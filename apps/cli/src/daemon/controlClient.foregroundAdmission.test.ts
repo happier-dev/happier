@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -165,7 +166,7 @@ describe('daemon control client: foreground Agent runtime admission', () => {
     }).success).toBe(false);
   });
 
-  it('normalizes an older daemon without the admission route to a typed refusal', async () => {
+  it.each([1, 2] as const)('normalizes an older daemon refusal with V%s Provider identity', async version => {
     const server = http.createServer((_request, response) => {
       response.statusCode = 404;
       response.setHeader('content-type', 'application/json');
@@ -194,6 +195,10 @@ describe('daemon control client: foreground Agent runtime admission', () => {
         foregroundPid: process.pid,
         directory: '/workspace',
         agentId: 'codex',
+        selection: SessionModelSelectionSchema.parse({ v: version, updatedAt: 1, ref: {
+          agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a', providerConnectionId: 'pc_work',
+          ...(version === 2 ? { source: 'account_provider_connection' } : {}),
+        } }),
         backendTarget: {
           kind: 'backend',
           backendId: 'codex',
@@ -203,6 +208,7 @@ describe('daemon control client: foreground Agent runtime admission', () => {
         ok: false,
         error: {
           code: 'provider_agent_runtime_unsupported',
+          connectionId: 'pc_work',
         },
       });
     } finally {

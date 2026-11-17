@@ -1273,7 +1273,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                     'provider_authorization_changed',
                     {
                       connectionId:
-                        request.selection?.ref.providerConnectionId
+                        (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null)
                         ?? undefined,
                       machineId: request.machineId,
                       sourceProfileId: request.profileId,
@@ -1643,7 +1643,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   'provider_agent_runtime_unsupported',
                   {
                     connectionId:
-                      request.selection?.ref.providerConnectionId
+                      (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null)
                       ?? undefined,
                     machineId: request.machineId,
                   },
@@ -1887,7 +1887,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   'provider_agent_runtime_unsupported',
                   {
                     connectionId:
-                      request.selection?.ref.providerConnectionId
+                      (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null)
                       ?? undefined,
                     machineId: request.machineId,
                     sourceProfileId: request.profileId,
@@ -1904,7 +1904,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 error instanceof ForegroundSessionAccountAdmissionError ? 'provider_authorization_changed' : 'provider_agent_runtime_unsupported',
                 {
                   connectionId:
-                    request.selection?.ref.providerConnectionId
+                    (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null)
                     ?? undefined,
                   machineId: request.machineId,
                 },
@@ -1924,7 +1924,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       error instanceof ForegroundSessionAccountAdmissionError ? 'provider_authorization_changed' : 'provider_agent_runtime_unsupported',
       {
         connectionId:
-          request.selection?.ref.providerConnectionId ?? undefined,
+          (request.selection ? readSessionModelSelectionProviderConnectionId(request.selection) : null) ?? undefined,
         machineId: request.machineId,
       },
     ));

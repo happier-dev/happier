@@ -35,6 +35,11 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
     accountSettings?: Readonly<Record<string, unknown>>;
     augmentSessionMetadata?: (metadata: Metadata) => Metadata;
 }>): DeferredStartupMetadataPlan {
+    const startupMetadataOverrides = createStartupMetadataOverrides({
+        permissionMode: params.explicitPermissionMode,
+        permissionModeUpdatedAt: params.explicitPermissionModeUpdatedAt,
+        modelSelection: params.modelSelection,
+    });
     const createMetadata = (machineId: string): SessionMetadataResult => createSessionMetadata({
         flavor: params.flavor,
         machineId,
@@ -49,9 +54,7 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
                 : Date.now(),
         sessionModeId: params.sessionModeId,
         sessionModeUpdatedAt: params.sessionModeUpdatedAt,
-        modelSelectionIntent: params.modelSelection
-            ? { v: 1, updatedAt: params.modelSelection.updatedAt, selection: params.modelSelection.ref }
-            : undefined,
+        modelSelectionIntent: startupMetadataOverrides.modelOverride ?? undefined,
         augmentMetadata: params.augmentSessionMetadata,
         launchControlMetadata: params.launchControlMetadata,
         accountSettings: params.accountSettings,
@@ -60,10 +63,6 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
     return {
         initialMetadata: createMetadata(params.initialMachineId).metadata,
         createInitializedSessionMetadata: createMetadata,
-        startupMetadataOverrides: createStartupMetadataOverrides({
-            permissionMode: params.explicitPermissionMode,
-            permissionModeUpdatedAt: params.explicitPermissionModeUpdatedAt,
-            modelSelection: params.modelSelection,
-        }),
+        startupMetadataOverrides,
     };
 }

@@ -1,3 +1,4 @@
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { TrackedSession } from '@/daemon/types';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
@@ -137,7 +138,7 @@ export function resolveTrackedRunnerAgentRuntimeCurrentness(input: Readonly<{
   };
 
   const selectedProviderConnectionId =
-    tracked.spawnOptions?.modelSelection?.ref.providerConnectionId;
+    (tracked.spawnOptions?.modelSelection ? readSessionModelSelectionProviderConnectionId(tracked.spawnOptions?.modelSelection) : null);
   if (selectedProviderConnectionId === null || selectedProviderConnectionId === undefined) {
     return agentRuntimeCurrentness;
   }
@@ -187,7 +188,7 @@ export async function resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
     const captured = providerResolution.accountSnapshot;
     const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
     let providerSettings: ProviderSettingsV1 | undefined;
-    if (tracked.spawnOptions?.modelSelection?.ref.providerConnectionId && captured?.scopeKey) {
+    if ((tracked.spawnOptions?.modelSelection ? readSessionModelSelectionProviderConnectionId(tracked.spawnOptions?.modelSelection) : null) && captured?.scopeKey) {
       const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: captured.scopeKey });
       const snapshot = getActiveAccountSettingsSnapshot();
       if (catalog.status === 'ready' && snapshot?.scopeKey === captured.scopeKey

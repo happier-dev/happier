@@ -1,3 +1,4 @@
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import * as React from 'react';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -40,7 +41,7 @@ export function useWorkflowRunAgentReadiness(params: Readonly<{
             if (!held || held.stale) continue;
             // A Provider or Team route has not been admitted here. Let the credential owner retain
             // known installation facts while reporting its unread authentication as unknown.
-            const unreadRoute = selection.modelSelection?.ref.providerConnectionId != null
+            const unreadRoute = (selection.modelSelection ? readSessionModelSelectionProviderConnectionId(selection.modelSelection) : null) != null
                 || Object.values(selection.connectedServices?.bindingsByServiceId ?? {})
                     .some(binding => binding.source === 'team_resource');
             const agent = selection.connectedServices === undefined && !unreadRoute ? held

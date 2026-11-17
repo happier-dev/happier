@@ -284,6 +284,22 @@ describe('resolveTrackedRunnerAgentRuntimeCurrentness', () => {
     });
   });
 
+  it('marks a V2 account Provider selection stale when its contribution was removed', () => {
+    const session = selectedProviderTracked();
+    const selected = session.spawnOptions?.modelSelection;
+    if (!selected || !session.spawnOptions) throw new Error('Missing selected Provider fixture');
+    session.spawnOptions = { ...session.spawnOptions, modelSelection: {
+      v: 2, updatedAt: selected.updatedAt, ref: {
+        source: 'account_provider_connection', agentTargetKey: selected.ref.agentTargetKey,
+        modelId: selected.ref.modelId, providerConnectionId: SELECTED_PROVIDER_CONNECTION_ID,
+      },
+    } };
+    expect(resolveTrackedRunnerAgentRuntimeCurrentness({
+      tracked: session, agentRuntimesByAgentId: new Map([['codex', registration()]]),
+      providerResolution: providerResolution({ providersByContributionKey: new Map() }),
+    })).toEqual({ versionState: 'stale', restartUnavailableReason: 'unsupported_backend' });
+  });
+
   it('keeps a current Agent with a resolvable selected Provider current', () => {
     expect(resolveTrackedRunnerAgentRuntimeCurrentness({
       tracked: selectedProviderTracked(),

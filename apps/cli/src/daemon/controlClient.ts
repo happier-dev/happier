@@ -1,3 +1,4 @@
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 /**
  * HTTP client helpers for daemon communication
@@ -1062,7 +1063,7 @@ export async function admitDaemonForegroundAgentRuntime(
       'provider_agent_runtime_unsupported',
       {
         connectionId:
-          body.selection?.ref.providerConnectionId ?? undefined,
+          (body.selection ? readSessionModelSelectionProviderConnectionId(body.selection) : null) ?? undefined,
       },
     ),
   };

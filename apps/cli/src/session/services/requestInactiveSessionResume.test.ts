@@ -701,6 +701,18 @@ describe('requestInactiveSessionResume', () => {
     }));
   });
 
+  it('uses the Provider-safe RPC for an incoming V2 Account connection', async () => {
+    callMachineRpc.mockRejectedValueOnce(new RpcError('method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
+    await expect(requestInactiveSessionResume({
+      credentials, sessionId: 'session-1', localId: 'local-1', rawSession: rawSession(), metadata,
+      incomingOptions: { modelSelection: { v: 2, updatedAt: 300, ref: {
+        source: 'account_provider_connection', agentTargetKey: 'agent:happier.agent.claude/claude',
+        modelId: 'model-a', providerConnectionId: 'pc_work',
+      } } },
+    })).resolves.toMatchObject({ ok: false, code: 'unsupported' });
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE }));
+  });
+
   it('wakes a Provider-bound inactive session through the atomic Provider-safe RPC', async () => {
     callMachineRpc.mockResolvedValueOnce({ type: 'success' });
 
