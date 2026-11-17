@@ -151,6 +151,8 @@ export async function claudeRemote(opts: {
     // Callbacks
     onSessionFound: (id: string) => void,
     onThinkingChange?: (thinking: boolean) => void,
+    /** Called at a new provider submission, after input selection and before provider effects. */
+    onBeforeProviderPrompt?: () => void | Promise<void>,
     onMessage: (message: SDKMessage) => void,
     /** Live provider ingress, before transcript filtering or buffering. */
     onProviderEvent?: () => void,
@@ -324,6 +326,7 @@ export async function claudeRemote(opts: {
     let currentProviderSessionId = startFrom;
     let unpublishedLaunchEffort: string | undefined = effortArgs[1];
     // Start the loop
+    if (initial.pendingProviderAction !== 'steer' && opts.onBeforeProviderPrompt) await opts.onBeforeProviderPrompt();
     const response = query({
         prompt: messages,
         options: sdkOptions,
@@ -443,6 +446,7 @@ export async function claudeRemote(opts: {
                 }
                 promptSettlements.track(next);
                 mode = next.mode;
+                if (next.pendingProviderAction !== 'steer' && opts.onBeforeProviderPrompt) await opts.onBeforeProviderPrompt();
                 messages.push({ type: 'user', uuid: promptSettlements.submit(next), message: { role: 'user', content: next.message } });
             }
 
