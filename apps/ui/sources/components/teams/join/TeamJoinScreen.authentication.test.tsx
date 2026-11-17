@@ -21,7 +21,7 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
 import { resolveServerProfileScopeIdForIdentifier, setActiveServerId, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { createTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
+import { TeamInvitationAcceptResultV1Schema, TeamInvitationPreviewResultV1Schema, createTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 installTokenStorageWebPlatformMocks();
@@ -35,14 +35,14 @@ const browserStorage = await vi.hoisted(async () => {
 
 function answerSavedAccountInvitation(serverId: string, identity: string, accountId: string) {
     home.answer(serverId, '/v1/account/profile', { body: AccountProfileSchema.parse({ id: accountId }) });
-    home.answer(serverId, '/v1/team-invitations/preview', { body: {
+    home.answer(serverId, '/v1/team-invitations/preview', { body: TeamInvitationPreviewResultV1Schema.parse({
         outcome: 'ok', preview: {
             home: { serverId: identity, displayName: 'Acme', storageMode: null },
             team: { teamId: 'team-1', name: 'Acme Team', logo: null, accentSeed: 'team-1' },
             role: 'member', historyAccess: 'from_membership', state: 'active',
             expiresAt: Date.UTC(2030, 0, 1), recipientEmailMask: null,
         },
-    } });
+    }) });
     home.answer(serverId, '/v1/auth/entry', { body: AuthEntryProjectionV1Schema.parse({
         v: 1, state: 'admission_required', scope: { kind: 'invitation' },
         home: { serverId: identity, displayName: 'Acme', storageMode: null },
@@ -50,7 +50,7 @@ function answerSavedAccountInvitation(serverId: string, identity: string, accoun
         account: { firstName: null, lastName: null, username: null, avatarUrl: null },
         invitationEmailVerificationRequired: false, actions: [], autoRedirect: null,
     }) });
-    home.answer(serverId, '/v1/team-invitations/accept', { body: { outcome: 'joined', teamId: 'team-1' } });
+    home.answer(serverId, '/v1/team-invitations/accept', { body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'joined', teamId: 'team-1' }) });
 }
 
 it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted profile before offering a name after an off-Home saved Account joins (focus recovery: %s)', async recovery => {
@@ -267,15 +267,15 @@ it.each([
     tryWriteServerEnabledBitInPlace(features, 'teams', true);
     home.answer(serverId, '/v1/features', { body: features });
     const token = 'a'.repeat(43);
-    home.answer(serverId, '/v1/team-invitations/preview', { body: {
+    home.answer(serverId, '/v1/team-invitations/preview', { body: TeamInvitationPreviewResultV1Schema.parse({
         outcome: 'ok', preview: {
             home: { serverId: identity, displayName: 'Acme', storageMode: null },
             team: { teamId: 'team-1', name: 'Acme Team', logo: null, accentSeed: 'team-1' },
             role: 'member', historyAccess: 'from_membership', state: 'active',
             expiresAt: Date.UTC(2030, 0, 1), recipientEmailMask: null,
         },
-    } });
-    home.answer(serverId, '/v1/auth/entry', { body: {
+    }) });
+    home.answer(serverId, '/v1/auth/entry', { body: AuthEntryProjectionV1Schema.parse({
         v: 1, state: 'admission_required', scope: { kind: 'invitation' },
         home: { serverId: identity, displayName: 'Acme', storageMode: null },
         team: { teamId: 'team-1', name: 'Acme Team', logo: null },
@@ -283,7 +283,7 @@ it.each([
         actions: [{ kind: 'authenticate', methodId: method, action: 'provision',
             mode, origin: 'home', presentation: { displayName: method === 'key_challenge' ? 'Device key' : 'Email and password' } }],
         autoRedirect: null,
-    } });
+    }) });
     const credentials = { token: createAccountTokenForTests('new-account', { currentAccount: true }) };
     const authPath = method === 'key_challenge' ? '/v1/auth' : '/v1/auth/email/provision';
     home.answer(serverId, authPath, { select: () => {

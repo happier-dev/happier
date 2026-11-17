@@ -1,3 +1,6 @@
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { NativeEmailPasswordPreloginResponseV1Schema } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -13,7 +16,7 @@ import { HomeAuthenticationFlow } from './HomeAuthenticationFlow';
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: boundary.request }));
+
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -24,6 +27,7 @@ let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 beforeEach(() => {
     restore = installLocalStorageMock().restore;
     boundary.request.mockReset();
+    setRuntimeFetch(boundary.request);
     boundary.request.mockResolvedValue(new Response('{}', { status: 404 }));
 });
 afterEach(async () => { await screen?.unmount(); screen = undefined; restore(); });
@@ -38,7 +42,7 @@ async function renderEntry(
     options: Readonly<{ mailboxProven?: boolean; admission?: NativeAccountAdmissionV1; openChosenAction?: boolean }> = {},
 ) {
     const fixture = createDirectoryHttpFixture();
-    const capabilities = projectAuthEntryMethodCapabilities({
+    const capabilities = projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
         v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
         actions: actions.map((row) => ({
             kind: 'authenticate', methodId: 'email_password', action: row.action, mode: row.mode,
@@ -46,7 +50,7 @@ async function renderEntry(
             ...(row.passwordReset ? { passwordReset: row.passwordReset } : {}),
             origin: 'home', presentation: { displayName: 'Email and password' },
         })),
-    });
+    }));
     screen = await renderScreen(<AuthProvider initialCredentials={null}>
         <HomeAuthenticationFlow
             target={{ kind: 'descriptor', descriptor: fixture.home.connectionDescriptor, authority: 'current_connection' }}
@@ -121,7 +125,7 @@ it('keeps the entered address and focuses the password when the Home rejects the
     await rendered.pressByTestIdAsync('home-auth-email_password-login-either');
     boundary.request.mockImplementation(async (url: string) => (
         url.endsWith('/prelogin')
-            ? new Response(JSON.stringify({ v: 1, kind: 'plain_password' }))
+            ? new Response(JSON.stringify(NativeEmailPasswordPreloginResponseV1Schema.parse({ v: 1, kind: 'plain_password' })))
             : new Response(JSON.stringify({ error: 'authentication_failed' }), { status: 401 })
     ));
 

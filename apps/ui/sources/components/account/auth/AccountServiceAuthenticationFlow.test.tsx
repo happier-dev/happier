@@ -1,32 +1,34 @@
+import { projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderScreen } from '@/dev/testkit';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createDeferred, renderScreen } from '@/dev/testkit';
+import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { ExternalOAuthParamsResponseSchema } from '@happier-dev/protocol/auth/externalOAuth';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import type { AccountServiceAuthenticationFlowProps } from './AccountServiceAuthenticationFlow';
-import { TokenStorage, type PendingAccountDirectoryAuth } from '@/auth/storage/tokenStorage';
 
-const authClient = vi.hoisted(() => ({ startOAuth: vi.fn() }));
+const network = vi.hoisted(() => ({ request: vi.fn() }));
 const linking = vi.hoisted(() => ({ openURL: vi.fn(async () => {}) }));
 
-vi.mock('react-native', async () => {
+installTokenStorageWebPlatformMocks({ reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return { ...await createReactNativeWebMock(), Linking: linking };
-});
-vi.mock('@/auth/accountDirectory/accountDirectoryAuthClient', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/auth/accountDirectory/accountDirectoryAuthClient')>(),
-    accountDirectoryAuthClient: authClient,
-}));
-vi.mock('@/components/account/auth/AccountDirectoryKeyLoginForm', () => ({
-    AccountDirectoryKeyLoginForm: (props: Record<string, unknown>) => React.createElement('AccountDirectoryKeyLoginForm', props),
-}));
+    return createReactNativeWebMock({ Linking: linking });
+} });
+installTokenStorageTestIsolation('account-service-auth-flow');
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-import { AccountServiceAuthenticationFlow } from './AccountServiceAuthenticationFlow';
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { AccountServiceAuthenticationFlow } = await import('./AccountServiceAuthenticationFlow');
 
 const capability = {
     version: 1 as const,
@@ -41,55 +43,43 @@ const service = {
         snapshot: { status: 'ready' as const, features: createRootLayoutFeaturesResponse(), serverIdentityId: 'srv_accounts' },
     },
     displayName: 'Acme',
-    authenticationActions: [
-        {
-            method: { id: 'github', enabledActions: [{ id: 'provision' as const, mode: 'either' as const }, { id: 'login' as const, mode: 'keyless' as const }] },
-            action: { id: 'provision' as const, mode: 'either' as const },
-            execution: { kind: 'oauth' as const, providerId: 'github', mode: 'keyed' as const },
-        },
-        {
-            method: { id: 'github', enabledActions: [{ id: 'provision' as const, mode: 'either' as const }, { id: 'login' as const, mode: 'keyless' as const }] },
-            action: { id: 'login' as const, mode: 'keyless' as const },
-            execution: { kind: 'oauth' as const, providerId: 'github', mode: 'keyless' as const },
-        },
-        {
-            method: { id: 'key_challenge', enabledActions: [{ id: 'provision' as const, mode: 'keyed' as const }] },
-            action: { id: 'provision' as const, mode: 'keyed' as const },
-            execution: { kind: 'generated_key' as const },
-        },
-        {
-            method: { id: 'key_challenge', enabledActions: [{ id: 'login' as const, mode: 'keyed' as const }] },
-            action: { id: 'login' as const, mode: 'keyed' as const },
-            execution: { kind: 'key_entry' as const },
-        },
-    ],
+    authenticationActions: projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
+        v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
+        actions: [
+            { kind: 'authenticate', methodId: 'github', action: 'provision', mode: 'either', origin: 'home', presentation: { displayName: 'GitHub' } },
+            { kind: 'authenticate', methodId: 'github', action: 'login', mode: 'keyless', origin: 'home', presentation: { displayName: 'GitHub' } },
+            { kind: 'authenticate', methodId: 'key_challenge', action: 'provision', mode: 'keyed', origin: 'home', presentation: { displayName: 'Secret key' } },
+            { kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed', origin: 'home', presentation: { displayName: 'Secret key' } },
+        ],
+    })).authenticationActions,
     transport: { runtimeOrigin: 'http://127.0.0.1:43123' },
 } satisfies AccountServiceAuthenticationFlowProps['service'];
 const intent = { kind: 'enter', target: { kind: 'automatic' } } as const;
-const pending: PendingAccountDirectoryAuth = {
-    endpoint: service.authority.endpointUrl,
-    serverIdentityId: service.authority.serverIdentityId,
-    canonicalServerUrl: service.authority.canonicalServerUrl,
-    provider: 'github',
-    purpose: 'account_directory',
-    credentialTarget: 'account_directory',
-    entryIntent: intent,
-    mode: 'keyless',
-    proof: 'exact-proof',
-    createdAt: 1,
-    expiresAt: 2,
-    returnTo: '/setup/wizard',
-};
-const startResult = { url: 'https://oauth.example.test/start', pending } as const;
+const target = { endpoint: service.authority.endpointUrl, serverIdentityId: service.authority.serverIdentityId };
+function startResponse() {
+    return Response.json(ExternalOAuthParamsResponseSchema.parse({
+        url: 'https://oauth.example.test/start', purpose: 'account_directory', credentialTarget: 'account_directory',
+        endpointUrl: service.authority.endpointUrl, endpointServerIdentityId: service.authority.serverIdentityId,
+        canonicalServerUrl: service.authority.canonicalServerUrl,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }));
+}
 
 describe('AccountServiceAuthenticationFlow', () => {
+    let restoreStorage: () => void;
+    let restoreLocks: () => void;
     beforeEach(() => {
-        authClient.startOAuth.mockReset();
+        vi.stubGlobal('window', { location: { assign: linking.openURL } });
+        restoreStorage = installLocalStorageMock().restore;
+        restoreLocks = installWebLockManagerMock().restore;
+        network.request.mockReset();
+        setRuntimeFetch(network.request);
+        network.request.mockImplementation(async () => startResponse());
         linking.openURL.mockClear();
     });
+    afterEach(() => { vi.unstubAllGlobals(); restoreLocks(); restoreStorage(); });
 
     it('preserves exact catalog method/action order and dispatches the tuple mode', async () => {
-        authClient.startOAuth.mockResolvedValue(startResult);
         const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent} onPostAuthContinuation={() => {}}
             returnTo="/setup/wizard" onResult={vi.fn()} onExternalAuthStarted={vi.fn()} onBack={vi.fn()} />);
         expect([
@@ -104,10 +94,16 @@ describe('AccountServiceAuthenticationFlow', () => {
             'account-service-auth-key_challenge-login-keyed',
         ]);
         await screen.pressByTestIdAsync('account-service-auth-github-provision-either');
-        expect(authClient.startOAuth).toHaveBeenCalledWith(expect.objectContaining({
-            providerId: 'github', mode: 'keyed', entryIntent: intent, returnTo: '/setup/wizard',
-            transport: service.transport,
-        }));
+        const [url] = network.request.mock.calls[0]!;
+        expect(new URL(String(url)).origin).toBe(service.transport.runtimeOrigin);
+        expect(new URL(String(url)).searchParams.get('mode')).toBe('keyed');
+        expect(new URL(String(url)).pathname).toBe('/v1/auth/external/github/params');
+        await waitForHomeGovernance(async () => {
+            expect(linking.openURL, screen.getTextContent()).toHaveBeenCalledWith('https://oauth.example.test/start');
+            expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toMatchObject({
+                mode: 'keyed', entryIntent: intent, returnTo: '/setup/wizard',
+            });
+        });
     });
 
     it('starts generated-key provisioning without opening the key-entry form', async () => {
@@ -116,12 +112,13 @@ describe('AccountServiceAuthenticationFlow', () => {
 
         await screen.pressByTestIdAsync('account-service-auth-key_challenge-provision-keyed');
 
-        expect(screen.findByType('AccountDirectoryKeyLoginForm')?.props.mode).toBe('provision');
+        expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
+        expect(screen.findByTestId('account-directory-key-provision-pending') ?? screen.findByTestId('account-directory-key-provision-failed')).not.toBeNull();
     });
 
     it('admits one sibling ceremony and releases the guard after a failed launch', async () => {
-        let reject!: (error: Error) => void;
-        authClient.startOAuth.mockReturnValue(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+        const response = createDeferred<Response>();
+        network.request.mockReturnValue(response.promise);
         const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent} onPostAuthContinuation={() => {}}
             returnTo="/setup/wizard" onResult={vi.fn()} onExternalAuthStarted={vi.fn()} onBack={vi.fn()} />);
         const first = screen.findByTestId('account-service-auth-github-provision-either');
@@ -130,59 +127,51 @@ describe('AccountServiceAuthenticationFlow', () => {
         const pressFirst = first.props.onPress;
         const pressSibling = sibling.props.onPress;
         act(() => { pressFirst(); pressSibling(); });
-        expect(authClient.startOAuth).toHaveBeenCalledTimes(1);
-        await act(async () => reject(new Error('failed')));
+        await vi.waitFor(() => expect(network.request).toHaveBeenCalledTimes(1));
+        await act(async () => response.resolve(Response.json({ error: 'authentication_failed' }, { status: 400 })));
+        network.request.mockImplementation(async () => startResponse());
         await screen.pressByTestIdAsync('account-service-auth-launch-failed-action');
         await screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
-        expect(authClient.startOAuth).toHaveBeenCalledTimes(2);
+        expect(network.request).toHaveBeenCalledTimes(2);
     });
 
     it('does not open a returned OAuth URL after the invoking surface becomes stale', async () => {
-        const clearPending = vi.spyOn(TokenStorage, 'clearPendingAccountDirectoryAuth')
-            .mockResolvedValue(true);
-        let resolve!: (result: typeof startResult) => void;
+        const response = createDeferred<Response>();
         let current = true;
-        authClient.startOAuth.mockReturnValue(new Promise((resolvePromise) => { resolve = resolvePromise; }));
+        network.request.mockReturnValue(response.promise);
         const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent} onPostAuthContinuation={() => {}}
             returnTo="/setup/wizard" onResult={vi.fn()} onExternalAuthStarted={vi.fn()} onBack={vi.fn()}
             isCurrent={() => current} />);
 
         const launch = screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
-        await vi.waitFor(() => expect(authClient.startOAuth).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(network.request).toHaveBeenCalledTimes(1));
         current = false;
-        resolve(startResult);
+        response.resolve(startResponse());
         await launch;
 
         expect(linking.openURL).not.toHaveBeenCalled();
-        expect(clearPending).toHaveBeenCalledWith({
-            endpoint: service.authority.endpointUrl,
-            serverIdentityId: service.authority.serverIdentityId,
-        }, { expected: pending });
+        expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
     });
 
     it('forwards cancellation and does not open a late OAuth URL after the journey aborts', async () => {
-        const clearPending = vi.spyOn(TokenStorage, 'clearPendingAccountDirectoryAuth')
-            .mockResolvedValue(true);
-        let resolve!: (result: typeof startResult) => void;
-        authClient.startOAuth.mockReturnValue(new Promise((resolvePromise) => { resolve = resolvePromise; }));
+        const response = createDeferred<Response>();
+        network.request.mockReturnValue(response.promise);
         const controller = new AbortController();
         const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent} onPostAuthContinuation={() => {}}
             returnTo="/setup/wizard" onResult={vi.fn()} onExternalAuthStarted={vi.fn()} onBack={vi.fn()}
             signal={controller.signal} />);
 
         const launch = screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
-        await vi.waitFor(() => expect(authClient.startOAuth).toHaveBeenCalledWith(expect.objectContaining({
-            signal: controller.signal,
-        })));
+        await vi.waitFor(() => expect(network.request).toHaveBeenCalledTimes(1));
+        const signal = network.request.mock.calls[0]?.[1]?.signal as AbortSignal;
+        expect(signal.aborted).toBe(false);
         controller.abort();
-        resolve(startResult);
+        expect(signal.aborted).toBe(true);
+        response.resolve(startResponse());
         await launch;
 
         expect(linking.openURL).not.toHaveBeenCalled();
-        expect(clearPending).toHaveBeenCalledWith({
-            endpoint: service.authority.endpointUrl,
-            serverIdentityId: service.authority.serverIdentityId,
-        }, { expected: pending });
+        expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
         expect(screen.findAllByTestId('account-service-auth-launch-failed')).toHaveLength(0);
     });
 });
