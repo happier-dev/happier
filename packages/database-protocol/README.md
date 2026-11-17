@@ -29,6 +29,32 @@ results carry a reason and a continuation when the executor can provide one.
 Arbitrary SQL continuation is an explicit non-snapshot rerun operand. No output
 allowance, shared model cap, retained cursor or retry policy is introduced.
 
+Relation summaries can include the existing `size` measurement: total bytes,
+heap/relation bytes, table bytes (including auxiliary storage), and index bytes
+where the dialect supplies them. MySQL table sizes are estimates; per-index
+bytes can remain unavailable. Missing measurements and row estimates are
+unknown, not zero. Directory row counts are approximate catalog estimates.
+PostgreSQL table statistics expose `lastAutovacuum` and `lastAutoanalyze` when
+observed. A selected statement's buffer-hit ratio uses its hit/read counters;
+missing counters or a zero denominator mean unknown, not a database-wide cache
+measurement or index-removal advice.
+
+Selected loaded rows can be exported through `database.rows.export` as CSV or
+tagged JSON without another database read. The result carries the source
+completeness and partial-cell ranges; selecting loaded rows does not establish
+that the table or query is complete. CSV uses `\N` for SQL NULL and quotes an
+empty string or literal `\N`. Tagged JSON preserves exact numeric text, SQL
+NULL versus JSON null, binary encodings and duplicate column labels.
+
+Telemetry detail bodies retain resource `service.version` and both deployment
+environment conventions. `deploymentEnvironmentName` prefers
+`deployment.environment.name`, falling back to legacy `deployment.environment`;
+the legacy value remains separately available. Endpoint `errorRate` is the
+observed `errorCount / requestCount`, or null without requests. Selected trace
+reads expose duration-ranked observed child spans and log-to-trace/span links;
+an unobserved parent or span remains unresolved. These projections reuse the
+collector's existing detail storage and read Actions.
+
 ## Evolving the ABI
 
 Follow the [protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution).
