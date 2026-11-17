@@ -3,7 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import axios from 'axios';
 import { AccountSettingsSchema, FeaturesResponseSchema, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -14,6 +15,7 @@ import { createRuntimeProviderModelManagementServices, createProviderAccountOper
 import { createRuntimeProviderConnectionServices } from '@/providers/connections/runtimeServices';
 import { resolveProviderContributionRegistryView } from '@/providers/registry';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
@@ -26,10 +28,13 @@ import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeReg
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async () => ({ port: 44322, stop: async () => {} }) }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
 
-it.each(['providers.models.projection', 'providers.models.refresh', 'providers.connections.describe', 'providers.models.list'] as const)(
+it.each(['providers.models.projection', 'providers.models.refresh', 'providers.connections.describe', 'providers.models.list', 'sessions.spawn.connected_services.list'] as const)(
   'uses requester Account policy through the real daemon factory without ambient disclosure (%s)', async actionId => {
-  const controller = createPluginReloadController();
-  const fixture = await createManagedRunLaunchFixture({ controller, physicalGateway: true });
+  const inventory = actionId === 'sessions.spawn.connected_services.list';
+  // Inventory consumes the executing daemon's active Agent declaration.
+  const controller = inventory ? pluginReloadController : createPluginReloadController();
+  const fixture = await createManagedRunLaunchFixture({ controller, physicalGateway: true,
+    ...(inventory ? { connectedAccounts: [{ purpose: 'inference', service: 'accounts', materializationKinds: ['httpHeaders'] as const }] } : {}) });
   const homeId = 'srv_requester_provider';
   const endpoint = 'https://requester-provider.test';
   const features = FeaturesResponseSchema.parse({ features: { providers: { enabled: true } },
@@ -42,6 +47,7 @@ it.each(['providers.models.projection', 'providers.models.refresh', 'providers.c
     provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
   const custodianToken = `e30.${Buffer.from(JSON.stringify({ sub: 'worker-b' })).toString('base64url')}.signature`;
   let authorizationAccepted = true;
+  let purposeReachable = true;
   let privateCustodianReads = 0;
   let requesterSourceReads = 0;
   let providerDispatches = 0;
@@ -69,8 +75,10 @@ it.each(['providers.models.projection', 'providers.models.refresh', 'providers.c
     if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: { status: 'present', revision: 1,
       content: { t: 'plain', v: fixture.snapshot.providerConnectionsCatalog?.status === 'ready' ? fixture.snapshot.providerConnectionsCatalog.catalog : {} } } };
     if (path === '/v1/account/entity-rows/connected-accounts/purposes') {
-      expect(options?.headers?.Authorization).toBe(`Bearer ${requesterToken}`);
+      if (inventory) expect(options?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe('admitted-provider-root');
+      else expect(options?.headers?.Authorization).toBe(`Bearer ${requesterToken}`);
       requesterSourceReads++;
+      if (!purposeReachable) return { status: 503, data: { error: 'gateway down' } };
       return { status: 200, data: { status: 'present', revision: 1,
         content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
     }
@@ -157,7 +165,8 @@ it.each(['providers.models.projection', 'providers.models.refresh', 'providers.c
       sourceConnectionId: 'run-gateway' } as const;
     const target = { kind: 'machine', machineId: fixture.machineId } as const;
     {
-      const actionInput = actionId === 'providers.models.refresh' ? { ...input, forceRefresh: true as const }
+      const actionInput = inventory ? { machineId: fixture.machineId, agentId: fixture.agentId, includeDefaults: true }
+        : actionId === 'providers.models.refresh' ? { ...input, forceRefresh: true as const }
         : actionId === 'providers.models.projection' ? input : { machineId: fixture.machineId, connectionId: 'run-gateway' };
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: actionId, target, input: actionInput });
       const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-provider-root', binding: {
@@ -183,17 +192,27 @@ it.each(['providers.models.projection', 'providers.models.refresh', 'providers.c
           serverId: homeId, defaultSessionMachineId: fixture.machineId, actionRequestId: envelope.requestId,
           externalActionExecutionAuthorization: admitted.authorization, externalActionTarget: target, signal: operation.signal });
         const result = await execute();
-        const expected = actionId === 'providers.connections.describe' ? { connections: [{ connectionId: 'run-gateway', authorized: true }] }
+        const expected = inventory ? { supportedServiceIds: ['acme.managed-run/accounts'], items: [] }
+          : actionId === 'providers.connections.describe' ? { connections: [{ connectionId: 'run-gateway', authorized: true }] }
           : actionId === 'providers.models.list' ? { connectionId: 'run-gateway', models: [],
             sourceCatalogs: [{ purpose: 'upstream', catalogObserved: false, models: [] }] }
           : { groups: [{ connectionName: 'Gateway', rows: [{ descriptor: { id: 'example' } }] }] };
-        expect(result, JSON.stringify({ actionId, result })).toMatchObject({ ok: true, result: { status: 'success', ...expected } });
+        expect(result, JSON.stringify({ actionId, result })).toMatchObject({ ok: true,
+          result: { ...(inventory ? {} : { status: 'success' }), ...expected } });
         if (!result.ok) throw new Error('Expected successful Provider Action');
         if (actionId === 'providers.models.projection' || actionId === 'providers.models.refresh') {
           DaemonProviderModelProjectionResponseV1Schema.parse(result.result);
         }
         expect(privateCustodianReads).toBe(0);
         expect(requesterSourceReads).toBeGreaterThan(0);
+        if (inventory) {
+          purposeReachable = false;
+          expect(await execute()).toMatchObject({ ok: false, errorCode: 'connected_services_default_unavailable',
+            details: { source: 'account_default', phase: 'purpose_binding', catalogReason: 'unreachable' } });
+          purposeReachable = true;
+          expect(await execute()).toMatchObject({ ok: true, result: expected });
+          expect(privateCustodianReads).toBe(0);
+        }
         const sourceReadsBeforeStop = requesterSourceReads;
         const providerDispatchesBeforeStop = providerDispatches;
         operation.abort();
