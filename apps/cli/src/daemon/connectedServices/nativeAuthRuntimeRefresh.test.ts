@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -16,9 +16,7 @@ import { createBuiltInQualifiedNativeRefreshHarness } from './refresh/ConnectedS
 import { ConnectedServiceRuntimeRegistry } from './runtimeRegistry/registry';
 import { createSessionConnectedServiceRuntimeAuthRefreshHandler } from './sessionRuntimeAuthRefresh';
 import { resolveSharedStateRequiredSwitchContinuity } from './sessionAuthSwitch/sharedStateContinuity';
-
-
-afterEach(() => vi.unstubAllGlobals());
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 
 function oauthResponse(accessToken: string) {
     return new Response(JSON.stringify({ access_token: accessToken, refresh_token: 'refresh-private',
@@ -71,8 +69,8 @@ describe('registered Session native auth refresh through the canonical coordinat
                         idToken: 'test-id', providerAccountId: 'work', expiresAtMs: String(h.now - 1) } },
                     randomBytes: length => new Uint8Array(length) }),
             } });
-            vi.stubGlobal('fetch', vi.fn(async () => providerStatus === 200 ? oauthResponse('access-new')
-                : new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })));
+            const providerFetch = stubUndiciFetch(async () => providerStatus === 200 ? oauthResponse('access-new')
+                : new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }));
             if (wiring === 'home') {
                 // The established runtime reads Account mode through the requester-bound
                 // Home API. Its unavailable response must not become a provider failure.
@@ -142,7 +140,7 @@ describe('registered Session native auth refresh through the canonical coordinat
                     expect(JSON.stringify(action)).not.toContain('connected_service_credential_refresh_unavailable');
                     expect(h.acquireRefreshLease).not.toHaveBeenCalled();
                     expect(h.mutateCredentialHealth).not.toHaveBeenCalled();
-                    expect(fetch).not.toHaveBeenCalled();
+                    expect(providerFetch).not.toHaveBeenCalled();
                     return;
                 }
                 expect(action).toMatchObject({ type: 'error', retryable: reason !== null, launchError: {
@@ -153,7 +151,7 @@ describe('registered Session native auth refresh through the canonical coordinat
                     expect(daemonFailure.errorDetail).toMatchObject({ uxDiagnostic: { diagnostics: { reason } } });
                     if (!('launchError' in action)) throw new Error('Missing launch diagnostic');
                     expect(action.launchError?.message).toContain(reason);
-                    expect(fetch).not.toHaveBeenCalled();
+                    expect(providerFetch).not.toHaveBeenCalled();
                 } else {
                     expect(daemonFailure.errorDetail).toMatchObject({ uxDiagnostic: {
                         suggestedActions: expect.arrayContaining(['reconnect_profile']),
@@ -215,7 +213,7 @@ describe('registered Session native auth refresh through the canonical coordinat
                     },
                 }) });
             const request = { sessionId: 'session', selection, refreshAttemptId: 'attempt-1', expectedCredentialRevision: h.firstRevision };
-            vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(oauthResponse('access-new')).mockResolvedValueOnce(oauthResponse('access-next')));
+            stubUndiciFetch(vi.fn().mockResolvedValueOnce(oauthResponse('access-new')).mockResolvedValueOnce(oauthResponse('access-next')));
             const firstSettlement = { ok: true, result: { status: 'refreshed', result: {
                 credentialRevision: h.secondRevision, accessToken: 'access-new', providerAccountId: 'work',
             } } };
