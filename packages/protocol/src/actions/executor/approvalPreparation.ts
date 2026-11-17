@@ -13,6 +13,8 @@ import { readWidgetLayoutFragmentActionAccountV1, readWidgetLayoutFragmentApprov
 import { machineAccessApprovalDisclosure } from '../specs/machine/access.js';
 import type { ApprovalPresentationContext } from '../actionSpecs.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
+import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
+import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { ComputerSelectedTargetResponseV1Schema, type ComputerApprovalDisplayV1 } from '../../computer/v1.js';
 import { type ActionId } from '../actionIds.js';
 import { DeploymentActionInputSchemasV1, DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
@@ -237,6 +239,21 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
   if (context.signal?.aborted) return { ok: false as const, errorCode: 'cancelled', error: 'cancelled' };
   return { input: reviewed.data, preview: prepared.preview,
     ...(prepared.hostReviewedChildren ? { hostReviewedChildren: prepared.hostReviewedChildren } : {}) };
+}
+
+/** The pressed contribution's own title, verb, description and field names, read once from the receiver's catalog. */
+function readContributedActionReview(deps: ActionExecutorDeps, input: unknown) {
+  const invocation = ActionInvokeInputSchema.safeParse(input);
+  if (!invocation.success) return null;
+  const id = formatQualifiedPluginActionId(invocation.data.action);
+  const definition = deps.listContributedActionDefinitions?.({ id }).find(candidate => candidate.id === id);
+  if (!definition) return null;
+  return {
+    title: definition.title,
+    ...(definition.confirmVerb === undefined ? {} : { confirmVerb: definition.confirmVerb }),
+    ...(definition.description ? { description: definition.description } : {}),
+    fields: (definition.inputHints?.fields ?? []).map(field => ({ path: field.path, title: field.title })),
+  };
 }
 
 export async function prepareApprovalRequest(params: Readonly<{
@@ -471,8 +488,11 @@ export async function prepareApprovalRequest(params: Readonly<{
   }
   const teamMemberPresentation = params.actionId === 'teams.members.add'
     ? await prepareTeamMemberApprovalPresentation(params) : null;
+  // A pressed contributed Action is reviewed by its own declaration, not by the generic `action.invoke` host Action.
+  const contributedAction = params.actionId === 'action.invoke' ? readContributedActionReview(params.deps, observedInput) : null;
   const defaultPreview = {
     actionId: params.actionId,
+    ...(contributedAction ? { contributedAction } : {}),
     ...(params.hostReviewedContent === undefined ? {} : { hostReviewedContent: params.hostReviewedContent }),
     ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     actionArgs: observedInput,

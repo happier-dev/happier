@@ -1,6 +1,8 @@
 export { readTeamMemberApprovalPresentation } from './specs/teamMemberApproval.js';
 
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
+import { ActionInvokeInputSchema } from './actionInvokeInput.js';
+import { readContributedActionReviewV1 } from './contributedActionReviewV1.js';
 import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceV1Schema, NativePermissionChoicesV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ApprovalStaleFailureDetailsSchema, buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
@@ -892,6 +894,25 @@ function describeNativePermissionChoice(input: Readonly<{
 }
 
 /** One Protocol-owned reading governs both rendered fields and approval admission. */
+/** A pressed contribution reads by its own field names; its ids and raw declared input stay under Technical details. */
+function describeContributedActionInvocation(actionArgs: unknown, preview: unknown): ApprovalActionFieldsPresentation | null {
+  const review = readContributedActionReviewV1(preview);
+  const invocation = ActionInvokeInputSchema.safeParse(actionArgs);
+  if (!review || !invocation.success) return null;
+  const declared = invocation.data.input;
+  const rows: ApprovalActionFieldRow[] = review.fields.flatMap(field => {
+    const value = field.path.split('.').reduce<unknown>((at, key) => isRecord(at) ? at[key] : undefined, declared);
+    return value === undefined || value === null ? [] : [{ kind: 'value' as const, path: `input.${field.path}`,
+      title: field.title, value: typeof value === 'string' ? value : JSON.stringify(value) }];
+  });
+  rows.push(
+    { kind: 'value', path: 'action.pluginId', title: 'Plugin id', value: invocation.data.action.pluginId, technical: true },
+    { kind: 'value', path: 'action.localId', title: 'Action id', value: invocation.data.action.localId, technical: true },
+    { kind: 'value', path: 'input', title: 'Declared Action input', value: JSON.stringify(declared ?? null), technical: true },
+  );
+  return { rows, unrepresentable: null };
+}
+
 export function describeApprovalActionFields(input: Readonly<{
   actionId: string;
   actionArgs: unknown;
@@ -904,6 +925,10 @@ export function describeApprovalActionFields(input: Readonly<{
     spec = getActionSpec(input.actionId as ActionId);
   } catch {
     return { rows: [], unrepresentable: { path: '', reason: 'missing_required_context' } };
+  }
+  if (input.actionId === 'action.invoke') {
+    const contributed = describeContributedActionInvocation(input.actionArgs, input.preview);
+    if (contributed) return contributed;
   }
   if (input.actionId === 'session.permission.respond' && isRecord(input.actionArgs)
     && input.actionArgs.nativeChoice !== undefined) {
