@@ -25,6 +25,11 @@ export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
         : row.machines;
 }
 
+/** The server-readable relation that makes a target link a current managed data link, for every Account mode. */
+function currentManagedDataTargetLinkWhere(environmentId: string) {
+    return { environmentId, role: 'data', sourceKind: 'plugin', deletedAt: null, detachedAt: null } as const;
+}
+
 /** One current relation owner validates every managed data-role link consumer. */
 export async function readCurrentManagedDataTargetLinksInTx(tx: Tx, input: Readonly<{
     environmentId: string;
@@ -34,14 +39,20 @@ export async function readCurrentManagedDataTargetLinksInTx(tx: Tx, input: Reado
     if (new Set(requested).size !== requested.length) return null;
     const links = new Map<string, Readonly<{ id: string; revision: number; pluginId: string }>>();
     for (const ids of portableQueryChunks({ values: requested, bindingsPerValue: 1, fixedBindings: 5 })) {
-        const rows = await tx.deploymentTargetLink.findMany({ where: { id: { in: [...ids] }, environmentId: input.environmentId,
-            role: 'data', sourceKind: 'plugin', deletedAt: null, detachedAt: null }, select: { id: true, revision: true, pluginId: true } });
+        const rows = await tx.deploymentTargetLink.findMany({ where: { id: { in: [...ids] },
+            ...currentManagedDataTargetLinkWhere(input.environmentId) }, select: { id: true, revision: true, pluginId: true } });
         for (const row of rows) {
             if (!row.pluginId) return null;
             links.set(row.id, { id: row.id, revision: row.revision, pluginId: row.pluginId });
         }
     }
     return links.size === requested.length ? requested.map(id => links.get(id)!) : null;
+}
+
+/** Opaque (E2EE) Environment content cannot name its links; the current link relation is the controller-recipient fact. */
+export async function hasCurrentManagedDataTargetLinkInTx(tx: Tx, environmentId: string): Promise<boolean> {
+    return (await tx.deploymentTargetLink.findFirst({ where: { ...currentManagedDataTargetLinkWhere(environmentId),
+        pluginId: { not: null } }, select: { id: true } })) !== null;
 }
 
 export function projectDeploymentTargetHeader(row: Prisma.DeploymentTargetLinkGetPayload<{ include: { machines: true } }>) {

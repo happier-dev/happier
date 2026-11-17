@@ -35,7 +35,7 @@ import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { linkDeploymentTargetForAdmittedEnvironmentInTx, readCurrentManagedDataTargetLinksInTx,
+import { hasCurrentManagedDataTargetLinkInTx, linkDeploymentTargetForAdmittedEnvironmentInTx, readCurrentManagedDataTargetLinksInTx,
     readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
 import { admitDeploymentEnvironmentPrincipalsInTx, createDeploymentEnvironmentPrincipalRows, deploymentEnvironmentPrincipalSelect,
     readDeploymentEnvironmentPrincipals, replaceDeploymentEnvironmentPrincipalsInTx, sameDeploymentEnvironmentPrincipals,
@@ -661,15 +661,17 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     const runtimeInstallations = link ? readDeploymentTargetRuntimeInstallations(link) : [];
     const preparedContent = await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, input);
     if (!preparedContent.ok) return preparedContent;
-    const managedDataTargetLinkIds = preparedContent.content?.bindings.flatMap(binding => binding.purpose === 'dataRole'
-        && 'targetLinkId' in binding ? [binding.targetLinkId] : []) ?? [];
-    const managedDataLinks = await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: loaded.row.id,
-        targetLinkIds: managedDataTargetLinkIds });
-    if (managedDataLinks === null) return deploymentFailure('deployment_conflict');
-    const controller = managedDataLinks.length ? await tx.machine.findUnique({ where: { id: loaded.row.controllerMachineId },
+    // Readable content names its data-role links; opaque content leaves the server the current link relation only.
+    const managedDataLinks = preparedContent.content ? await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: loaded.row.id,
+        targetLinkIds: preparedContent.content.bindings.flatMap(binding => binding.purpose === 'dataRole'
+            && 'targetLinkId' in binding ? [binding.targetLinkId] : []) }) : null;
+    if (preparedContent.content && managedDataLinks === null) return deploymentFailure('deployment_conflict');
+    const controllerManagesData = managedDataLinks ? managedDataLinks.length > 0
+        : await hasCurrentManagedDataTargetLinkInTx(tx, loaded.row.id);
+    const controller = controllerManagesData ? await tx.machine.findUnique({ where: { id: loaded.row.controllerMachineId },
         select: { id: true, installationId: true } }) : null;
     const controllerInstallation = controller?.installationId ? { machineId: controller.id, installationId: controller.installationId } : null;
-    if (managedDataLinks.length && !controllerInstallation) return deploymentFailure('deployment_conflict');
+    if (controllerManagesData && !controllerInstallation) return deploymentFailure('deployment_conflict');
     const previous = isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input)) ? preparedContent
         : await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, loaded.row);
     if (!previous.ok) return previous;

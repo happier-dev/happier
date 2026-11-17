@@ -4,13 +4,15 @@ import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     sealEncryptedDataKeyEnvelopeV1, sealSavedSecretResourceStoredContentV1,
-    verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol';
+    verifyAccountContentKeyBindingV1, computeContentPublicKeyFingerprint, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
 import { captureDeploymentBindingSavedSecretRevisionsV1, DeploymentEnvironmentContentV1Schema,
     type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { deriveBoxPublicKeyFromEd25519PublicKey, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { sealMachineSecretGrantEnvelopeV1 } from '@happier-dev/deployments';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import type { Tx } from '@/storage/inTx';
@@ -608,27 +610,50 @@ describe('Environment installation grants and complete resource captures', () =>
     it('authors backup credential references through the binding transaction before placement', () => roundtrip('backupBeforePlacement'));
     it('refuses operational purposes without a current destination, Domain or data/native owner', () => roundtrip('operational'));
 
-    it('seals a live managed data role only to the Environment controller', async () => {
-        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+    it.each(['plain', 'e2ee'] as const)('seals a live %s managed data role only to the Environment controller', async mode => {
+        const recipientKeys = nacl.box.keyPair();
+        const owner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding(recipientKeys.publicKey) : {}) } });
         const controller = { machineId: crypto.randomUUID(), installationId: crypto.randomUUID() };
         const target = { machineId: crypto.randomUUID(), installationId: crypto.randomUUID() };
         const installationKeys = [nacl.sign.keyPair(), nacl.sign.keyPair()];
-        await db.machine.createMany({ data: [controller, target].map((machine, index) => ({ id: machine.machineId,
-            installationId: machine.installationId, installationPublicKey: new Uint8Array(installationKeys[index]!.publicKey),
-            accountId: owner.id, ...publishedMachine })) });
+        await db.machine.createMany({ data: await Promise.all([controller, target].map(async (machine, index) => {
+            const machineKey = nacl.randomBytes(32);
+            return { id: machine.machineId,
+                installationId: machine.installationId, installationPublicKey: new Uint8Array(installationKeys[index]!.publicKey),
+                accountId: owner.id, ...(mode === 'plain' ? publishedMachine : {
+                    metadata: privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0({ host: 'Binding custody', platform: 'linux',
+                        happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }, machineKey))),
+                    dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: machineKey,
+                        recipientPublicKey: recipientKeys.publicKey, randomBytes: nacl.randomBytes }),
+                }) };
+        })) });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Managed data role controller', audience: [] }));
         if (!source.ok) throw new Error(source.error);
         const resourceId = crypto.randomUUID();
+        const resourceKey = nacl.randomBytes(32);
+        const secret = { v: 1 as const, name: 'Managed readonly password', kind: 'token' as const, value: 'private-password' };
         const resource = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
-            displayName: 'Managed readonly password', kind: 'token', encryptionMode: 'plain', accountGrants: [], teamGrants: [],
-            storedContent: { t: 'plain', v: { v: 1, name: 'Managed readonly password', kind: 'token', value: 'private-password' } } }));
+            displayName: secret.name, kind: secret.kind, encryptionMode: mode, accountGrants: [], teamGrants: [],
+            storedContent: sealSavedSecretResourceStoredContentV1(mode === 'plain' ? { resourceId, mode, content: secret }
+                : { resourceId, mode, resourceDataKey: resourceKey, content: secret, randomBytes: nacl.randomBytes }),
+            keyEnvelopes: mode === 'plain' ? [] : [{ recipientAccountId: owner.id,
+                recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(recipientKeys.publicKey),
+                encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: resourceKey,
+                    recipientPublicKey: recipientKeys.publicKey, randomBytes: nacl.randomBytes }) }] }));
         if (!resource.ok) throw new Error(resource.error);
+        const dataKey = nacl.randomBytes(32);
+        const seal = async (content: unknown) => mode === 'plain'
+            ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(content))
+            : new Uint8Array(await sealSessionDataKeyBundleV0(content, dataKey));
         const artifact = async (kind: string, body: unknown) => {
             const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
-                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Managed data role controller' })),
-                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(body) })),
-                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                kind: deriveArtifactStoredKindV1({ kind }),
+                header: await seal({ kind, title: 'Managed data role controller' }),
+                body: await seal({ body: JSON.stringify(body) }),
+                dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
+                    : sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: recipientKeys.publicKey, randomBytes: nacl.randomBytes }) });
             if (!created.ok) throw new Error(created.error);
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
@@ -650,14 +675,17 @@ describe('Environment installation grants and complete resource captures', () =>
         const secretSource = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: resource.value.revision };
         const definition = DeploymentEnvironmentContentV1Schema.parse({ ...baseContent, bindings: [{ purpose: 'dataRole',
             targetLinkId: link.targetLinkId, role: 'readOnlyPassword', source: secretSource }] });
-        const controllerGrant: MachineSecretGrantV1 = { v: 1, kind: 'secret', environmentId: environment.environmentId,
-            ...controller, resourceId, resourceRevision: resource.value.revision, sealedContent: 'controller-only-readonly-seal' };
+        const controllerGrant = sealMachineSecretGrantEnvelopeV1({ subject: { v: 1, kind: 'secret', environmentId: environment.environmentId,
+            ...controller, resourceId, resourceRevision: resource.value.revision },
+            content: { kind: 'secret', value: secret.value }, seal: plaintext => privacyKit.encodeBase64(sealBoxBundle({
+                plaintext, recipientPublicKey: deriveBoxPublicKeyFromEd25519PublicKey(installationKeys[0]!.publicKey),
+                randomBytes: nacl.randomBytes })) });
         const bindingReference = await artifact('deployment-environment.v1', definition);
         const bound = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, owner.id, { serverId,
             environmentId: environment.environmentId, expectedRevision: link.revision,
             ...bindingReference, grants: [controllerGrant],
             referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(definition.bindings) }));
-        expect(bound).toMatchObject({ ok: true, environmentId: environment.environmentId });
+        expect(bound, JSON.stringify(bound)).toMatchObject({ ok: true, environmentId: environment.environmentId });
         if (!bound.ok) throw new Error(bound.error);
         expect(await db.machineSecretGrant.findMany({ where: { environmentId: environment.environmentId },
             select: { machineId: true, installationId: true, contentEnvelope: true } })).toEqual([{ ...controller,
@@ -666,6 +694,15 @@ describe('Environment installation grants and complete resource captures', () =>
             environmentId: environment.environmentId, expectedRevision: bound.revision, dataRoleTargetLinkIds: [link.targetLinkId] }));
         expect(preparation).toMatchObject({ ok: true, bindingPreparation: { runtimeInstallations: [],
             controllerInstallation: expect.objectContaining(controller) } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        expect(await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, outsider.id, { serverId,
+            environmentId: environment.environmentId, expectedRevision: bound.revision,
+            ...bindingReference, grants: [controllerGrant],
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(definition.bindings) })))
+            .toMatchObject({ ok: false });
+        expect(await db.deploymentEnvironment.findUnique({ where: { id: environment.environmentId },
+            select: { revision: true } })).toEqual({ revision: bound.revision });
+        if (mode === 'e2ee') return;
         const nativeDefinition = DeploymentEnvironmentContentV1Schema.parse({ ...baseContent, bindings: [{ purpose: 'dataRole',
             service: 'postgres', role: 'readOnlyPassword', source: secretSource }] });
         const nativeReference = await artifact('deployment-environment.v1', nativeDefinition);
