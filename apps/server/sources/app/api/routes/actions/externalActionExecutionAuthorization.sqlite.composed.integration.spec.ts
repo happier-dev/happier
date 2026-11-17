@@ -5312,10 +5312,13 @@ describe("external Action execution authorization", () => {
         const credentials = { token, encryption: null } as const;
         const ref = { id: crypto.randomUUID(), serverId: homeId, machineId: fixture.machine.id,
             rootPath: '/fresh-project', projectKey: crypto.randomUUID(), createdAtMs: 1 };
+        const nativeRequest = { tool: 'Bash', kind: 'permission' as const, turnId: 'pending-native-turn',
+            arguments: { command: 'git status --short --untracked-files=all' }, createdAt: 1 };
         const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
             storedContentMode: 'plain', metadata: createTestMetadata({ machineId: ref.machineId, path: ref.rootPath,
-                workspaceId: ref.id, projectId: ref.projectKey }), agentState: null });
+                workspaceId: ref.id, projectId: ref.projectKey }), agentState: { requests: { 'pending-native-call': nativeRequest } } });
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+            active: true,
             encryptionMode: 'plain', metadataLayoutVersion: fields.metadataLayoutVersion,
             metadata: fields.sharedMetadata.ciphertext, ownerMetadata: JSON.stringify(fields.ownerMetadata), agentState: fields.agentState } });
         const reads: Array<{ path: string; status: number }> = [];
@@ -5358,6 +5361,8 @@ describe("external Action execution authorization", () => {
                 externalActionExecutionAuthorization: projected, externalActionTarget: projected.binding.target,
             });
             expect(result, JSON.stringify({ reads, result })).toMatchObject({ ok: true, result: { session: { id: session.id },
+                pendingRequests: [{ requestId: 'pending-native-call', turnId: nativeRequest.turnId,
+                    kind: nativeRequest.kind, tool: nativeRequest.tool, arguments: nativeRequest.arguments }],
                 acceptedWorkspace: { checkout: { serverId: homeId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath } } } });
             expect(reads).toEqual([{ path: '/v1/account/project-rows/read', status: 200 }]);
             // Older path-associated Sessions consume the same signed owner,

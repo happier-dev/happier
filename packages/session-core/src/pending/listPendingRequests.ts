@@ -48,7 +48,7 @@ export type SessionPendingRequest = Readonly<{
     mcpTool?: ResolvedMcpToolIdentityV1;
 }>;
 
-/** Public status carries the offered decision facts, never private tool arguments. */
+/** Status projects opened pending content, including native operands before transcript publication. */
 export function projectSessionStatusPendingRequestsV1(
     requests: readonly SessionPendingRequest[],
 ): NonNullable<SessionStatusResult['pendingRequests']> {
@@ -57,6 +57,7 @@ export function projectSessionStatusPendingRequestsV1(
         ...(request.turnId ? { turnId: request.turnId } : {}),
         kind: request.kind,
         tool: request.tool,
+        ...(request.arguments !== undefined ? { arguments: request.arguments } : {}),
         ...(request.nativeChoices ? { nativeChoices: {
             ...request.nativeChoices,
             choices: request.nativeChoices.choices.map(choice => ({ ...choice, response: { ...choice.response } })),

@@ -2380,8 +2380,14 @@ once-only request without creating or widening a grant.
 
 In 0.3 development source, `session.status.get` also returns `pendingRequests`
 from the shared Session pending-request projector. Each entry exposes `requestId`,
-its optional `turnId`, `kind` and `tool`, without tool arguments. A null list means
-the request content could not be opened; older status producers may omit it.
+its optional `turnId`, `kind`, `tool` and available `arguments`. These operands
+are opened Session content, redacted by the publishing owner, and remain readable
+when a fresh native tool call has no durable transcript message yet. They use the
+existing authorized Session read and Account-mode Action result transport; they
+are not server-visible status metadata. A null list means the request content
+could not be opened; older producers may omit the list or operands. This
+unreleased 0.3 closed projection requires matching development readers when
+operands are emitted; it adds no mixed-development adapter or new authority.
 Answer a `permission` entry with `session.permission.respond`, preserving both
 the exact request id and any published turn id. A current turn-scoped request
 rejects an omitted or stale turn id. Answer a `user_action` entry with

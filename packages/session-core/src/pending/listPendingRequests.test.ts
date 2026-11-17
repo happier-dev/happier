@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import { SessionStatusResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { Message } from "../messages/messageTypes.js";
 import { readSharedMetadataActionConfirmationState } from "./readSharedMetadataPendingRequestFacts.js";
 import {
@@ -67,15 +68,27 @@ describe('public status pending request projection', () => {
             ] }),
         ]);
     });
-    it('preserves offered choices and owner-projected refusals while excluding private arguments', () => {
+    it('exposes fresh native operands without a transcript while preserving offered choices and caller refusals', () => {
         const nativeChoices = { requirementId: 'requirement', source: 'native-agent', choices: [
             { id: 'persistent-choice', label: 'Remember for this Machine', decision: 'approved' as const,
                 scope: 'localPersistent' as const, response: { approved: true as const, decision: 'approved' as const } },
         ] };
         const nativeChoiceAvailability = [{ choiceId: 'persistent-choice', allowed: false, reason: 'owner_required' as const }];
-        expect(projectSessionStatusPendingRequestsV1([{ id: 'request', turnId: 'turn', tool: 'native-tool', kind: 'permission',
-            createdAt: 1, arguments: { secret: 'private-argument' }, nativeChoices, nativeChoiceAvailability }]))
-            .toEqual([{ requestId: 'request', turnId: 'turn', kind: 'permission', tool: 'native-tool', nativeChoices, nativeChoiceAvailability }]);
+        // READY249's pending native request exists before its durable tool-call message.
+        const requestId = 'call_01a1e79eef8876fb9111655565682b8a';
+        const turnId = 'native-turn-3e8d86af-dfdb-47ab-bc1e-1fd12d447097-1';
+        const argumentsValue = { command: 'git status --short --untracked-files=all' };
+        const facts = createPendingFacts({ active: true, permissionRelationship: 'sharedApprover', agentState: {
+            requests: { [requestId]: { tool: 'Bash', kind: 'permission', turnId, createdAt: 1,
+                arguments: argumentsValue, nativeChoices } },
+        } });
+        expect(SessionStatusResultSchema.shape.pendingRequests.parse(projectSessionStatusPendingRequestsV1(listPendingRequests(facts, []))))
+            .toEqual([{ requestId, turnId, kind: 'permission', tool: 'Bash', arguments: argumentsValue,
+                nativeChoices, nativeChoiceAvailability }]);
+        // Older AgentState producers may publish a pending request without operands.
+        expect(projectSessionStatusPendingRequestsV1(listPendingRequests(createPendingFacts({ active: true,
+            agentState: { requests: { legacy: { tool: 'Bash' } } },
+        }), []))).toEqual([{ requestId: 'legacy', kind: 'permission', tool: 'Bash' }]);
         expect(projectSessionStatusPendingRequestsV1([])).toEqual([]);
     });
 });

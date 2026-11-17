@@ -682,6 +682,8 @@ export const SessionStatusResultSchema = lazyZodSchema(() => z.looseObject({
     turnId: z.optional(TurnIdSchema),
     kind: z.enum(['permission', 'user_action']),
     tool: z.string(),
+    // Opened Session content, already redacted by the publishing owner; absent in older projections.
+    arguments: z.optional(z.unknown()),
     nativeChoices: z.optional(NativePermissionChoicesV1Schema),
     nativeChoiceAvailability: z.optional(z.array(NativePermissionChoiceAvailabilityV1Schema)),
     permissionOwnerLabel: z.optional(z.string()),
