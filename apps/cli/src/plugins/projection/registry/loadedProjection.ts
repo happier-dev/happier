@@ -70,6 +70,7 @@ import type {
 } from './types';
 
 export type ResolvePluginContributesParams = Readonly<{
+    pluginIds?: readonly string[];
     happyHomeDir?: string;
     existingAgentIds?: ReadonlySet<string>;
     providerContributionKeys?: readonly string[];

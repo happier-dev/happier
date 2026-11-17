@@ -10,11 +10,11 @@ import type { ResolvedPluginEnablement } from './types';
  * bundled backend-compatibility facts. Author-owned CLI, catalog, capability,
  * and presentation facts remain on the public manifest projection.
  */
-export function resolveBuiltInContributions(params?: Readonly<{ providerContributionKeys?: readonly string[]; agentIdentity?: PluginContributionIdentityV1;
+export function resolveBuiltInContributions(params?: Readonly<{ pluginIds?: readonly string[]; providerContributionKeys?: readonly string[]; agentIdentity?: PluginContributionIdentityV1;
     pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
 }>): ResolvedBuiltInContributionInputs {
     const bundled = loadEnabledBundledPluginLocatorResult({
-        ...(params?.agentIdentity ? { pluginIds: [params.agentIdentity.pluginId] } : {}),
+        ...(params?.agentIdentity ? { pluginIds: [params.agentIdentity.pluginId] } : { pluginIds: params?.pluginIds }),
         pluginEnablementById: params?.pluginEnablementById,
     });
     const projected = projectLoadedPluginContributes({

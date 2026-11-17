@@ -8,15 +8,15 @@ export async function resolvePluginContributes(
     params: ResolvePluginContributesParams = {},
 ): Promise<ResolvedContributionInputs> {
     let loadResult = await loadInstalledPlugins({ happyHomeDir: params.happyHomeDir,
-        ...(params.agentIdentity ? { pluginIds: [params.agentIdentity.pluginId] } : {}),
+        ...(params.agentIdentity ? { pluginIds: [params.agentIdentity.pluginId] } : { pluginIds: params.pluginIds }),
     });
     let referenceGraph = params.referenceGraph ?? loadEnabledBundledPluginLocatorResult({
-        ...(params.agentIdentity ? { pluginIds: [params.agentIdentity.pluginId] } : {}),
+        ...(params.agentIdentity ? { pluginIds: [params.agentIdentity.pluginId] } : { pluginIds: params.pluginIds }),
         pluginEnablementById: params.pluginEnablementById,
     }).admittedGraph;
     let admittedGraph = admitPluginContributionGraph({ loadedPlugins: loadResult.loadedPlugins, referenceGraph,
         pluginEnablementById: params.pluginEnablementById });
-    if (params.agentIdentity && Object.keys(admittedGraph.diagnosticsByPluginId).length > 0) {
+    if ((params.agentIdentity || params.pluginIds !== undefined) && Object.keys(admittedGraph.diagnosticsByPluginId).length > 0) {
         // Cross-plugin references are a real demand for the reference universe,
         // including installed peers. Keep the existing admission decision whole.
         loadResult = await loadInstalledPlugins({ happyHomeDir: params.happyHomeDir });
@@ -25,6 +25,12 @@ export async function resolvePluginContributes(
         }).admittedGraph;
         admittedGraph = admitPluginContributionGraph({ loadedPlugins: loadResult.loadedPlugins, referenceGraph,
             pluginEnablementById: params.pluginEnablementById });
+    }
+    if (params.pluginIds !== undefined && !params.agentIdentity) {
+        const selected = new Set(params.pluginIds);
+        // Reference admission may need peers; projection still belongs to the requested scope.
+        admittedGraph = { ...admittedGraph,
+            loadedPlugins: admittedGraph.loadedPlugins.filter(plugin => selected.has(plugin.pluginId)) };
     }
     const project = params.agentIdentity || params.providerContributionKeys
         ? (await import('./selected')).projectSelectedLoadedPluginContributes

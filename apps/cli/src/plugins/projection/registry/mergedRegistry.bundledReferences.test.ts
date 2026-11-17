@@ -10,6 +10,15 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
 
 describe('resolveMergedContributionRegistry bundled reference universe', () => {
+  it('projects only the requested plugin declarations, including an empty runtime scope', async () => {
+    const empty = await resolveMergedContributionRegistry({ pluginIds: [] });
+    expect(empty.pluginDeclarations).toHaveLength(0);
+    expect(empty.agents).toHaveLength(0);
+    const selected = await resolveMergedContributionRegistry({ pluginIds: ['happier.agent.muse'] });
+    expect(selected.pluginDeclarations?.map(entry => entry.pluginId)).toEqual(['happier.agent.muse']);
+    expect(selected.agents.map(agent => agent.id)).toEqual(['muse']);
+    expect(selected.systemTools?.some(tool => tool.pluginId === 'happier.agent.muse')).toBe(true);
+  });
   it('accepts an installed external HostAccess reference to bundled Claude without duplicating its projection or activation', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-bundled-ref-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-bundled-ref-'));
@@ -95,6 +104,9 @@ describe('resolveMergedContributionRegistry bundled reference universe', () => {
       },
     });
 
+    const scoped = await resolveMergedContributionRegistry({ happyHomeDir, pluginIds: [pluginId] });
+    expect(scoped.agents.map(agent => agent.id)).toEqual([`${pluginId}/assistant`]);
+    expect(scoped.pluginDeclarations?.map(entry => entry.pluginId)).toEqual([pluginId]);
     const registry = await resolveMergedContributionRegistry({ happyHomeDir });
     const selected = await resolveMergedContributionRegistry({ happyHomeDir,
       agentIdentity: { pluginId, localId: 'assistant' },

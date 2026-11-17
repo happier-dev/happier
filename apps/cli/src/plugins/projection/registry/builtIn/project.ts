@@ -9,7 +9,7 @@ export type ResolvedBuiltInContributionInputs = ResolvedContributionInputs & Req
 >;
 
 export function projectBuiltInContributionInputs(projected: ResolvedContributionInputs,
-  params?: Readonly<{ providerContributionKeys?: readonly string[]; agentIdentity?: PluginContributionIdentityV1 }>,
+  params?: Readonly<{ pluginIds?: readonly string[]; providerContributionKeys?: readonly string[]; agentIdentity?: PluginContributionIdentityV1 }>,
 ): ResolvedBuiltInContributionInputs {
     const agents = params?.providerContributionKeys ? EMPTY_CONTRIBUTIONS : projectBuiltInAgents({
         manifestAgents: projected.agents ?? EMPTY_CONTRIBUTIONS,
@@ -22,7 +22,7 @@ export function projectBuiltInContributionInputs(projected: ResolvedContribution
         providers: projected.providers ?? EMPTY_CONTRIBUTIONS,
         catalogEntries: EMPTY_CONTRIBUTIONS,
         managedDependencies: params?.providerContributionKeys || params?.agentIdentity ? EMPTY_CONTRIBUTIONS : Object.freeze([
-            ...BUILT_IN_INSTALLABLE_CONTRIBUTIONS.map(({ descriptor, owner }) => ({
+            ...BUILT_IN_INSTALLABLE_CONTRIBUTIONS.filter(entry => params?.pluginIds === undefined || params.pluginIds.includes(entry.owner.ownerId)).map(({ descriptor, owner }) => ({
                 provenance: 'first_party',
                 source: { kind: 'bundled' },
                 pluginId: owner.ownerId,

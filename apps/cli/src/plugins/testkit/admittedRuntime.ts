@@ -21,7 +21,7 @@ import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/curr
 import { assertContainedRegularGenerationFile, readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry, resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { PluginDaemonDatabaseQuiescence } from '@/plugins/runtime/context/daemonDatabase';
 
@@ -123,6 +123,9 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
         const resolveRuntimeRegistry = async () => {
             const registry = await resolveExecutablePluginRuntimeRegistry({
                 ...params.runtimeOptions,
+                ...(params.runtimeOptions?.contributes === undefined && params.runtimeOptions?.pluginIds !== undefined ? {
+                    contributes: await resolveMergedContributionRegistry({ happyHomeDir, pluginIds: params.runtimeOptions.pluginIds }),
+                } : {}),
                 happyHomeDir,
                 generation: controller.getState().generation + 1,
                 resolveDevelopmentSourceAuthority: developmentRoots.resolveDevelopmentSourceAuthority,

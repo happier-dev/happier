@@ -1,3 +1,4 @@
+import { beforeAll } from 'vitest';
 import type { LoggerService } from '@happier-dev/plugin-sdk';
 import type { AgentSessionOpenRequest, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { FeaturesResponseSchema, QualifiedProviderAccountUsageWriteV4Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
@@ -370,3 +371,10 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     }
   }
 }
+
+// Compile the cold retained source graph in fixture setup, through real admission.
+// Per-test fixtures still own fresh host state and native processes.
+beforeAll(async () => {
+  const fixture = await createAdmittedMuseSessionFixture();
+  await fixture.dispose();
+});
