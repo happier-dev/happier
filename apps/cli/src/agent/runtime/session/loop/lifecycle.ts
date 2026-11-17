@@ -429,6 +429,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     failure?: RuntimeTranscriptRequiredAdmissionError;
     userLocalIds: Set<string>;
     hasAssistantText?: true;
+    changedFiles?: boolean | null;
     finalAssistantMessageSeq?: number;
     failureMessageSeq?: number;
     failureEvent?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>;
@@ -589,6 +590,11 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           });
         }
         if (transcriptAdmissionFailure) throw transcriptAdmissionFailure;
+        if (mutation.action === 'complete' || mutation.action === 'fail') {
+          mutation = { ...mutation, automationLifecycleFacts: {
+            ...mutation.automationLifecycleFacts, changedFiles: turnState?.changedFiles ?? null,
+          } };
+        }
         const settledMutation: RuntimeSessionTurnMutationV1 =
           mutation.action === 'complete'
             ? {
@@ -863,6 +869,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       normalizedToolTurnChangeTracker,
       toolNormalizationSource,
       publishTurnChangeSet: repositoryCheckpointLifecycle?.publishTurnChangeSet,
+      onTurnChangeFacts: ({ turnId, changedFiles }) => { readTurnTranscriptState(turnId).changedFiles = changedFiles; },
       mcpServerIdentities: params.config.mcpServerIdentities,
       skillDelivery: params.config.readSkillDelivery?.(),
       usageAccount: params.config.skillUsageAccount,

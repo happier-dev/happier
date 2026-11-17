@@ -38,6 +38,7 @@ import { createNotificationAccountSnapshotFixture } from '@/testkit/notification
 import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { sendReadyWithPushNotification } from '@/agent/runtime/notifications/sendReadyWithPushNotification';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createHostScmCommandRunner } from '@/scm/runtime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
@@ -60,6 +61,7 @@ describe('host ready after a provider successor starts', () => {
     { hostAnswer: 'HOST_ANSWER', eagerStartup: false, retirePreview: true, omitReceipt: false, combinedCard: false, rejectDiff: false },
     { hostAnswer: 'HOST_ANSWER', eagerStartup: false, retirePreview: false, omitReceipt: true, combinedCard: false, rejectDiff: false },
     { hostAnswer: 'HOST_ANSWER', eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: true, rejectDiff: false },
+    { hostAnswer: 'FACTS_ANSWER', eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: true, rejectDiff: false, factsOnly: true },
     { hostAnswer: 'HOST_ANSWER', eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: true, rejectDiff: true },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, failure: 'native' },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, failure: 'prompt' },
@@ -183,11 +185,15 @@ describe('host ready after a provider successor starts', () => {
       },
       dispose() {},
     };
-    const runtime = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
-      context: {} as AgentSessionRuntimeContext, cwd: '/tmp/ready-handoff', connectedAccounts: [],
+    const runtime = { ...createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
+      context: {} as AgentSessionRuntimeContext, cwd: checkpointRoot ?? '/tmp/ready-handoff', connectedAccounts: [],
+      ...(combinedCard ? { scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }) } : {}),
       capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
       cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
-    });
+    }),
+      // The vendor fixture has no native startup-instruction channel or reopen factory.
+      readSessionStartupInstructionsSupport: () => false,
+    };
     const metadata = createTestMetadata({ path: checkpointRoot ?? '/tmp/ready-handoff', permissionMode: 'default' });
     const snapshots = createTurnAssistantTextSnapshotStore();
     let observedSeq = 1;
@@ -274,6 +280,7 @@ describe('host ready after a provider successor starts', () => {
       config: {
         flavor: 'default', policyAgentId: 'codex', backendDisplayName: 'Test Agent', uiLogPrefix: '[ReadyTest]',
         providerName: 'Test Agent', waitingForCommandLabel: 'Test Agent', agentMessageType: 'codex',
+        ...(combinedCard ? { checkpointToolSource: { protocol: 'native' as const, agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } } : {}),
         runtimeActivityApplicability: 'not_applicable', machineMetadata: { host: 'test', platform: 'linux', happyCliVersion: '0.0.0-test', homeDir: '/tmp', happyHomeDir: '/tmp/happier', happyLibDir: '/tmp/happier/lib' },
         loadTerminalDisplay: async () => () => null, shouldRenderTerminalDisplay: () => false, formatPromptErrorMessage: String,
         ...(combinedCard ? {} : { lifecycleHooks: { createCheckpointLifecycle: () => ({}) } }),
@@ -378,6 +385,15 @@ describe('host ready after a provider successor starts', () => {
         const card = cards[0];
         if (!card || card.type !== 'tool-call') throw new Error('Missing combined host card');
         const meta = readTurnChangeToolMetadata(card.input);
+        if ('factsOnly' in scenario && scenario.factsOnly) {
+          expect(extractCanonicalDiffFiles(card.input, meta!)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ source: 'provider_tool', filePath: 'tracked.txt' }),
+          ]));
+          expect(terminalMutations).toContainEqual(expect.objectContaining({
+            action: 'complete', turnId: hostTurnIds[0], automationLifecycleFacts: expect.objectContaining({ changedFiles: true }),
+          }));
+          return;
+        }
         expect(meta).toMatchObject({ turnId: hostTurnIds[0], repositoryCheckpoint: { contentConfidence: 'exact' } });
         expect(extractCanonicalDiffFiles(card.input, meta!)).toEqual(expect.arrayContaining([
           expect.objectContaining({ source: 'provider_tool', filePath: 'tracked.txt' }),
