@@ -6,6 +6,7 @@ import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { buildConfiguredSshHostsSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildConfiguredSshHostsSystemTaskSpec';
+import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 
 import type { SshConfiguredHostSuggestion } from './filterConfiguredSshHostSuggestions';
 
@@ -36,8 +37,14 @@ export function useConfiguredSshHostSuggestions(params: Readonly<{
         if (unsupported) return;
         setError(null);
         processedResultRef.current = null;
-        const nextTaskId = await runner.start(buildConfiguredSshHostsSystemTaskSpec());
-        setTaskId(nextTaskId);
+        // Clearing the settled selection publishes startup before the next native task id exists.
+        setTaskId(null);
+        try {
+            const nextTaskId = await runner.start(buildConfiguredSshHostsSystemTaskSpec());
+            setTaskId(nextTaskId);
+        } catch (error) {
+            setError(error instanceof Error ? error : new Error(getErrorMessage(error)));
+        }
     }, [runner, unsupported]);
 
     React.useEffect(() => {
@@ -59,10 +66,9 @@ export function useConfiguredSshHostSuggestions(params: Readonly<{
         } else {
             setError(new Error(result.error.message));
         }
-        setTaskId(null);
     }, [taskSnapshot?.result]);
 
-    const active = taskId != null;
+    const active = !unsupported && processedResultRef.current === null && error === null;
     return {
         suggestions,
         loading: active && suggestions.length === 0,

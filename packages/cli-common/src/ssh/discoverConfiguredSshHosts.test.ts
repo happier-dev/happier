@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { ConfiguredSshHostsV1Schema } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
 
 import { discoverConfiguredSshHosts } from './discoverConfiguredSshHosts.js';
+import { createSystemTasksRunner } from '../systemTasks/interactiveTaskKinds.js';
+import { createDiscoverConfiguredSshHostsSystemTaskKind, DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND } from '../systemTasks/ssh/discoverConfiguredSshHosts.js';
 
 function createHomeFixture(): string {
   const homeDir = join(tmpdir(), `happier-ssh-discovery-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -21,6 +24,51 @@ function writeHomeFile(homeDir: string, relativePath: string, text: string): str
 }
 
 describe('discoverConfiguredSshHosts', () => {
+  it('returns a known-empty inventory when optional SSH files and include directories are absent', async () => {
+    const homeDir = createHomeFixture();
+    expect(await discoverConfiguredSshHosts({ homeDir })).toEqual([]);
+
+    writeHomeFile(homeDir, '.ssh/config', 'Include missing.conf missing.d/*.conf\n');
+    expect(await discoverConfiguredSshHosts({ homeDir })).toEqual([]);
+  });
+
+  it.each(['config', 'known_hosts', 'included.conf', 'conf.d'] as const)(
+    'preserves a permission failure while reading %s instead of claiming an empty inventory',
+    async (source) => {
+      const homeDir = createHomeFixture();
+      if (source === 'included.conf') writeHomeFile(homeDir, '.ssh/config', 'Include included.conf\n');
+      if (source === 'conf.d') writeHomeFile(homeDir, '.ssh/config', 'Include conf.d/*.conf\n');
+      const inaccessiblePath = join(homeDir, '.ssh', source);
+      const permissionError = Object.assign(new Error('Permission denied'), { code: 'EACCES' });
+
+      // The filesystem adapter is the OS boundary; parsing and Include traversal stay real.
+      await expect(discoverConfiguredSshHosts({ homeDir, fs: {
+        readFile: async (path, encoding) => {
+          if (path === inaccessiblePath) throw permissionError;
+          return await readFile(path, encoding);
+        },
+        readdir: async (path, options) => {
+          if (path === inaccessiblePath) throw permissionError;
+          return await readdir(path, options);
+        },
+      } })).rejects.toBe(permissionError);
+    },
+  );
+
+  it('publishes a task failure when an existing SSH config cannot be read as a file', async () => {
+    const homeDir = createHomeFixture();
+    mkdirSync(join(homeDir, '.ssh/config'));
+    const runner = createSystemTasksRunner({ kinds: {
+      [DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND]: createDiscoverConfiguredSshHostsSystemTaskKind({ homeDir }),
+    } });
+    await runner.start({ taskId: 'ssh-discovery', kind: DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND, params: {} });
+
+    expect(await runner.wait({ taskId: 'ssh-discovery' })).toMatchObject({
+      ok: false,
+      error: { code: 'system_task_failed' },
+    });
+  });
+
   it('discovers concrete SSH config hosts with hostname, username, and port', async () => {
     const homeDir = createHomeFixture();
     const configPath = writeHomeFile(homeDir, '.ssh/config', `

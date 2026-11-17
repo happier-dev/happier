@@ -91,7 +91,7 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
                         />
                     )}
                 />
-            ) : (
+            ) : !props.error ? (
                 <Item
                     testID={`${props.testID}-empty`}
                     title={props.loading
@@ -103,7 +103,7 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
                     mode="info"
                     showChevron={false}
                 />
-            )}
+            ) : null}
 
             {props.error ? (
                 <Item

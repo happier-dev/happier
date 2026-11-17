@@ -432,8 +432,9 @@ function resolveTildePath(path: string, homeDir: string, baseDir: string): strin
 async function readTextIfPresent(fs: DiscoverConfiguredSshHostsFs, path: string): Promise<string | null> {
   try {
     return await fs.readFile(path, 'utf8');
-  } catch {
-    return null;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
   }
 }
 
@@ -441,8 +442,9 @@ async function readDirIfPresent(fs: DiscoverConfiguredSshHostsFs, path: string):
   if (!fs.readdir) return [];
   try {
     return await fs.readdir(path, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return [];
+    throw error;
   }
 }
 
