@@ -147,7 +147,8 @@ export function WorkflowTriggerSentenceLines(
                     {
                       id: REMOVE_ID,
                       title: t('workflows.sentence.removeTrigger'),
-                      category: REMOVE_ID,
+                      // Its own untitled section, last: no heading above "Remove this trigger" (lab `.ft2`).
+                      category: '',
                       destructive: true,
                       icon: (
                         <Icon

@@ -3900,6 +3900,16 @@ describe('the Sentence view (round 1116c)', () => {
         await screen.unmount();
     });
 
+    it('selects the first step when it opens with nothing selected, so its card is the live selected row', async () => {
+        const harness = await loadHarness();
+        const selections: (string | null)[] = [];
+        const screen = await renderScreen(<Controlled harness={harness} initial={twoStepDraft(harness)} onSelect={(id) => selections.push(id)} />);
+        await flushHookEffects();
+        // Opening the view selects the step it shows, in the editor's one selection (Steps and Flow see it too).
+        expect(selections).toEqual(['analyze']);
+        await screen.unmount();
+    });
+
     it('selects a step from its chip, shares the selection with Steps and shows only that step\'s card', async () => {
         const harness = await loadHarness();
         const selections: (string | null)[] = [];

@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import type { WorkflowAuthoredResultReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 
 import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
-import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { listWorkflowFinalOutputOptions } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -94,15 +96,43 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                         });
                     }
                 }}
-                footer={selected === undefined ? null : <FieldItem label={t('workflows.finalOutput.fieldPath')}>
-                    <WorkflowResultFieldPathInput
-                        draft={props.draft}
-                        testID={`${props.testIDPrefix}-final-output-path`}
-                        reference={selected}
-                        onChange={props.onChange}
-                    />
-                </FieldItem>}
+                // The chosen result's field, on one line under the rows (lab round 1116c `svr-f`).
+                footer={selected === undefined ? null : (
+                    <View style={styles.footer}>
+                        <Text style={styles.footerLabel}>{t('workflows.finalOutput.fieldPath')}</Text>
+                        <View style={styles.footerField}>
+                            <WorkflowResultFieldPathInput
+                                draft={props.draft}
+                                testID={`${props.testIDPrefix}-final-output-path`}
+                                reference={selected}
+                                onChange={props.onChange}
+                            />
+                        </View>
+                    </View>
+                )}
             />
         </View>
     );
 }
+
+const styles = StyleSheet.create((theme) => ({
+    footer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        paddingHorizontal: theme.space.s16,
+        paddingTop: theme.space.s10,
+        paddingBottom: theme.space.s8,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.default,
+    },
+    footerLabel: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.secondary,
+    },
+    footerField: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+    },
+}));

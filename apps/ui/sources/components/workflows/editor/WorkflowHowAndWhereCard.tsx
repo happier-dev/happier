@@ -122,6 +122,8 @@ export function WorkflowHowAndWhereCard(
     workflowDefinitionId?: string;
     description?: string;
     onChangeDescription?: (next: string) => void;
+    /** `false`: the Sentence view's one card, which stands on the sentence's edge without the page's number column. */
+    gutter?: boolean;
     testIDPrefix: string;
   }>,
 ): React.ReactElement {
@@ -239,7 +241,7 @@ export function WorkflowHowAndWhereCard(
   }, [onChange, props.authoringFacts, readDraft, readOnly]);
 
   return (
-    <WorkflowCardGutterRow icon="laptop">
+    <WorkflowCardGutterRow icon={props.gutter === false ? null : 'laptop'}>
       <WorkflowKindCard
         testID={id}
         title={t('workflows.page.sections.howWhereTitle')}

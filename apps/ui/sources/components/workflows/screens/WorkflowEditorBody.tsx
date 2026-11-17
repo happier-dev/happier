@@ -1348,8 +1348,14 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 }}
                 composerScope={props.composerScope}
                 {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
-                renderStepCard={(blockId) => <WorkflowEditorBlockList {...blockListProps} onlyBlockId={blockId} />}
-                renderOptionsCard={() => <WorkflowHowAndWhereCard {...howAndWhereCardProps} expanded onExpandedChange={() => {}} />}
+                // The one card reads as the lab's sentence card at every width: its number on the heading line,
+                // the card the column's full width (the document's compact grid).
+                renderStepCard={(blockId) => (
+                    <WorkflowDocumentGridContext.Provider value="compact">
+                        <WorkflowEditorBlockList {...blockListProps} onlyBlockId={blockId} />
+                    </WorkflowDocumentGridContext.Provider>
+                )}
+                renderOptionsCard={() => <WorkflowHowAndWhereCard {...howAndWhereCardProps} gutter={false} expanded onExpandedChange={() => {}} />}
                 testIDPrefix={testIDPrefix}
             />
         </WorkflowDocumentGridContext.Provider>

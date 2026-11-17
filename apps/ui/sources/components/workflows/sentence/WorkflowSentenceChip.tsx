@@ -215,16 +215,17 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: '100%',
     minWidth: 0,
   },
+  // The sentence reads at the reading size (lab round 1116c `.svl`); paths stay in the code face at meta.
   label: {
-    ...Typography.variant('body', 'medium'),
+    ...Typography.variant('reading', 'medium'),
     flexShrink: 1,
     minWidth: 0,
   },
   selectedLabel: {
-    ...Typography.variant('body', 'semiBold'),
+    ...Typography.variant('reading', 'semiBold'),
   },
   quietLabel: {
-    ...Typography.variant('body'),
+    ...Typography.variant('reading'),
   },
   mono: {
     ...Typography.variant('meta'),
@@ -239,7 +240,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.space.s6 / 2,
   },
   word: {
-    ...Typography.variant('body'),
+    ...Typography.variant('reading'),
     color: theme.colors.text.secondary,
   },
   row: {

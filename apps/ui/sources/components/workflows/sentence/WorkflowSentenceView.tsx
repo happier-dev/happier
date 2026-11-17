@@ -103,6 +103,14 @@ export function WorkflowSentenceView(
     (block) => findWorkflowBlock({ blocks: [block] }, selectedBlockId) !== null,
   ))?.id ?? blocks[0]?.id ?? null;
   const { onSelectBlock } = props;
+  // Opening the view (or removing the selected step) selects the step it shows, in the editor's one selection:
+  // its card is then the live selected row, and Steps and Flow show the same step.
+  const selectionShown = selectedBlockId !== null
+    && blocks.some((block) => findWorkflowBlock({ blocks: [block] }, selectedBlockId) !== null);
+  const firstBlockId = blocks[0]?.id ?? null;
+  React.useEffect(() => {
+    if (!selectionShown && firstBlockId !== null) onSelectBlock(firstBlockId);
+  }, [selectionShown, firstBlockId, onSelectBlock]);
   const selectStep = React.useCallback(
     (blockId: string) => {
       setCard('step');
@@ -113,6 +121,18 @@ export function WorkflowSentenceView(
   const optionsShown =
     card === 'options' && props.renderOptionsCard !== undefined;
   const cardKey = optionsShown ? 'options' : shownBlockId;
+  // Workflow options trails the sentence's final clause: the Result, or "Add a first step" before there is one.
+  const optionsChip = props.renderOptionsCard === undefined ? null : (
+    <WorkflowSentenceChip
+      key="options"
+      kind="add"
+      icon="sliders-horizontal"
+      label={t('workflows.sentence.workflowOptions')}
+      selected={optionsShown}
+      onPress={() => setCard(optionsShown ? 'step' : 'options')}
+      testID={`${props.testIDPrefix}-sentence-options`}
+    />
+  );
   return (
     <View testID={`${props.testIDPrefix}-sentence`}>
       <View
@@ -140,6 +160,7 @@ export function WorkflowSentenceView(
           shownBlockId={optionsShown ? null : shownBlockId}
           onSelectStep={selectStep}
           {...props}
+          trailing={blocks.length === 0 ? optionsChip : null}
         />}
         {blocks.length === 0 || props.verbClause !== undefined ? null : (
           <View
@@ -154,16 +175,7 @@ export function WorkflowSentenceView(
                 testIDPrefix={props.testIDPrefix}
               />
             </WorkflowSentenceUnit>
-            {props.renderOptionsCard === undefined ? null : (
-              <WorkflowSentenceChip
-                kind="add"
-                icon="sliders-horizontal"
-                label={t('workflows.sentence.workflowOptions')}
-                selected={optionsShown}
-                onPress={() => setCard(optionsShown ? 'step' : 'options')}
-                testID={`${props.testIDPrefix}-sentence-options`}
-              />
-            )}
+            {optionsChip}
           </View>
         )}
       </View>
@@ -254,6 +266,8 @@ function WorkflowSentenceSteps(
       blocks: readonly WorkflowBlock[];
       shownBlockId: string | null;
       onSelectStep: (blockId: string) => void;
+      /** What closes the steps clause when it is the sentence's last (Workflow options before any step). */
+      trailing: React.ReactNode;
     }>,
 ) {
   const presentEngine = useRoleEnginePresentation(
@@ -390,6 +404,7 @@ function WorkflowSentenceSteps(
   // Add another step closes the last clause (lab: after the otherwise branch), never a line of its own.
   if (lines.length > 1 && lines[lines.length - 1]!.length === 0) lines.pop();
   if (addStep !== null) lines[lines.length - 1]!.push(addStep);
+  if (props.trailing !== null) lines[lines.length - 1]!.push(props.trailing);
   if (lines.length === 1) {
     return (
       <View

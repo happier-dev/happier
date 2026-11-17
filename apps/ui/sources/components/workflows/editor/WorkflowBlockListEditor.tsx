@@ -853,8 +853,11 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
       </Text>
     ) : null;
   const isLast = index === blocks.length - 1;
+  // The Sentence view's one card (`onlyBlockId`) stands alone: a leaf draws no spine to blocks it does not show.
+  const lonelyLeaf = list.kind === 'root' && props.onlyBlockId !== undefined
+    && block.kind !== 'parallel' && block.kind !== 'loop' && block.kind !== 'if';
   const spineReach: WorkflowSpineReach | null =
-    list.kind === 'root'
+    lonelyLeaf ? null : list.kind === 'root'
       ? !isLast
         ? 'next'
         : block.kind === 'parallel' ||

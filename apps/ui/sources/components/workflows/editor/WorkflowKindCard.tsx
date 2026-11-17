@@ -161,9 +161,15 @@ export function WorkflowKindCard(props: Readonly<{
  * A page card on the document's grid (the first cards): its mark hangs in the ordinal gutter as a
  * container's does, so the cards and the steps under them share one spine column and one text edge.
  */
-export function WorkflowCardGutterRow(props: Readonly<{ icon: IconName; children: React.ReactNode; testID?: string }>): React.ReactElement {
+export function WorkflowCardGutterRow(props: Readonly<{
+    /** The card's mark in the document's number column; `null`: a host with no column draws the card alone. */
+    icon: IconName | null;
+    children: React.ReactNode;
+    testID?: string;
+}>): React.ReactElement {
     const { theme } = useUnistyles();
     const grid = useWorkflowDocumentGridStyles();
+    if (props.icon === null) return <View testID={props.testID}>{props.children}</View>;
     return (
         <View testID={props.testID} style={grid.blockColumn}>
             <View style={[grid.heading, workflowEditorStyles.cardGutterRow]}>
