@@ -1,8 +1,9 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { isBaseCredentialDiagnosticKey, isUnsafeTelemetryDataKey } from '@happier-dev/protocol/common/sensitiveKeys';
-import { parseDatabaseConnectionUrl } from '../connection.js';
+import { maskDatabaseConnectionUrl, parseDatabaseConnectionUrl } from '../connection.js';
 import { PostgresqlInputError, type PostgresqlLexicalToken } from './input.js';
 import { normalizePostgresqlStatement } from './statement.js';
+import { postgresqlStatementWords } from './identifiers.js';
 
 export type PostgresqlObservationValue = null | boolean | number | string | PostgresqlObservationValue[] | { [key: string]: PostgresqlObservationValue };
 export type PostgresqlObservation = Readonly<{
@@ -16,7 +17,12 @@ function canonical(value: PostgresqlObservationValue): string {
 }
 function sensitive(name: string) { return isBaseCredentialDiagnosticKey(name) || isUnsafeTelemetryDataKey(name) || name.toLowerCase() === 'secret'; }
 function credentialUrl(value: string): boolean {
- try { const url=new URL(value); return Boolean(url.username || url.password); }
+ try {
+  const url = new URL(value);
+  if (url.username || url.password) return true;
+  try { return maskDatabaseConnectionUrl(value) !== url.toString(); }
+  catch { return false; }
+ }
  catch { return false; }
 }
 function mask(value: PostgresqlObservationValue, redact: boolean): PostgresqlObservationValue {
@@ -45,8 +51,7 @@ export function createPostgresqlObservationNormalizer() {
    if (!(error instanceof PostgresqlInputError)) throw error;
    return { shape:null, fingerprint:null, statementKind:'unknown', maskedSql:null, maskedParameters:mask({...parameters},true) };
   }
-  const words = tokens.filter(token => token.kind === 'word' || token.kind === 'identifier')
-   .map(token => sql.slice(token.start, token.end).replace(/^"|"$/g, '').toLowerCase());
+  const words = postgresqlStatementWords(sql, tokens);
   const hasSensitiveField = words.some(sensitive);
   let depth = 0;
   let command: string | undefined;
