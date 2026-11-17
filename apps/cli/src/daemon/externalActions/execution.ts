@@ -1291,8 +1291,9 @@ resolveServerFeaturesSnapshot?: () =>
           : {}),
         serverId: params.serverId,
         serverApiUrl: requesterAccountContext?.serverHttpBaseUrl ?? params.serverBaseUrl,
+        machineId: params.machineId,
         ...(managedPolicyAction
-          ? { machineId: params.machineId, hostActionApprovalLifetime: managedPolicyAction.hostActionApprovalLifetime }
+          ? { hostActionApprovalLifetime: managedPolicyAction.hostActionApprovalLifetime }
           : {}),
         ...(observedServerIdentityId
           ? { serverIdentityId: observedServerIdentityId }

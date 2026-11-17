@@ -381,6 +381,8 @@ export function createCliActionExecutorHarness(
       ? originationSettingsProvider.getAccountSettings?.() : null;
     return {
       ...(context ?? {}),
+      // Placement is captured by this executor, never supplied by its caller.
+      ...(localMachineId ? { runtimeActionMachineId: localMachineId } : {}),
       // This is the executing Account, never a substitute for the requester.
       // Received RPC/Machine and original Action admission keep their host-built requester context.
       ...(context?.surface !== 'rpc' && !context?.machineAdmission && !context?.externalActionExecutionAuthorization

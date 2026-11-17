@@ -9,6 +9,7 @@ import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/man
 import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { createManagedMachinePresetPreparationBindingV1, readManagedMachinePresetPreparationV1 } from '@happier-dev/cli-common/machines/managed';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -29,11 +30,12 @@ it.each([
     { prepared: true, refuseFirstDelete: false, hostState: undefined },
     { prepared: false, refuseFirstDelete: false, hostState: undefined },
     { prepared: true, refuseFirstDelete: true, hostState: undefined },
-    ...(['revoked', 'replaced', 'offline', 'not_found', 'abort'] as const).map(hostState => ({
+    ...(['ready-context', 'ready', 'wrong-host', 'revoked', 'replaced', 'offline', 'not_found', 'abort'] as const).map(hostState => ({
         prepared: true, refuseFirstDelete: false, hostState,
     })),
 ])('archives after native cleanup or confirmed permanent host loss and restores cold ($prepared/$refuseFirstDelete/$hostState)', async ({ prepared, refuseFirstDelete, hostState }) => {
     const machineNative = hostState !== undefined;
+    const onInstalledHost = hostState === 'ready-context' || hostState === 'ready' || hostState === 'wrong-host';
     const permanentlyGone = hostState === 'revoked' || hostState === 'replaced';
     const controller = new AbortController();
     onTestFinished(() => controller.abort());
@@ -45,7 +47,7 @@ it.each([
         const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
         const policy = normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: {
-            'machines.presets.archive': ['cli'], 'machines.presets.restore': ['cli'],
+            'machines.presets.archive': ['cli', 'ui'], 'machines.presets.restore': ['cli', 'ui'],
         } });
         const settings = AccountSettingsSchema.parse({ actionsSettingsV1: policy });
         setActiveAccountSettingsSnapshot({ source: 'network', settings, settingsVersion: 1, loadedAtMs: 1,
@@ -113,7 +115,7 @@ it.each([
             if (hostState === 'abort') controller.abort();
             if (hostState === 'not_found') return { results: [{ machineId: 'original-prepare-host', status: 'not_found' }] };
             return { results: [{ machineId: 'original-prepare-host', status: 'found', machine: {
-                id: 'original-prepare-host', managedMachineRef: null, active: false,
+                id: 'original-prepare-host', managedMachineRef: null, active: onInstalledHost,
                 revokedAt: hostState === 'revoked' ? 123 : null, replacedByMachineId: hostState === 'replaced' ? 'new-host' : null,
                 metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
             } }] };
@@ -167,14 +169,35 @@ it.each([
             const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot, serverHttpBaseUrl,
                 isCurrent: async () => lifetime === getActiveAccountSettingsSnapshotLifetimeToken() });
             const accountDeps = createAccountServerActionDeps({ token, credentials, serverId: 'route-home', serverIdentityId: homeId, serverHttpBaseUrl });
-            const cli = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createCliActionExecutor({ token, credentials, happyHomeDir,
+            const nativeRoles: string[] = [];
+            const cli = onInstalledHost ? createCliActionExecutorFromCredentials({ credentials,
+                serverId: 'route-home', serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl,
+                machineId: hostState === 'wrong-host' ? 'another-controller' : 'original-prepare-host',
+                actionsSettingsProvider: { getActionsSettings: () => policy },
+                // The separately hosted native plugin is the boundary. Parent review,
+                // retained-image placement, private content and row settlement stay real.
+                invokeContributedAction: async ({ action }) => {
+                    nativeRoles.push(action.localId);
+                    if (action.localId === LIMA_MANIFEST.contributes.machineProvisioners[0]!.preparation!.actions.destroy) {
+                        nativePresent = false;
+                        return { ok: true, result: { kind: 'confirmed' } };
+                    }
+                    return { ok: true, result: nativePresent ? { kind: 'ready', artifact,
+                        launch: artifact.value.launch } : { kind: 'absent' } };
+                },
+            }) : runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createCliActionExecutor({ token, credentials, happyHomeDir,
                 savedSecretOperationContext, sessionId: 'cli-global', mode: 'plain', ctx: null,
                 serverId: 'route-home', serverIdentityId: homeId, serverHttpBaseUrl,
                 accountServerActionDeps: accountDeps }));
-            const context = { surface: 'cli' as const, authority: 'present_user' as const, actionsSettings: policy, signal: controller.signal };
+            const context = { surface: onInstalledHost ? 'ui' as const : 'cli' as const,
+                authority: 'present_user' as const, actionsSettings: policy, signal: controller.signal,
+                ...(onInstalledHost ? { externalActionTarget: { kind: 'machine' as const, machineId: 'original-prepare-host' } } : {}),
+                // Positive control and forged caller identity: only host-captured identity may win.
+                ...(hostState === 'ready-context' || hostState === 'wrong-host' ? { runtimeActionMachineId: 'original-prepare-host' } : {}),
+            };
             let archived = await cli.execute('machines.presets.archive', { homeId, id: preset.id, expectedRevision: 1 },
                 { ...context, actionRequestId: 'original-archive' });
-            if (machineNative && !permanentlyGone) {
+            if (machineNative && !permanentlyGone && hostState !== 'ready' && hostState !== 'ready-context') {
                 expect(archived).toMatchObject({ ok: false });
                 expect(preset.archivedAt).toBeUndefined();
                 expect(nativePresenceAtArchive).toEqual([]);
@@ -183,6 +206,9 @@ it.each([
                 expect(openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared?.artifact).toEqual(artifact);
                 expect(vendorMethods).toEqual([]);
                 expect(supplierRequests).toEqual([]);
+                if (hostState === 'wrong-host') {
+                    expect(nativeRoles).toEqual([]);
+                }
                 if (hostState === 'abort') expect(homeRequests).not.toContain('POST /v1/machines/presets/update');
                 return;
             }
@@ -211,7 +237,8 @@ it.each([
                 cliIdentity: 'original-cli', credentialConfigurations })).toMatchObject({ kind: 'cold' });
             if (permanentlyGone) expect(opened.prepared).toMatchObject({ status: 'cancelled', code: 'preparation_cleanup_required', artifact });
             expect(nativePresent).toBe(permanentlyGone);
-            expect(vendorMethods.some(method => method.startsWith('DELETE '))).toBe(prepared && !permanentlyGone);
+            expect(vendorMethods.some(method => method.startsWith('DELETE '))).toBe(prepared && !permanentlyGone && !onInstalledHost);
+            if (onInstalledHost) expect(nativeRoles).toContain(LIMA_MANIFEST.contributes.machineProvisioners[0]!.preparation!.actions.destroy);
             expect(supplierRequests).toEqual([]);
             expect(JSON.stringify({ archived, restored })).not.toContain(secret);
         } finally {

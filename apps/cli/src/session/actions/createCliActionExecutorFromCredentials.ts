@@ -1237,9 +1237,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         ? { revalidatePluginActionCallerOccurrence: params.revalidatePluginActionCallerOccurrence }
         : {}),
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
+      ...(params.machineId ? { runtimeActionMachineId: params.machineId } : {}),
       ...(params.runtimeActionExecute
-        ? { runtimeActionExecute: params.runtimeActionExecute,
-            ...(params.machineId ? { runtimeActionMachineId: params.machineId } : {}) }
+        ? { runtimeActionExecute: params.runtimeActionExecute }
         : {}),
       ...(params.machineGuardAction ? { machineGuardAction: params.machineGuardAction } : {}),
       ...(params.workflowAction ? { workflowAction: params.workflowAction } : {}),
