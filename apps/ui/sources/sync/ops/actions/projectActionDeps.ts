@@ -5,6 +5,8 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { createProjectTrustClientForAccount } from '@/sync/api/account/apiProjectTrust';
 import { canUsePrivateProjectAccountAction } from '@/sync/api/projects/projectAccountRowsClient';
@@ -53,13 +55,8 @@ export function createUiProjectAction(account?: LazyActionAccountContext): NonNu
             account.assertCurrent();
             const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
             if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-            const workspace = parsed.data.workspace;
-            if (!areServerProfileIdentifiersEquivalent(account.serverId, workspace.serverId)) {
-                return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
-            }
-            // The authenticated Account resolves registered device-local profile aliases.
-            // Finite owners and accepted Workspace rows use this canonical Home identity.
-            const canonicalInput = { ...parsed.data, workspace: { ...workspace, serverId: account.serverId } };
+            // Admission named the Home before review and signing. Delivery preserves those bytes.
+            const canonicalInput = parsed.data;
             const originalAccount = !context.externalActionCredential && !context.externalActionExecutionAuthorization
                 && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');
             const placement = await resolveProjectActionMachineV1({ actionId, input: canonicalInput, context,
@@ -78,8 +75,18 @@ export function createUiProjectAction(account?: LazyActionAccountContext): NonNu
                         || !context.actionRequestId || !canUsePrivateProjectAccountAction(account, context)) {
                         return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
                     }
+                    const target = context.externalActionTarget?.kind === 'machine'
+                        ? context.externalActionTarget : { kind: 'machine' as const, machineId };
+                    // The executor consumed the native confirmation at admission;
+                    // carry its admitted review through the same private requester projector.
+                    const needsInvocation = context.presentUserConfirmation?.inputDigest !== undefined
+                        || context.presentUserApproval?.actionId === actionId || Boolean(readHostReviewedParentV1(context));
+                    const invocation = needsInvocation ? projectExternalActionRequesterInvocationV1({ actionId,
+                        context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' } }, account, target }) : null;
+                    if (needsInvocation && !invocation) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
                     const execution = await executeOriginalAccountMachineAction({ account, actionId, input: canonicalInput,
-                        machineId, requestId: context.actionRequestId, ...(context.signal ? { signal: context.signal } : {}) });
+                        machineId, machineTarget: target, requestId: context.actionRequestId,
+                        ...(invocation ? { invocation } : {}), ...(context.signal ? { signal: context.signal } : {}) });
                     account.assertResultCurrent(getActionSpec(actionId).sideEffectClass);
                     if (!execution.ok) return execution;
                     const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);

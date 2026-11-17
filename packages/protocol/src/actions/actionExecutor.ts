@@ -239,7 +239,7 @@ import { executeUsageCoachAction } from './executor/usageCoachActions.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
 import { isFilesystemActionId } from './filesystemActionFamily.js';
 import { DaemonWorkspaceFileListResponseSchema } from '../machines/workspaceFiles.js';
-import { isProjectActionIdV1 } from './projectActionIdsV1.js';
+import { isProjectActionIdV1, isProjectFiniteActionIdV1 } from './projectActionIdsV1.js';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '../projects/openProjectV1.js';
 import { isSessionTerminalActionId } from './sessionTerminalActionFamily.js';
 import { SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS } from './sessionAgentTransitionActionFamily.js';
@@ -2459,7 +2459,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // Resolve declared operands before exact domain schemas parse them. The
     // snapshot is also the sole selection used by preparation and replay.
     let admittedInput: unknown = bound.input ?? {};
-    if (!existingAdmission && isDeploymentActionIdV1(actionId)) {
+    if (!existingAdmission && (isDeploymentActionIdV1(actionId) || isProjectFiniteActionIdV1(actionId))) {
       const home = admitDeploymentHomeInputV1(admittedInput, ctx, deps.resolveServerProfileScopeId);
       if ('errorCode' in home) return home;
       admittedInput = home.input;

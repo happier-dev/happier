@@ -19,7 +19,7 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 export { ProjectSetupConsentFailureDetailsV1Schema, ProjectSetupConsentScopeV1Schema,
   type ProjectSetupConsentFailureDetailsV1, type ProjectSetupConsentScopeV1 } from './projectSetupConsentFailure.js';
-import { PROJECT_ACTION_IDS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
+import { PROJECT_ACTION_IDS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, isProjectFiniteActionIdV1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
 export { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from './projectActionIdsV1.js';
 export { PROJECT_ACTION_IDS_V1, isProjectActionIdV1, isProjectWorkspaceSyncPreparationActionV1, type ProjectActionIdV1 } from './projectActionIdsV1.js';
 export { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1,
@@ -55,7 +55,7 @@ export function readProjectSetupConsentFailureV1(value: unknown): ProjectSetupCo
 
 /** A no-effect setup precondition retains invocation custody, never reviewer authority. */
 export function readProjectSetupConsentHoldV1(actionId: string, value: unknown): ProjectSetupConsentRequiredV1 | null {
-  const finite = Object.prototype.hasOwnProperty.call(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId);
+  const finite = isProjectFiniteActionIdV1(actionId);
   if (!canRetainProjectSetupReviewV1(actionId)) return null;
   const operation = ProjectCommandActionOutputV1Schema.safeParse(value);
   if (operation.success && operation.data.operation.actionId === actionId && operation.data.operation.setupReview

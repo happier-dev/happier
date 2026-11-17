@@ -6,6 +6,7 @@ import type { ActionExecutorContext } from './types.js';
 import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation, pluginActionInvokeConfirmationMismatchV1 } from '../invocationAuthority.js';
 import { readExternalActionBindingAuthority } from '../externalActionBindingAuthority.js';
 import { isDeploymentActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isProjectFiniteActionIdV1 } from '../projectActionIdsV1.js';
 import { admitDeploymentHomeInputV1 } from './deploymentHomeAdmission.js';
 
 /** Bind a host's completed Confirm to the captured Account, target and normalized intent. */
@@ -15,8 +16,9 @@ export function bindPresentUserActionConfirmationV1(actionId: ActionId, input: u
   if (context.presentUserConfirmation || !isPresentUserHostInvocation(context)
     || !context.runtimeAccountId || !context.actionRequestId || !(context.serverIdentityId ?? context.serverId)) return context;
   const target = context.externalActionTarget;
-  // The executor names a Deployment's Home before digests; the confirmation answers that same admitted intent.
-  const home = isDeploymentActionIdV1(actionId) ? admitDeploymentHomeInputV1(input, context, undefined) : null;
+  // The executor names the Home before digests; confirmation answers that same admitted intent.
+  const home = isDeploymentActionIdV1(actionId) || isProjectFiniteActionIdV1(actionId)
+    ? admitDeploymentHomeInputV1(input, context, undefined) : null;
   const admittedInput = home && 'input' in home ? home.input : input;
   return { ...context, authority: 'present_user', actionCaller: { kind: 'host' }, presentUserConfirmation: {
     actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, admittedInput, context.sessionTargetsV1),

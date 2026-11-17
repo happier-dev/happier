@@ -14,6 +14,8 @@ import {
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
     projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentReadEnvelopeAdmissionV1,
+    projectWorkspaceSyncAdmissionInputV1,
+    deriveWorkspaceSyncRelationshipId,
     isDeploymentEnvironmentUpdateNativeAdmissionV1,
     createDeploymentCandidatePublicationV1,
     ExternalActionExecutionAuthorizationRequestV1Schema,
@@ -234,6 +236,17 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 const environmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(admittedEnvelope)
                     ?? native?.environmentId;
                 const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+                const sync = envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(params.actionId, envelope.input)
+                    : envelope.workspaceSyncAdmission;
+                // This boundary publishes its installed Machine's SOURCE fact;
+                // a different SOURCE needs its own Home admission fixture.
+                const workspaceSyncAdmission = sync?.sourceMachineId === machine.id ? {
+                    relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(envelope.requestId!),
+                    sourceWorkspaceRefId: sync.sourceWorkspaceRefId,
+                    source: { actorAccountId: params.accountId, custodianAccountId: machine.access.custodian.accountId,
+                        machineId: machine.id, installationId: machine.installationId!, role: machine.access.role,
+                        encryptionMode: machine.access.resourceMode },
+                } : undefined;
                 const deploymentCandidatePublication = params.deploymentSource && native && !deploymentNativeAdmission
                     ? createDeploymentCandidatePublicationV1({ ...params, requestId: envelope.requestId!, requestEnvelopeDigest,
                         environmentId: native.environmentId, source: params.deploymentSource }) : undefined;
@@ -244,6 +257,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         custodianAccountId: params.custodian?.accountId ?? params.accountId, installationId: machine.installationId,
                         accountEncryptionMode: params.encryption ? 'e2ee' : 'plain', actionId: params.actionId,
                         requestId: envelope.requestId, target,
+                        ...(workspaceSyncAdmission ? { workspaceSyncAdmission } : {}),
                         ...(environmentId !== undefined ? { environmentId } : {}),
                         ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
                         ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),

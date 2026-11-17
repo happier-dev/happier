@@ -4,7 +4,8 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { createDefaultWorkspaceExecutionSettingsV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
@@ -540,6 +541,78 @@ describe('Project finite delivery through the default UI Action host', () => {
         expect(confirmation).toHaveBeenCalledWith(expect.objectContaining({ actionId, input }));
         expect(foreignDisclosure).not.toHaveBeenCalled();
         expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(0);
+    });
+
+    it.each((['projects.prepare', 'projects.script.run', 'projects.compute.exec'] as const).flatMap(actionId =>
+        (['canonical', 'profileAlias'] as const).flatMap(homeInput =>
+            (['confirm', 'decline'] as const).map(decision => ({ actionId, homeInput, decision })))))(
+        'carries the native finite review through original Account HTTP delivery: $actionId / $homeInput / $decision', async ({ actionId, homeInput, decision }) => {
+        homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } },
+        } } } });
+        const workspace = { serverId: homeInput === 'canonical' ? serverId : requesterHomeId,
+            workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' };
+        const input = actionId === 'projects.prepare'
+            ? { workspace, phase: 'setup', heldOperationId: 'held-setup', expectedEffectDigest: 'a'.repeat(64), consentScope: 'thisTime' }
+            : actionId === 'projects.script.run' ? { workspace, selection: { kind: 'named', name: 'check' }, choice: { kind: 'primary' } }
+                : { workspace, executable: 'make', argv: ['check'], cwd: '/repo', choice: { kind: 'primary' } };
+        const canonicalInput = { ...input, workspace: { ...workspace, serverId } };
+        answerExplicitScriptWorkerPlacement();
+        rpcResponses.set(`source:${getActionSpec('projects.inspect').bindings!.rpcMethod}`, ProjectDefinitionInspectOutputSchema.parse({
+            definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(JSON.stringify({
+                version: 1, scripts: { check: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } },
+            })) },
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            setupReview: { reviewedEffectDigest: 'a'.repeat(64), reviewedEffect: { commands: ['setup'] } },
+        }));
+        const accepted = ProjectCommandActionOutputV1Schema.parse({ operation: {
+            version: 1, operationId: 'held-setup', actionId,
+            scope: { accountId: 'requester', machineId: 'source' }, state: 'accepted', revision: 2, createdAt: 1,
+            title: 'Prepare', cancellation: 'supported', domainRef: { kind: 'projectCommand',
+                purpose: actionId === 'projects.prepare' ? 'setup' : actionId === 'projects.script.run' ? 'script' : 'exec',
+                serverId, machineId: 'source', workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: canonicalInput.workspace },
+        } });
+        let reviewDigest: string | undefined;
+        let receivedConfirmation: unknown;
+        let receivedInput: unknown;
+        let receivedTarget: unknown;
+        let reviewedInput: unknown;
+        const confirmation = vi.fn(async (review: { input: unknown; preview: unknown }) => {
+            reviewedInput = review.input;
+            reviewDigest = computeActionReviewDigestV1(actionId, { actionArgs: review.input, preview: review.preview });
+            return decision === 'confirm';
+        });
+        const refusal = { errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
+        await answerExternalActionAccountForHome(homes, serverId, { actionId, machineId: 'source', tokenEpoch: 0,
+            requesterInvocation: 'optional', failure: result => result === refusal ? refusal : null,
+            execute: (value, context) => {
+                receivedInput = value;
+                receivedTarget = context.target;
+                receivedConfirmation = context.invocation?.presentUserConfirmation;
+                if (!receivedConfirmation) return refusal;
+                return accepted;
+            },
+        });
+        const result = await createDefaultActionExecutor({ presentUserActionConfirmation: confirmation }).execute(actionId, input,
+            { serverId, surface: 'ui', authority: 'present_user', actionRequestId: 'native-held-setup' });
+
+        expect(confirmation, JSON.stringify(result)).toHaveBeenCalledTimes(1);
+        expect(reviewDigest).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        expect(reviewedInput).toEqual(canonicalInput);
+        if (decision === 'decline') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(0);
+            expect(homes.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/mutate`)).toHaveLength(0);
+            return;
+        }
+        expect(receivedInput, JSON.stringify({ result,
+            requests: homes.requests.map(row => ({ serverId: row.serverId, path: row.path })) })).toEqual(canonicalInput);
+        expect(receivedTarget).toEqual({ kind: 'machine', machineId: 'source' });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: accepted });
+        expect(receivedConfirmation).toMatchObject({ actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, canonicalInput),
+            requestId: 'native-held-setup', accountId: 'requester', serverId: 'srv_finite_requester',
+            target: { kind: 'machine', machineId: 'source' }, reviewDigest });
+        expect(homes.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/mutate`)).toHaveLength(0);
     });
 
     it.each(['confirmed_opened', 'invalid_json', 'mismatched', 'mismatched_refusal', 'outcome_unknown', 'acknowledged_502', 'pre_open_refusal'] as const)('keeps original Open custody after HTTP settlement: %s', async settlement => {

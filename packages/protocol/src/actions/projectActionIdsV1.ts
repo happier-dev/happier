@@ -36,6 +36,9 @@ export const PROJECT_FINITE_ACTION_RPC_METHODS_V1 = {
   'projects.script.run': RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN,
   'projects.compute.exec': RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC,
 } as const;
+export function isProjectFiniteActionIdV1(value: string): value is keyof typeof PROJECT_FINITE_ACTION_RPC_METHODS_V1 {
+  return Object.prototype.hasOwnProperty.call(PROJECT_FINITE_ACTION_RPC_METHODS_V1, value);
+}
 export function isProjectActionIdV1(value: string): value is ProjectActionIdV1 {
   return (PROJECT_ACTION_IDS_V1 as readonly string[]).includes(value);
 }
