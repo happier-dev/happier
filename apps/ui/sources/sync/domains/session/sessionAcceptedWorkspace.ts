@@ -1,4 +1,4 @@
-import type { SessionAcceptedWorkspaceV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { SessionAcceptedWorkspaceV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -7,10 +7,10 @@ import { readCurrentProjectAccountRows, readProjectAccountWorkspaceRefs } from '
 import { readSessionOwnerMetadataView } from './readSessionOwnerMetadataView';
 
 /** Reuses the opened Account's admitted, indexed census; never inventories or guesses from paths. */
-export function readSessionAcceptedWorkspace(session: Pick<Session, 'ownerAccountId' | 'access' | 'accessLevel'
+export function readSessionAcceptedWorkspaceRef(session: Pick<Session, 'ownerAccountId' | 'access' | 'accessLevel'
     | 'metadataLayoutVersion' | 'metadata' | 'ownerMetadataView'>, scope: ServerAccountScope | null,
-    state: Parameters<typeof readCurrentProjectAccountRows>[0]): SessionAcceptedWorkspaceV1 | undefined {
-    if (!scope) return undefined;
+    state: Parameters<typeof readCurrentProjectAccountRows>[0]): WorkspaceRefV1 | null {
+    if (!scope) return null;
     const currentRows = readCurrentProjectAccountRows(state);
     const rows = areServerAccountScopesEqual(scope, currentRows?.scope) ? currentRows : null;
     const census = admitProjectWorkspaceCensusForSubject({
@@ -20,7 +20,11 @@ export function readSessionAcceptedWorkspace(session: Pick<Session, 'ownerAccoun
     });
     const metadata = readSessionOwnerMetadataView(session);
     const resolved = metadata && census.workspaceRefs ? census.sessionProjectKeyResolver?.(metadata, scope.serverId) : null;
-    if (resolved?.kind !== 'resolved' || !resolved.ref) return undefined;
-    return { checkout: workspaceAddressFromRefV1(resolved.ref),
-        ...(resolved.ref.repositoryIdentity ? { repository: resolved.ref.repositoryIdentity } : {}) };
+    return resolved?.kind === 'resolved' ? resolved.ref ?? null : null;
+}
+
+export function readSessionAcceptedWorkspace(...input: Parameters<typeof readSessionAcceptedWorkspaceRef>): SessionAcceptedWorkspaceV1 | undefined {
+    const ref = readSessionAcceptedWorkspaceRef(...input);
+    return ref ? { checkout: workspaceAddressFromRefV1(ref),
+        ...(ref.repositoryIdentity ? { repository: ref.repositoryIdentity } : {}) } : undefined;
 }

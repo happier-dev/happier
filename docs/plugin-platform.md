@@ -3747,6 +3747,16 @@ remains `services`; it cannot stand in for a Machine page. The existing portable
 declaration projection and shared page catalog carry this destination without
 a second registry or mount engine.
 
+In 0.3 development, checkout-scoped Services and Session targets can also carry
+the canonical `project` target and the addressed Machine's `installationId`;
+Project targets carry `installationId` beside their existing checkout. The shared
+surface host supplies these through the admitted Project context. Session
+checkout selection reuses the Account census owner; a machine-wide Services
+surface omits the project. Plugins combine these presentation facts
+with the mount's existing `accountScope` to scope reads, without treating them
+as an execution grant. The database tabs and panel use this context when they have no
+explicit launch input.
+
 An admitted current Machine mount with verified Home and installation facts
 can advertise `openManagedMachineConfiguration({provisioner:{pluginId,localId}})`.
 The host derives the controller from that target, revalidates the Account,

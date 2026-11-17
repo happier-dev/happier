@@ -140,6 +140,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             sessionId={sessionId}
             platform={platform}
             targetKind="services"
+            projectId={scope === 'workspace' ? props.workspaceRefId : null}
             testID={`${props.testID}-plugin-stack`}
         />
     );

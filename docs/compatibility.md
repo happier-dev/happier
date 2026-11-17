@@ -9362,6 +9362,13 @@ development UI, Protocol and CLI readers must reload together: older strict
 plain-envelope readers reject the added operand, and older encrypted readers do
 not implement it. This adds no Action id, stored format or released ABI change.
 
+Unreleased 0.3 checkout-scoped Services and Session targets accept optional
+`project` (the existing canonical Project target) and `installationId` facts;
+Project targets accept `installationId` beside their existing checkout. Bare
+Services and Session targets remain valid. Emitting the new fields requires matching development
+Protocol, SDK and UI readers because the public target envelope is closed;
+there is no mixed-development adapter or released ABI change.
+
 Unreleased 0.3 preparation ready results accept optional `artifactSizeBytes` from
 native artifact inspection. The existing private prepared state retains the same
 optional measurement; older records without it remain readable and unknown. The

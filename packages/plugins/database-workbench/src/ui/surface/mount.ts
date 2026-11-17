@@ -26,8 +26,21 @@ export type WorkbenchLaunchInput = Readonly<{
   descriptor?: DatabaseDescriptorV1;
 }>;
 
-export function readWorkbenchLaunchInput(context: RenderContext): WorkbenchLaunchInput | null {
+export function readWorkbenchLaunchInput(context: Pick<RenderContext, 'launchInput' | 'launch' | 'surface'>): WorkbenchLaunchInput | null {
   const input = context.launchInput ?? context.launch?.input;
+  const target = context.surface.target;
+  if (input === undefined && (target.kind === 'services' || target.kind === 'session' || target.kind === 'project')) {
+    const project = target.kind === 'project' ? target : target.project;
+    const { installationId } = target;
+    const checkout = project?.checkout;
+    const account = context.surface.accountScope;
+    if (!checkout || !project || !installationId || !account) return null;
+    const parsed = DatabaseTargetsListInputV1Schema.safeParse({ scope: {
+      kind: 'worktree', accountId: account.accountId, installationId, projectKey: project.projectKey,
+      workspace: { serverId: checkout.serverId, machineId: checkout.machineId, workspaceId: checkout.id, rootPath: checkout.rootPath },
+    } });
+    return parsed.success ? { scope: parsed.data.scope } : null;
+  }
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
   // Launch input is host-delivered JSON; the P1 owner's own parsers admit the place and the database.
   const fields = input as Readonly<Record<string, unknown>>;

@@ -49,7 +49,7 @@ export function PluginSurfacePlacementStack(props: Readonly<{
     const deviceType = useDeviceType();
     const surfacePlatform = props.platform ?? 'web';
     const runtimeFormFactor = props.formFactor ?? resolvePluginUiRuntimeFormFactor({ deviceType });
-    const projectRef = useProjectAccountWorkspaceRef(props.targetKind === 'project' && props.projectContext === undefined
+    const projectRef = useProjectAccountWorkspaceRef((props.targetKind === 'project' || props.targetKind === 'services') && props.projectContext === undefined
         ? props.projectId ?? null : null, props.serverId ?? undefined);
     const readProjectContext = useProjectContext({ serverId: props.serverId ?? projectRef?.serverId ?? '', projectRef, activeCheckout: projectRef });
     const suppliedProjectContext = props.projectContext === undefined ? readProjectContext : props.projectContext;
@@ -107,7 +107,7 @@ export function PluginSurfacePlacementStack(props: Readonly<{
                             sessionId={props.sessionId}
                             agentId={props.agentId}
                             projectId={props.projectId}
-                            projectContext={props.targetKind === 'project' ? projectContext : undefined}
+                            projectContext={props.targetKind === 'project' || props.targetKind === 'services' ? projectContext : undefined}
                             pluginUiProjection={props.pluginUiProjection}
                             localServicePreviewState={props.localServicePreviewState}
                             platform={props.platform}

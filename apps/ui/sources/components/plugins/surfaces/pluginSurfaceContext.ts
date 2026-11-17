@@ -174,19 +174,20 @@ export function resolvePluginSurfaceTarget(
         case 'session': {
             const sessionId = readId(facts.sessionId);
             if (!sessionId) return unresolvedTarget('session_target_identity_unavailable');
-            if (facts.session) return facts.session.sessionId === sessionId
-                ? resolvedTarget(facts.session) : unresolvedTarget('session_target_identity_unavailable');
+            if (facts.session && facts.session.sessionId !== sessionId) return unresolvedTarget('session_target_identity_unavailable');
             const agentId = readId(facts.agentId);
             const repository = readProjectRepositoryIdentityV1({ snapshot: facts.snapshot });
             const branch = facts.snapshot?.branch;
             const currentBranch = branch && !branch.detached ? readId(branch.head) : undefined;
             const headOid = readId(branch?.headOid);
-            return resolvedTarget({ kind: 'session', sessionId, ...(agentId ? { agentId } : {}),
-                ...(repository ? { repository } : {}), ...(currentBranch ? { branch: currentBranch } : {}), ...(headOid ? { headOid } : {}) });
+            const target = facts.session ?? { kind: 'session' as const, sessionId, ...(agentId ? { agentId } : {}),
+                ...(repository ? { repository } : {}), ...(currentBranch ? { branch: currentBranch } : {}), ...(headOid ? { headOid } : {}) };
+            const installationId = readId(facts.installationId);
+            return resolvedTarget({ ...target, ...(facts.project ? { project: facts.project } : {}), ...(installationId ? { installationId } : {}) });
         }
         case 'project': {
             return facts.project && readId(facts.project.projectKey)
-                ? Object.freeze({ resolved: true as const, target: facts.project })
+                ? resolvedTarget(readId(facts.installationId) ? { ...facts.project, installationId: readId(facts.installationId) } : facts.project)
                 : unresolvedTarget('project_target_identity_unavailable');
         }
         case 'browser': {
@@ -209,7 +210,10 @@ export function resolvePluginSurfaceTarget(
                 : unresolvedTarget('machine_target_identity_unavailable');
         }
         case 'services':
-            return resolvedTarget({ kind: 'services' });
+            return resolvedTarget({ kind: 'services',
+                ...(facts.project ? { project: facts.project } : {}),
+                ...(readId(facts.installationId) ? { installationId: readId(facts.installationId) } : {}),
+            });
         case 'app':
             return resolvedTarget({ kind: 'app' });
         case null:
@@ -224,6 +228,8 @@ export function usePluginSessionSurfaceTarget(input: Readonly<{
     serverId: string | null | undefined;
     agentId?: string | null;
     authority?: ActiveServerAccountScopeLifetime | null;
+    project?: ProjectSurfaceTargetV1 | null;
+    installationId?: string | null;
 }>): Extract<PluginSurfaceTarget, { kind: 'session' }> | null {
     const active = useActiveServerAccountScopeLifetime();
     const authority = input.authority === undefined ? active : input.authority;
@@ -236,7 +242,8 @@ export function usePluginSessionSurfaceTarget(input: Readonly<{
         target: Extract<PluginSurfaceTarget, { kind: 'session' }> }> | null>(null);
     return React.useMemo(() => {
         if (!current) { baseline.current = null; return null; }
-        const resolved = resolvePluginSurfaceTarget({ targetKind: 'session', sessionId: input.sessionId, agentId: input.agentId, snapshot });
+        const resolved = resolvePluginSurfaceTarget({ targetKind: 'session', sessionId: input.sessionId, agentId: input.agentId, snapshot,
+            project: input.project, installationId: input.installationId });
         if (!resolved.resolved || resolved.target.kind !== 'session') return null;
         const previous = baseline.current?.authority === authority && baseline.current.serverId === input.serverId
             && baseline.current.target.sessionId === input.sessionId ? baseline.current.target : null;
@@ -246,7 +253,7 @@ export function usePluginSessionSurfaceTarget(input: Readonly<{
             : Object.freeze({ ...resolved.target, ...(repository ? { repository } : {}) });
         baseline.current = { authority, serverId: input.serverId, target };
         return target;
-    }, [authority, current, input.sessionId, input.serverId, input.agentId, provider?.kind, provider?.baseUrl, provider?.nameWithOwner,
+    }, [authority, current, input.sessionId, input.serverId, input.agentId, input.project, input.installationId, provider?.kind, provider?.baseUrl, provider?.nameWithOwner,
         branch?.head, branch?.headOid, branch?.detached]);
 }
 
@@ -259,8 +266,12 @@ export function usePluginSessionSurfaceTarget(input: Readonly<{
 export function getPluginSurfaceTargetAuthorityKey(target: PluginSurfaceTarget): string {
     switch (target.kind) {
         case 'app':
-        case 'services':
             return JSON.stringify([target.kind]);
+        case 'services':
+            return JSON.stringify([target.kind, target.project?.projectKey ?? null,
+                target.project?.checkout?.serverId ?? null, target.project?.checkout?.machineId ?? null,
+                target.project?.checkout?.id ?? null, target.project?.checkout?.rootPath ?? null,
+                target.installationId ?? null]);
         case 'session':
             return JSON.stringify([target.kind, target.sessionId, target.agentId ?? null]);
         case 'project':
@@ -276,9 +287,10 @@ export function getPluginSurfaceTargetAuthorityKey(target: PluginSurfaceTarget):
 
 /** Exact checkout changes replace physical content; branch/HEAD facts replace only Resource demand. */
 export function getPluginSurfaceTargetMountKey(target: PluginSurfaceTarget): string {
-    const checkout = target.kind === 'project' ? target.checkout : undefined;
+    const checkout = target.kind === 'project' ? target.checkout : target.kind === 'session' ? target.project?.checkout : undefined;
     return JSON.stringify([getPluginSurfaceTargetAuthorityKey(target),
-        checkout ? [checkout.serverId, checkout.id, checkout.machineId, checkout.rootPath] : null]);
+        checkout ? [checkout.serverId, checkout.id, checkout.machineId, checkout.rootPath] : null,
+        target.kind === 'session' || target.kind === 'project' ? target.installationId ?? null : null]);
 }
 
 /**

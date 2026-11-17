@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { useActiveServerAccountScopeLifetime, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScopeLifetime, useSessionAcceptedWorkspaceRef, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { readProjectWidgetAreaContextV1, type ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { useProjectSource } from './sources/useProjectSources';
@@ -13,13 +13,17 @@ export const ProjectContextProvider = ProjectContext.Provider;
 /** The mounted Project/Account owns its baseline; reads never probe SCM or write accepted refs. */
 export function useProjectContext(input: Readonly<{
     serverId: string;
+    sessionId?: string | null;
     projectRef?: WorkspaceRefV1 | null;
     activeCheckout?: WorkspaceRefV1 | null;
     authority?: Readonly<{ isCurrent(): boolean }> | null;
 }>): ProjectWidgetAreaContextV1 {
     const inherited = React.useContext(ProjectContext);
-    const anchor = input.projectRef === undefined ? input.activeCheckout : input.projectRef;
-    const selected = input.activeCheckout;
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const scopedLifetime = lifetime?.isCurrent() && selectActiveServerAccountScopeForServer(lifetime.scope, input.serverId) ? lifetime : null;
+    const sessionRef = useSessionAcceptedWorkspaceRef(input.sessionId ?? null, scopedLifetime?.scope ?? null);
+    const anchor = input.projectRef === undefined ? input.activeCheckout ?? sessionRef : input.projectRef;
+    const selected = input.activeCheckout === undefined ? sessionRef : input.activeCheckout;
     const inheritedCheckout = inherited?.target?.checkout;
     const canInherit = inherited !== null && anchor != null && inherited.target !== null
         && (input.authority?.isCurrent() ?? true)
@@ -31,11 +35,10 @@ export function useProjectContext(input: Readonly<{
         && (selected ? inheritedCheckout?.id === selected.id && inheritedCheckout.machineId === selected.machineId
             && inheritedCheckout.rootPath === selected.rootPath && areServerProfileIdentifiersEquivalent(selected.serverId, inheritedCheckout.serverId)
             : inheritedCheckout === undefined);
-    const lifetime = useActiveServerAccountScopeLifetime();
-    const scopedLifetime = lifetime?.isCurrent() && selectActiveServerAccountScopeForServer(lifetime.scope, input.serverId) ? lifetime : null;
     const authority = input.authority === undefined ? scopedLifetime : input.authority;
     const demand = React.useRef<ProjectWidgetAreaContextV1 | null>(null);
-    demand.current = canInherit ? inherited : readProjectWidgetAreaContextV1({ ...input, authority }, demand.current);
+    const projectInput = { ...input, projectRef: anchor, activeCheckout: selected, authority };
+    demand.current = canInherit ? inherited : readProjectWidgetAreaContextV1(projectInput, demand.current);
     const source = useProjectSource(canInherit ? null : scopedLifetime, canInherit ? null : demand.current.sourceId).source;
     const checkout = demand.current.target?.checkout;
     const workspaceScope = React.useMemo(() => checkout ? {
@@ -44,6 +47,6 @@ export function useProjectContext(input: Readonly<{
     const snapshot = useWorkspaceScmSummarySnapshot(canInherit ? null : workspaceScope);
     const previous = React.useRef<ProjectWidgetAreaContextV1 | null>(null);
     if (canInherit) return inherited;
-    previous.current = readProjectWidgetAreaContextV1({ ...input, source, snapshot, authority }, previous.current);
+    previous.current = readProjectWidgetAreaContextV1({ ...projectInput, source, snapshot }, previous.current);
     return previous.current;
 }

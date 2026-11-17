@@ -149,6 +149,9 @@ import { resolveWorkspaceTargetForSessionFromState } from '../domains/session/re
 import { createProjectForSessionResolver } from '../runtime/orchestration/projectForSessionResolver';
 import { normalizeSessionId } from '../domains/session/normalizeSessionId';
 import { selectHomeQualifiedSession } from '../domains/session/selectHomeQualifiedSession';
+import { readSessionAcceptedWorkspaceRef } from '../domains/session/sessionAcceptedWorkspace';
+import type { ServerAccountScope } from '../domains/scope/serverAccountScope';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 export { useProjectAccountRows } from '../domains/workspaces/projectAccountRows';
 import { buildSessionMetadataStabilitySignature } from '../domains/session/metadata/sessionMetadataStability';
 import { readSessionOwnerMetadataView } from '../domains/session/readSessionOwnerMetadataView';
@@ -301,6 +304,16 @@ export function useSessionSelector<T>(id: string, serverId: string | null | unde
   const activeServerId = useActiveServerSnapshot(Boolean(normalizedServerId)).serverId;
   return getStorage()((state) => select(selectHomeQualifiedSession(state, normalizedSessionId, serverId, activeServerId)),
     { sessions: normalizedSessionId ? [normalizedSessionId] : [] });
+}
+
+/** Select the census owner's accepted checkout; transcript and unrelated Project edits retain identity. */
+export function useSessionAcceptedWorkspaceRef(id: string | null, scope: ServerAccountScope | null): WorkspaceRefV1 | null {
+  const sessionId = normalizeSessionId(id ?? '');
+  return getStorage()((state) => {
+    if (!sessionId || !scope) return null;
+    const session = selectHomeQualifiedSession(state, sessionId, scope.serverId, scope.serverId);
+    return session ? readSessionAcceptedWorkspaceRef(session, scope, state) : null;
+  }, { sessions: sessionId ? [sessionId] : [], projectAccountRows: true, profileScope: true, sessionLocalStateScope: true });
 }
 
 /**

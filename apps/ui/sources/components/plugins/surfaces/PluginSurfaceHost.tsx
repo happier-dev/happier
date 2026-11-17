@@ -2024,10 +2024,14 @@ function PluginSurfaceHostMount(props: Readonly<(
             : resolveSurfaceResourceScope(selectedSurfaceBinding),
         [composerBinding, ephemeralBinding, selectedSurfaceBinding, targetedBinding],
     );
-    const addressedProjectRef = useProjectAccountWorkspaceRef(surfaceScope.declared && surfaceScope.targetKind === 'project'
+    const addressedSessionId = targetedMount?.physicalTarget.kind === 'session' ? targetedMount.physicalTarget.sessionId
+        : composerMount?.physicalTarget.kind === 'session' ? composerMount.physicalTarget.sessionId
+            : surfaceScope.declared && surfaceScope.targetKind === 'session' ? props.sessionId ?? null : null;
+    const addressedProjectRef = useProjectAccountWorkspaceRef(surfaceScope.declared && (surfaceScope.targetKind === 'project' || surfaceScope.targetKind === 'services')
         && props.projectContext === undefined ? props.projectId ?? null : null, props.serverId ?? undefined);
     const readProjectContext = useProjectContext({ serverId: props.serverId ?? addressedProjectRef?.serverId ?? '',
-        projectRef: addressedProjectRef, activeCheckout: addressedProjectRef });
+        sessionId: addressedSessionId,
+        projectRef: addressedSessionId ? undefined : addressedProjectRef, activeCheckout: addressedSessionId ? undefined : addressedProjectRef });
     const suppliedProjectContext = props.projectContext === undefined ? readProjectContext : props.projectContext;
     const projectContext = suppliedProjectContext && (suppliedProjectContext.scope.authority?.isCurrent() ?? true)
         && (!props.serverId || areServerProfileIdentifiersEquivalent(suppliedProjectContext.scope.serverId, props.serverId)) ? suppliedProjectContext : null;
@@ -2419,20 +2423,21 @@ function PluginSurfaceHostMount(props: Readonly<(
     const declaredBrowserTargetUrl = declaredBrowserTarget?.kind === 'externalUrl'
         ? declaredBrowserTarget.url
         : null;
-    const sessionTarget = usePluginSessionSurfaceTarget({
-        sessionId: targetedMount?.physicalTarget.kind === 'session' ? targetedMount.physicalTarget.sessionId
-            : composerMount?.physicalTarget.kind === 'session' ? composerMount.physicalTarget.sessionId
-                : surfaceScope.declared && surfaceScope.targetKind === 'session' ? props.sessionId : null,
-        serverId, agentId: props.agentId, authority: accountLifetime,
-    });
     const surfaceTargetKind = surfaceScope.declared ? surfaceScope.targetKind : null;
     const enclosingDestinationNavigation = usePluginSurfaceDestinationNavigationBinding();
     // Addressed record facts are independent of the selected plugin execution origin.
     // Subscribe only to the installation scalar; presence/daemon changes do not republish context.
-    const addressedInstallationId = useServerScopedMachine(props.serverId,
-        surfaceTargetKind === 'machine' ? props.machineId : null,
+    const addressedCheckout = projectContext?.target?.checkout;
+    const addressedInstallationId = useServerScopedMachine(addressedCheckout?.serverId ?? props.serverId,
+        surfaceTargetKind === 'machine' ? props.machineId
+            : surfaceTargetKind === 'services' || surfaceTargetKind === 'project' || surfaceTargetKind === 'session'
+                ? addressedCheckout?.machineId ?? props.machineId : null,
         React.useCallback((machine: Machine | null) => machine && !machine.revokedAt && !machine.replacedByMachineId
             ? machine.installationId ?? null : null, []));
+    const sessionTarget = usePluginSessionSurfaceTarget({
+        sessionId: addressedSessionId, serverId, agentId: props.agentId, authority: accountLifetime,
+        project: projectContext?.target, installationId: addressedInstallationId,
+    });
     const readAddressedHomeId = React.useCallback(() => surfaceTargetKind === 'machine' && props.serverId
         ? getServerProfileById(props.serverId)?.serverIdentityId ?? null : null, [surfaceTargetKind, props.serverId]);
     const addressedHomeId = React.useSyncExternalStore(React.useCallback((listener: () => void) => surfaceTargetKind === 'machine'

@@ -72,6 +72,43 @@ describe('createPluginSurfaceContext', () => {
         expect(resolvePluginSurfaceTarget({ targetKind: 'session', sessionId: 'session-a' })).toEqual({ resolved: true, target: { kind: 'session', sessionId: 'session-a' } });
     });
 
+    it('discloses the admitted checkout and installation to Session and Project rail mounts', () => {
+        const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout', projectKey: 'project', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 0 });
+        const project = readProjectWidgetAreaContextV1({ serverId: 'home', activeCheckout: checkout }).target;
+        if (!project) throw new Error('Checkout must supply its Project');
+        for (const facts of [
+            { targetKind: 'project' as const, project, installationId: 'installation' },
+            { targetKind: 'session' as const, sessionId: 'session', session: { kind: 'session' as const, sessionId: 'session' }, project, installationId: 'installation' },
+        ]) {
+            const resolution = resolvePluginSurfaceTarget(facts);
+            const target = facts.targetKind === 'project' ? { ...project, installationId: 'installation' }
+                : { ...facts.session, project, installationId: 'installation' };
+            expect(resolution).toEqual({ resolved: true, target });
+            const fixture = createPluginSurfaceContextFixture();
+            const published = createPluginSurfaceContext({ mount: fixture.mount, target,
+                accountEncryptionMode: fixture.accountEncryptionMode, environment: { ...fixture, columnVisible: false }, translations: fixture.translations });
+            expect(PluginUiHostApiSurfaceContextV1Schema.parse(published).target).toEqual(target);
+        }
+    });
+
+    it('carries the canonical checkout into a Services target and retires it when the checkout changes', () => {
+        const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout', projectKey: 'project', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 0 });
+        const project = readProjectWidgetAreaContextV1({ serverId: 'home', activeCheckout: checkout }).target;
+        if (!project) throw new Error('Checkout must supply its Project');
+        const resolved = resolvePluginSurfaceTarget({ targetKind: 'services', project, installationId: 'installation' });
+        expect(resolved).toEqual({ resolved: true, target: { kind: 'services', project, installationId: 'installation' } });
+        const bare = resolvePluginSurfaceTarget({ targetKind: 'services' });
+        if (!resolved.resolved || !bare.resolved) throw new Error('Services targets must resolve');
+        expect(getPluginSurfaceTargetAuthorityKey(resolved.target)).not.toBe(getPluginSurfaceTargetAuthorityKey(bare.target));
+        const changed = resolvePluginSurfaceTarget({ targetKind: 'services', installationId: 'installation',
+            project: { ...project, checkout: { ...checkout, id: 'other-checkout', rootPath: '/other' } } });
+        const opened = resolvePluginSurfaceTarget({ targetKind: 'services', installationId: 'installation',
+            project: { ...project, checkout: { ...checkout, lastOpenedAtMs: 500 } } });
+        if (!changed.resolved || !opened.resolved) throw new Error('Services targets must resolve');
+        expect(getPluginSurfaceTargetAuthorityKey(changed.target)).not.toBe(getPluginSurfaceTargetAuthorityKey(resolved.target));
+        expect(getPluginSurfaceTargetAuthorityKey(opened.target)).toBe(getPluginSurfaceTargetAuthorityKey(resolved.target));
+    });
+
     it('publishes the canonical logical Project target through the public context reader', () => {
         const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout-address', projectKey: 'logical-project', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
             futurePrivateFact: 'not disclosed', source: { sourceId: 'source', revision: 1, futurePrivateFact: 'not disclosed' },
