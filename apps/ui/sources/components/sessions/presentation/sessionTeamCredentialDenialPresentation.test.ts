@@ -39,6 +39,8 @@ describe('presentSessionTeamCredentialDenial', () => {
         expect(presentation?.title).toBe('Connected account needs reconnect');
         expect(presentation?.body).toContain(t('teams.credentials.recovery.ownerHandoff'));
         expect(presentation?.body).toContain('Acme OpenAI');
+        // The row reads `title · body`: the body continues the title, it never says it again.
+        expect(presentation?.body).not.toContain(presentation?.title);
     });
     it('selects the named refusal and recovery from the common owner/shared-editor history reader without owner metadata', () => {
         const issue = runtimeIssue({ teamCredential: {
