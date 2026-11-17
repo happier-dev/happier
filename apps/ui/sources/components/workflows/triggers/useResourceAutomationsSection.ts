@@ -156,7 +156,10 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const machineSharing = useMachineShareController({ machineId,
         machineName: props.subjectName ?? machineId,
         scope: demanded && linkDraft !== null && machineSubject && binding ? binding.scope : null });
-    const audience = machineSubject ? machineSharing.audience : props.sourceAudience;
+    const profileSubject = subject?.kind === 'approvalProfile';
+    const profileSharing = useDocumentShareController(demanded && linkDraft !== null && profileSubject && binding
+        ? { scope: binding.scope, artifactId: subject.profileId, kind: 'approval-profile.v1' } : null);
+    const audience = machineSubject ? machineSharing.audience : profileSubject ? profileSharing.audience : props.sourceAudience;
     const workflow = linkDraft ? parseWorkflowDefinitionRefV1(linkDraft.workflow) : null;
     const review = useDocumentShareController(demanded && binding && workflow?.kind === 'artifact'
         && audience !== undefined ? { scope: binding.scope, artifactId: workflow.artifactId,
@@ -177,9 +180,10 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         }
     }, [linkDraft, workflow?.kind, review.shareMissingAudience, editor.add, project, binding]);
     const missingAudience = workflow && workflow.kind !== 'artifact' ? NO_SHARED_AUDIENCE : review.missingAudience;
-    const reviewIssue = machineSubject ? machineSharing.issue ?? review.issue : review.issue;
-    const reviewLoading = review.loading || (machineSubject && linkDraft !== null && machineSharing.loading);
-    const retryReview = machineSubject && machineSharing.issue ? machineSharing.retryContent : review.retryContent;
+    const sourceSharing = machineSubject ? machineSharing : profileSubject ? profileSharing : null;
+    const reviewIssue = sourceSharing?.issue ?? review.issue;
+    const reviewLoading = review.loading || (linkDraft !== null && Boolean(sourceSharing?.loading));
+    const retryReview = sourceSharing?.issue ? sourceSharing.retryContent : review.retryContent;
     const link = React.useMemo(() => ({ whenOptions, whenStatus, draft: linkDraft, setDraft,
         missingAudience, issue: reviewIssue, loading: reviewLoading,
         retryReview, submit: submitLink }),

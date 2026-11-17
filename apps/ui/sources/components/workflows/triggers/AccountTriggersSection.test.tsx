@@ -463,6 +463,48 @@ describe('Account Workflow Library and settings', () => {
             params: expect.objectContaining({ id: 'builtin:review-and-converge' }) }));
         await screen.unmount();
     });
+    it('reviews a linked Workflow against the profile grant audience only when linking, and declines without writes', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ArtifactAccessGrantsListResponseV1Schema } = await import('@happier-dev/protocol/artifacts/artifactAccessV1');
+        const subject = { kind: 'approvalProfile' as const, serverId, profileId: 'artifact-careful' };
+        const principal = { kind: 'group' as const, teamId: 'studio', groupId: 'release' };
+        const definitionId = '11111111-1111-4111-8111-111111111111';
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+        }) });
+        const profileGrants = `/v1/artifacts/${subject.profileId}/access/grants`;
+        home.answer(serverId, `GET ${profileGrants}`, { body: ArtifactAccessGrantsListResponseV1Schema.parse({
+            artifactId: subject.profileId, ownerAccountId: 'account-a', access: 'owner', grants: [
+                { principal, accessLevel: 'view', createdByAccountId: 'account-a', createdAt: 1, display: { name: 'Release' } },
+            ],
+        }) });
+        const workflowGrants = `/v1/artifacts/${definitionId}/access/grants`;
+        const reviews: unknown[] = [];
+        home.answer(serverId, `GET ${workflowGrants}`, { select: raw => {
+            reviews.push(raw);
+            return { body: ArtifactAccessGrantsListResponseV1Schema.parse({ artifactId: definitionId,
+                ownerAccountId: 'account-a', access: 'owner', grants: [], missingAudience: [principal] }) };
+        } });
+        const hook = await renderHook(() => useResourceAutomationsSection({ subject }), {
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        expect(home.requests.filter(request => request.path === profileGrants || request.path === workflowGrants)).toEqual([]);
+        await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId,
+            trigger: { kind: 'action', phase: 'after', enabled: true, actionIds: ['deployments.deploy'] } }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().audience).toEqual([
+            { kind: 'account', accountId: 'account-a' }, principal,
+        ]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().link.missingAudience).toEqual([principal]));
+        expect(reviews).toHaveLength(1);
+        expect(hook.getCurrent().link.draft?.trigger).toMatchObject({ subject });
+        await act(async () => { expect(await hook.getCurrent().link.submit('decline')).toEqual({ ok: false, phase: 'declined', shared: [] }); });
+        expect(home.requests.filter(request => (request.path === profileGrants || request.path === workflowGrants) && request.method !== 'GET')).toEqual([]);
+        expect(rows).toEqual([]);
+        await hook.unmount();
+    });
+
     it('reads a canonical profile subject as itself: its own sentence, no legacy starters, and the selected read', async () => {
         const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');

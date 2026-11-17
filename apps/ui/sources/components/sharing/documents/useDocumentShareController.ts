@@ -115,6 +115,8 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     loading: boolean;
     retryContent(): void;
     grants: readonly ArtifactAccessGrantRowV1[];
+    /** The admitted roster's owner and grant principals, for sharing a linked document. */
+    audience: readonly PrincipalRefV1[] | undefined;
     /** Undefined until the grant owner has completed the requested review. */
     missingAudience: readonly PrincipalRefV1[] | undefined;
     /** Apply only the owner's reviewed missing audience, returning acknowledged partial progress. */
@@ -274,6 +276,10 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     const isOwner = response?.access === 'owner';
     const editable = isOwner || response?.access === 'admin';
     const grants = response?.grants ?? NO_GRANTS;
+    const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(() =>
+        state.phase === 'ready' && state.reviewedIdentity === identity && response
+            ? [{ kind: 'account', accountId: response.ownerAccountId }, ...response.grants.map(row => row.principal)]
+            : undefined, [state.phase, state.reviewedIdentity, identity, response]);
     const missingAudience = requestedAudience === undefined || state.phase !== 'ready' || state.reviewedIdentity !== identity
         ? undefined : response?.missingAudience;
     const shareMissingAudience = React.useCallback(async (): Promise<DocumentAudienceShareResult> => {
@@ -400,6 +406,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         loading: input !== null && (state.phase === 'initial' || review.phase === 'initial'),
         retryContent: () => { void load(); void loadReview(); },
         grants,
+        audience,
         missingAudience,
         shareMissingAudience,
         privateChoices,
