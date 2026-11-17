@@ -31,6 +31,9 @@ const managedListPath = managedMachineActionEndpointPathV1('machines.managed.lis
 
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0 }));
+// Native HTTP is a platform boundary. Home/vendor HTTP below uses the installed
+// fixture transport; host classification must not issue an Expo request.
+vi.mock('expo/fetch', () => ({ fetch: () => { throw new Error('Unexpected native HTTP request'); } }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
     Platform: { get OS() { return 'web'; } },
 }));
@@ -142,6 +145,10 @@ await prepareAuthenticationInventory(packaged, { manifest: CODER_MANIFEST, targe
     packageName: '@happier-dev/plugins-machine-coder' });
 
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+// react-native aliases this module; bypass the renderer's module mock to reach
+// the platform object captured by vitestSetup's earlier runtimeFetch import.
+const { Platform: runtimePlatform } = await vi.importActual<typeof import('@/dev/reactNativeStub')>('@/dev/reactNativeStub');
+const runtimePlatformOsDescriptor = Object.getOwnPropertyDescriptor(runtimePlatform, 'OS')!;
 
 
 afterEach(async () => {
@@ -150,6 +157,7 @@ afterEach(async () => {
     await connection?.dispose();
     await homes.reset();
     vi.restoreAllMocks();
+    Object.defineProperty(runtimePlatform, 'OS', runtimePlatformOsDescriptor);
 });
 
 function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<ReturnType<typeof restoreServerAccountForTest>>['credentials']>;
@@ -676,12 +684,25 @@ it('leaves a native-addressed attempt alone when choosing an Account method', as
 });
 
 
-it.each([false, true])('configures Cloudflare browser OAuth before continuing without a Machine (Home client: %s)', async homeClient => {
+async function useNativeAccountHttpHost() {
+    // vitestSetup preloads runtimeFetch against this canonical platform stub;
+    // the renderer keeps its web mock while HTTP uses the real native branch.
+    Object.defineProperty(runtimePlatform, 'OS', { configurable: true, enumerable: true, get: () => 'ios' });
+    expect(await (await import('@/utils/system/runtimeFetch')).readRuntimeFetchHost('https://portable-controller.test')).toBe('native');
+}
+
+it.each([false, true])('configures Cloudflare browser OAuth on a native HTTP host before continuing without a Machine (Home client: %s)', async homeClient => {
+    // Cloudflare declares browserReachability: unreachable; native HTTP keeps this flow Account-local.
+    await useNativeAccountHttpHost();
     const fixture = await restorePortableFixture(cloudflare, homeClient);
     const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={cloudflare} onCancel={() => {}} />);
     try {
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:save')).not.toBeNull());
         expect(screen.findHostByTestId('connected-account-configuration:clientId') === null).toBe(homeClient);
+        if (homeClient) {
+            await screen.pressByTestIdAsync('connected-account-advanced:header');
+            expect(screen.findHostByTestId('connected-account-configuration:clientId')).not.toBeNull();
+        }
         expect(screen.findHostByTestId('connected-account-browser-machine-unavailable')).toBeNull();
         expect(screen.findHostByTestId('connected-account-oauth:open')).toBeNull();
         expect([...fixture.transactions.values()].map(value => value.scope.phase)).toEqual(['configurationRequired']);
@@ -692,6 +713,7 @@ it.each([false, true])('configures Cloudflare browser OAuth before continuing wi
 });
 
 it('collects Cloudflare token, Account configuration and guide in one draft and preserves it after a configuration validation error', async () => {
+    await useNativeAccountHttpHost();
     let releaseVendorResponse!: () => void;
     const vendorResponseReady = new Promise<void>(resolve => { releaseVendorResponse = resolve; });
     const fixture = await restorePortableFixture(cloudflare, false, vendorResponseReady);
@@ -740,6 +762,7 @@ it('collects Cloudflare token, Account configuration and guide in one draft and 
 });
 
 it('retries a draft removed after discovery with the chosen Cloudflare token form', async () => {
+    await useNativeAccountHttpHost();
     const fixture = await restorePortableFixture(cloudflare);
     // The containing setup panel passes the person's chosen method into restored setup.
     const setup = (controllerMounted: boolean) => <PortableSetup credentials={fixture.credentials} service={cloudflare}
@@ -912,8 +935,9 @@ it.each([
 
 it('refuses a genuinely changed Coder draft and offers recovery before credential promotion', async () => {
     const fixture = await restorePortableFixture(coder);
+    const onCancel = vi.fn();
     const setup = (mounted: boolean) => <PortableSetup credentials={fixture.credentials} service={coder}
-        modeId="token" controllerMounted={mounted} onCancel={() => {}} />;
+        modeId="token" controllerMounted={mounted} onCancel={onCancel} />;
     const screen = await renderScreen(setup(false));
     try {
         await flushHookEffects({ cycles: 10 });
@@ -939,9 +963,21 @@ it('refuses a genuinely changed Coder draft and offers recovery before credentia
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry'), screen.getTextContent()).not.toBeNull());
         expect(screen.getTextContent()).toContain(t('connectedServices.errors.accountConfigurationChanged'));
         expect(fixture.promotions).toHaveLength(0);
+        const attemptReads = () => fixture.paths.filter(path => path === `/v2/connect/connected-account-attempt-transactions/${started.attemptId}`).length;
+        const readsBeforeRetry = attemptReads();
         await screen.pressByTestIdAsync('connected-account:error:retry');
-        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error'), screen.getTextContent()).toBeNull());
+        // Retry resubmits the same draft; it cannot overwrite a newer configuration revision.
+        // The real configuration owner reads the addressed transaction before checking its revision.
+        await vi.waitFor(() => expect(attemptReads()).toBeGreaterThan(readsBeforeRetry));
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:submit')!.props.accessibilityState?.busy).not.toBe(true));
+        expect(screen.findHostByTestId('connected-account:error')).not.toBeNull();
+        await screen.pressByTestIdAsync('connected-account:error-details-toggle');
+        expect(screen.findByTestId('connected-account:error-details-code')?.props.children).toContain('connected_account_configuration_changed');
         expect(screen.findHostByTestId('connected-account-manual:token')!.props.editable).not.toBe(false);
+        expect(fixture.promotions).toHaveLength(0);
+        await screen.pressByTestIdAsync('connected-account-setup:cancel');
+        expect(onCancel).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(fixture.transactions.has(started.attemptId!)).toBe(false));
         expect(fixture.promotions).toHaveLength(0);
     } finally { await screen.unmount(); }
 });
