@@ -971,13 +971,13 @@ async function executeExternalActionRequest(input: Readonly<{
         ...(sessionActionOrigin.sourceInputId ? { sourceInputId: sessionActionOrigin.sourceInputId } : {}),
         via: 'action' as const },
     } : {}),
+    ...(registryThemeContent ? { registryThemeContent } : {}),
     ...(apiTokenPrincipal
       ? {
           externalActionCredential: {
             accountId: apiTokenPrincipal.accountId,
             principalId: apiTokenPrincipal.principalId,
             credentialId: apiTokenPrincipal.credentialId,
-    ...(registryThemeContent ? { registryThemeContent } : {}),
             grant: executionAuthorization?.success && 'grant' in executionAuthorization.data.binding
               ? executionAuthorization.data.binding.grant
               : apiTokenPrincipal.grant,

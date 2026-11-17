@@ -297,6 +297,59 @@ describe('executeExternalAction', () => {
     } finally { diagnostics.mockRestore(); }
   });
 
+  it.each(['plain', 'e2ee'] as const)('delivers admitted requester theme content without changing ordinary registry reads (%s)', async mode => {
+    const actionId = 'registries.items.read' as const;
+    const target = { kind: 'machine' as const, machineId: 'theme-machine' };
+    const accountPrincipal = { accountId: principal.accountId,
+      authentication: { kind: 'account' as const, tokenEpoch: 0 }, authority: 'present_user' as const };
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(53) };
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(52));
+    const source: RegistrySourceDescriptorV1 = { id: deriveMarketplaceSourceId('https://themes.example.test/index.json'), title: 'Private themes',
+      url: 'https://themes.example.test/index.json', format: 'happier-catalog', kinds: ['theme'], enabled: true,
+      addedAt: 0, origin: { kind: 'user' }, removable: true };
+    const host = createRegistryHostV1({ host: 'node', readSources: async () => [source], http: {
+      async getJson(url) { return { ok: true, fetchedAt: 1, value: url === source.url ? {
+        source: { id: source.id, title: source.title, sourceUrl: source.url, kind: 'user' },
+        freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], themes: [{
+          itemId: 'night', title: 'Night', version: '1.0.0', listing: { includes: [{ key: 'night', label: 'Night', mode: 'dark' }] },
+          contentUrl: 'https://themes.example.test/night.json',
+        }],
+      } : { themes: [{ key: 'night', label: 'Night', mode: 'dark', document: { schemaVersion: 1, id: 'night', name: 'Night',
+        createdAt: '2026-11-16', updatedAt: '2026-11-16', base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } } }] } }; },
+      async getText() { throw new Error('Unexpected text boundary'); }, async getBytes() { throw new Error('Unexpected package boundary'); },
+    } });
+    const realExecutor = createActionExecutor({ ...createUnavailableHostActionDeps(), registryActionExecute: ({ actionId, input, context }) =>
+      host.execute(actionId, input, context.registryThemeContent ? { themeContent: context.registryThemeContent } : undefined) });
+    for (const themeContent of [false, true]) {
+      const input = { kind: 'theme', sourceId: source.id, itemId: 'night' };
+      const binding = { serverIdentityId: 'srv_theme_home', accountId: accountPrincipal.accountId,
+        authentication: accountPrincipal.authentication, actionId, requestId: crypto.randomUUID(), target };
+      const intent = themeContent ? { registryThemeContent: true as const } : {};
+      const envelope = mode === 'e2ee'
+        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+          binding, input, material, randomBytes: tweetnacl.randomBytes, ...intent })
+        : { v: 1 as const, requestId: binding.requestId, target, input, ...intent };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-theme-proof', binding: {
+        ...binding, machineId: target.machineId, custodianAccountId: accountPrincipal.accountId,
+        installationId: 'theme-installation', accountEncryptionMode: mode,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      } });
+      const result = await executeExternalAction({ actionId, envelope, principal: accountPrincipal, executionAuthorization: authorization,
+        currentMachineId: target.machineId, currentServerId: 'theme-home', currentInstallationId: 'theme-installation',
+        externalActionMachineRequestPrivateKey: installation.secretKey, verifyExecutionAuthorization: async () => true,
+        resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }), executor: realExecutor });
+      expect(result.kind).toBe('response');
+      if (result.kind !== 'response') continue;
+      const execution = envelope.v === 2 ? openExternalActionResponseV2({ envelope: result.response, binding, material, request: envelope })
+        : result.response.v === 1 ? result.response.execution : null;
+      expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { item: { payload: {
+        kind: 'theme', state: themeContent ? 'ready' : 'listing',
+        ...(themeContent ? { themes: [{ document: { profile: { assetAppearance: 'dark' } } }] } : {}),
+      } } } });
+    }
+  });
+
   it.each(['plain', 'e2ee'] as const)('refuses unsupported protected logs operands before ordinary Action IO (%s, waived positive control)', async mode => {
     const actionId = 'machines.services.logs.read' as const;
     const target = { kind: 'machine' as const, machineId: 'logs-constraint-machine' };
@@ -354,58 +407,6 @@ describe('executeExternalAction', () => {
         expect.soft(await invoke(`unsupported-${mode}-${operand}`, protectedInput))
           .toMatchObject({ result: { kind: 'invalid_request', errorCode: mode === 'e2ee' ? 'invalid_encrypted_envelope' : 'invalid_envelope' } });
       }
-  it.each(['plain', 'e2ee'] as const)('delivers admitted requester theme content without changing ordinary registry reads (%s)', async mode => {
-    const actionId = 'registries.items.read' as const;
-    const target = { kind: 'machine' as const, machineId: 'theme-machine' };
-    const accountPrincipal = { accountId: principal.accountId,
-      authentication: { kind: 'account' as const, tokenEpoch: 0 }, authority: 'present_user' as const };
-    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(53) };
-    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(52));
-    const source: RegistrySourceDescriptorV1 = { id: deriveMarketplaceSourceId('https://themes.example.test/index.json'), title: 'Private themes',
-      url: 'https://themes.example.test/index.json', format: 'happier-catalog', kinds: ['theme'], enabled: true,
-      addedAt: 0, origin: { kind: 'user' }, removable: true };
-    const host = createRegistryHostV1({ host: 'node', readSources: async () => [source], http: {
-      async getJson(url) { return { ok: true, fetchedAt: 1, value: url === source.url ? {
-        source: { id: source.id, title: source.title, sourceUrl: source.url, kind: 'user' },
-        freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], themes: [{
-          itemId: 'night', title: 'Night', version: '1.0.0', listing: { includes: [{ key: 'night', label: 'Night', mode: 'dark' }] },
-          contentUrl: 'https://themes.example.test/night.json',
-        }],
-      } : { themes: [{ key: 'night', label: 'Night', mode: 'dark', document: { schemaVersion: 1, id: 'night', name: 'Night',
-        createdAt: '2026-11-16', updatedAt: '2026-11-16', base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } } }] } }; },
-      async getText() { throw new Error('Unexpected text boundary'); }, async getBytes() { throw new Error('Unexpected package boundary'); },
-    } });
-    const realExecutor = createActionExecutor({ ...createUnavailableHostActionDeps(), registryActionExecute: ({ actionId, input, context }) =>
-      host.execute(actionId, input, context.registryThemeContent ? { themeContent: context.registryThemeContent } : undefined) });
-    for (const themeContent of [false, true]) {
-      const input = { kind: 'theme', sourceId: source.id, itemId: 'night' };
-      const binding = { serverIdentityId: 'srv_theme_home', accountId: accountPrincipal.accountId,
-        authentication: accountPrincipal.authentication, actionId, requestId: crypto.randomUUID(), target };
-      const intent = themeContent ? { registryThemeContent: true as const } : {};
-      const envelope = mode === 'e2ee'
-        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-          binding, input, material, randomBytes: tweetnacl.randomBytes, ...intent })
-        : { v: 1 as const, requestId: binding.requestId, target, input, ...intent };
-      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-theme-proof', binding: {
-        ...binding, machineId: target.machineId, custodianAccountId: accountPrincipal.accountId,
-        installationId: 'theme-installation', accountEncryptionMode: mode,
-        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-      } });
-      const result = await executeExternalAction({ actionId, envelope, principal: accountPrincipal, executionAuthorization: authorization,
-        currentMachineId: target.machineId, currentServerId: 'theme-home', currentInstallationId: 'theme-installation',
-        externalActionMachineRequestPrivateKey: installation.secretKey, verifyExecutionAuthorization: async () => true,
-        resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
-        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }), executor: realExecutor });
-      expect(result.kind).toBe('response');
-      if (result.kind !== 'response') continue;
-      const execution = envelope.v === 2 ? openExternalActionResponseV2({ envelope: result.response, binding, material, request: envelope })
-        : result.response.v === 1 ? result.response.execution : null;
-      expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { item: { payload: {
-        kind: 'theme', state: themeContent ? 'ready' : 'listing',
-        ...(themeContent ? { themes: [{ document: { profile: { assetAppearance: 'dark' } } }] } : {}),
-      } } } });
-    }
-  });
 
       expect(nativeReads).toBe(1);
       expect(network).not.toHaveBeenCalled();
