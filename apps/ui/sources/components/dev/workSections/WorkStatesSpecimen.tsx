@@ -61,7 +61,7 @@ function report(
         activeAt: at,
         // A Session waiting on a person's answer, as the Inbox and Work list see one.
         ...(turn === 'needs_you'
-          ? { latestTurnStatus: undefined, pendingPermissionRequestCount: 1, pendingRequestObservedAt: at }
+          ? { latestTurnStatus: undefined, updatedAt: at, hasPendingPermissionRequests: true, pendingRequestObservedAt: at }
           : { latestTurnStatus: turn, latestTurnStatusObservedAt: at }),
       }),
       NOW,
