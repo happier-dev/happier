@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DatabaseContinuationV1Schema, type DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
 import { compilePostgresqlStatsV1 } from './stats.js';
+import { executePostgresqlOperation, type PostgresqlQuery } from './operations.js';
+import { compilePostgresqlSetupV1, decodePostgresqlSetupV1 } from './setup.js';
 import type { DatabaseStatsNativeRowV1, DatabaseStatsSqlPlanV1 } from '../stats.js';
 
 const binaries = process.env.HAPPIER_DATABASE_STATS_POSTGRES_BIN ?? '';
@@ -48,6 +50,40 @@ describe.skipIf(!binaries)('PostgreSQL stats against a real engine', () => {
             execFileSync(join(binaries, 'pg_ctl'), ['-D', data, '-m', 'immediate', '-w', 'stop'], { stdio: 'pipe' });
         }
         rmSync(directory, { recursive: true, force: true });
+    });
+    it('executes selected stats groups through the shared native operation owner using held installed facts', async () => {
+        const query: PostgresqlQuery = async statement => {
+            const parameters = statement.values.map(value => value === null ? 'NULL' : `'${String(value).replaceAll("'", "''")}'`).join(',');
+            const output = psql(`PREPARE stats_operation AS SELECT row_to_json(r) FROM (${statement.text}) r; EXECUTE stats_operation${parameters ? `(${parameters})` : ''}`);
+            const objects = output.trim() ? output.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>) : [];
+            // This real psql JSON-row transport supplies text values; stats needs aliases, not type OIDs.
+            const fields = Object.keys(objects[0] ?? {}).map(name => ({ name, dataTypeID: 25 }));
+            return { fields, rows: objects.map(row => fields.map(field => {
+                const value = row[field.name];
+                return value === null || value === undefined ? null : value === true ? 't' : value === false ? 'f' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+            })), command: 'SELECT', rowCount: objects.length };
+        };
+        const target = { kind: 'manual', accountId: 'a', installationId: 'i', projectKey: 'p', savedSecretId: 's',
+            workspace: { serverId: 'h', machineId: 'm', workspaceId: 'w', rootPath: directory } } as const;
+        const facts = decodePostgresqlSetupV1(await query(compilePostgresqlSetupV1()));
+        expect(facts).toMatchObject({ database: 'postgres', currentUser: 'postgres', serverAddress: null,
+            pgStatStatements: { schema: 'custom stats', version: expect.stringMatching(/^1\.\d+$/u) } });
+        expect(facts.databaseOid).toMatch(/^\d+$/u);
+        expect(facts.engineStartedAt).not.toBe('');
+        const options = { stats: { database: facts.database, intervalBasis: { bindingKey: 'fixture', databaseIdentity: facts.databaseOid, selectionKey: 'selected' },
+            pgStatStatements: facts.pgStatStatements } };
+        const requests = [
+            { kind: 'stats.read', group: 'size', selection: {} },
+            { kind: 'stats.read', group: 'tables', selection: { schema: 'selected', page: { rows: 10 } } },
+            { kind: 'stats.read', group: 'indexes', selection: { relation: { schema: 'selected', name: 'items' } } },
+            { kind: 'stats.read', group: 'activity', selection: { page: { rows: 10 } } },
+            { kind: 'stats.read', group: 'statements', selection: { page: { rows: 100 }, order: 'calls' } },
+        ] as const satisfies readonly DatabaseStatsReadV1[];
+        for (const request of requests) {
+            const result = await executePostgresqlOperation({ operation: 'stats.read', target, request }, query, options);
+            expect(result).toMatchObject({ ok: true, operation: 'stats.read', observation: { status: 'available', group: request.group, engineId: 'postgresql' } });
+            if (result.ok && result.operation === 'stats.read') expect(result.observation.observedAtMs).toBeGreaterThan(0);
+        }
     });
     it('resumes the original typed stats request using only the returned offset and finishes at the page boundary', () => {
         psql('CREATE SCHEMA paged; CREATE TABLE paged.alpha(id integer); CREATE TABLE paged.beta(id integer); CREATE TABLE paged.gamma(id integer);');

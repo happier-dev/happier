@@ -52,10 +52,10 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
         const order = { totalTime: time, calls: 's.calls', rows: 's.rows' }[operation.selection.order];
         const pagination = page();
         const info = minor >= 9 ? `LEFT JOIN ${namespace}."pg_stat_statements_info" info ON TRUE` : '';
-        const extensionMetadata = `e.extversion AS extension_version, ${metadata},
+        const extensionMetadata = `${bind(extension.version)}::text AS extension_version, ${metadata},
             ${minor >= 9 ? 'info.stats_reset::text AS extension_stats_reset, info.dealloc::text AS deallocated' : 'NULL::text AS extension_stats_reset, NULL::text AS deallocated'}`;
         return statsSqlPlan('postgresql', operation, { sql: `SELECT r.*, ${extensionMetadata}
-            FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace en ON en.oid = e.extnamespace ${info}
+            FROM (SELECT 1) available ${info}
             LEFT JOIN LATERAL (SELECT ${key} AS key, current_database() AS database, s.userid::text AS user_id,
                 ${topLevel} AS top_level, s.query, s.queryid IS NULL AS visibility_restricted, s.calls::text AS calls,
                 ${time} AS total_time_ms, s.rows::text AS rows, s.shared_blks_read::text AS blocks_read,
@@ -64,7 +64,7 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
                 ${minor >= 11 ? ', s.stats_since::text AS stats_started_at' : ''}
                 FROM ${namespace}."pg_stat_statements" s WHERE s.dbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())
                 ${predicate} ORDER BY ${order} DESC, s.dbid, s.userid, s.queryid${minor >= 9 ? ', s.toplevel' : ''}${pagination}) r ON TRUE
-            WHERE e.extname = 'pg_stat_statements'`, parameters }, rows => rows.filter(row => row.key !== undefined).map(row => ({
+            `, parameters }, rows => rows.filter(row => row.key !== undefined).map(row => ({
             key: statsText(row, 'key'), database: statsText(row, 'database'), ...statsOptional('user', statsText(row, 'user_id')),
             topLevel: statsBoolean(row, 'top_level'), ...statsShape(statsText(row, 'query'), normalizePostgresqlStatement),
             calls: statsCounter(row, 'calls'), totalTimeMs: statsNumber(row, 'total_time_ms'), rows: statsCounter(row, 'rows'), nativeTimeUnit: 'milliseconds',

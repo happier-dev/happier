@@ -8,6 +8,8 @@ import { admitPostgresqlWorkbenchStatement } from './statement.js';
 import { fitDatabaseOperationResult } from '../resultEnvelope.js';
 import { databaseRowsBindingV1 } from '../rows.js';
 import { quotePostgresqlIdentifier } from './identifiers.js';
+import { compilePostgresqlStatsV1, type PostgresqlStatsCompilationV1 } from './stats.js';
+import { statsNativeRowsV1, statsOperationResultV1, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 export { quotePostgresqlIdentifier } from './identifiers.js';
 
 export interface PostgresqlNativeResult {
@@ -21,6 +23,9 @@ export interface PostgresqlCompiledStatement {
     values: Array<string | boolean | Buffer | null>;
 }
 export type PostgresqlQuery = (statement: PostgresqlCompiledStatement) => Promise<PostgresqlNativeResult>;
+export type PostgresqlExecutionOptions = Readonly<{
+    stats?: DatabaseStatsExecutionContextV1 & PostgresqlStatsCompilationV1;
+}>;
 
 export function postgresqlFailureCause(error: unknown): DatabaseFailureCauseV1 {
     const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed';
@@ -333,10 +338,19 @@ function compileEdit(relation: DatabaseRelationV1, change: DatabaseEditV1, metad
 }
 
 /** Dialect semantics operate on native frames, independent of network/container transport. */
-async function executeDialectOperation(input: DatabaseOperationInputV1, query: PostgresqlQuery): Promise<DatabaseOperationResultV1> {
+async function executeDialectOperation(input: DatabaseOperationInputV1, query: PostgresqlQuery, options: PostgresqlExecutionOptions): Promise<DatabaseOperationResultV1> {
     switch (input.operation) {
         case 'describe': return unavailable('Target descriptions belong to the selected-target resolver');
-        case 'stats.read': return unavailable('Statistics belong to the target statistics adapter');
+        case 'stats.read': {
+            if (!options.stats) return unavailable('Statistics require native connection setup facts');
+            const plan = compilePostgresqlStatsV1(input.request, options.stats);
+            const resultSets: (readonly DatabaseStatsNativeRowV1[])[] = [];
+            if (plan.status === 'compiled') for (const statement of plan.statements) {
+                const native = await query({ text: statement.sql, values: statement.parameters.map(String) });
+                resultSets.push(statsNativeRowsV1(native.fields, native.rows));
+            }
+            return statsOperationResultV1('postgresql', input.request, plan, resultSets, options.stats);
+        }
         case 'schemas.list': {
             const native = await query({ text: "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' AND ($1::text IS NULL OR strpos(nspname,$1)>0) AND ($2::text IS NULL OR nspname>$2) ORDER BY nspname LIMIT $3", values: [input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)] });
             const rows = native.rows.slice(0, input.page.rows);
@@ -388,6 +402,6 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
     }
 }
 
-export async function executePostgresqlOperation(input: DatabaseOperationInputV1, query: PostgresqlQuery): Promise<DatabaseOperationResultV1> {
-    return fitDatabaseOperationResult(input, await executeDialectOperation(input, query));
+export async function executePostgresqlOperation(input: DatabaseOperationInputV1, query: PostgresqlQuery, options: PostgresqlExecutionOptions = {}): Promise<DatabaseOperationResultV1> {
+    return fitDatabaseOperationResult(input, await executeDialectOperation(input, query, options));
 }

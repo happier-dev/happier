@@ -2,7 +2,8 @@ import type { DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
 import type { DatabaseStatsSqlPlanV1 } from '../stats.js';
 import { statsSqlPlan, statsText, statsBoolean, statsOptional, statsCounter, statsSize, statsRelation, statsJsonArray } from '../stats.js';
 import { quoteSqliteIdentifier } from './identifiers.js';
-export function compileSqliteStatsV1(operation: DatabaseStatsReadV1, capabilities: Readonly<{ dbstat?: boolean }> = {}): DatabaseStatsSqlPlanV1 {
+export type SqliteStatsCompilationV1 = Readonly<{ dbstat?: boolean }>;
+export function compileSqliteStatsV1(operation: DatabaseStatsReadV1, capabilities: SqliteStatsCompilationV1 = {}): DatabaseStatsSqlPlanV1 {
     if (operation.group==='statements'||operation.group==='activity'||operation.group==='indexAdvice') return {status:'unavailable',reason:'unsupported_group'};
     const parameters:(string|number)[]=[];
     const bind=(value:string|number)=>{parameters.push(value);return `?${parameters.length}`;};

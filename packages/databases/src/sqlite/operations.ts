@@ -7,6 +7,8 @@ import type {
 import { admitSqliteWorkbenchStatement, scanSqliteStatements } from './statement.js';
 import { quoteSqliteIdentifier } from './identifiers.js';
 import { databaseRowsBindingV1 } from '../rows.js';
+import { compileSqliteStatsV1, type SqliteStatsCompilationV1 } from './stats.js';
+import { statsNativeRowsV1, statsOperationResultV1, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 export { quoteSqliteIdentifier } from './identifiers.js';
 
 export type SqliteNativeValue = string | number | bigint | Uint8Array | null;
@@ -17,6 +19,9 @@ export interface SqliteNativeResult {
 }
 export interface SqliteCompiledStatement { text: string; values: SqliteNativeValue[] }
 export type SqliteQuery = (statement: SqliteCompiledStatement) => SqliteNativeResult;
+export type SqliteExecutionOptions = Readonly<{
+    stats?: DatabaseStatsExecutionContextV1 & SqliteStatsCompilationV1;
+}>;
 
 export class SqliteOperationError extends Error {
     constructor(readonly failure: DatabaseFailureV1) { super(failure.code); this.name = 'SqliteOperationError'; }
@@ -254,7 +259,7 @@ function readCell(query: SqliteQuery, input: DatabaseCellReadInputV1): DatabaseO
 }
 
 /** Pure dialect semantics; the transport owns the containing atomic transaction. */
-export function executeSqliteOperation(input: DatabaseOperationInputV1, query: SqliteQuery): DatabaseOperationResultV1 {
+export function executeSqliteOperation(input: DatabaseOperationInputV1, query: SqliteQuery, options: SqliteExecutionOptions = {}): DatabaseOperationResultV1 {
     switch (input.operation) {
         case 'describe': return unavailable('Target descriptions belong to the selected-target resolver');
         case 'schemas.list': {
@@ -299,6 +304,15 @@ export function executeSqliteOperation(input: DatabaseOperationInputV1, query: S
             }
             return { ok: true, operation: input.operation, status: 'committed', inserted: String(inserted), updated: String(updated), deleted: String(deleted) };
         }
-        case 'stats.read': return unavailable('SQLite statistics are not implemented');
+        case 'stats.read': {
+            if (!options.stats) return unavailable('Statistics require native connection setup facts');
+            const plan = compileSqliteStatsV1(input.request, options.stats);
+            const resultSets: (readonly DatabaseStatsNativeRowV1[])[] = [];
+            if (plan.status === 'compiled') for (const statement of plan.statements) {
+                const native = query({ text: statement.sql, values: [...statement.parameters] });
+                resultSets.push(statsNativeRowsV1(native.columns, native.rows));
+            }
+            return statsOperationResultV1('sqlite', input.request, plan, resultSets, options.stats);
+        }
     }
 }

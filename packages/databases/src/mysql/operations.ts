@@ -6,6 +6,8 @@ import type {
 } from '@happier-dev/database-protocol';
 import { admitMysqlWorkbenchStatement } from './statement.js';
 import { databaseRowsBindingV1 } from '../rows.js';
+import { compileMysqlStatsV1 } from './stats.js';
+import { statsNativeRowsV1, statsOperationResultV1, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 
 export interface MysqlNativeField { name: string; columnType: number; characterSet: number }
 export type MysqlNativeValue = string | number | Buffer | null;
@@ -17,7 +19,7 @@ export interface MysqlNativeResult {
 }
 export interface MysqlCompiledStatement { text: string; values: Array<string | number | boolean | Buffer | null> }
 export type MysqlQuery = (statement: MysqlCompiledStatement) => Promise<MysqlNativeResult>;
-export interface MysqlExecutionOptions { noBackslashEscapes?: boolean; ansiQuotes?: boolean }
+export interface MysqlExecutionOptions { noBackslashEscapes?: boolean; ansiQuotes?: boolean; stats?: DatabaseStatsExecutionContextV1 }
 
 // Stable MySQL wire protocol column types. BOOL is a TINYINT on this boundary, not a distinct boolean type.
 const wireTypes: Readonly<Record<number, string>> = {
@@ -321,6 +323,15 @@ export async function executeMysqlOperation(input: DatabaseOperationInputV1, que
             return { ok: true, operation: input.operation, status: 'committed', inserted: String(inserted), updated: String(updated), deleted: String(deleted) };
         }
         case 'cell.read': return readCell(query, input);
-        case 'stats.read': return unavailable('Statistics are executed by the selected statistics owner');
+        case 'stats.read': {
+            if (!options.stats) return unavailable('Statistics require native connection setup facts');
+            const plan = compileMysqlStatsV1(input.request);
+            const resultSets: (readonly DatabaseStatsNativeRowV1[])[] = [];
+            if (plan.status === 'compiled') for (const statement of plan.statements) {
+                const native = await query({ text: statement.sql, values: [...statement.parameters] });
+                resultSets.push(statsNativeRowsV1(native.fields, native.rows));
+            }
+            return statsOperationResultV1('mysql', input.request, plan, resultSets, options.stats);
+        }
     }
 }

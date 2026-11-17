@@ -1,14 +1,31 @@
-import { DatabaseStatsObservationV1Schema, type DatabaseStatsIntervalBasisV1, type DatabaseStatsObservationV1, type DatabaseStatsReadV1, type DatabaseStatsReasonV1 } from '@happier-dev/database-protocol';
+import { DatabaseStatsObservationV1Schema, type DatabaseStatsIntervalBasisV1, type DatabaseStatsObservationV1, type DatabaseStatsReadV1, type DatabaseStatsReasonV1, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
 
 export type DatabaseStatsSqlStatementV1 = Readonly<{ sql: string; parameters: readonly (string | number)[] }>;
 export type DatabaseStatsDecodeContextV1 = Readonly<{
     observedAtMs: number; database: string; intervalBasis: DatabaseStatsIntervalBasisV1;
 }>;
+/** Setup facts belong to the held native connection; execution supplies completion time. */
+export type DatabaseStatsExecutionContextV1 = Omit<DatabaseStatsDecodeContextV1, 'observedAtMs'>;
 export type DatabaseStatsNativeRowV1 = Readonly<Record<string, unknown>>;
 export type DatabaseStatsSqlPlanV1 = Readonly<{
     status: 'compiled'; statements: readonly DatabaseStatsSqlStatementV1[];
     decode(resultSets: readonly (readonly DatabaseStatsNativeRowV1[])[], context: DatabaseStatsDecodeContextV1): DatabaseStatsObservationV1;
 }> | Readonly<{ status: 'unavailable'; reason: DatabaseStatsReasonV1 }>;
+
+/** Stats SQL owns unique aliases; preserve native values until its typed decoder. */
+export function statsNativeRowsV1(columns: readonly Readonly<{ name: string }>[], rows: readonly (readonly unknown[])[]): readonly DatabaseStatsNativeRowV1[] {
+    return rows.map(row => Object.fromEntries(columns.map((column, index) => [column.name, row[index]])));
+}
+
+export function statsOperationResultV1(engineId: string, operation: DatabaseStatsReadV1, plan: DatabaseStatsSqlPlanV1,
+    resultSets: readonly (readonly DatabaseStatsNativeRowV1[])[], context: DatabaseStatsExecutionContextV1): DatabaseOperationResultV1 {
+    const completed = { ...context, observedAtMs: Date.now() };
+    const observation: DatabaseStatsObservationV1 = plan.status === 'compiled' ? plan.decode(resultSets, completed) : {
+        v: 1, status: 'unavailable', group: operation.group, engineId, observedAtMs: completed.observedAtMs,
+        scope: statsScope(operation, context.database), intervalBasis: context.intervalBasis, reason: plan.reason,
+    };
+    return { ok: true, operation: 'stats.read', observation };
+}
 
 /** Stats queries have unique aliases and integer casts; native adapters preserve text. */
 export function statsText(row: DatabaseStatsNativeRowV1, key: string): string | undefined {
