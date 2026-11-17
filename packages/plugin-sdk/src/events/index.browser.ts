@@ -8,8 +8,10 @@ export { ConnectedServiceQuotaEventV1ProtocolSchema } from './machineServices.js
 export type { CurrentSourceCatalog } from '../eventAutomation.js';
 export { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from './deploymentReceipts.js';
 export { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from './deploymentReceipts.js';
+export { DEPLOYMENT_PROMOTE_ACTION_ID_V1 } from './deploymentReceipts.js';
 export { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from './deploymentReceipts.js';
 export { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from './deploymentReceipts.js';
+export { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from './deploymentReceipts.js';
 export { DeploymentFailedEventV1ProtocolSchema } from './deploymentReceipts.js';
 export { DeploymentReceiptChangedEventV1ProtocolSchema } from './deploymentReceipts.js';
 export { DeploymentReceiptEventSetupV1ProtocolSchema } from './deploymentReceipts.js';

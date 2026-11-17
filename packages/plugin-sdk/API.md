@@ -1683,8 +1683,10 @@
 | `./events` | `CurrentSourceCatalog` | type | any |
 | `./events` | `DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1` | value | any |
 | `./events` | `DEPLOYMENT_DEPLOY_ACTION_ID_V1` | value | any |
+| `./events` | `DEPLOYMENT_PROMOTE_ACTION_ID_V1` | value | any |
 | `./events` | `DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1` | value | any |
 | `./events` | `DEPLOYMENT_RECEIPT_EVENT_REFS_V1` | value | any |
+| `./events` | `DEPLOYMENT_ROLLBACK_ACTION_ID_V1` | value | any |
 | `./events` | `DeploymentFailedEventV1ProtocolSchema` | value | any |
 | `./events` | `DeploymentReceiptChangedEventV1ProtocolSchema` | value | any |
 | `./events` | `DeploymentReceiptEventSetupV1ProtocolSchema` | value | any |

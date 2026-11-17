@@ -18,4 +18,4 @@ export const DeploymentRollbackCompletedEventV1ProtocolSchema = rolledBack;
 export const DeploymentReceiptOutcomeEventV1ProtocolSchema = outcome;
 export const DeploymentReceiptChangedEventV1ProtocolSchema = changed;
 
-export { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+export { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';

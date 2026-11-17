@@ -8,7 +8,7 @@ import { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } f
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN, ScmWorktreeCreateResponseSchema } from '@happier-dev/protocol/scm/worktrees';
 import { MachineStorageItemsListResultV1Schema, PileReviewV1Schema, PileApplyResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
@@ -47,6 +47,12 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   expect(catalog.find(({ event }) => event.identity.pluginId === 'happier.machine.services'
     && event.identity.localId === 'deployment-failed')?.event.automation)
     .toMatchObject({ completesActionIds: expect.arrayContaining([DEPLOYMENT_DEPLOY_ACTION_ID_V1]) });
+  for (const [localId, actionId] of [['rollback-completed', DEPLOYMENT_ROLLBACK_ACTION_ID_V1],
+    ['promotion-completed', DEPLOYMENT_PROMOTE_ACTION_ID_V1]] as const) {
+    expect(catalog.find(({ event }) => event.identity.pluginId === 'happier.machine.services'
+      && event.identity.localId === localId)?.event.automation)
+      .toMatchObject({ completesActionIds: [actionId], completionOutcome: 'succeeded' });
+  }
   expect(catalog.some(({ event }) => event.identity.pluginId === 'happier.machine.services'
     && event.identity.localId === 'worktree-removed'),
   'The settled removal owner must be selectable through the ordinary Event catalog').toBe(true);

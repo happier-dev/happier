@@ -54,4 +54,4 @@ export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSch
 export type { MachineServiceObservationV1, WorktreeRemovedEventV1, GuardStoppedEventV1, ConnectedServiceQuotaEventV1, ConnectedServiceCredentialHealthEventV1, ProjectSetupSettledEventV1 } from './machineServices.js';
 
 export { SCM_WORKTREE_REMOVE_ACTION_ID_V1, PROJECT_PREPARE_ACTION_ID_V1 } from './machineServices.js';
-export { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from './deploymentReceipts.js';
+export { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1 } from './deploymentReceipts.js';

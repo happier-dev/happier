@@ -1,7 +1,7 @@
 import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { arePluginMachineMaterializationRefsEqual, computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, readDeploymentAccountChangeV1,
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, readDeploymentAccountChangeV1,
     DeploymentReceiptChangedEventV1ProtocolSchema as changedSchema,
     deploymentInProgressStates, DeploymentReceiptEventSourceConfigV1ProtocolSchema as configSchema,
     DeploymentReceiptEventSetupV1ProtocolSchema as setupSchema,
@@ -25,11 +25,11 @@ const outcomes = {
         title: 'Deployment receipt changed', description: 'The current deployment receipt or its serving Domain changed.' },
     [DEPLOYMENT_FAILED_EVENT]: { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'failed', operation: null, schema: failedSchema, key: 'deploymentFailed',
         title: 'Deployment failed', description: 'A deployment receipt settled as failed, with its recorded failure phase.' },
-    [ROLLBACK_COMPLETED_EVENT]: { completesActionIds: undefined, state: 'succeeded', operation: 'rollback', schema: rollbackSchema, key: 'rollbackCompleted',
+    [ROLLBACK_COMPLETED_EVENT]: { completesActionIds: [DEPLOYMENT_ROLLBACK_ACTION_ID_V1], state: 'succeeded', operation: 'rollback', schema: rollbackSchema, key: 'rollbackCompleted',
         title: 'Rollback completed', description: 'A rollback receipt settled successfully.' },
     [DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded.localId]: { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'succeeded', operation: null, schema: outcomeSchema, key: 'deploymentSucceeded',
         title: 'Deployment succeeded', description: 'A deployment receipt settled successfully.' },
-    'promotion-completed': { completesActionIds: undefined, state: 'succeeded', operation: 'promote', schema: outcomeSchema, key: 'promotionCompleted',
+    'promotion-completed': { completesActionIds: [DEPLOYMENT_PROMOTE_ACTION_ID_V1], state: 'succeeded', operation: 'promote', schema: outcomeSchema, key: 'promotionCompleted',
         title: 'Promotion completed', description: 'A promotion receipt settled successfully.' },
     'deployment-cancelled': { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'cancelled', operation: null, schema: outcomeSchema, key: 'deploymentCancelled',
         title: 'Deployment cancelled', description: 'A deployment receipt settled as cancelled.' },
@@ -373,7 +373,8 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                     nativeReceipt = receipt;
                     if (receipt.operation === 'deploy' && receipt.settledAtMs !== undefined) {
                         for (const candidate of Object.keys(outcomes) as EventId[]) {
-                            if (!outcomes[candidate].completesActionIds || outcomes[candidate].state !== receipt.state) continue;
+                            if (!outcomes[candidate].completesActionIds || outcomes[candidate].state !== receipt.state
+                                || outcomes[candidate].operation !== null) continue;
                             await admitNativeActionCompletionObservation(completionContext, projectReceiptObservation({
                                 receipt, event: candidate, serverId: event.payload.serverId, observationReceivedAt: now(),
                                 sourceInstanceId: `deployment:${computeCanonicalDomainSeparatedDigest('happier.deployment.completion-source.v1',
