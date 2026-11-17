@@ -1,5 +1,6 @@
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
+import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { acquireSessionAccountCursorLocksInTx, readSessionAccountCursorAudienceInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
@@ -23,7 +24,7 @@ export async function acquireWorkflowPublicationLocksInTx(
     });
     const admittedAccountIds = await acquireSessionAccountCursorLocksInTx(tx, captured.sessionIds, captured.accountIds, options);
     if (captured.runIds.length > 0) {
-        if (getDbProviderFromEnv(process.env, "postgres") === "postgres") {
+        if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres")) === "postgres") {
             await tx.$queryRawUnsafe(
                 'SELECT "id" FROM "AutomationRun" WHERE "id" = ANY($1::text[]) ORDER BY "id" FOR NO KEY UPDATE',
                 captured.runIds,
