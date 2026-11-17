@@ -54,16 +54,12 @@ export const handleSessionHostCliCommand: CommandHandler = async (context) => {
       },
       // The daemon that launched (or later adopts) this host publishes its process birth in its own state.
       readTrustedCaller: readPublishedDaemonProcessBirth,
-      // Held for a Session about to be created (New Session intent): load the runner code that Session's
-      // command runs (catalog command, launch preparation, runtime bridge, session loop) before it arrives.
-      preloadSessionRunner: () => Promise.all([
-        import('@/agent/catalog/registry'),
-        import('@/cli/providerSessionArgPartition'),
-        import('@/session/creation/resolveSessionCreationAgentTarget'),
-        import('@/cli/runBackendSessionCliCommand'),
-        import('@/agent/runtime/bridges/session/SessionHostBridge'),
-        import('@/agent/runtime/session/loop/lifecycle'),
-      ]),
+      // Held for a Session about to be created (New Session intent): prepare what that Session's
+      // command runs before it arrives.
+      preloadSessionRunner: async () => {
+        const { preloadSessionRunner } = await import('@/agent/runtime/lifecycle/sessionRunnerPreload');
+        await preloadSessionRunner();
+      },
     });
     process.stdout.write(`${SESSION_HOST_READY_LINE} ${process.pid}\n`);
     await host.whenEnded;
