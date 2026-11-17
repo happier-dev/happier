@@ -166,6 +166,9 @@ export const ReviewCommentOperationErrorCodeV1Schema = lazyZodSchema(() => z.enu
 ]));
 export type ReviewCommentOperationErrorCodeV1 = z.infer<typeof ReviewCommentOperationErrorCodeV1Schema>;
 
+/** Largest page one `reviews.comments.list` request may ask for. */
+export const REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1 = 200;
+
 export const ReviewCommentListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   workspace: z.optional(ReviewCommentWorkspaceV1Schema),
   workspaceId: z.optional(z.string().check(z.minLength(1))),
@@ -182,7 +185,7 @@ export const ReviewCommentListRequestV1Schema = lazyZodSchema(() => z.strictObje
   taxonomyIds: ReviewCommentListTaxonomyIdsV1Schema,
   includeHistory: z._default(z.boolean(), false),
   cursor: z.optional(z.string().check(z.minLength(1))),
-  limit: z._default(z.number().check(z.int(), z.positive(), z.maximum(200)), 50),
+  limit: z._default(z.number().check(z.int(), z.positive(), z.maximum(REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1)), 50),
 }));
 export type ReviewCommentListRequestV1 = z.infer<typeof ReviewCommentListRequestV1Schema>;
 

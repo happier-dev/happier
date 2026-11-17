@@ -1,5 +1,5 @@
 import { isActionFamilyId } from '../actionFamilies.js';
-import { ReviewCommentActionIdV1Schema, ReviewCommentListActionRequestV1Schema, ReviewCommentListResponseV1Schema, type ReviewCommentListResponseV1 } from '../../../reviews/comments/actions.js';
+import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ReviewCommentActionIdV1Schema, ReviewCommentListActionRequestV1Schema, ReviewCommentListResponseV1Schema, type ReviewCommentListResponseV1 } from '../../../reviews/comments/actions.js';
 import type { WorkflowSessionScopeV1 } from '../../../workflows/workflowSessionScopeV1.js';
 import { normalizeId } from '../inputReading.js';
 import type { AdmittedActionInputById } from '../../actionSpecs.js';
@@ -101,7 +101,8 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             do {
               ctx.signal?.throwIfAborted();
               const result = await deps.reviewCommentAction({ actionId: 'reviews.comments.list',
-                input: ReviewCommentListActionRequestV1Schema.parse({ sessionId: apply.sessionId, runId, includeHistory: true, ...(cursor ? { cursor } : {}) }),
+                input: ReviewCommentListActionRequestV1Schema.parse({ sessionId: apply.sessionId, runId, includeHistory: true,
+                  limit: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ...(cursor ? { cursor } : {}) }),
                 ...requestContext });
               const failure = readActionFailureEnvelope(result);
               if (failure) return failure;
@@ -143,7 +144,8 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
               ctx.signal?.throwIfAborted();
               const result = await deps.reviewCommentAction({
                 actionId: 'reviews.comments.list',
-                input: { ...request, ...(cursor ? { cursor } : {}) },
+                // Draining every page: a page size only sets how many round trips that costs.
+                input: { ...request, limit: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ...(cursor ? { cursor } : {}) },
                 ...requestContext,
               });
               const failure = readActionFailureEnvelope(result);

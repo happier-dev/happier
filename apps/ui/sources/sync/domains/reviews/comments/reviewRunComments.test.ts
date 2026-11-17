@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentListRequestV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
 
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
@@ -94,6 +95,24 @@ describe('review run comments (one cache, bound to its Home and Account)', () =>
             expect(notify).toHaveBeenCalledTimes(2);
         } finally { stop(); }
     });
+    it('reads a large review run in as few pages as the list contract allows', async () => {
+        const target = { scope: { serverId: 'publication-home', accountId: 'account-b' }, sessionId: 'sess_1', runId: 'run_1' };
+        const items = Array.from({ length: 180 }, (_, index) => comment('account-b', { id: `comment-${index}`, findingId: `f${index}` }));
+        const pages: number[] = [];
+        // The run host pages by the canonical list request (its default page is 50).
+        const execute = async (_actionId: string, input: unknown) => {
+            const request = ReviewCommentListRequestV1Schema.parse(input);
+            const start = request.cursor ? Number(request.cursor) : 0;
+            pages.push(start);
+            const end = start + request.limit;
+            return { items: items.slice(start, end), cursor: end < items.length ? String(end) : null };
+        };
+
+        await loadReviewRunComments({ ...target, execute: execute as never });
+
+        expect({ pages: pages.length, comments: readReviewRunComments(target).comments.length }).toEqual({ pages: 1, comments: 180 });
+    });
+
     it('keeps one canonical revision when another reviewer opens an older reference afterwards', async () => {
         let revision = 5;
         const served = await serveActionHomes({

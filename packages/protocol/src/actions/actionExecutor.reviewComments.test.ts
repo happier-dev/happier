@@ -306,7 +306,8 @@ describe('createActionExecutor (review comments)', () => {
     expect(requests).toEqual([undefined, 'second-page'].map((cursor) => ({
       actionId: 'reviews.comments.list', serverId: 'server', signal,
       reviewCommentPrincipal: { actor: { kind: 'workflow', runId: 'run' } },
-      input: { sessionId: 'origin', states: [], includeHistory: false, limit: 50, ...(cursor ? { cursor } : {}) },
+      // A drain reads the largest page the list contract allows: fewer round trips, same rows.
+      input: { sessionId: 'origin', states: [], includeHistory: false, limit: 200, ...(cursor ? { cursor } : {}) },
     })));
   });
 

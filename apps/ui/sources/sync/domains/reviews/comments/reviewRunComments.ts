@@ -1,5 +1,5 @@
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
-import type { ReviewCommentListResponseV1, ReviewCommentGetResponseV1, ReviewCommentTransitionResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, type ReviewCommentListResponseV1, type ReviewCommentGetResponseV1, type ReviewCommentTransitionResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -196,6 +196,8 @@ export function loadReviewRunComments(params: ReviewRunCommentsTarget & Readonly
                     sessionId: params.sessionId,
                     runId: params.runId,
                     includeHistory: true,
+                    // The card shows every finding of the run: read it in the fewest pages.
+                    limit: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1,
                     ...(cursor ? { cursor } : {}),
                 }) as ReviewCommentListResponseV1;
                 comments.push(...page.items);
