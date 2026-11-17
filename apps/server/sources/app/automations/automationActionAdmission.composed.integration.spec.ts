@@ -7,14 +7,20 @@ import { db } from "@/storage/db";
 import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { automationSubjectKeyV1 } from "@happier-dev/protocol/automations/automationSubjectV1";
-import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from "@happier-dev/protocol/databases/databaseTargetIdentityV1";
+import { automationSubjectKeyV1, type AutomationSubjectV1 } from "@happier-dev/protocol/automations/automationSubjectV1";
 import { AutomationTriggerIdSchema, sealAutomationTriggerDefinitionStoredEnvelopeV1,
     createAccountScopedCryptoMaterialSnapshotV1 } from "@happier-dev/protocol";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol/storage/artifactStoredContent";
+import { encodeArtifactKindV1 } from "@happier-dev/protocol/artifacts/artifactKindV1";
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from "@happier-dev/protocol/actions/approvalProfileArtifactV1";
+import { decodeBase64 } from "privacy-kit";
+import { registerProjectAccountRowRoutes } from "@/app/api/routes/projects/registerProjectAccountRowRoutes";
+import { buildProjectAccountRowPhysicalKeyV1 } from "@happier-dev/protocol/projects/projectAccountRowsV1";
 import { PluginManifestV2Schema } from "@happier-dev/protocol/plugins/manifest/v2";
 import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 import { formatQualifiedPluginActionId } from "@happier-dev/protocol/plugins/actions/qualifiedActionId";
+import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from "@happier-dev/protocol/databases/databaseTargetIdentityV1";
 
 describe("Action occurrence admission through the real router", () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -217,6 +223,227 @@ describe("Action occurrence admission through the real router", () => {
                 }
             }
             expect(await db.automationTrigger.count({ where: { automationId } })).toBe(2);
+        } finally { await app.close(); }
+    });
+
+    it.each(["project", "healthCheck"] as const)("keeps Account-private %s subjects own-only across public trigger writes", async kind => {
+        const serverId = await getOrCreateServerIdentityId();
+        const projectKey = randomUUID();
+        const subject: AutomationSubjectV1 = kind === "project" ? { kind, serverId, projectKey }
+            : { kind, serverId, sourceInstanceId: randomUUID(), checkId: randomUUID() };
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        registerProjectAccountRowRoutes(app);
+        try {
+            for (const mode of ["plain", "e2ee"] as const) {
+                const accountId = randomUUID();
+                const otherAccountId = randomUUID();
+                await db.account.createMany({ data: [accountId, otherAccountId].map(id => ({ id,
+                    encryptionMode: mode, ...(mode === "e2ee" ? createSignedAccountContentBinding() : {}) })) });
+                if (kind === "project" && mode === "plain") {
+                    const key = { kind: "project-organization", serverId, projectKey } as const;
+                    for (const id of [accountId, otherAccountId]) {
+                        const written = await app.inject({ method: "POST", url: "/v1/account/project-rows/mutate",
+                            headers: { "x-test-user-id": id }, payload: { mutations: [{ key, expectedRevision: "absent",
+                                content: { t: "plain", v: { key, value: { label: id } } } }],
+                            expectedRefs: [], topologyChange: false } });
+                        expect(written.statusCode, written.body).toBe(200);
+                        expect(written.json()).toMatchObject({ status: "updated" });
+                    }
+                    expect(await db.userKVStore.count({ where: { accountId: { in: [accountId, otherAccountId] },
+                        key: buildProjectAccountRowPhysicalKeyV1(key) } })).toBe(2);
+                }
+                const automationId = randomUUID();
+                await db.automation.create({ data: { id: automationId, accountId, name: "Private subject reach", enabled: true,
+                    templateCiphertext: JSON.stringify({ ...createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                        directory: "/tmp/reach", prompt: "Check" }), ...(mode === "e2ee"
+                        ? { workflow: { t: "encrypted", c: "private-workflow" } } : {}) }), templateVersion: 1 } });
+                const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: "e2ee",
+                    material: { type: "legacy", secret: new Uint8Array(32).fill(7) } }).material;
+                for (const claimedReach of [true, false]) {
+                    const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+                    const definition = { kind: "action", phase: "after", actionIds: ["scm.commit.create"], subject };
+                    const envelope = mode === "e2ee" ? sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode, material,
+                        randomBytes: length => new Uint8Array(length).fill(1),
+                        binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: "action" }, definition })
+                        : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode,
+                            binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: "action" }, definition });
+                    const response = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                        headers: { "x-test-user-id": accountId }, payload: { triggerId, trigger: {
+                            kind: "action", phase: "after", actionIds: definition.actionIds, enabled: true,
+                            subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
+                            triggerDefinitionEnvelope: envelope,
+                            reachesOthers: claimedReach,
+                        } } });
+                    if (mode === "e2ee" && claimedReach) {
+                        expect(response.statusCode, response.body).toBe(409);
+                        expect(response.json()).toEqual({ error: "automation_stored_content_unavailable" });
+                        expect(await db.automationTrigger.findUnique({ where: { id: triggerId } })).toBeNull();
+                    } else {
+                        expect(response.statusCode, response.body).toBe(200);
+                        expect(response.json().triggers.find((trigger: { id: string }) => trigger.id === triggerId))
+                            .toMatchObject({ reachesOthers: false });
+                        const stored = await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
+                        expect(stored.reachesOthers).toBe(false);
+                        expect(JSON.parse(stored.definitionEnvelope!)).toEqual(envelope);
+                    }
+                }
+            }
+        } finally { await app.close(); }
+    });
+
+    it.each(["machine", "session", "approvalProfile", "app", "environment", "backup"] as const)("derives encrypted %s reach from exact admitted identities without opening content", async kind => {
+        const ownerId = randomUUID();
+        const editorId = randomUUID();
+        const viewerId = randomUUID();
+        const resourceId = randomUUID();
+        const serverId = await getOrCreateServerIdentityId();
+        await db.account.createMany({ data: [ownerId, editorId, viewerId].map(id => ({ id,
+            encryptionMode: "e2ee", ...createSignedAccountContentBinding() })) });
+        if (kind === "machine") {
+            await db.machine.create({ data: { id: resourceId, accountId: ownerId,
+                metadata: "private-machine-content", installationId: randomUUID() } });
+            await db.machineGrant.createMany({ data: [
+                { machineId: resourceId, principalKind: "account", accountId: editorId, accessLevel: "admin", createdByAccountId: ownerId },
+                { machineId: resourceId, principalKind: "account", accountId: viewerId, accessLevel: "view", createdByAccountId: ownerId },
+            ] });
+        } else if (kind === "session") {
+            await db.session.create({ data: { id: resourceId, accountId: ownerId, tag: randomUUID(),
+                metadata: "private-session-content", encryptionMode: "e2ee" } });
+            await db.sessionGrant.createMany({ data: [
+                { sessionId: resourceId, principalKind: "account", accountId: editorId, accessLevel: "edit", createdByAccountId: ownerId },
+                { sessionId: resourceId, principalKind: "account", accountId: viewerId, accessLevel: "view", createdByAccountId: ownerId },
+            ] });
+        } else if (kind === "approvalProfile") {
+            await db.artifact.create({ data: { id: resourceId, accountId: ownerId,
+                kind: encodeArtifactKindV1({ kind: "other", kindHint: APPROVAL_PROFILE_ARTIFACT_KIND_V1 }),
+                header: new Uint8Array([1]), body: new Uint8Array([2]), dataEncryptionKey: new Uint8Array([3]),
+                headerVersion: 1, bodyVersion: 1 } });
+            await db.artifactGrant.createMany({ data: [
+                { artifactId: resourceId, principalKind: "account", accountId: editorId, accessLevel: "edit", createdByAccountId: ownerId },
+                { artifactId: resourceId, principalKind: "account", accountId: viewerId, accessLevel: "view", createdByAccountId: ownerId },
+            ] });
+        } else {
+            const source = await db.projectSource.create({ data: { ...(kind === "app" ? { id: resourceId } : {}),
+                createdByAccountId: ownerId, owner: { kind: "account", accountId: ownerId }, name: "Reach source",
+                audience: [{ principal: { kind: "account", accountId: viewerId }, level: "view" }], attachments: [] } });
+            if (kind !== "app") {
+                const machine = await db.machine.create({ data: { id: randomUUID(), accountId: ownerId,
+                    metadata: "private-controller", installationId: randomUUID() } });
+                const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: ownerId,
+                    kind: "v1:other:deployment-environment.v1", header: new Uint8Array([1]), body: new Uint8Array([2]),
+                    dataEncryptionKey: new Uint8Array([3]), headerVersion: 1, bodyVersion: 1 } });
+                await db.deploymentEnvironment.create({ data: { id: resourceId, projectSourceId: source.id,
+                    createdByAccountId: ownerId, controllerMachineId: machine.id, protection: "nonProduction",
+                    purpose: "standard", deployerMode: "managers", referencedSavedSecretRevisions: [],
+                    contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+                if (kind === "backup") await db.projectSource.update({ where: { id: source.id }, data: { deletedAt: new Date() } });
+            }
+        }
+        const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: "e2ee",
+            material: { type: "legacy", secret: new Uint8Array(32).fill(7) } }).material;
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            for (const [accountId, home, id, expected] of [
+                [ownerId, serverId, resourceId, true],
+                ...(kind === "machine" || kind === "session" || kind === "approvalProfile"
+                    ? [[editorId, serverId, resourceId, true] as const] : []),
+                [viewerId, serverId, resourceId, false], [ownerId, "srv_wrong_home", resourceId, false],
+                [ownerId, serverId, randomUUID(), false],
+            ] as const) {
+                const automationId = randomUUID();
+                const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+                await db.automation.create({ data: { id: automationId, accountId, name: "Encrypted subject reach", enabled: true,
+                    templateCiphertext: JSON.stringify({ ...createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                        directory: "/tmp/reach", prompt: "Check" }), workflow: { t: "encrypted", c: "private-workflow" } }), templateVersion: 1 } });
+                const subject: AutomationSubjectV1 = kind === "machine" ? { kind, serverId: home, machineId: id }
+                    : kind === "session" ? { kind, serverId: home, sessionId: id }
+                    : kind === "approvalProfile" ? { kind, serverId: home, profileId: id }
+                    : kind === "app" ? { kind, serverId: home, projectSourceId: id }
+                    : { kind, serverId: home, environmentId: id };
+                const definition = { kind: "action", phase: "after", actionIds: ["scm.commit.create"], subject };
+                const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: "e2ee", material,
+                    randomBytes: length => new Uint8Array(length).fill(1),
+                    binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: "action" }, definition });
+                const response = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                    headers: { "x-test-user-id": accountId }, payload: { triggerId, trigger: {
+                        kind: "action", phase: "after", actionIds: definition.actionIds, enabled: true,
+                        subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
+                        reachesOthers: false, triggerDefinitionEnvelope: envelope,
+                    } } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json().triggers[0]).toMatchObject({ reachesOthers: expected });
+                const stored = await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
+                expect(stored.reachesOthers).toBe(expected);
+                expect(JSON.parse(stored.definitionEnvelope!)).toEqual(envelope);
+                if (accountId === editorId) {
+                    if (kind === "machine") await db.machineGrant.updateMany({ where: { machineId: resourceId, accountId }, data: { accessLevel: "view" } });
+                    if (kind === "session") await db.sessionGrant.updateMany({ where: { sessionId: resourceId, accountId }, data: { accessLevel: "view" } });
+                    if (kind === "approvalProfile") await db.artifactGrant.updateMany({ where: { artifactId: resourceId, accountId }, data: { accessLevel: "view" } });
+                    const nextEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: "e2ee", material,
+                        randomBytes: length => new Uint8Array(length).fill(2),
+                        binding: { v: 1, automationId, triggerId, triggerRevision: 1, triggerKind: "action" }, definition });
+                    const changed = await app.inject({ method: "PATCH", url: `/v3/automations/${automationId}/triggers`,
+                        headers: { "x-test-user-id": accountId }, payload: { triggerId, expectedRevision: 0,
+                            enabled: false, triggerDefinitionEnvelope: nextEnvelope } });
+                    expect(changed.statusCode, changed.body).toBe(200);
+                    expect(changed.json().triggers[0]).toMatchObject({ enabled: false, reachesOthers: false });
+                }
+            }
+        } finally { await app.close(); }
+    });
+
+    it("derives profile reach from the Artifact edit grant at every write", async () => {
+        const profileKind = "approval-profile.v1";
+        const ownerId = randomUUID();
+        const editorId = randomUUID();
+        const profileId = randomUUID();
+        const serverId = await getOrCreateServerIdentityId();
+        await db.account.createMany({ data: [ownerId, editorId].map(id => ({ id, encryptionMode: "plain" })) });
+        await db.artifact.create({ data: { id: profileId, accountId: ownerId,
+            kind: encodeArtifactKindV1({ kind: "other", kindHint: profileKind }),
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: profileKind, name: "Profile" })),
+            body: decodeBase64(encodePlainArtifactStoredContent({ kind: profileKind, profile: { name: "Profile" } })),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
+        await db.artifactGrant.create({ data: { artifactId: profileId, principalKind: "account", accountId: editorId,
+            accessLevel: "view", createdByAccountId: ownerId } });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            for (const [accountId, expected, home] of [
+                [editorId, false, serverId], [ownerId, true, serverId], [ownerId, false, "srv_other_home"],
+            ] as const) {
+                const automationId = randomUUID();
+                await db.automation.create({ data: { id: automationId, accountId, name: "Profile reach", enabled: true,
+                    templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                        directory: "/tmp/reach", prompt: "Check" })), templateVersion: 1 } });
+                const response = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                    headers: { "x-test-user-id": accountId }, payload: { triggerId: randomUUID(), trigger: {
+                        kind: "action", phase: "after", actionIds: ["scm.commit.create"], enabled: true,
+                        subject: { kind: "approvalProfile", serverId: home, profileId },
+                    } } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json().triggers[0]).toMatchObject({ reachesOthers: expected });
+            }
+            await db.artifactGrant.updateMany({ where: { artifactId: profileId, accountId: editorId }, data: { accessLevel: "edit" } });
+            const automationId = randomUUID();
+            const triggerId = randomUUID();
+            await db.automation.create({ data: { id: automationId, accountId: editorId, name: "Editable profile", enabled: true,
+                templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                    directory: "/tmp/reach", prompt: "Check" })), templateVersion: 1 } });
+            const edited = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": editorId }, payload: { triggerId, trigger: {
+                    kind: "action", phase: "after", actionIds: ["scm.commit.create"], enabled: true,
+                    subject: { kind: "approvalProfile", serverId, profileId },
+                } } });
+            expect(edited.statusCode, edited.body).toBe(200);
+            expect(edited.json().triggers[0]).toMatchObject({ reachesOthers: true });
+            await db.artifactGrant.updateMany({ where: { artifactId: profileId, accountId: editorId }, data: { accessLevel: "view" } });
+            const changed = await app.inject({ method: "PATCH", url: `/v3/automations/${automationId}/triggers`,
+                headers: { "x-test-user-id": editorId }, payload: { triggerId, expectedRevision: 0, enabled: false } });
+            expect(changed.statusCode, changed.body).toBe(200);
+            expect(changed.json().triggers[0]).toMatchObject({ reachesOthers: false });
         } finally { await app.close(); }
     });
 
