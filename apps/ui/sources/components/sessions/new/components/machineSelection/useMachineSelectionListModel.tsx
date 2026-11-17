@@ -198,9 +198,9 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
     managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
-    /** Commits local reviewed intent only; explicit admission owns resource acquisition. */
     /** Which default placed the preset ("Team default"): the matching row's trailing provenance. */
     managedPlacementSourceLabel?: string | null;
+    /** Commits local reviewed intent only; explicit admission owns resource acquisition. */
     onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
     /** Opens the Machines presets (the managed group's trailing "Presets" destination). */
     onOpenManagedPresets?: () => void;
@@ -734,9 +734,9 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 ? managedMachines.find(offer => offer.homeId === managedPlacementPreset.homeId
                     && offer.presetId === managedPlacementPreset.presetId)?.id ?? null
                 : null;
-        // "Connect a computer…" closes the New machine group (lab m-pick): the other way to add a machine.
         // Provenance sits on the inherited preset's row only (owner ruling 2026-11-16), never on the chip.
         const inheritedPresetOptionId = !params.selectedManagedMachine && params.managedPlacementSourceLabel ? managedOptionId : null;
+        // "Connect a computer…" closes the New machine group (lab m-pick): the other way to add a machine.
         const connectMachineOption: SelectionListOption | null = purpose === 'session' && hasConnectMachine
             ? {
                 id: 'connect-machine',

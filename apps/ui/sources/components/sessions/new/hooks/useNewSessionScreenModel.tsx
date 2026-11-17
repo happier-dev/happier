@@ -1569,6 +1569,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         modelSelectionV2,
         modelSelectionForPersistence,
         modelIsManagedDefault,
+        modelSource,
         teamCredentialModel: selectedTeamCredentialModel,
         setModelMode,
         setModelSelection,
@@ -1589,7 +1590,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         allowTargetlessDraftEngineSelection: routeBackendTarget === null,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft,
-        modelSource,
         rememberedEngineSelection,
         implicitProfileModelSelection: initialProfileAuthoringIntent.modelSelection,
     });
@@ -2639,6 +2639,17 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 ?? (isBundledAgentId(selectedRuntimeCarrierAgentId) ? getAgentCore(selectedRuntimeCarrierAgentId)?.nativeSandbox?.off : false)) === true
             : false,
     });
+    // The names a source word uses come from the reads that decided the defaults (lab L11 vocabulary).
+    const managedDefaultsProject = managedSessionDefaults.projectRead.data;
+    const managedDefaultsTeamId = managedSessionDefaults.read.context?.primaryTeamId ?? null;
+    const managedDefaultsTeamName = managedDefaultsProject?.teamName
+        ?? (managedDefaultsTeamId ? teamCredentialCatalog.teamNameById[managedDefaultsTeamId] : undefined) ?? null;
+    const inheritedSourceNames = React.useMemo(() => ({
+        teamName: managedDefaultsTeamName,
+        projectName: managedDefaultsProject?.source?.name ?? null,
+        organization: managedSessionDefaults.read.context?.policyDefaults?.organization ?? null,
+    }), [managedDefaultsTeamName, managedDefaultsProject?.source?.name, managedSessionDefaults.read.context?.policyDefaults?.organization]);
+    const permissionModeAttribution = describeInheritedDefaultSource(permissionModeSource, inheritedSourceNames);
 
     const resolveSelectedProfileAuthoringIntent = React.useCallback((profileId: string) => (
         resolveLaunchProfileAuthoringIntent({
@@ -2664,17 +2675,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         permissionModeRef,
         applyPermissionMode,
         resolveDefaultPermissionMode,
-    // The names a source word uses come from the reads that decided the defaults (lab L11 vocabulary).
-    const managedDefaultsProject = managedSessionDefaults.projectRead.data;
-    const managedDefaultsTeamId = managedSessionDefaults.read.context?.primaryTeamId ?? null;
-    const managedDefaultsTeamName = managedDefaultsProject?.teamName
-        ?? (managedDefaultsTeamId ? teamCredentialCatalog.teamNameById[managedDefaultsTeamId] : undefined) ?? null;
-    const inheritedSourceNames = React.useMemo(() => ({
-        teamName: managedDefaultsTeamName,
-        projectName: managedDefaultsProject?.source?.name ?? null,
-        organization: managedSessionDefaults.read.context?.policyDefaults?.organization ?? null,
-    }), [managedDefaultsTeamName, managedDefaultsProject?.source?.name, managedSessionDefaults.read.context?.policyDefaults?.organization]);
-    const permissionModeAttribution = describeInheritedDefaultSource(permissionModeSource, inheritedSourceNames);
         prepareSecretPromptForProfileSelection,
         agentType: agentPolicyType,
         sessionModeDescriptor: selectedBackendEntry?.agentCatalogEntry.sessionModeDescriptor,
@@ -2839,6 +2839,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         homeNameByTeamId: teamCredentialCatalog.homeNameByTeamId,
         teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
         selectedTeamCredentialModel,
+        modelAttribution: modelIsManagedDefault ? { agentTargetKey: selectedBackendTargetKey,
+            label: describeInheritedDefaultSource(modelSource, inheritedSourceNames) } : null,
         onSelectTeamCredentialModel: (selection) => { void selectDraftTeamModel(selection); },
         onSelectOtherModel: clearTeamCredentialModel,
     }), [clearTeamCredentialModel, inheritedSourceNames, modelIsManagedDefault, modelSource, selectDraftTeamModel, selectedBackendTargetKey, selectedTeamCredentialModel,
@@ -2864,8 +2866,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resolvedBackendEntries,
         getCompatibleProfileBackendEntries,
         isBackendEntrySelectable,
-        modelAttribution: modelIsManagedDefault ? { agentTargetKey: selectedBackendTargetKey,
-            label: describeInheritedDefaultSource(modelSource, inheritedSourceNames) } : null,
         getBackendEntryUnavailabilityReason,
         selectedBackendEntry,
         getBackendEntryMachineAgent,
@@ -3089,6 +3089,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const offersNoFolder = executionTarget?.kind === 'machine' && !directoryIntentFixed;
     const { pathPopover: composerPathPopover, machinePopover, resumePopover } = useNewSessionInputPopovers({
         managedPlacementPreset,
+        managedPlacementSourceLabel: managedPlacementPreset ? describeInheritedDefaultSource(managedPlacementSource, inheritedSourceNames) : null,
         machineInventory: useEnhancedSessionWizard ? undefined : {
             allowedServerIds: destinationServerIds,
             activeServerId: activeServerSource.activeServerId,
@@ -3115,7 +3116,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         machineGroups: serverScopedMachineGroups,
         selectedServerId,
         recentMachines,
-        managedPlacementSourceLabel: managedPlacementPreset ? describeInheritedDefaultSource(managedPlacementSource, inheritedSourceNames) : null,
         favoriteMachineItems,
         selectMachineTarget,
         toggleFavoriteMachine,
