@@ -44,6 +44,36 @@ const menuActions = (
     );
 
 describe('theme library and editor views', () => {
+  it('windows the editor start-from library through the visual picker in its page', async () => {
+    const { ThemeProfileEditorView } = await import('./ThemeProfileEditorView');
+    const specimen = await renderScreen(<ThemeLibrarySpecimen scene="D1" />);
+    const basis: import('./themeProfileEditorViewTypes').ThemeProfileEditorViewProps = specimen.findAllByType(ThemeProfileEditorView)[0]!.props;
+    await specimen.unmount();
+    const onChoose = vi.fn();
+    const option = basis.startFrom!.options[0]!;
+    const screen = await renderSettingsView(<ThemeProfileEditorView {...basis} startFrom={{
+      options: Array.from({ length: 200 }, (_, index) => ({ ...option, key: `theme-${index}`, name: `Theme ${index}` })),
+      selectedKey: 'theme-0', onChoose,
+    }} />);
+    await act(async () => {
+      for (const node of screen.tree.findAll(node => typeof node.type === 'string'
+        && (node.props.testID === 'settings-theme-profile-editor' || node.props.role === 'radiogroup')
+        && typeof node.props.onLayout === 'function')) {
+        node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 600 } } });
+      }
+    });
+    await measureMountedCollections(screen, { width: 960, height: 600 });
+    const tiles = screen.tree.findAll(node => typeof node.type === 'string'
+      && typeof node.props.testID === 'string' && /^settings-theme-profile-start:theme-\d+$/.test(node.props.testID));
+    expect(tiles.length).toBeGreaterThan(0);
+    expect(tiles.length).toBeLessThan(200);
+    console.info('[theme-window-cost] editor', { source: 200, mounted: tiles.length });
+    await screen.pressByTestIdAsync('settings-theme-profile-start:theme-1');
+    expect(onChoose).toHaveBeenCalledWith('theme-1');
+    expect(onChoose).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
+
   it("offers Share as plugin and, last and destructive, Delete on your own theme's menu", async () => {
     const screen = await renderSettingsView(<ThemeLibrarySpecimen scene="A1" />);
     // The grid windows through the shared Collection: give the page and the grid a measured size first.

@@ -485,6 +485,7 @@ function StartFromGroup(
     >
       <SelectionTiles
         variant="visual"
+        scroll="page"
         tileSizing="fill"
         maximumColumns={phone ? 2 : 4}
         previewAspectRatio={phone ? 1.1 : 1.6}

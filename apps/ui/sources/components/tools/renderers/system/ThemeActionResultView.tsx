@@ -443,16 +443,15 @@ function ThemeOptions(props: ThemeActionResultViewProps) {
   );
   return (
     <SelectionTiles
-      variant="card"
+      variant="visual"
+      scroll="page"
+      tileSizing="fill"
       options={tiles}
       value={props.currentOptionKey ?? null}
       onChange={(next) => {
         if (next) props.onTryOption(next);
       }}
-      descriptionPlacement="below"
-      density={phone ? 'compact' : 'regular'}
-      minimumColumns={phone ? 1 : 3}
-      subtitleLines={2}
+      maximumColumns={phone ? 2 : 4}
       accessibilityLabel={t('themeCard.options')}
       testIdPrefix={props.testID ? `${props.testID}:option` : undefined}
     />

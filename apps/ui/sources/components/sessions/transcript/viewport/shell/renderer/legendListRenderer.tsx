@@ -5,6 +5,8 @@ import {
     recordTranscriptScrollSample,
 } from '@/components/sessions/transcript/viewport/driver/transcriptViewportWriteDiagnostics';
 import * as React from 'react';
+import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
+import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { View, type LayoutChangeEvent, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import {
     LegendList,
@@ -123,6 +125,19 @@ function LegendListTranscriptRendererInner<TItem>(
     ref: React.ForwardedRef<TranscriptListShellRef<TItem>>,
 ): React.ReactElement {
     const legendListRef = React.useRef<LegendListRef | null>(null);
+    // Nested page Collections follow this physical list; they never create another scroller.
+    const scrollActivity = React.useMemo(() => createScrollViewNearViewportTracker({ current: {
+        getInnerViewRef: () => {
+            if (props.frame.platform === 'web') {
+                return (legendListRef.current?.getScrollableNode?.() as { lastElementChild?: unknown } | null)?.lastElementChild ?? null;
+            }
+            const scroller = legendListRef.current?.getNativeScrollRef?.() as unknown as { getInnerViewRef?: () => unknown } | null;
+            return scroller?.getInnerViewRef?.() ?? null;
+        },
+        scrollTo: ({ y }: Readonly<{ y: number }>) => {
+            void legendListRef.current?.scrollToOffset({ offset: y, animated: false });
+        },
+    } }, false), [props.frame.platform]);
     const retainedEntry = React.useMemo(() => props.viewportRetention
         ? retainedViewports.get(props.viewportRetention)?.get(props.dataKey) ?? null
         : null, [props.dataKey, props.viewportRetention]);
@@ -462,17 +477,19 @@ function LegendListTranscriptRendererInner<TItem>(
         // shade reads the settled offset on the same layout commit.
         // The Legend surface may not have published a state yet; a missing offset reports nothing.
         const settledOffset = webScrollableElementRef.current?.scrollTop ?? legendListRef.current?.getState()?.scroll;
-        if (typeof settledOffset === 'number') paneHeaderScrollSinkRef.current?.reportTopDistance(settledOffset);
-        const emit = onContentSizeChangeRef.current;
-        if (!emit) return;
+        if (typeof settledOffset === 'number') {
+            paneHeaderScrollSinkRef.current?.reportTopDistance(settledOffset);
+            scrollActivity.onScroll({ nativeEvent: { contentOffset: { x: 0, y: settledOffset } } });
+        }
         const height = legendListRef.current?.getState().contentLength;
         if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) return;
         if (lastEmittedContentHeightRef.current === height) return;
         lastEmittedContentHeightRef.current = height;
         // Width is not part of Legend's public state surface and no transcript consumer reads
         // it (the shell handler is `(_, h) => ...`), so the synthesized signal reports 0.
-        emit(0, height);
-    }, []);
+        scrollActivity.onContentSizeChange?.(0, height);
+        onContentSizeChangeRef.current?.(0, height);
+    }, [scrollActivity]);
 
     const readWebScrollMetrics = React.useCallback((): WebTranscriptScrollMetrics | null => {
         if (!isWebFrame || typeof document === 'undefined' || typeof window === 'undefined') return null;
@@ -756,9 +773,10 @@ function LegendListTranscriptRendererInner<TItem>(
 
     const handleLegendLayout = React.useCallback((event: LayoutChangeEvent) => {
         invalidateNativePhysicalViewportCapture();
+        scrollActivity.onLayout(event);
         props.onLayout?.(event);
         recordViewportHeight(event.nativeEvent.layout.height);
-    }, [invalidateNativePhysicalViewportCapture, props.onLayout, recordViewportHeight]);
+    }, [invalidateNativePhysicalViewportCapture, props.onLayout, recordViewportHeight, scrollActivity]);
 
     const handleVisualBottomSlotLayout = React.useCallback((event: LayoutChangeEvent) => {
         recordVisualBottomSlotHeight(event.nativeEvent.layout.height);
@@ -808,6 +826,9 @@ function LegendListTranscriptRendererInner<TItem>(
         const nextScrollOffset = isWebFrame && typeof webScroll === 'number' && Number.isFinite(webScroll)
             ? webScroll
             : event.nativeEvent.contentOffset.y;
+        scrollActivity.onScroll(nextScrollOffset === event.nativeEvent.contentOffset.y ? event : {
+            ...event, nativeEvent: { ...event.nativeEvent, contentOffset: { ...event.nativeEvent.contentOffset, y: nextScrollOffset } },
+        });
         // Opt-in diagnostics sample (no-op unless the operator opened the channel). Native
         // has no DOM scroller to intercept, so this observed offset is its only record of
         // viewport movement.
@@ -1017,7 +1038,7 @@ function LegendListTranscriptRendererInner<TItem>(
             props.onScroll?.(event);
         }
         if (pendingViewportCauseRef.current === cause) pendingViewportCauseRef.current = 'layout';
-    }, [emitRendererAtEndState, hasLiveKeyedHeldIntent, hasPendingHeldIntentCorrection, heldIntentSettleUntilRef, invalidateNativePhysicalViewportCapture, isWebFrame, latchHeldEndIntent, paneHeaderScrollSink, props.frame.rendererOptions.continuousFollow.endThresholdRatio, props.onScroll, props.onStartReachedThreshold, props.webDomObservation, readRendererAtEndState, readWebScrollMetrics, releaseHeldScrollIntent, requestHeldIntentSettle, tryAcknowledgeInitialPresentationSettlement, userScrollIntent]);
+    }, [emitRendererAtEndState, hasLiveKeyedHeldIntent, hasPendingHeldIntentCorrection, heldIntentSettleUntilRef, invalidateNativePhysicalViewportCapture, isWebFrame, latchHeldEndIntent, paneHeaderScrollSink, props.frame.rendererOptions.continuousFollow.endThresholdRatio, props.onScroll, props.onStartReachedThreshold, props.webDomObservation, readRendererAtEndState, readWebScrollMetrics, releaseHeldScrollIntent, requestHeldIntentSettle, scrollActivity, tryAcknowledgeInitialPresentationSettlement, userScrollIntent]);
 
     const handleLegendWheel = React.useCallback((event: unknown) => {
         invalidateNativePhysicalViewportCapture();
@@ -1704,6 +1725,7 @@ function LegendListTranscriptRendererInner<TItem>(
 
     return (
         <TranscriptRendererContentDemandProvider demand={contentDemand}>
+            <PluginUiScrollActivityProvider tracker={scrollActivity}>
             <View
                 ref={identityHostRef}
                 nativeID={props.frame.rendererOptions.identity.nativeID}
@@ -1729,6 +1751,7 @@ function LegendListTranscriptRendererInner<TItem>(
                     />
                 </TranscriptLayoutCommitObserver>
             </View>
+            </PluginUiScrollActivityProvider>
         </TranscriptRendererContentDemandProvider>
     );
 }

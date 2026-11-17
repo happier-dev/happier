@@ -1,6 +1,14 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { act, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { TranscriptListShell } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
+import { resolveConversationTranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
+import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
+
+// The external recycler mounts the real transcript header and its nested Collection.
+vi.mock('@legendapp/list/react-native', async () =>
+  (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true, renderItemLimit: 12 }),
+);
 
 vi.mock(
   'expo-router',
@@ -54,7 +62,40 @@ function props(overrides: Partial<Props> = {}): Props {
 const has = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
   screen.tree.findAll((node) => node.props?.testID === id).length > 0;
 
+function renderResultInTranscript(input: Props) {
+  return renderScreen(<TranscriptListShell<{ id: string }>
+    data={[{ id: 'theme-result' }]} dataKey="theme-options"
+    keyExtractor={item => item.id} renderItem={() => null}
+    frame={resolveConversationTranscriptListShellFrame({ platformOS: 'web' })}
+    webDomObservation={createWebDomScrollObservation()}
+    header={<ThemeActionResultView {...input} />}
+  />);
+}
+
 describe('ThemeActionResultView', () => {
+  it('windows a data-sized set of proposed themes without losing selection or the try operation', async () => {
+    const input = props({ options: Array.from({ length: 200 }, (_, index) => ({
+      key: `choice-${index}`, name: `Choice ${index}`, description: 'Proposal', miniature: MINIATURE,
+    })), currentOptionKey: 'choice-0' });
+    const screen = await renderResultInTranscript(input);
+    await act(async () => {
+      for (const node of screen.tree.findAll(node => typeof node.type === 'string'
+        && node.props.role === 'radiogroup' && typeof node.props.onLayout === 'function')) {
+        node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 600 } } });
+      }
+    });
+    const choices = screen.tree.findAll(node => typeof node.type === 'string'
+      && typeof node.props.testID === 'string' && /^card:option:choice-\d+$/.test(node.props.testID));
+    expect(choices.length).toBeGreaterThan(0);
+    expect(choices.length).toBeLessThan(200);
+    console.info('[theme-window-cost] transcript', { source: input.options!.length, mounted: choices.length });
+    const next = screen.tree.findAll(node => node.props.testID === 'card:option:choice-1' && typeof node.props.onPress === 'function')[0];
+    await pressTestInstanceAsync(next!);
+    expect(input.onTryOption).toHaveBeenCalledWith('choice-1');
+    expect(input.onTryOption).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
+
   it('shows supported layout changes in B4 even when the palette and radius are unchanged', async () => {
     const { prepareThemeCss } = await import('@/theme/css/prepareThemeCss');
     const { ThemePalettePreview } = await import('@/components/settings/appearance/ThemeModePreview');
