@@ -2635,9 +2635,11 @@ describe("workflowRunService (integration)", () => {
         const checkpoint = checkpointEnvelope(seeded.accountId, runId, rootId, 1n);
         const rootContentEnvelope = progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n });
         const initialize = { accountId: seeded.accountId, runId, machineId: seeded.machineId, parentAttempt: 1, expectedRevision: 0, checkpointEnvelope: checkpoint, rootInvocation: { id: rootId, contentEnvelope: rootContentEnvelope } } as const;
-        await expect(initializeWorkflowRunExecutionOwner({ ...initialize, accountCurrentness: initialCurrentness })).resolves.toMatchObject({ initialization: "created" });
+        // The executor opens the root row it initialized instead of reading it back.
+        const initializedRoot = { index: { id: rootId, runId, sequence: "0", parentRecordId: null, memberOrdinal: "0", attempt: "0", lifecycle: "pending" }, contentEnvelope: rootContentEnvelope };
+        await expect(initializeWorkflowRunExecutionOwner({ ...initialize, accountCurrentness: initialCurrentness })).resolves.toMatchObject({ initialization: "created", rootInvocation: initializedRoot });
         await expect(initializeWorkflowRunExecution({ ...initialize, machineId: randomUUID() })).rejects.toMatchObject({ code: "currentness_conflict" });
-        await expect(initializeWorkflowRunExecution(initialize)).resolves.toMatchObject({ initialization: "existing", run: { revision: 1 } });
+        await expect(initializeWorkflowRunExecution(initialize)).resolves.toMatchObject({ initialization: "existing", run: { revision: 1 }, rootInvocation: initializedRoot });
         await commitWorkflowInvocationFact({ accountId: seeded.accountId, runId, machineId: seeded.machineId, parentAttempt: 1, invocationId: rootId, invocationAttempt: 0n, expectedLifecycle: "pending", lifecycle: "completed", contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) });
         const completedEnvelope = progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n });
         await expect(commitWorkflowInvocationFact({ accountId: seeded.accountId, runId, machineId: seeded.machineId, parentAttempt: 1, invocationId: rootId, invocationAttempt: 0n, expectedLifecycle: "completed", lifecycle: "completed", contentEnvelope: completedEnvelope }))

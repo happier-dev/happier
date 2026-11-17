@@ -258,6 +258,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       destinations?: NonNullable<WorkflowRunStepProgressV1['destinations']>;
       projectionExpectedRevision?: number;
       discussionRound?: WorkflowDiscussionRoundBindingV1;
+      /** The root row this executor just created: opened as the starting row; it has no members yet. */
+      createdRoot?: Readonly<{ index: unknown; contentEnvelope: unknown; parentRevision: number }>;
     },
   ) {
     this.stepProgress = new WorkflowStepProgress({ definition: params.authoredDefinition,
@@ -266,7 +268,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
 
   static async load(params: ConstructorParameters<typeof DurableWorkflowCoordinatorStore>[0]): Promise<DurableWorkflowCoordinatorStore> {
     const store = new DurableWorkflowCoordinatorStore(params);
-    await store.loadInvocation(params.rootRecordId);
+    await store.loadInvocation(params.rootRecordId, params.createdRoot);
+    if (params.createdRoot) store.stepProgressReconstructed = true;
     const original = await store.readInvocationBindingRow(params.rootRecordId);
     if (!original) throw new Error('workflow_root_invocation_missing');
     const root = await readWorkflowInvocationRootV1({ root: original, readInvocation: store.readInvocationBindingRow,
@@ -1867,6 +1870,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     let checkpoint: WorkflowCheckpointEnvelopeV1;
     let rootRecordId: string;
     let revision = initial.run.revision;
+    let createdRoot: Readonly<{ index: unknown; contentEnvelope: unknown; parentRevision: number }> | undefined;
     if (initial.checkpointEnvelope === null) {
       rootRecordId = randomUUID();
       checkpoint = WorkflowCheckpointEnvelopeV1Schema.parse({
@@ -1893,6 +1897,9 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         rootInvocation: { id: rootRecordId, contentEnvelope: rootEnvelope } }));
       const run = WorkflowRunSummaryV1Schema.parse(initialized.run);
       revision = run.revision;
+      const root = initialized.initialization === 'created' && initialized.rootInvocation !== undefined
+        ? asRecord(initialized.rootInvocation) : undefined;
+      if (root) createdRoot = { index: root.index, contentEnvelope: root.contentEnvelope, parentRevision: revision };
     } else {
       const envelope = parseWorkflowStoredContentEnvelopeV1(initial.checkpointEnvelope);
       const opened = openWorkflowCheckpointStoredEnvelopeV1({
@@ -1913,6 +1920,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       definition: accepted.definition,
       frozenChildren: accepted.frozenChildren,
       discussionRound: readWorkflowDiscussionRoundBindingV1(accepted),
+      ...(createdRoot ? { createdRoot } : {}),
       destinations: deriveWorkflowDestinationsV1({ definition: accepted.authoredDefinition, children: accepted.frozenChildren,
         materializedLeaves: accepted.materializedLeaves, originSessionId: accepted.origin?.originSessionId }).leaves,
     });

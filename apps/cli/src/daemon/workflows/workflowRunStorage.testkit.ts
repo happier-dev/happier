@@ -254,7 +254,11 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
       }
       case 'initialize': {
         expectRevision();
-        if (checkpointEnvelope !== null) return { initialization: 'existing', run: summary() };
+        const initializedRoot = () => {
+          const row = ordered().find(candidate => candidate.index.parentRecordId === null)!;
+          return { index: row.index, contentEnvelope: row.contentEnvelope };
+        };
+        if (checkpointEnvelope !== null) return { initialization: 'existing', run: summary(), rootInvocation: initializedRoot() };
         revision += 1;
         state = 'running';
         checkpointEnvelope = String(operation.checkpointEnvelope);
@@ -263,7 +267,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
           id: root.id, sequence: '0', parentRecordId: null, memberOrdinal: '0',
           lifecycle: 'pending', contentEnvelope: root.contentEnvelope,
         });
-        return { initialization: 'created', run: summary() };
+        return { initialization: 'created', run: summary(), rootInvocation: initializedRoot() };
       }
       case 'invocations.admit': {
         const requests = operation.invocations as ReadonlyArray<Readonly<Record<string, unknown>>>;

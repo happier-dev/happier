@@ -743,7 +743,8 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
                 && roots[0]!.id === params.rootInvocation.id
                 && roots[0]!.contentEnvelope === params.rootInvocation.contentEnvelope
                 && decodeStoredText(existing.workflowCheckpointEnvelope, existing.workflowCheckpointEnvelopeBytes) === params.checkpointEnvelope) {
-                return { run: await projectRunInTx(tx, existing as WorkflowRunProjectionRow, params.accountId), initialization: "existing" as const };
+                return { run: await projectRunInTx(tx, existing as WorkflowRunProjectionRow, params.accountId), initialization: "existing" as const,
+                    rootInvocation: { index: projectInvocation(roots[0]!), contentEnvelope: roots[0]!.contentEnvelope } };
             }
             throw new WorkflowRunServiceError("currentness_conflict");
         }
@@ -752,7 +753,7 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
         if (await tx.workflowRunInvocation.findUnique({ where: { id: params.rootInvocation.id }, select: { id: true } })) throw new WorkflowRunServiceError("currentness_conflict");
         const roots = await tx.workflowRunInvocation.count({ where: { runId: params.runId, parentRecordId: null } });
         if (roots !== 0) throw new WorkflowRunServiceError("currentness_conflict");
-        await tx.workflowRunInvocation.create({ data: { id: params.rootInvocation.id, runId: params.runId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, attempt: 0n, lifecycle: "pending", contentEnvelope: params.rootInvocation.contentEnvelope } });
+        const root = await tx.workflowRunInvocation.create({ data: { id: params.rootInvocation.id, runId: params.runId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, attempt: 0n, lifecycle: "pending", contentEnvelope: params.rootInvocation.contentEnvelope }, select: invocationSelect }) as InvocationRow;
         const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
         const parent = await tx.automationRun.update({
             where: { id: params.runId },
@@ -762,7 +763,9 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
         await markWorkflowRunChangedTx(tx, params.accountId, params.runId);
         afterTx(tx, () => log({ event: 'workflow_run_phase', runId: params.runId,
             phase: 'run_initialization', timestamp: new Date().toISOString() }));
-        return { run: await projectRunInTx(tx, parent as WorkflowRunProjectionRow, params.accountId), initialization: "created" as const };
+        // The executor opens this root as its starting row instead of reading it back.
+        return { run: await projectRunInTx(tx, parent as WorkflowRunProjectionRow, params.accountId), initialization: "created" as const,
+            rootInvocation: { index: projectInvocation(root), contentEnvelope: root.contentEnvelope } };
     }, {
         // Ordered publication locks/replay and mode/control/row predicates fence this mutation.
         isolationLevel: "ReadCommitted",
