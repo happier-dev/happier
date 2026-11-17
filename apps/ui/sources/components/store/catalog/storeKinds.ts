@@ -135,6 +135,7 @@ type PluginList = Readonly<{
     items: PluginCatalogState['discoverEntries']; loading: boolean; stale: boolean; hasNextPage: boolean;
     nextPage: PluginCatalogState['loadMoreDiscover']; refresh: PluginCatalogState['refreshDiscover'];
     sources: PluginCatalogState['discoverSources']; sourceStatuses: PluginCatalogState['discoverSourceStatuses'];
+    sourceFailures: PluginCatalogState['discoverSourceFailures'];
     error: PluginCatalogState['discoverError'];
 }>;
 function usePluginList(input: StoreListInput, demand: StoreDemand): PluginList {
@@ -143,7 +144,8 @@ function usePluginList(input: StoreListInput, demand: StoreDemand): PluginList {
     return { items: catalog.discoverEntries, loading: catalog.loadingDiscover, stale: catalog.discoverStale,
         hasNextPage: catalog.discoverNextCursor !== null, nextPage: catalog.loadMoreDiscover,
         refresh: catalog.refreshDiscover, sources: catalog.discoverSources,
-        sourceStatuses: catalog.discoverSourceStatuses, error: catalog.discoverError };
+        sourceStatuses: catalog.discoverSourceStatuses, sourceFailures: catalog.discoverSourceFailures,
+        error: catalog.discoverError };
 }
 function pluginSummary(item: PluginMarketplaceCatalogEntry): StoreItemSummary<PluginMarketplaceCatalogEntry> {
     return { key: JSON.stringify(['plugin', item.sourceId, item.itemId]), ref: item,

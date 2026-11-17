@@ -387,37 +387,43 @@ it('leaves a kind page\'s query and rows still when Discover re-renders without 
     expect(query()).toBe(settled);
 });
 
-it('keeps a failed Starter catalog distinct from a successful empty search and retries its owner', async () => {
+it.each(['starter', 'plugin'] as const)('keeps a failed %s catalog distinct from a successful empty search and retries its owner', async kind => {
     const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
+    const { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');
     const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
-    const serverUrl = 'https://store-starter-search-failure.test';
-    const sourceId = 'user:starter-search';
-    const sourceUrl = 'https://starter-search.test/catalog.json';
+    const serverUrl = `https://store-${kind}-search-failure.test`;
+    const sourceUrl = `https://${kind}-search.test/catalog.json`;
+    const sourceId = kind === 'plugin' ? deriveMarketplaceSourceId(sourceUrl) : `user:${kind}-search`;
+    const emptyCatalog = kind === 'starter' ? { schemaVersion: 1, starters: [] }
+        : MarketplaceIndexSourceSnapshotV1Schema.parse({
+            source: { id: sourceId, title: 'Team catalog', kind: 'user', sourceUrl },
+            freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], diagnostics: [],
+        });
     let failed = false;
     const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
         key: 'registry-sources', value: { v: 2,
             disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(source => source.id),
-            sources: [{ id: sourceId, title: 'Team starters', format: 'happier-catalog', kinds: ['starter'],
+            sources: [{ id: sourceId, title: 'Team catalog', format: 'happier-catalog', kinds: [kind],
                 url: sourceUrl, enabled: true, addedAt: 1 }],
         },
     }, 'updated', { handleExternalRequest: async url => url === sourceUrl
-        ? failed ? new Response(null, { status: 503 }) : Response.json({ schemaVersion: 1, starters: [] })
+        ? failed ? new Response(null, { status: 503 }) : Response.json(emptyCatalog)
         : new Response(null, { status: 503 }) });
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
     const scope = storage.getState().settingsScope!;
     const executor = createDefaultActionExecutor();
     const read = () => executor.execute('registries.items.list', {
-        kind: 'starter', sourceIds: [sourceId], query: 'garden', refresh: true,
+        kind, sourceIds: [sourceId], query: 'garden', refresh: true,
     }, { surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId });
     // The same real Action/HTTP fixture first proves confirmed-empty, then a genuine catalog outage.
     expect(await read()).toMatchObject({ ok: true, result: { pages: [{ status: { state: 'ok' }, items: [] }] } });
     failed = true;
     expect(await read()).toMatchObject({ ok: true, result: { pages: [{ status: { state: 'unreachable' }, items: [] }] } });
-    const filters = JSON.stringify({ kind: { include: ['starter'], exclude: [] }, source: { include: [sourceId], exclude: [] } });
+    const filters = JSON.stringify({ kind: { include: [kind], exclude: [] }, source: { include: [sourceId], exclude: [] } });
     function Page() {
         const params = React.useMemo(() => ({ view: 'search', q: 'garden', filters }), []);
         const navigation = React.useMemo(() => ({ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }), []);
-        return <DestinationInstanceHost tabId="starter-search" ref={{ kind: 'plugins', params }} pathname="/plugins" focused visible
+        return <DestinationInstanceHost tabId={`${kind}-search`} ref={{ kind: 'plugins', params }} pathname="/plugins" focused visible
             navigation={navigation}><AppPaneProvider><StoreSearchPage presented /></AppPaneProvider></DestinationInstanceHost>;
     }
     const screen = await renderScreen(<Page />);

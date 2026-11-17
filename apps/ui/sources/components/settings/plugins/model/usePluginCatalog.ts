@@ -27,6 +27,7 @@ export type PluginCatalogState = Readonly<{
     discoverNextCursor: string | null;
     discoverSources: readonly Readonly<{ id: string; title: string; kind: PluginMarketplaceCatalogSourceKind }>[];
     discoverSourceStatuses: PluginMarketplaceDiscoverPage['sources'];
+    discoverSourceFailures: ReturnType<typeof useRegistryItems>['sourceFailures'];
     discoverDiagnostics: PluginMarketplaceDiscoverPage['diagnostics'];
     discoverNonInstallable: PluginMarketplaceDiscoverPage['nonInstallable'];
     discoverSearchText: string;
@@ -162,6 +163,7 @@ export function usePluginCatalogWithSources(params: PluginCatalogParams, sources
     return { execution, accountKey, current, selectedItem, unresolvedListing, resolveInstallEntry,
         discoverEntries: page.entries, discoverNextCursor: page.nextCursor, discoverSources,
         discoverSourceStatuses: page.sources, discoverDiagnostics: page.diagnostics, discoverNonInstallable: page.nonInstallable,
+        discoverSourceFailures: browse.sourceFailures,
         discoverSearchText: searchText, setDiscoverSearchText: setSearchText, selectedDiscoverSourceId: sourceId,
         discoverResultsSearchText: desired && !browse.stale ? desired.text.trim() : null,
         discoverStale: !listing && (browse.stale || !params.query && desired !== null
