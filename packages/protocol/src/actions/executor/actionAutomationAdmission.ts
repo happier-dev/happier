@@ -7,6 +7,7 @@ import type { ActionSettlementV1 } from './actionSettlement.js';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema,
   AutomationActionAdmitResultV1Schema, type AutomationActionAdmitResultV1,
   type AutomationActionAdmitRequestV1 } from '../../automations/automationActionOccurrenceV1.js';
+import type { AutomationActionOccurrenceEvidenceV1 } from '../../automations/automationActionOccurrenceV1.js';
 import { ActionAutomationTriggerReferenceV1Schema, ActionAutomationConsentReferenceV1Schema,
   ActionAutomationIndexV1Schema, ActionAutomationIndexChangeV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1,
   type ActionAutomationIndexSelectionV1 } from '../../automations/automationActionTriggerV1.js';
@@ -56,7 +57,26 @@ export type ActionAutomationSelectionV1 = Readonly<{
   before: readonly ActionAutomationSelectedTriggerV1[];
   after: readonly ActionAutomationSelectedTriggerV1[];
   notices?: readonly ActionAutomationNoticeV1[];
+  /** Account-opened matching belongs to this admitted invocation, never its stored Artifact. */
+  privateMatching?: ActionAutomationPrivateMatchingV1;
 }>;
+export type ActionAutomationPrivateMatchingV1 = (evidence: AutomationActionOccurrenceEvidenceV1,
+  selected: readonly ActionAutomationSelectedTriggerV1[]) => Promise<Readonly<{
+    matched: readonly ActionAutomationSelectedTriggerV1[];
+    notices: readonly ActionAutomationNoticeV1[];
+  }>>;
+export type ActionAutomationPrepareMatchingV1 = (selection: ActionAutomationSelectionV1,
+  context: ActionExecutorContext) => Promise<ActionAutomationPrivateMatchingV1>;
+
+/** A missing private owner is visible; a structural tuple never proves an empty filter. */
+export function unavailableActionAutomationMatchingV1(reason: string): ActionAutomationPrivateMatchingV1 {
+  return async (_evidence, selected) => ({ matched: [], notices: selected.map(row => ({ code: 'action_automation_skipped',
+    reason, automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId })) });
+}
+export async function matchActionAutomationTriggersV1(selection: ActionAutomationSelectionV1,
+  evidence: AutomationActionOccurrenceEvidenceV1, selected: readonly ActionAutomationSelectedTriggerV1[]) {
+  return (selection.privateMatching ?? unavailableActionAutomationMatchingV1('privateDefinitionUnavailable'))(evidence, selected);
+}
 export type ActionAutomationSelectArgsV1 = Readonly<{
   actionId: string;
   input: unknown;
@@ -68,8 +88,13 @@ export type ActionAutomationSelectArgsV1 = Readonly<{
   loadSubjectFacts?: () => Promise<readonly AutomationSubjectContextV1[]>;
   resolveConsent?: (args: Readonly<{ selection: ActionAutomationSelectedTriggerV1; context: ActionExecutorContext }>)
     => Promise<ActionAutomationConsentResolutionV1>;
+  prepareMatching?: ActionAutomationPrepareMatchingV1;
+  /** Native completion combines its Action buckets before opening selected private rows once. */
+  deferPrivateMatching?: true;
   /** Existing ActionSpec completion declares a later domain event instead of an immediate after bucket. */
   includeAfter?: false;
+  /** Terminal native observations consume only after checks, including their selector notices. */
+  includeBefore?: false;
   signal?: AbortSignal;
 }>;
 export type ActionAutomationStartResultV1 = Readonly<{
@@ -103,6 +128,7 @@ export type ActionAutomationWaitV1 = (args: Readonly<{
 }>) => Promise<ActionAutomationRunObservationV1>;
 export type ActionAutomationCancelV1 = (args: Parameters<ActionAutomationWaitV1>[0]) => Promise<void>;
 export type ActionAutomationPortV1 = Readonly<{
+  prepareMatching?: ActionAutomationPrepareMatchingV1;
   select(args: ActionAutomationSelectArgsV1): Promise<ActionAutomationSelectionV1>;
   hasAfterActions?: (actionIds: readonly string[]) => Promise<boolean>;
   settle(args: Readonly<{ selection: ActionAutomationSelectionV1; event: ActionSettlementV1;
@@ -284,6 +310,7 @@ export function createActionAutomationPortV1(options: Readonly<{
       const sharedRequester = isSharedRequesterActionV1(args.context);
       for (const row of candidates) {
         if (row.phase === 'after' && args.includeAfter === false) continue;
+        if (row.phase === 'before' && args.includeBefore === false) continue;
         const own = row.ownerAccountId === options.accountId;
         const subjectKey = row.subjectKey;
         const matchedSubject = subjectKey ? subjects.find(context =>
@@ -323,8 +350,11 @@ export function createActionAutomationPortV1(options: Readonly<{
         }
         (row.phase === 'before' ? before : after).push(selected);
       }
-      return Object.freeze({ status: 'ready', subjects, before: Object.freeze(before), after: Object.freeze(after),
-        notices: Object.freeze(notices) });
+      const selection: ActionAutomationSelectionV1 = { status: 'ready', subjects, before: Object.freeze(before), after: Object.freeze(after),
+        notices: Object.freeze(notices) };
+      return Object.freeze({ ...selection,
+        ...(args.prepareMatching && !args.deferPrivateMatching && (before.length || after.length)
+          ? { privateMatching: await args.prepareMatching(selection, args.context) } : {}) });
     },
     async settle(args) { if (args.selection.after.length > 0) return await options.settle(args); },
     ...(options.start ? { start: options.start } : {}),
@@ -365,6 +395,23 @@ export function createActionAutomationPortV1(options: Readonly<{
   };
 }
 
+/** Admission outcomes name the executing reference; notices retain the selected source identity. */
+export function projectActionAutomationAdmitOutcomesV1(response: AutomationActionAdmitResultV1,
+  admitted: readonly Readonly<{ row: ActionAutomationSelectedTriggerV1; trigger: ActionAutomationTriggerReferenceV1 }>[]): ActionAutomationStartResultV1 {
+  const originalReferences = new Map(admitted.map(({ row, trigger }) =>
+    [JSON.stringify([trigger.automationId, trigger.triggerId]), row] as const));
+  const runs: ActionAutomationRunV1[] = [];
+  const notices: ActionAutomationNoticeV1[] = [];
+  for (const result of response.results) {
+    const source = originalReferences.get(JSON.stringify([result.automationId, result.triggerId]));
+    if (!source) continue;
+    if (result.kind === 'skipped') notices.push({ code: 'action_automation_skipped', reason: result.reason,
+      automationId: source.automationId, triggerId: source.triggerId, workflowId: source.workflowId });
+    else runs.push({ automationId: source.automationId, triggerId: source.triggerId, runId: result.runId });
+  }
+  return { runs, notices };
+}
+
 /** Both hosts share occurrence construction; adapters supply only their existing authenticated HTTP owner. */
 export function createActionAutomationHttpPortV1(options: Readonly<{
   accountId: string;
@@ -372,21 +419,6 @@ export function createActionAutomationHttpPortV1(options: Readonly<{
   subscribe?: Parameters<typeof createActionAutomationPortV1>[0]['subscribe'];
   allowConsent?: ActionAutomationAllowConsentV1;
 }>): ReturnType<typeof createActionAutomationPortV1> {
-  const projectOutcomes = (response: AutomationActionAdmitResultV1,
-    admitted: readonly Readonly<{ row: ActionAutomationSelectedTriggerV1; trigger: ActionAutomationTriggerReferenceV1 }>[]): ActionAutomationStartResultV1 => {
-    const originalReferences = new Map(admitted.map(({ row, trigger }) =>
-      [JSON.stringify([trigger.automationId, trigger.triggerId]), row] as const));
-    const runs: ActionAutomationRunV1[] = [];
-    const notices: ActionAutomationNoticeV1[] = [];
-    for (const result of response.results) {
-      const source = originalReferences.get(JSON.stringify([result.automationId, result.triggerId]));
-      if (!source) continue;
-      if (result.kind === 'skipped') notices.push({ code: 'action_automation_skipped', reason: result.reason,
-        automationId: source.automationId, triggerId: source.triggerId, workflowId: source.workflowId });
-      else runs.push({ automationId: source.automationId, triggerId: source.triggerId, runId: result.runId });
-    }
-    return { runs, notices };
-  };
   const admitOccurrence: NonNullable<ActionAutomationPortV1['admitOccurrence']> = async (input, context) => (
     AutomationActionAdmitResultV1Schema.parse(await options.request(AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1,
       { method: 'POST', body: AutomationActionAdmitRequestV1Schema.parse(input), signal: context.signal }))
@@ -418,8 +450,14 @@ export function createActionAutomationHttpPortV1(options: Readonly<{
           subjects: selection.subjects.map(({ role, subject }) => ({ role, kind: subject.kind, key: automationSubjectKeyV1(subject) })),
         },
       });
-      const response = await admitOccurrence(body, context);
-      return projectOutcomes(response, admitted);
+      const matching = await matchActionAutomationTriggersV1(selection, body.evidence, admitted.map(item => item.row));
+      const matched = admitted.filter(item => matching.matched.includes(item.row));
+      if (matched.length === 0) return { runs: [], notices: matching.notices };
+      const response = await admitOccurrence({ ...body, triggers: matched.map(({ trigger }) => ({
+        automationId: trigger.automationId, triggerId: trigger.triggerId, triggerRevision: trigger.triggerRevision,
+      })) }, context);
+      const outcomes = projectActionAutomationAdmitOutcomesV1(response, matched);
+      return { ...outcomes, notices: [...matching.notices, ...outcomes.notices] };
     },
     settle: async ({ selection, event, context }) => {
       const admitted = selection.after.flatMap(row => {
@@ -437,8 +475,13 @@ export function createActionAutomationHttpPortV1(options: Readonly<{
         ...(event.machineId ? { machineId: event.machineId } : {}), occurredAt: event.occurredAt,
         subjects: selection.subjects.map(({ role, subject }) => ({ role, kind: subject.kind, key: automationSubjectKeyV1(subject) })),
       } });
-      const response = await admitOccurrence(input, context);
-      return projectOutcomes(response, admitted).notices;
+      const matching = await matchActionAutomationTriggersV1(selection, input.evidence, admitted.map(item => item.row));
+      const matched = admitted.filter(item => matching.matched.includes(item.row));
+      if (matched.length === 0) return matching.notices;
+      const response = await admitOccurrence({ ...input, triggers: matched.map(({ trigger }) => ({
+        automationId: trigger.automationId, triggerId: trigger.triggerId, triggerRevision: trigger.triggerRevision,
+      })) }, context);
+      return [...matching.notices, ...projectActionAutomationAdmitOutcomesV1(response, matched).notices];
     },
   });
   return { ...port, admitOccurrence };

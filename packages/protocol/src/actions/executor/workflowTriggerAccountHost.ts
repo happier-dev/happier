@@ -78,6 +78,8 @@ import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
 import { isHealthCheckEventSourceV1 } from '../../deployments/healthCheckSourceV1.js';
 import { canonicalizeAutomationSessionLifecycleStructuralConfiguration, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
 import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
+import { unavailableActionAutomationMatchingV1 } from './actionAutomationAdmission.js';
+import { readActionErrorCodeV1 } from '../actionErrorClassV1.js';
 
 function unavailable(code = 'content_unavailable', details?: unknown): never {
   throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
@@ -1005,6 +1007,10 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
     return result;
   };
   return { ...actions,
+    prepareActionMatching: accountId => async (selection, context) => {
+      try { return await readWithAccountWitness(owner => owner.prepareActionMatching(accountId)(selection, context)); }
+      catch (error) { return unavailableActionAutomationMatchingV1(readActionErrorCodeV1(error) ?? 'action_failed'); }
+    },
     list: (raw, caller) => readWithAccountWitness(owner => owner.list(raw, caller)),
     listSubjects: raw => readWithAccountWitness(owner => owner.listSubjects(raw)),
   };

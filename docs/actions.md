@@ -2115,6 +2115,16 @@ Synchronous SCM worktree create/remove responses already report the completed
 repository operation and carry no accepted-operation handle. These contracts are
 development source; composed automation validation is still required.
 
+In development source, private Only-when matching uses safe Action evidence for
+both phases. The Account host opens only the selected trigger definitions once
+at admission, including after-only triggers. The same invocation retains that
+snapshot through approval and settlement even if the source changes or is
+removed. Restoring a cold approval Artifact reopens its exact trigger references
+and revisions; unavailable content produces a visible Skip. It does not retain a
+private snapshot across restarts. Shared-source private matching currently
+produces a visible Skip because a source-owner evaluator is unavailable; the
+actor's keys never open another Account's trigger definition.
+
 Development Action discovery summaries expose `automation.before`,
 `automation.after`, `automation.workflowStep`, native `automation.subjectKinds`
 and an optional `automation.primarySubject` containing its declared `kind` and

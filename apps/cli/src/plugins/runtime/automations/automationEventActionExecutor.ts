@@ -372,9 +372,10 @@ export function createAutomationEventActionExecutor(params: Readonly<{
           return admissionFailure('automation_event_host_evidence_unavailable');
         }
         try {
-          await admitNativeActionCompletion(params.nativeCompletion, { ...admissionInput.data,
+          const notices = await admitNativeActionCompletion(params.nativeCompletion, { ...admissionInput.data,
             sourceInstanceId: admissionInput.data.sourceInstanceId, machineId: materialization.data.machineId }, { signal });
-          return { results: [] };
+          return notices.length ? { ...admissionFailure('automation_event_host_evidence_unavailable'),
+            automationNotices: notices } : { results: [] };
         } catch {
           signal.throwIfAborted();
           return admissionFailure('automation_event_host_evidence_unavailable');

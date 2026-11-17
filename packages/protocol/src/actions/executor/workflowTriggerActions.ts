@@ -11,6 +11,8 @@ import { AutomationTriggerIdSchema } from '../../automations/automationTriggerId
 import { isDeploymentReceiptEventSourceV1, readDeploymentReceiptEventSubjectV1 } from '../../deployments/deploymentReceiptEventsV1.js';
 import { HealthCheckSourceConfigV1Schema, isHealthCheckEventSourceV1, readHealthCheckEventSubjectV1 } from '../../deployments/healthCheckSourceV1.js';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '../../automations/automationEventV1.js';
+import { createActionAutomationPrivateMatchingV1 } from './actionAutomationPrivateMatching.js';
+import type { ActionAutomationPrepareMatchingV1 } from './actionAutomationAdmission.js';
 import { readAutomationTemplateStoredEnvelopeV1 } from '../../automations/automationTemplateStoredV1.js';
 import {
   AutomationStoredWorkflowDefinitionV2Schema,
@@ -184,6 +186,8 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
 }>;
 
 export interface WorkflowTriggerActions {
+  /** Host-private selected envelope reader; no editor projection or Workflow resolution. */
+  prepareActionMatching(accountId: string): ActionAutomationPrepareMatchingV1;
   prepareMutation: (args: WorkflowActionExecuteArgs<WorkflowTriggerMutationActionId>)
     => Promise<Pick<Caller, 'workflowTriggerMutationAdmission'>>;
   readActorConsent: (input: WorkflowActorConsentReadSelection & Readonly<{
@@ -222,12 +226,13 @@ export interface WorkflowTriggerActions {
 
 /** Both Account hosts bind their workspace reader to this one consent owner. */
 export function createWorkflowActorConsentPortV1(options: Readonly<{
-  actions: Pick<WorkflowTriggerActions, 'readActorConsent' | 'saveActorConsent'>;
+  actions: Pick<WorkflowTriggerActions, 'readActorConsent' | 'saveActorConsent' | 'prepareActionMatching'>;
   accountId: string;
   resolveProject(context: Caller): Promise<WorkflowProjectTargetV1>;
 }>): Readonly<{
   resolveConsent(args: Readonly<{ selection: ActionAutomationSelectedTriggerV1; context: Caller }>): Promise<ActionAutomationConsentResolutionV1>;
   allowConsent(args: Parameters<ActionAutomationAllowConsentV1>[0] & Readonly<{ executionContext: Caller }>): Promise<ActionAutomationTriggerReferenceV1>;
+  prepareMatching: ActionAutomationPrepareMatchingV1;
 }> {
   const selectionInput = (selection: ActionAutomationSelectedTriggerV1) => {
     const saved = selection.consent?.row;
@@ -249,6 +254,7 @@ export function createWorkflowActorConsentPortV1(options: Readonly<{
       consentedWorkflowRevision: saved.workflowRevision };
   };
   return {
+    prepareMatching: options.actions.prepareActionMatching(options.accountId),
     async resolveConsent({ selection, context }) {
       if (!selection.consent?.row) return { current: false };
       const current = await options.actions.readActorConsent({ ...selectionInput(selection),
@@ -824,6 +830,13 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ...changes,
     }, row, undefined, signal);
   const actions = {
+    prepareActionMatching: (accountId: string) => createActionAutomationPrivateMatchingV1({ accountId,
+      readDefinition: readRetained,
+      openTrigger: async (row, trigger) => {
+        if (!deps.openActionTrigger) refuse('target_unavailable');
+        return deps.openActionTrigger(row, trigger);
+      },
+    }),
     prepareMutation: async (args: WorkflowActionExecuteArgs<WorkflowTriggerMutationActionId>) => {
       if (args.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID) {
         const input = WorkflowTriggerAddRequestV1Schema.parse(args.input);

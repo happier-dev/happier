@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import '../actionSpecs.js';
-import { createActionAutomationPortV1 } from './actionAutomationAdmission.js';
+import { createActionAutomationHttpPortV1, createActionAutomationPortV1 } from './actionAutomationAdmission.js';
+import { createWorkflowActorConsentPortV1 } from './workflowTriggerActions.js';
+import { createActionAutomationInvocationV1 } from './actionSettlement.js';
+import { createAccountWorkflowTriggerActions } from './workflowTriggerAccountHost.js';
+import type { AutomationDefinitionDetail } from '../../automations/automationApiV3.js';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
+import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
+import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
+import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
+import { restoreApprovalAutomaticContextV1, createApprovalAutomaticChecksV1 } from './automaticApprovalContinuation.js';
 import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
 
 describe('Approval profile subject admission', () => {
@@ -26,4 +36,138 @@ describe('Approval profile subject admission', () => {
     } } })).before).toEqual([]);
     expect(admitted.before.map(row => row.automationId)).toEqual(['automation']);
   });
+});
+
+it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching for both phases without another definition read (%s)', async mode => {
+  const actionId = 'notifications.notify_me';
+  const workflowId = '11111111-1111-4111-8111-111111111111';
+  const rows = ['before', 'after'].map(phase => ({ automationId: 'own', triggerId: phase,
+    triggerRevision: 1, workflowId, workflowRevision: 1, ownerAccountId: 'actor',
+    actionIds: [actionId], phase, ...(phase === 'before' ? { mode: 'notify' } : {}) }));
+  let definitionReads = 0;
+  let workflowReads = 0;
+  const sent: unknown[] = [];
+  const current: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+    ? { kind: 'available', witness: { mode, version: 1, contentKeyFingerprint: null } }
+    : { kind: 'available', witness: { mode, version: 1, contentKeyFingerprint: 'current' },
+      material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: mode,
+        material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+  const workflowContext = AutomationStoredWorkflowDefinitionV2Schema.parse({ workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } });
+  const stored: AutomationDefinitionDetail = { id: 'own', name: 'Own', description: null, enabled: true,
+    targetType: null, existingSessionId: null, templateVersion: 1, workflowDefinitionId: workflowId,
+    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+      workflow: current.witness.mode === 'e2ee' && 'material' in current
+        ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
+          material: current.material.material, payload: workflowContext, randomBytes: length => new Uint8Array(length).fill(2) }) }
+        : { t: 'plain', v: workflowContext }, triggerEvidence: null, visibleTeamId: null, managedTarget: null }),
+    scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
+    triggers: rows.map(row => ({ id: row.triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+      kind: 'action' as const, phase: row.phase as 'before' | 'after', actionIds: [actionId],
+      ...(row.phase === 'before' ? { mode: 'notify' as const } : {}),
+      triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+        ...(current.witness.mode === 'e2ee' && 'material' in current
+          ? { mode: 'e2ee' as const, material: current.material.material, randomBytes: length => new Uint8Array(length).fill(2) }
+          : { mode: 'plain' as const }),
+        binding: { v: 1, automationId: 'own', triggerId: row.triggerId, triggerRevision: 1, triggerKind: 'action' },
+        definition: { kind: 'action', phase: row.phase, actionIds: [actionId],
+          ...(row.phase === 'before' ? { mode: 'notify' } : {}),
+          filter: { v: 1, all: [{ op: 'eq', field: row.phase === 'before' ? '/phase' : '/outcome',
+            value: row.phase === 'before' ? 'after' : 'failed' }] } },
+      })) })) };
+  const unexpectedWrite = async (): Promise<never> => { throw new Error('Matching performs no write'); };
+  let retainedRow = stored;
+  const actions = createAccountWorkflowTriggerActions({ resolveEncryption: async () => current,
+    randomBytes: length => new Uint8Array(length).fill(1), newId: () => 'unused',
+    resolveWorkflow: async () => { workflowReads++; return { definition: WorkflowDefinitionV1Schema.parse({ version: 1,
+      blocks: [{ kind: 'action', id: 'notice', actionId, input: { message: { kind: 'literal', value: 'Notice' } } }] }) }; },
+    automations: { get: async () => { definitionReads++; return retainedRow; },
+      list: async () => ({ automations: [], nextCursor: null }), listDetails: async () => ({ automations: [], nextCursor: null }),
+      create: unexpectedWrite, reconcile: unexpectedWrite, delete: unexpectedWrite } });
+  const checks = createWorkflowActorConsentPortV1({ accountId: 'actor',
+    resolveProject: async () => ({ machineId: 'machine', directory: '/repo' }),
+    actions,
+  });
+  const http = createActionAutomationHttpPortV1({ accountId: 'actor', request: async (_path, request) => {
+    if (request.method === 'GET') return { v: 1, rows };
+    sent.push(request.body);
+    return { results: [] };
+  } });
+  const context = { actionRequestId: 'original-request' };
+  const empty = await http.select({ actionId: 'account.name.set', input: {}, context, prepareMatching: checks.prepareMatching });
+  await createActionAutomationInvocationV1({ actionId: 'account.name.set', context, selection: empty, port: http }).settle({ ok: true });
+  expect(definitionReads).toBe(0);
+  expect(sent).toEqual([]);
+  const selection = await http.select({ actionId, input: {}, context, prepareMatching: checks.prepareMatching });
+  expect(workflowReads).toBe(0);
+  const invocation = createActionAutomationInvocationV1({ actionId, context, selection, port: http });
+  await http.start!({ actionId, input: {}, selected: selection.before,
+    context: { ...context, actionAutomationAdmission: invocation } });
+  expect(sent).toEqual([]);
+  const restored = restoreApprovalAutomaticContextV1({ automaticChecks: createApprovalAutomaticChecksV1(selection, false) },
+    actionId, { ...context, actionAutomationAdmission: invocation }, { ...http, prepareMatching: checks.prepareMatching });
+  expect(await restored.actionAutomationAdmission!.settle({ ok: true })).toEqual({ ok: true });
+  expect(sent).toEqual([]);
+  expect(definitionReads).toBe(1);
+  const failedContext = { actionRequestId: 'failed-request' };
+  const failedSelection = await http.select({ actionId, input: {}, context: failedContext, prepareMatching: checks.prepareMatching });
+  const failed = createActionAutomationInvocationV1({ actionId, context: failedContext, selection: failedSelection, port: http });
+  await failed.settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' });
+  expect(sent).toEqual([expect.objectContaining({ evidence: expect.objectContaining({ outcome: 'failed' }),
+    triggers: [{ automationId: 'own', triggerId: 'after', triggerRevision: 1 }] })]);
+  expect(definitionReads).toBe(2);
+  retainedRow = { ...stored, triggers: [] };
+  const cold = restoreApprovalAutomaticContextV1({ automaticChecks: createApprovalAutomaticChecksV1(selection, false) },
+    actionId, { actionRequestId: 'cold-request', actionAutomationAdmission: invocation }, { ...http, prepareMatching: checks.prepareMatching });
+  expect(await cold.actionAutomationAdmission!.settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' }))
+    .toMatchObject({ automationNotices: [expect.objectContaining({ reason: 'content_unavailable' })] });
+  expect(sent).toHaveLength(1);
+  expect(definitionReads).toBe(3);
+  retainedRow = { ...stored, triggers: [...stored.triggers, { ...stored.triggers[0]!, id: 'unrelated',
+    triggerDefinitionEnvelope: 'unavailable unrelated private content' }] };
+  http.apply({ automationId: 'own', rows: [selection.after[0]!] });
+  const afterContext = { actionRequestId: 'after-only-request' };
+  const afterOnly = await http.select({ actionId, input: {}, context: afterContext, prepareMatching: checks.prepareMatching });
+  expect(afterOnly.before).toEqual([]);
+  // A later removal cannot rewrite the already admitted private matching snapshot.
+  retainedRow = { ...stored, triggers: [] };
+  const afterInvocation = createActionAutomationInvocationV1({ actionId, context: afterContext, selection: afterOnly, port: http });
+  await afterInvocation.settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' });
+  expect(sent).toHaveLength(2);
+  expect(definitionReads).toBe(4);
+  expect(workflowReads).toBe(0);
+});
+
+it('does not open a shared source with actor keys or admit it without private matching', async () => {
+  const subject = { kind: 'machine' as const, serverId: 'home', machineId: 'subject-machine' };
+  const source = { automationId: 'source', triggerId: 'shared', triggerRevision: 1, workflowId: 'workflow',
+    workflowRevision: 1, ownerAccountId: 'author', actionIds: ['notifications.notify_me'], phase: 'after' as const,
+    reachesOthers: true, subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'workflow') };
+  const actor = { ...source, automationId: 'actor-consent', triggerId: 'consent', ownerAccountId: 'actor',
+    consentFor: { automationId: source.automationId, triggerId: source.triggerId }, consentedWorkflowRevision: 1 };
+  let reads = 0;
+  const unexpectedWrite = async (): Promise<never> => { throw new Error('No write'); };
+  const actions = createAccountWorkflowTriggerActions({
+    resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+    randomBytes: length => new Uint8Array(length).fill(1), newId: () => 'unused',
+    resolveWorkflow: async () => { throw new Error('No Workflow projection'); },
+    automations: { get: async () => { reads++; throw new Error('No source Account read'); },
+      list: async () => ({ automations: [], nextCursor: null }), listDetails: async () => ({ automations: [], nextCursor: null }),
+      create: unexpectedWrite, reconcile: unexpectedWrite, delete: unexpectedWrite },
+  });
+  const checks = createWorkflowActorConsentPortV1({ accountId: 'actor', resolveProject: async () => ({ machineId: 'machine', directory: '/repo' }),
+    actions });
+  const http = createActionAutomationHttpPortV1({ accountId: 'actor', request: async (_path, request) => {
+    if (request.method === 'GET') return { v: 1, rows: [source] };
+    throw new Error('No occurrence is admissible');
+  } });
+  const context = { actionRequestId: 'shared-request', defaultSessionMachineId: 'machine' };
+  const selection = await http.select({ actionId: source.actionIds[0]!, input: {}, context,
+    subjects: [{ role: 'operand', subject }], prepareMatching: checks.prepareMatching });
+  const current = { ...selection, after: selection.after.map(row => ({ ...row, consent: { status: 'current' as const, row: actor } })) };
+  expect(current.after).toHaveLength(1);
+  const invocation = createActionAutomationInvocationV1({ actionId: source.actionIds[0]!, selection: current, context, port: http });
+  expect(await invocation.settle({ ok: true })).toMatchObject({ ok: true, automationNotices: [expect.objectContaining({
+    code: 'action_automation_skipped', reason: 'privateDefinitionUnavailable', automationId: 'source',
+  })] });
+  expect(reads).toBe(0);
 });

@@ -6,7 +6,8 @@ import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from 
 import { WorkflowFinalResultV1Schema, projectWorkflowFinalResultDeliverableTextV1 } from '../../workflows/workflowProgressV1.js';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecutorDeps } from './types.js';
 import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
-import type { ActionAutomationPortV1, ActionAutomationSelectionV1, ActionAutomationTriggerReferenceV1 } from './actionAutomationAdmission.js';
+import type { ActionAutomationPortV1, ActionAutomationSelectionV1, ActionAutomationTriggerReferenceV1,
+  ActionAutomationPrivateMatchingV1 } from './actionAutomationAdmission.js';
 import { createActionAutomationInvocationV1 } from './actionSettlement.js';
 import { deriveActionActorV1 } from '../actionRequestAttributionV1.js';
 import { resolveHostStampedAuthority } from '../invocationAuthority.js';
@@ -84,9 +85,15 @@ export function restoreApprovalAutomaticContextV1(request: Readonly<{
     ...(origin.machineId ? { defaultSessionMachineId: origin.machineId } : {}),
     ...(origin.target ? { externalActionTarget: origin.target } : {}) } : context;
   const continuation = { actionId, context: retained, selection, notices: request.automaticChecks?.notices };
-  return port ? { ...retained, actionAutomationAdmission: context.actionAutomationAdmission?.continue(continuation)
-    ?? createActionAutomationInvocationV1({
-    ...continuation, port,
+  const continued = context.actionAutomationAdmission?.continue(continuation);
+  if (continued) return { ...retained, actionAutomationAdmission: continued };
+  const pendingMatching = port?.prepareMatching?.(selection, retained);
+  const privateMatching: ActionAutomationPrivateMatchingV1 | undefined = pendingMatching
+    ? (evidence, selected) => pendingMatching.then(match => match(evidence, selected))
+    : undefined;
+  const matchedSelection = privateMatching ? { ...selection, privateMatching } : selection;
+  return port ? { ...retained, actionAutomationAdmission: createActionAutomationInvocationV1({
+    ...continuation, selection: matchedSelection, port,
   }) } : retained;
 }
 

@@ -649,16 +649,6 @@ export function createCliActionDeps(params: CliActionDepsParams,
             return entry?.definition.kind === 'event' ? entry.definition.automation ?? null : null;
           } finally { await lease.release(); }
         },
-        readDefinition: async automationId => {
-          const { getAutomationDefinition } = await import('@/api/automations');
-          return runWithServerHttpBaseUrl(todoHomeBaseUrl, () => getAutomationDefinition({
-            token: params.credentials!.token, automationId,
-          }));
-        },
-        resolveEncryption: async () => {
-          const { createCliAutomationEncryptionResolver } = await import('./workflowTriggers');
-          return createCliAutomationEncryptionResolver({ credentials: params.credentials!, serverHttpBaseUrl: todoHomeBaseUrl })();
-        },
       },
       onCommittedObservation: async (observation: CommittedAutomationEventObservationV1) => {
         const noticeHomeIdentity = await resolveProjectHomeIdentity();

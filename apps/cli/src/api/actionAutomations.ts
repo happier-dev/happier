@@ -16,6 +16,7 @@ export function createCliActionAutomationPortV1(input: Readonly<{
   isCredentialCurrent?: () => boolean | Promise<boolean>;
   checks?: Pick<ActionAutomationPortV1, 'start' | 'wait' | 'cancel'> & Readonly<{
     allowConsent: NonNullable<ActionAutomationPortV1['allowConsent']>;
+    prepareMatching: NonNullable<ActionAutomationPortV1['prepareMatching']>;
     resolveConsent: NonNullable<ActionAutomationSelectArgsV1['resolveConsent']>;
   }>;
 }>): ActionAutomationPortV1 | undefined {
@@ -26,7 +27,7 @@ export function createCliActionAutomationPortV1(input: Readonly<{
   const checks = input.checks;
   const bind = (port: ReturnType<typeof createActionAutomationHttpPortV1>): ActionAutomationPortV1 => ({ ...port,
     ...checks,
-    select: args => port.select({ ...args, ...(checks ? { resolveConsent: checks.resolveConsent } : {}) }),
+    select: args => port.select({ ...args, ...(checks ? { resolveConsent: checks.resolveConsent, prepareMatching: checks.prepareMatching } : {}) }),
     ...(checks ? { allowConsent: async (args: Parameters<NonNullable<ActionAutomationPortV1['allowConsent']>>[0]) => {
       const consent = await checks.allowConsent(args);
       port.retainConsent(consent);

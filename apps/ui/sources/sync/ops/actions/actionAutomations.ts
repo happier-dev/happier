@@ -14,7 +14,7 @@ export function createUiActionAutomationPortV1(account: LazyActionAccountContext
   const key = serverAccountScopeKeySuffix({ serverId: account.serverId, accountId: account.accountId });
   const current = indexes.get(key);
   const bind = (port: ReturnType<typeof createActionAutomationHttpPortV1>): ActionAutomationPortV1 => ({ ...port, ...checks,
-    select: args => port.select({ ...args, ...(checks ? { resolveConsent: checks.resolveConsent } : {}) }),
+    select: args => port.select({ ...args, ...(checks ? { resolveConsent: checks.resolveConsent, prepareMatching: checks.prepareMatching } : {}) }),
     ...(checks ? { allowConsent: async (args: Parameters<NonNullable<ActionAutomationPortV1['allowConsent']>>[0]) => {
       const consent = await checks.allowConsent(args);
       port.retainConsent(consent);

@@ -56,7 +56,8 @@ export function createActionAutomationInvocationV1(args: ActionAutomationContinu
     get selection() { return current.selection; },
     continue(next: ActionAutomationContinuationV1) {
       if (next.actionId !== args.actionId || next.context.actionRequestId !== args.context.actionRequestId) return undefined;
-      current = next;
+      const privateMatching = current.selection.privateMatching;
+      current = privateMatching ? { ...next, selection: { ...next.selection, privateMatching } } : next;
       return invocation;
     },
     async settle(result: ActionExecuteResult, context = current.context) {
