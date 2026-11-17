@@ -147,10 +147,31 @@ async function mountSheet(options: Readonly<{
       screen.findByTestId('browser-login-import:source:chromium:Default'),
     ).toBeTruthy(),
   );
-  return { screen, onClose };
+  return { screen, onClose, scope };
 }
 
 describe('BrowserLoginImportSheet', () => {
+  it('keeps the selected source presence current through offline and missing inventory', async () => {
+    machine.answer = async () => sources;
+    const source = createMachineFixture({ id: 'machine-a', kind: 'persistent', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+    const other = createMachineFixture({ id: 'machine-b', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+    const { screen, scope } = await mountSheet({ machines: [source, other] });
+    const { SelectionListFilterChip } = await import('@/components/ui/selectionList');
+    const chip = () => screen.findByType(SelectionListFilterChip).props.filter as SelectionListFilter;
+    expect(chip().presence).toBe('online');
+    await act(async () => {
+      await publishMachineInventoryForTest(scope, [{ ...source, active: false, activeAt: source.activeAt + 1 }, other]);
+      await flushHookEffects();
+    });
+    expect(chip().selectedId).toBe('machine-a');
+    expect(chip().presence).toBe('offline');
+    await act(async () => { await publishMachineInventoryForTest(scope, [other]); await flushHookEffects(); });
+    expect(chip().selectedId).toBe('machine-a');
+    expect(chip().presence).toBeUndefined();
+    await act(async () => { await publishMachineInventoryForTest(scope, [{ ...source, activeAt: source.activeAt + 2 }, other]); await flushHookEffects(); });
+    expect(chip().presence).toBe('online');
+  });
+
   it('chooses the source Machine from one chip that tells same-named Machines apart', async () => {
     machine.answer = async (call) => {
       if (call.method === RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES)

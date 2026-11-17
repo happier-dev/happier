@@ -37,6 +37,7 @@ import {
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import {
   formatMachineDisplayNameParts,
   resolveMachineDisplayNameParts,
@@ -176,6 +177,7 @@ export function BrowserLoginImportSheet(
   const importController = React.useRef<AbortController | null>(null);
 
   const machines = useMachineListForServer(destination.serverId) ?? [];
+  const sourceMachinePresence = useMachinePresenceSummary(destination.serverId, sourceMachineId);
   const machineIds = React.useMemo(
     () => [
       ...new Set([
@@ -470,7 +472,9 @@ export function BrowserLoginImportSheet(
                         color={theme.colors.text.secondary}
                       />
                     ),
-                    presence: 'online',
+                    ...(sourceMachinePresence.presenceOnline == null ? {} : {
+                      presence: sourceMachinePresence.presenceOnline ? 'online' as const : 'offline' as const,
+                    }),
                     disabled: busy,
                     options: machineIds.map((id) => ({
                       id,
