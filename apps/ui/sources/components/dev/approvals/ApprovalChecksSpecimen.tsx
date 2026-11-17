@@ -18,6 +18,7 @@ import {
   APPROVAL_CHECKS_PERSON_SCENES,
   APPROVAL_CHECKS_RUN_ID,
   type ApprovalChecksPersonScene,
+  APPROVAL_CHECKS_SCENE_LABELS,
   APPROVAL_CHECKS_SCENES,
   createApprovalChecksSceneFixture,
   type ApprovalChecksScene,
@@ -221,7 +222,7 @@ const ApprovalChecksSceneCard = React.memo(function ApprovalChecksSceneCard(
     <View style={styles.scene} testID={`dev-approval-checks:${scene}`}>
       {props.labeled ? (
         <Text variant="meta" style={styles.label}>
-          {scene}
+          {APPROVAL_CHECKS_SCENE_LABELS[scene]}
         </Text>
       ) : null}
       <ApprovalPromptCard

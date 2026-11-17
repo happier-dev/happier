@@ -26,6 +26,23 @@ export const APPROVAL_CHECKS_SCENES = [
 ] as const;
 export type ApprovalChecksScene = (typeof APPROVAL_CHECKS_SCENES)[number];
 
+/** What each scene shows, in words, so a reviewer reads the specimen without the lab index. */
+export const APPROVAL_CHECKS_SCENE_LABELS: Readonly<Record<ApprovalChecksScene, string>> = {
+  aconsent: 'Consent asked · a shared check, first time',
+  achanged: 'Re-ask · its steps changed (Review steps open, changed step tagged)',
+  amatch: 'Re-ask · it now runs before more Actions',
+  approveHidden: 'Consent asked on another Account’s request · Allow hidden',
+  abot: 'Shared Bot · the Account holder has not allowed it (skip line)',
+  anomachine: 'Skipped · it needs a Machine to run',
+  askipped: 'You skipped it · the Action went on',
+  achecking: 'Checking · step n of m and elapsed time',
+  apassed: 'Passed · the Action runs',
+  arefused: 'Refused · the check’s reason',
+  acouldnotrun: 'Couldn’t run · its Machine is offline',
+  anotify: 'Notify mode · nothing waits',
+  aoverride: 'Failed · a person may approve anyway',
+};
+
 /**
  * A person's own deploy held by the same checks (lab `consent-v-pconsent`, `wait-v-p*`, `override-v-poverride`): the
  * request the person's app opens for review in place, with the Agent scene whose checks it carries.
@@ -47,7 +64,7 @@ const FREEZE = {
   workflowId: 'builtin:open-a-pull-request',
   workflowRevision: 4,
   ownerAccountId: 'account-mara',
-  actionIds: ['deployments.deploy'],
+  actionIds: ['session.title.set'],
   phase: 'before' as const,
   mode: 'wait' as const,
   onFailure: 'ask' as const,
@@ -224,19 +241,11 @@ export function createApprovalChecksSceneFixture(
     updatedAtMs: params.nowMs - 60_000,
     createdBy: person ? { surface: 'system' } : { surface: 'agent', sessionId: 'dev-approval-checks' },
     requestedSurface: person ? 'ui' : 'agent',
-    actionId: 'deployments.deploy',
-    actionArgs: {
-      serverId: params.serverId,
-      environmentId: 'env-production',
-      expectedRevision: 3,
-      requestKey: `deploy-${scene}`,
-      targetLinkId: 'link-production',
-      expectedTargetLinkRevision: 2,
-      contentArtifactId: 'content-happier-web',
-      contentHeaderVersion: 1,
-      contentBodyVersion: 1,
-    },
-    summary: 'Deploy happier-web',
+    // An Account-placed Action, so the card can be approved here without a Machine's signed placement; the checks
+    // around it are what the specimen shows.
+    actionId: 'session.title.set',
+    actionArgs: { sessionId: 'dev-approval-checks', title: 'Ship the billing fix' },
+    summary: 'Rename the session to “Ship the billing fix”',
     executionOriginV1: person ? {
       v: 1,
       authority: 'present_user',
@@ -244,7 +253,7 @@ export function createApprovalChecksSceneFixture(
       caller: { kind: 'host' },
       accountId: params.accountId,
       serverId: params.serverId,
-      actionId: 'deployments.deploy',
+      actionId: 'session.title.set',
       requestId: `dev-approval-checks-person-${scene}`,
     } : {
       v: 1,
@@ -260,7 +269,7 @@ export function createApprovalChecksSceneFixture(
       accountId: scene === 'approveHidden' ? 'account-ade' : params.accountId,
       serverId: params.serverId,
       sessionId: 'dev-approval-checks',
-      actionId: 'deployments.deploy',
+      actionId: 'session.title.set',
       requestId: `dev-approval-checks-${scene}`,
     },
     automaticChecks,
