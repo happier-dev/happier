@@ -15,6 +15,7 @@ import type { RuntimeTurnPromptMeta } from './turns/runtimeTurnOperations';
 import { createPermissionModeQueueState } from './createPermissionModeQueueState';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createSessionProviderInputOutcomeBinding, type SessionProviderInputOutcome } from './session/input/providerInputOutcome';
+import { composeExecutionRunWorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 
 function createFollowHarness(overrides?: Omit<Partial<ApiSessionClient>, 'updateMetadata'>) {
   let emit: ((message: UserMessage) => boolean | void) | undefined;
@@ -133,10 +134,18 @@ describe('protected Follow queue to host context', () => {
         : { sourceSessionId: input.sourceSessionId, delivered: input.consumed }),
     }));
     const settlements: SessionProviderInputOutcome[] = [];
+    const withdrawals: string[] = [];
+    let finished = false;
     const harness = createFollowHarness({ observePendingSessionFollow, acknowledgeSessionFollow,
       runSessionFollowSourceRequest: ({ request }) => request(),
       enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
       reconcileSessionInputForProviderDispatch: async () => 'admitted',
+      // Home cancellation is an RPC boundary; the real Follow and prompt-loop owners decide when to call it.
+      withdrawSessionInputBeforeProviderDispatch: async ({ localId }) => {
+        withdrawals.push(localId);
+        finished = true;
+        return true;
+      },
       observeProviderInputSettlement: async input => { settlements.push(input); return true; },
     });
     const requestScenario = scenario.startsWith('request-');
@@ -165,6 +174,9 @@ describe('protected Follow queue to host context', () => {
         ...(second ? [{ localInputId: 'follow-second', delivery: second }] : [])].map(({ localInputId, delivery }) => {
         if ('source' in delivery.original) return { kind: 'admitted_run_input' as const, localInputId,
           destinationSessionId: 'destination', delivery, effectiveDelivery: delivery.delivery,
+          ...('terminalEventId' in delivery.original ? { workerUpdate: composeExecutionRunWorkerUpdateV1({
+            runId: 'run-original', sessionId: 'source', status: 'failed', canInspect: true,
+          }) } : {}),
           ...(runPermissionCleared ? { disposition: 'withdrawn' as const } : {}) };
         if (!('sourceMessage' in delivery.original)) return { kind: 'admitted_input' as const, localInputId,
           sourceSessionId: 'source', destinationSessionId: 'destination', delivery, effectiveDelivery: delivery.delivery,
@@ -231,7 +243,6 @@ describe('protected Follow queue to host context', () => {
     });
     const reconcile = createSessionFollowContextReconciler({ session: harness.session, hydrateObservation: hydrate,
       maxFollowContextUtf8Bytes: scenario === 'omitted' ? 0 : scenario === 'selected-prefix-one-fits' ? 6_000 : 8192 });
-    let finished = false;
     const binding = createSessionProviderInputOutcomeBinding({ getTarget: () => ({
       sessionId: harness.session.sessionId,
       hasPendingProviderInput: localId => ['human-input', 'follow-input', 'follow-second'].includes(localId),
@@ -276,9 +287,14 @@ describe('protected Follow queue to host context', () => {
       expect(sends).toHaveLength(refused || scenario === 'local-command' ? 0 : 1);
       expect(resets).toHaveLength(scenario === 'local-command' ? 1 : 0);
       if (refused) {
-        expect(settlements).toContainEqual(expect.objectContaining({ kind: 'rejected_before_effect', localId: 'follow-input',
-          reason: runPermissionCleared ? 'provider_rejected_before_acceptance' : 'provider_unavailable_before_acceptance',
-          retryable: !runPermissionCleared }));
+        if (requestScenario || runPermissionCleared) {
+          expect(withdrawals).toEqual(['follow-input']);
+          expect(settlements).toEqual([]);
+        } else {
+          expect(withdrawals).toEqual([]);
+          expect(settlements).toContainEqual(expect.objectContaining({ kind: 'rejected_before_effect', localId: 'follow-input',
+            reason: 'provider_unavailable_before_acceptance', retryable: true }));
+        }
         expect(acknowledgeSessionFollow).not.toHaveBeenCalled();
       } else if (scenario === 'omitted' || scenario === 'local-command' || scenario === 'selected-prefix-gap') {
         if (scenario === 'omitted' || scenario === 'selected-prefix-gap') {
@@ -302,8 +318,9 @@ describe('protected Follow queue to host context', () => {
       } else {
         if (scenario === 'run-execution-permission-withdrawn-quiet') {
           expect(sends[0].prompt).not.toContain('run-original');
-          expect(settlements).toContainEqual(expect.objectContaining({ kind: 'rejected_before_effect', localId: 'follow-input',
-            reason: 'provider_rejected_before_acceptance', retryable: false }));
+          expect(withdrawals).toEqual(['follow-input']);
+          expect(settlements).toEqual([expect.objectContaining({ kind: 'accepted', localId: 'human-input', userMessageSeq: 18,
+            providerTurnId: 'native-turn', providerDeliveryKind: 'newTurn' })]);
           expect(acknowledgeSessionFollow).not.toHaveBeenCalled();
           expect(harness.messageQueue.queue).toEqual([]);
           return;
