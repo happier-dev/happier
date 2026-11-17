@@ -6014,6 +6014,27 @@ even when their triggers are not copied.
 Inline definitions supplied to trigger add or update use the same validator
 against the Event being enrolled, including retained inline references.
 
+In 0.3 development source, the Home derives shared Action-trigger reach when
+the trigger is written, using the subject's existing edit/manage owner. It
+recomputes that decision on later trigger edits; a caller's `reachesOthers`
+claim grants no authority. For encrypted Machine, Session, approval-profile,
+App, Environment and backup subjects, the Home compares the canonical subject
+digest with identities admitted by those owners without opening private
+trigger content. A retained Environment continues to use its Source owner's
+management authority after Source removal. Logical Project rows and saved
+health-check definitions currently have Account-private owners rather than a
+shared management grant. Project keys belong to an Account's private rows, so
+the same Home and Project key in two Accounts does not grant shared authority.
+Plugin-kind subjects also remain owner-only; an embedded core resource id does
+not turn a plugin identity into that resource's management grant. These cases,
+and omitted subjects or view-only authors, mean “Runs only on your own Actions”.
+An encrypted Database subject includes service and database names. Finite
+restore requests can carry those operands, but the Home has no existing full
+target census to bind a trigger digest to their management authority. An
+unproved positive reach claim returns the existing typed
+stored-content refusal; own-only authoring remains available. These remaining
+bindings are not covered by the six-kind router validation.
+
 Trigger admission seals only referenced leaves in the private accepted snapshot.
 Other Events, Run now, schedules and Session lifecycle admissions leave the value
 absent. Text substitutes an empty string, conditions treat it as unset, and a
