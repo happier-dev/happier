@@ -460,11 +460,12 @@ describe('TeamAuthEntrySurface', () => {
         const actionPending = new Promise<void>((resolve) => {
             releaseAction = resolve;
         });
+        const onSelectAction = vi.fn(() => actionPending);
         const screen = await renderScreen(
             <TeamAuthEntrySurface
                 teamId="team-1"
                 target={target}
-                onSelectAction={() => actionPending}
+                onSelectAction={onSelectAction}
             />,
         );
         await waitForTestId(screen, 'team-auth-entry-ready');
@@ -475,11 +476,19 @@ describe('TeamAuthEntrySurface', () => {
         });
 
         expect(screen.findByTestId('team-auth-entry-action:home-password')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('team-auth-entry-action:team-oidc')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('team-auth-entry-action:team-oidc')?.props.accessibilityState?.busy).toBe(true);
+        // The shared web Pressable keeps a busy opener focusable for a dialog;
+        // its semantic state and admission guard still refuse repeat activation.
+        expect(screen.findByTestId('team-auth-entry-action:team-oidc')?.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+        await act(async () => {
+            screen.pressByTestId('team-auth-entry-action:team-oidc');
+            screen.pressByTestId('team-auth-entry-action:home-password');
+        });
+        expect(onSelectAction).toHaveBeenCalledOnce();
 
         await act(async () => releaseAction());
         expect(screen.findByTestId('team-auth-entry-action:home-password')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('team-auth-entry-action:team-oidc');
+        expect(onSelectAction).toHaveBeenCalledTimes(2);
     });
 
     it('fails a mismatched Team projection closed and retries from a polite terminal state', async () => {
