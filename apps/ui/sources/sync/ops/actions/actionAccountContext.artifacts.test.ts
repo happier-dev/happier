@@ -1167,6 +1167,50 @@ describe('scoped Account workflow Artifact operations', () => {
                 .toEqual(['work_board', 'work_board']);
         } finally { account.dispose(); }
     });
+    it.each([false, true])('keeps safe locked Team resources in the public list Action without opening content (lockedOnly=%s)', async lockedOnly => {
+        const home = await upsertAndActivateServer({ serverUrl: `https://locked-team-artifact-list-${lockedOnly}.test`, scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const locked = { id: 'locked-team-artifact', ownerAccountId: 'another-account', access: 'view', encryptionMode: 'e2ee',
+            kind: 'other', kindHint: null, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+            publicAudience: 'retained', sharedTeamIds: ['selected-team'], sharedWithTeamScope: 'group',
+            availability: { kind: 'locked', reason: 'encryption_material_unavailable' } };
+        const readable: Artifact = { id: 'readable-team-artifact', ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'plain',
+            kind: 'other', kindHint: null, header: encodePlainArtifactStoredContent({ title: 'Readable document' }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 2, createdAt: 1, updatedAt: 2,
+            publicAudience: 'none', sharedTeamIds: ['selected-team'], sharedWithTeamScope: 'team_and_group' };
+        const listRequests: URL[] = [];
+        runtimeFetch.mockImplementation(async (input: unknown) => {
+            const target = new URL(String(input));
+            if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
+            if (target.pathname === '/v1/account/encryption') {
+                // The E2EE receiver has only its sign-in token, with no client encryption material.
+                return json({ mode: lockedOnly ? 'e2ee' : 'plain', updatedAt: 0 });
+            }
+            expect(target.pathname).toBe('/v1/artifacts');
+            listRequests.push(target);
+            return json({ items: lockedOnly ? [locked] : [locked, readable], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } });
+        });
+        const account = await captureLazyActionAccountContext(home.id);
+        try {
+            const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(account) })));
+            const caller = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+            const result = await execute('artifact.list', { sharedWithTeamId: 'selected-team', teamResourceKind: 'otherArtifacts', limit: 3 }, caller);
+            const expectedItems = [{ artifactId: locked.id, header: {}, availability: locked.availability, sharedWithTeamScope: 'group' },
+                ...(lockedOnly ? [] : [{ artifactId: readable.id, header: { title: 'Readable document' }, sharedWithTeamScope: 'team_and_group' }])];
+            expect(result).toMatchObject({ ok: true, result: { items: expectedItems } });
+            if (!result.ok) throw new Error(result.error);
+            expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(result.result).items).toHaveLength(expectedItems.length);
+            expect(listRequests).toHaveLength(1);
+            expect(listRequests[0]!.searchParams.get('sharedWithTeamId')).toBe('selected-team');
+            expect(listRequests[0]!.searchParams.get('teamResourceKind')).toBe('otherArtifacts');
+            expect(listRequests[0]!.searchParams.has('includeBody')).toBe(false);
+        } finally { account.dispose(); }
+    });
     it('selects ordinary Artifact lists across structural pages without leaking filters or truncating omitted limits', async () => {
         const home = await upsertAndActivateServer({ serverUrl: 'https://ordinary-artifact-selection.test', scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;

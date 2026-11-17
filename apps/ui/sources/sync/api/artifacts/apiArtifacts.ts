@@ -1,12 +1,12 @@
 import { pick } from 'zod/mini';
 import { ArtifactTemplateAcceptedVersionResponseV1Schema, type ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1, type ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { requireArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import type { ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { MemoryDecisionSourceErrorCodeV1Schema } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
-import { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, ArtifactUpdateResponse } from '@/sync/domains/artifacts/artifactTypes';
+import { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, ArtifactUpdateResponse, type ArtifactListItem } from '@/sync/domains/artifacts/artifactTypes';
 import { HappyError } from '@/utils/errors/errors';
 import { createServerFetchForActiveServer, serverFetch, type ServerFetch } from '@/sync/http/client';
 import { encodeBase64 } from '@/encryption/base64';
@@ -16,7 +16,7 @@ import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Sche
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
+import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpLockedListItemV1Schema, ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
     ArtifactReadHeadersBatchResponseV1Schema, type ArtifactReadBatchResponseV1,
     type ArtifactReadHeadersBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
@@ -113,7 +113,17 @@ function readArtifactResponse(value: unknown): Artifact {
     }
     return { ...value as Artifact, ...projection.data,
         ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName.parse(Reflect.get(value, 'ownerDisplayName')),
+        sharedWithTeamScope: ArtifactHttpReadV1Schema.shape.sharedWithTeamScope.parse(Reflect.get(value, 'sharedWithTeamScope')),
         publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(Reflect.get(value, 'publicAudience')) };
+}
+
+function readArtifactListItem(value: unknown): ArtifactListItem {
+    if (value && typeof value === 'object' && Object.hasOwn(value, 'availability')) {
+        const locked = ArtifactHttpLockedListItemV1Schema.safeParse(value);
+        if (!locked.success) throw new HappyError('Artifact content is unavailable', false, { code: 'artifact_content_unavailable' });
+        return locked.data;
+    }
+    return readArtifactResponse(value);
 }
 
 export type ArtifactApiOptions = Readonly<{
@@ -140,13 +150,18 @@ export type ArtifactApiOptions = Readonly<{
     ownerAccountId?: string;
 }>;
 
+export type ArtifactTeamListApiOptions = ArtifactApiOptions & Readonly<{
+    sharedWithTeamId: string;
+    teamResourceKind?: ArtifactTeamResourceKindV1;
+}>;
+
 type ArtifactReadBatchItem = ArtifactReadBatchResponseV1['items'][number] | ArtifactReadHeadersBatchResponseV1['items'][number];
 type ArtifactReadBatchOptions = Pick<ArtifactApiOptions, 'request' | 'signal' | 'readTransport' | 'fresh'>;
 type PreparedArtifactReadBatch<T> = Readonly<{ release: () => void; read: (artifactIds: readonly string[]) => Promise<T> }>;
-type ArtifactListPage = Readonly<{ items: Artifact[]; hasUnclassified?: boolean; kindCoverage?: ArtifactKindCoverageV1 }>;
+type ArtifactListPage<T = Artifact> = Readonly<{ items: T[]; hasUnclassified?: boolean; kindCoverage?: ArtifactKindCoverageV1 }>;
 const artifactDetailReads = createScopedBatchResolutionSingleFlight<ArtifactReadBatchItem>();
 const artifactOpaqueReads = createScopedResolutionSingleFlight<Artifact>();
-const artifactInventoryReads = createScopedResolutionSingleFlight<ArtifactListPage>();
+const artifactInventoryReads = createScopedResolutionSingleFlight<ArtifactListPage<ArtifactListItem>>();
 
 /** A write may commit even when its acknowledgement is refused or lost. */
 function artifactMutationAttempt<T>(opts: Pick<ArtifactApiOptions, 'serverId' | 'readTransport'>,
@@ -437,15 +452,20 @@ export async function fetchArtifacts(
     return (await fetchArtifactListPage(credentials, opts)).items;
 }
 
-export async function fetchArtifactListPage(credentials: AuthCredentials, opts: ArtifactApiOptions = {}): Promise<ArtifactListPage> {
+export function fetchArtifactListPage(credentials: AuthCredentials, opts: ArtifactTeamListApiOptions): Promise<ArtifactListPage<ArtifactListItem>>;
+export function fetchArtifactListPage(credentials: AuthCredentials, opts?: ArtifactApiOptions): Promise<ArtifactListPage>;
+export async function fetchArtifactListPage(credentials: AuthCredentials,
+    opts: ArtifactApiOptions & Partial<Pick<ArtifactTeamListApiOptions, 'sharedWithTeamId' | 'teamResourceKind'>> = {}): Promise<ArtifactListPage<ArtifactListItem>> {
     throwIfAborted(opts.signal);
     const binding = captureArtifactReadBinding(opts);
     const approvalSelected = opts.approvalStates !== undefined || opts.approvalSessionIds !== undefined;
-    const filtered = opts.coarseKind !== undefined || opts.kinds !== undefined || opts.browserListed === true || Boolean(opts.unclassified) || approvalSelected || opts.audience !== undefined;
+    const filtered = opts.coarseKind !== undefined || opts.kinds !== undefined || opts.browserListed === true || Boolean(opts.unclassified) || approvalSelected || opts.audience !== undefined || opts.sharedWithTeamId !== undefined;
     const query = new URLSearchParams();
     if (opts.limit !== undefined) query.set('limit', String(opts.limit));
     if (opts.cursor !== undefined) query.set('cursor', opts.cursor);
     if (opts.audience) query.set('audience', opts.audience);
+    if (opts.sharedWithTeamId !== undefined) query.set('sharedWithTeamId', opts.sharedWithTeamId);
+    if (opts.teamResourceKind !== undefined) query.set('teamResourceKind', opts.teamResourceKind);
     if (opts.includeBody) query.set('includeBody', 'true');
     if (opts.coarseKind) query.set('kind', opts.coarseKind);
     if (opts.kinds !== undefined) query.set('kinds', JSON.stringify(opts.kinds));
@@ -465,6 +485,12 @@ export async function fetchArtifactListPage(credentials: AuthCredentials, opts: 
             }, async response => {
                 throwIfAborted(sharedSignal);
                 if (!response.ok) {
+                    if (response.status === 503) {
+                        const payload: unknown = await response.clone().json().catch(() => null);
+                        if (payload && typeof payload === 'object' && Reflect.get(payload, 'error') === 'artifact_content_unavailable') {
+                            throw await artifactHttpReadError(response, 'Failed to fetch artifacts', 'artifact_content_unavailable');
+                        }
+                    }
                     if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
                         let message = 'Failed to fetch artifacts';
                         const error: unknown = await response.json().catch(() => null);
@@ -479,11 +505,11 @@ export async function fetchArtifactListPage(credentials: AuthCredentials, opts: 
                 const hasUnclassified: unknown = filtered && value && typeof value === 'object' ? Reflect.get(value, 'hasUnclassified') : undefined;
                 const rawCoverage: unknown = filtered && value && typeof value === 'object' ? Reflect.get(value, 'coverage') : undefined;
                 const kindCoverage = rawCoverage === undefined ? undefined : ArtifactKindCoverageV1Schema.parse(rawCoverage);
-                if (opts.kinds !== undefined || opts.browserListed || approvalSelected || opts.audience) requireArtifactKindCoverageV1(kindCoverage);
+                if (opts.kinds !== undefined || opts.browserListed || approvalSelected || opts.audience || opts.sharedWithTeamId !== undefined) requireArtifactKindCoverageV1(kindCoverage);
                 if (!Array.isArray(items) || (filtered && typeof hasUnclassified !== 'boolean')) {
                     throw new HappyError('Artifact content is unavailable', false, { code: 'artifact_content_unavailable' });
                 }
-                const data = items.map(readArtifactResponse);
+                const data = items.map(opts.sharedWithTeamId === undefined ? readArtifactResponse : readArtifactListItem);
                 return { items: opts.ownerAccountId === undefined ? data : data.filter(artifact => artifact.ownerAccountId === opts.ownerAccountId),
                     ...(filtered ? { hasUnclassified: hasUnclassified as boolean } : {}), ...(kindCoverage ? { kindCoverage } : {}) };
             });

@@ -4,7 +4,8 @@ import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
-import { ArtifactCallerAccessV1Schema } from './artifactAccessV1.js';
+import { ArtifactCallerAccessV1Schema, ArtifactLockedAvailabilityV1Schema } from './artifactAccessV1.js';
+export { ArtifactLockedAvailabilityV1Schema, type ArtifactLockedAvailabilityV1 } from './artifactAccessV1.js';
 import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
 import { ArtifactBlobReferenceV1Schema, ArtifactBodyV1Schema, ArtifactRevisionProvenanceV1Schema } from './artifactBinaryV1.js';
 import { ARTIFACT_ACTION_IDS_V1 } from './artifactActionIdsV1.js';
@@ -17,7 +18,8 @@ import { LaunchProfileArtifactV1Schema } from '../launchProfiles/launchProfileAr
 import { ApprovalArtifactStateV1Schema } from '../approvals/approvalArtifactKindV1.js';
 import { StoredContentPublicShareReadResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
 import { SessionDataKeyRecipientContentKeyV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
-import { ResourceRecipientKeyEnvelopeInputV1Schema } from '../teams/resourceGrantAccessV1.js';
+import { ResourceRecipientKeyEnvelopeInputV1Schema, ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
+import { ArtifactTeamResourceKindV1Schema } from './artifactKindV1.js';
 export { ArtifactRevisionV1Schema, type ArtifactRevisionV1 } from './artifactRevisionV1.js';
 
 export const ArtifactActionIdV1Schema = lazyZodSchema(() => z.enum(ARTIFACT_ACTION_IDS_V1));
@@ -68,12 +70,15 @@ export const ArtifactCreateInputV1Schema = lazyZodSchema(() => z.union([
 ]));
 export const ArtifactListInputV1Schema = lazyZodSchema(() => z.strictObject({
   audience: z.optional(z.literal('received')),
+  sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
+  teamResourceKind: z.optional(ArtifactTeamResourceKindV1Schema),
   search: z.optional(z.string()), kind: z.optional(z.string().check(z.minLength(1))),
   kinds: z.optional(z.array(z.string().check(z.minLength(1)))),
   approvalStates: z.optional(z.array(ApprovalArtifactStateV1Schema)),
   sort: z.optional(z.enum(['updated_desc', 'created_desc', 'title_asc'])),
   limit: z.optional(z.number().check(z.int(), z.positive())), cursor: z.optional(z.string().check(z.minLength(1))),
-}));
+}).check(z.refine(input => input.teamResourceKind === undefined || input.sharedWithTeamId !== undefined,
+  { message: 'Team resource kind requires a Team scope' })));
 export const ArtifactUpdateInputV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { expectedRevision: ArtifactRevisionV1Schema, header: ArtifactHeaderMetadataV1Schema, body: z.string() })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { expectedRevision: ArtifactRevisionV1Schema, header: ArtifactHeaderMetadataV1Schema, ...upload })),
@@ -98,6 +103,8 @@ export const ArtifactRestoreInputV1Schema = (<T extends z.ZodMiniObject>(schema:
 export const ArtifactHeaderV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, {
   ownerAccountId: z.string().check(z.minLength(1)), access: ArtifactCallerAccessV1Schema,
   publicAudience: ArtifactPublicAudienceV1ReadSchema,
+  availability: z.optional(ArtifactLockedAvailabilityV1Schema),
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   header: ArtifactHeaderMetadataV1Schema, headerVersion: z.number().check(z.int(), z.positive()),
   seq: z.number().check(z.int(), z.nonnegative()), createdAt: z.number().check(z.int(), z.nonnegative()), updatedAt: z.number().check(z.int(), z.nonnegative()),
 })));

@@ -1,4 +1,5 @@
-import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1 } from './artifactKindV1.js';
+import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1,
+  type ArtifactTeamResourceKindV1 } from './artifactKindV1.js';
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, type ApprovalArtifactStateV1 } from '../approvals/approvalArtifactKindV1.js';
 import { throwIfAborted } from '../abortSignal.js';
 import { getArtifactKindPolicyV1 } from './artifactSharingV1.js';
@@ -10,6 +11,8 @@ export { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from './artifactListPageV1.js';
 
 export type ArtifactListSelectionOptionsV1 = Readonly<{
   audience?: 'received';
+  sharedWithTeamId?: string;
+  teamResourceKind?: ArtifactTeamResourceKindV1;
   limit?: number; cursor?: string; search?: string; kind?: string;
   kinds?: readonly string[];
   approvalStates?: readonly ApprovalArtifactStateV1[];
@@ -28,14 +31,14 @@ export type ArtifactListSelectionOptionsV1 = Readonly<{
 }>;
 
 export type ArtifactListPageOptionsV1 = Readonly<Pick<ArtifactListSelectionOptionsV1,
-  'audience' | 'limit' | 'cursor' | 'includeBody' | 'coarseKind' | 'kinds' | 'approvalStates' | 'approvalSessionIds' | 'browserListed' | 'indexedKinds' | 'ownerAccountId' | 'signal'> & { unclassified?: boolean | 'coarse' | 'approval' }>;
+  'audience' | 'sharedWithTeamId' | 'teamResourceKind' | 'limit' | 'cursor' | 'includeBody' | 'coarseKind' | 'kinds' | 'approvalStates' | 'approvalSessionIds' | 'browserListed' | 'indexedKinds' | 'ownerAccountId' | 'signal'> & { unclassified?: boolean | 'coarse' | 'approval' }>;
 
 /** Public hosts select membership before paging. The executor admits private approval callers. */
 export function artifactActionListSelectionV1(input: ArtifactActionInputV1<'artifact.list'> & Readonly<{ signal?: AbortSignal }>): ArtifactListSelectionOptionsV1 {
   const { kind, kinds, approvalStates, ...options } = input;
   const requested = kinds ?? (kind === undefined ? undefined : [kind]);
   const sort = input.sort ?? 'updated_desc';
-  if (requested === undefined) return { ...options, sort, browserListed: true };
+  if (requested === undefined) return { ...options, sort, ...(input.sharedWithTeamId ? {} : { browserListed: true }) };
   const selected = requested.filter(value => (kind === undefined || value === kind)
     && (getArtifactKindPolicyV1(value).browserListed || isApprovalArtifactKindV1(value) || value === BOT_TEMPLATE_ARTIFACT_KIND_V1));
   return { ...options, sort, kinds: selected,
@@ -136,11 +139,36 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   }
   const { kinds, updatedOrder, matches, compare, approvalSelection, unknownApprovalStateMatches } = artifactHeaderSelection(options);
   if (kinds?.length === 0 || options?.approvalSessionIds?.length === 0) return { items: [], coverage: 'complete' };
+  // The server owns Team bucket membership, including locked and legacy rows.
+  // Preserve its structural frontier instead of filling a page from the library.
+  if (options?.sharedWithTeamId !== undefined && updatedOrder) {
+    const page = await params.readPage({ sharedWithTeamId: options.sharedWithTeamId,
+      ...(options.teamResourceKind === undefined ? {} : { teamResourceKind: options.teamResourceKind }),
+      limit: Math.min(options.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1),
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+      ...(options.ownerAccountId === undefined ? {} : { ownerAccountId: options.ownerAccountId }),
+      ...(options.audience === undefined ? {} : { audience: options.audience }),
+      ...(options.browserListed ? { browserListed: true as const } : options.indexedKinds !== undefined ? { indexedKinds: options.indexedKinds }
+        : kinds !== undefined ? { kinds } : options.coarseKind ? { coarseKind: options.coarseKind } : {}),
+      ...(options.approvalStates === undefined ? {} : { approvalStates: options.approvalStates }),
+      ...(options.approvalSessionIds === undefined ? {} : { approvalSessionIds: options.approvalSessionIds }),
+      ...(options.includeBody ? { includeBody: !params.readBodies } : {}),
+      ...(options.signal ? { signal: options.signal } : {}) });
+    const items: T[] = [];
+    for (const item of page.items.filter(matches)) {
+      throwIfAborted(options.signal);
+      if (!options.headerAdmission || await options.headerAdmission(item.header)) items.push(item);
+    }
+    const selected = options.includeBody && params.readBodies ? await params.readBodies(items) : items;
+    throwIfAborted(options.signal);
+    return { ...page, items: selected, coverage: page.coverage ?? 'complete' };
+  }
   // Received discovery is a demanded structural page, including when a private
   // search is sparse. Its frontier belongs to transport, never a logical fill
   // or legacy-inventory walk, and this path never requests bodies.
   if (options?.audience === 'received') {
     const page = await params.readPage({ audience: 'received', limit: Math.min(options.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1),
+      ...(options.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId, teamResourceKind: options.teamResourceKind }),
       ...(options.cursor ? { cursor: options.cursor } : {}),
       ...(options.browserListed ? { browserListed: true as const } : options.indexedKinds !== undefined ? { indexedKinds: options.indexedKinds }
         : kinds !== undefined ? { kinds } : options.coarseKind ? { coarseKind: options.coarseKind } : {}),
@@ -190,6 +218,7 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   let hasMorePhysicalRows = false;
   do {
     const page = await params.readPage({ limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ...(cursor ? { cursor } : {}),
+      ...(options.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId, teamResourceKind: options.teamResourceKind }),
       ...(options.browserListed ? { browserListed: true as const } : options.indexedKinds !== undefined ? { indexedKinds: options.indexedKinds }
         : kinds !== undefined ? { kinds } : options.coarseKind ? { coarseKind: options.coarseKind } : {}),
       ...(options.ownerAccountId !== undefined ? { ownerAccountId: options.ownerAccountId } : {}),
@@ -223,6 +252,7 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
     const selectedIds = new Set(all.map(item => item.artifactId));
     do {
       const page = await params.readPage({ limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1,
+        ...(options.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId, teamResourceKind: options.teamResourceKind }),
         unclassified: approvalSelection ? 'approval' : coarseSelection ? 'coarse' : true,
         ...(legacyCursor ? { cursor: legacyCursor } : {}),
         ...(options.ownerAccountId !== undefined ? { ownerAccountId: options.ownerAccountId } : {}),

@@ -29,6 +29,34 @@ function store(supported = true) {
 describe('Account Artifact coarse kind transport', () => {
   beforeEach(() => { get.mockReset(); post.mockReset(); });
 
+  it('pages an admitted locked Team row without opening Account content material', async () => {
+    const getAccountEncryptionMode = vi.fn(async () => 'e2ee' as const);
+    const artifacts = createAccountArtifactStore({ credentials: { token: 'synthetic-token', encryption: null },
+      getAccountEncryptionMode });
+    get.mockResolvedValue({ status: 200, data: { items: [{ id: artifactId, ownerAccountId: 'another-owner',
+      access: 'view', publicAudience: 'none', encryptionMode: 'e2ee', kind: null, sharedWithTeamScope: 'group',
+      availability: { kind: 'locked', reason: 'encryption_material_unavailable' },
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }],
+      hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } } });
+    const page = await artifacts.list({ sharedWithTeamId: 'team-a', teamResourceKind: 'otherArtifacts', limit: 1 });
+    expect(page.items).toEqual([expect.objectContaining({ artifactId, header: {}, sharedWithTeamScope: 'group',
+      availability: { kind: 'locked', reason: 'encryption_material_unavailable' } })]);
+    expect(page.nextCursor).toBeDefined();
+    expect(page.coverage).toBe('partial');
+    expect(getAccountEncryptionMode).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledTimes(1);
+    const query = new URL(get.mock.calls[0]![0]).searchParams;
+    expect(Object.fromEntries(query)).toMatchObject({ sharedWithTeamId: 'team-a', teamResourceKind: 'otherArtifacts', limit: '1' });
+    expect(query.has('includeBody')).toBe(false);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('preserves the Team bucket owner unavailable refusal at the CLI receiver', async () => {
+    get.mockResolvedValue({ status: 503, data: { error: 'artifact_content_unavailable' } });
+    await expect(store().list({ sharedWithTeamId: 'team-a', teamResourceKind: 'projectDocuments' }))
+      .rejects.toMatchObject({ code: 'artifact_content_unavailable', status: 503 });
+  });
+
   it('reads received templates as one header page without legacy or body demand', async () => {
     const selected = { ...row(artifactId, { kind: 'bot_template.v1', title: 'Received' }, 1), access: 'view' };
     const header = { ...selected };

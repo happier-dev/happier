@@ -42,7 +42,7 @@ import { createArtifactWithHeaderViaApi, decryptArtifactListItems, fetchArtifact
 import { listArtifactHeadersV1, type ArtifactListPageOptionsV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifactListPage, fetchArtifactReadBatch, fetchArtifactStorageUsage, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
-import type { Artifact, ArtifactBodyInput, ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { Artifact, ArtifactBodyInput, ArtifactHeader, ArtifactLockedListItem, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { resolveHomeTarget as resolveCapturedHomeTarget, resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { isActionEffectResult as isEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
@@ -519,9 +519,10 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             set: (input, operationSignal) => withArtifactPreparation(input.artifactId, () => accessApi.set(input, operationSignal), operationSignal),
             remove: (input, operationSignal) => withArtifactPreparation(input.artifactId, () => accessApi.remove(input, operationSignal), operationSignal),
         };
-        const projectArtifactListItem = (artifact: Pick<Artifact, 'id' | 'bodyVersion' | 'headerVersion' | 'seq' | 'createdAt' | 'updatedAt' | 'ownerAccountId' | 'ownerDisplayName' | 'access' | 'sharedTeamIds'>,
-            opened: DecryptedArtifact | null | undefined, includeBody?: boolean) => ({
+        const projectArtifactListItem = (artifact: Pick<Artifact, 'id' | 'bodyVersion' | 'headerVersion' | 'seq' | 'createdAt' | 'updatedAt' | 'ownerAccountId' | 'ownerDisplayName' | 'access' | 'sharedTeamIds' | 'sharedWithTeamScope' | 'publicAudience'>,
+            opened: DecryptedArtifact | null | undefined, includeBody?: boolean, availability?: ArtifactLockedListItem['availability']) => ({
                 artifactId: artifact.id, header: opened?.isDecrypted && opened.rawHeader ? opened.rawHeader : {},
+                ...(availability ? { availability } : {}),
                 ...(artifact.bodyVersion !== undefined ? { bodyVersion: artifact.bodyVersion } : {}),
                 ...(opened?.isDecrypted ? { provenance: opened.provenance } : {}),
                 ...(includeBody && opened?.isDecrypted ? { body: opened.body, bodyVersion: opened.bodyVersion } : {}),
@@ -529,30 +530,39 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 ownerAccountId: artifact.ownerAccountId, access: artifact.access,
                 ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
                 ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: artifact.sharedTeamIds }),
-                publicAudience: opened?.publicAudience,
+                ...(artifact.sharedWithTeamScope === undefined ? {} : { sharedWithTeamScope: artifact.sharedWithTeamScope }),
+                publicAudience: availability ? artifact.publicAudience : opened?.publicAudience,
             });
         const listArtifacts = async (options: ArtifactListPageOptionsV1) => {
                 // Explicit Account Actions own their capture; Session bootstrap cannot hold their reads.
                 assertCurrent();
-                const params = await artifactParams();
-                assertCurrent();
-                const page = await withArtifactReadSignal(options.signal, borrowerSignal =>
+                const page = await withArtifactReadSignal(options.signal, async borrowerSignal => {
                     // This finite Action reports failure to its presenter, which owns visible Retry.
-                    fetchArtifactListPage(credentials, { request, readTransport, ...options, serverId, signal: borrowerSignal, retry: 'none' }));
+                    const readOptions = { request, readTransport, ...options, serverId, signal: borrowerSignal, retry: 'none' as const };
+                    return options.sharedWithTeamId === undefined ? fetchArtifactListPage(credentials, readOptions)
+                        : fetchArtifactListPage(credentials, { ...readOptions, sharedWithTeamId: options.sharedWithTeamId });
+                });
                 const artifacts = page.items;
                 assertCurrent();
+                const readable = artifacts.filter((artifact): artifact is Artifact => !('availability' in artifact));
                 // Demanded Skills, prompt bundle and saved Workflow headers consume private
                 // maker attribution (a Workflow library row's `savedBy`, also on its exact read).
                 // Other inventories retain their existing content-only discovery cost.
-                const openedArtifacts = await decryptArtifactListItems({ ...params, artifacts,
+                const openedArtifacts = readable.length === 0 ? [] : await decryptArtifactListItems({ ...await artifactParams(), artifacts: readable,
                     includeBody: options.includeBody, includeProvenance: options.includeBody === true || options.coarseKind === 'skill'
                         || options.kinds?.includes('prompt_bundle.v2') === true
                         || options.kinds?.includes(workflowDefinitionArtifactSharingAdapterV1.kind) === true });
                 assertCurrent();
                 const items = [];
                 let coverage: 'complete' | 'partial' = 'complete';
-                for (const [index, artifact] of artifacts.entries()) {
-                    const opened = openedArtifacts[index] ?? null;
+                let openedIndex = 0;
+                for (const artifact of artifacts) {
+                    if ('availability' in artifact) {
+                        coverage = 'partial';
+                        items.push(projectArtifactListItem(artifact, null, false, artifact.availability));
+                        continue;
+                    }
+                    const opened = openedArtifacts[openedIndex++] ?? null;
                     // Unopened headers cannot be classified; body failures keep
                     // their readable header for the owning document's typed result.
                     if (!opened?.isDecrypted || !opened.rawHeader) {

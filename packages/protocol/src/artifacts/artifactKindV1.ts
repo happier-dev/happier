@@ -6,6 +6,14 @@ import { ApprovalArtifactQueryHintsV1Schema, deriveApprovalArtifactQueryHintsV1,
 export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui', 'work_board', 'widget_area_layout', 'widget_definition', 'widget_layout_fragment', 'other']);
 export type ArtifactCoarseKindV1 = z.infer<typeof ArtifactCoarseKindV1Schema>;
 
+/** Disjoint Team discovery buckets; exact contributed kinds remain on each row. */
+export const ArtifactTeamResourceKindV1Schema = z.enum(['projectDocuments', 'prompts', 'workflows', 'otherArtifacts']);
+export type ArtifactTeamResourceKindV1 = z.infer<typeof ArtifactTeamResourceKindV1Schema>;
+// Lightweight identities also consumed by the existing sharing adapters. Keeping
+// their schemas out of this index owner avoids importing the Action policy graph.
+export const PROMPT_DOC_ARTIFACT_KIND_V2 = 'prompt_doc.v2';
+export const PROMPT_BUNDLE_ARTIFACT_KIND_V2 = 'prompt_bundle.v2';
+export const WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 = 'workflow-definition.v1';
 export const THEME_PROFILE_ARTIFACT_KIND_V1 = 'theme_profile.v1';
 export const APPROVAL_PROFILE_ARTIFACT_KIND_V1 = 'approval-profile.v1';
 
@@ -21,6 +29,27 @@ export function getArtifactContentDeliveryPolicyV1(kind: unknown): ArtifactConte
     bodyPreviewAllowed: !privateTheme && !isApprovalArtifactKindV1(kind) };
 }
 
+/** Storage selection derives identities from the existing content/sharing owners. */
+export function getArtifactTeamResourceStoredKindsV1() {
+  const stored = (kindHint: string) => ArtifactCoarseKindV1Schema.options.map(kind => encodeArtifactKindV1({ kind, kindHint }));
+  return {
+    projectDocument: stored(PROMPT_DOC_ARTIFACT_KIND_V2),
+    prompts: [...stored(PROMPT_DOC_ARTIFACT_KIND_V2), ...stored(PROMPT_BUNDLE_ARTIFACT_KIND_V2)],
+    workflows: stored(WORKFLOW_DEFINITION_ARTIFACT_KIND_V1),
+  } as const;
+}
+
+/** A Source context reference specializes an actual document, never memory or setup/widget content. */
+export function deriveArtifactTeamResourceKindV1(input: Readonly<{
+  storedKind: string | null; sourceContextDocument?: boolean;
+}>): ArtifactTeamResourceKindV1 {
+  const kinds = getArtifactTeamResourceStoredKindsV1();
+  if (input.storedKind !== null && kinds.workflows.includes(input.storedKind)) return 'workflows';
+  if (input.storedKind !== null && kinds.prompts.includes(input.storedKind)) {
+    return input.sourceContextDocument && kinds.projectDocument.includes(input.storedKind) ? 'projectDocuments' : 'prompts';
+  }
+  return 'otherArtifacts';
+}
 
 export interface ArtifactKindV1 {
   kind: ArtifactCoarseKindV1;
@@ -149,7 +178,7 @@ export function deriveArtifactCoarseKindV1(header: Readonly<Record<string, unkno
   // Inventory readers retain malformed skill identities so selected Sessions
   // can report unavailable content and GC cannot mistake them for absence.
   if (header.bundleSchemaId === 'skills.skill_md_v1') return 'skill';
-  if (header.kind === 'prompt_doc.v2' || header.kind === 'prompt_bundle.v2') return 'prompt';
+  if (header.kind === PROMPT_DOC_ARTIFACT_KIND_V2 || header.kind === PROMPT_BUNDLE_ARTIFACT_KIND_V2) return 'prompt';
   if (header.kind === 'plugin.ui.archive') return 'plugin_ui';
   if (header.kind === 'work-board.v1') return 'work_board';
   if (header.kind === 'widget-area-layout.v1') return 'widget_area_layout';

@@ -3,6 +3,7 @@ import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protoc
 import { artifactAccessUrl as accessUrl, requireArtifactAccessResponse as requireAccessResponse,
   reportArtifactTemplateAcceptedVersion } from './artifactAccessHttp';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
+import type { ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { z } from 'zod/mini';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1 } from '@happier-dev/transfers';
@@ -19,7 +20,7 @@ import { type UsageNoticeArtifactHeaderV1,
 
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createResourceDataKey, openResourceDataKey, ResourceDataKeyUnavailableError } from '@/api/encryption/resourceDataKey';
-import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactHttpReadV1Schema, ArtifactHttpLockedListItemV1Schema, type ArtifactLockedAvailabilityV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { completeArtifactAccessMutationPreparationV1, runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import type { ArtifactCallerAccessV1, ArtifactAccessGrantSetInputV1, ArtifactAccessGrantRemoveInputV1, ArtifactPublicLinkActionIdV1, ArtifactPublicLinkIssuedV1, ArtifactSavedByV1, ArtifactWorkspaceSourceV1, ArtifactRevisionProvenanceV1, ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
@@ -158,6 +159,8 @@ export type AccountArtifactHeader = Readonly<{
   access: ArtifactCallerAccessV1;
   sharedTeamIds?: readonly string[];
   publicAudience?: ArtifactPublicAudienceV1;
+  availability?: ArtifactLockedAvailabilityV1;
+  sharedWithTeamScope?: ResourceTeamShareScopeV1;
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number;
   seq: number; createdAt: number; updatedAt: number;
   body?: ArtifactBodyV1 | null; bodyVersion?: number;
@@ -740,11 +743,14 @@ export function createAccountArtifactStore(params: Readonly<{
     if (options?.limit !== undefined) url.searchParams.set('limit', String(options.limit));
     if (options?.cursor) url.searchParams.set('cursor', options.cursor);
     if (options?.audience) url.searchParams.set('audience', options.audience);
+    if (options?.sharedWithTeamId) url.searchParams.set('sharedWithTeamId', options.sharedWithTeamId);
+    if (options?.teamResourceKind) url.searchParams.set('teamResourceKind', options.teamResourceKind);
     if (options?.includeBody) url.searchParams.set('includeBody', 'true');
     const coarseKind = options?.coarseKind;
     const indexedKinds = options?.indexedKinds ?? options?.kinds;
     const filtered = coarseKind !== undefined || indexedKinds !== undefined || options?.browserListed === true || Boolean(options?.unclassified)
-      || options?.approvalStates !== undefined || options?.approvalSessionIds !== undefined || options?.audience !== undefined;
+      || options?.approvalStates !== undefined || options?.approvalSessionIds !== undefined || options?.audience !== undefined
+      || options?.sharedWithTeamId !== undefined;
     if (filtered && coarseKind !== undefined) url.searchParams.set('kind', coarseKind);
     if (indexedKinds !== undefined) url.searchParams.set('kinds', JSON.stringify(indexedKinds));
     if (options?.browserListed) url.searchParams.set('browserListed', 'true');
@@ -757,6 +763,10 @@ export function createAccountArtifactStore(params: Readonly<{
       ...(options?.signal ? { signal: options.signal } : {}), validateStatus: () => true });
     options?.signal?.throwIfAborted();
     if (response.status < 200 || response.status >= 300) {
+      if (response.data && typeof response.data === 'object'
+        && Reflect.get(response.data, 'error') === 'artifact_content_unavailable') {
+        throw Object.assign(unavailableBinary(), { status: response.status });
+      }
       throw Object.assign(new HttpStatusError(response.status, response.status === 400 ? 'artifact_list_cursor_invalid' : 'artifact_list_failed'), {
         code: response.status === 400 ? 'invalid_cursor' : 'list_failed', status: response.status,
       });
@@ -818,6 +828,15 @@ export function createAccountArtifactStore(params: Readonly<{
       options.signal?.throwIfAborted();
       if (!raw || typeof raw !== 'object') continue;
       const value = raw as Record<string, unknown>;
+      if ('availability' in value) {
+        const row = ArtifactHttpLockedListItemV1Schema.parse(value);
+        items.push({ artifactId: row.id, ownerAccountId: row.ownerAccountId,
+          ownerDisplayName: row.ownerDisplayName, access: row.access, sharedTeamIds: row.sharedTeamIds,
+          publicAudience: row.publicAudience, availability: row.availability, sharedWithTeamScope: row.sharedWithTeamScope, header: {},
+          headerVersion: row.headerVersion, bodyVersion: row.bodyVersion,
+          seq: row.seq, createdAt: row.createdAt, updatedAt: row.updatedAt });
+        continue;
+      }
       if (typeof value.id !== 'string' || typeof value.header !== 'string' || typeof value.dataEncryptionKey !== 'string') continue;
       const headerVersion = readNonnegativeSafeInteger(value.headerVersion);
       const seq = readNonnegativeSafeInteger(value.seq);
@@ -875,6 +894,7 @@ export function createAccountArtifactStore(params: Readonly<{
         ...(value.ownerDisplayName === undefined ? {} : { ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName.parse(value.ownerDisplayName) }),
         ownerAccountId: access.ownerAccountId, access: access.access,
         ...(value.sharedTeamIds === undefined ? {} : { sharedTeamIds: ArtifactHttpReadV1Schema.shape.sharedTeamIds.parse(value.sharedTeamIds) }),
+        ...(value.sharedWithTeamScope === undefined ? {} : { sharedWithTeamScope: ArtifactHttpReadV1Schema.shape.sharedWithTeamScope.parse(value.sharedWithTeamScope) }),
         publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(value.publicAudience),
         headerVersion, seq, createdAt, updatedAt });
     }

@@ -14,6 +14,33 @@ const row = { id: 'skill', ownerAccountId: 'account', access: 'owner', encryptio
     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, seq: 0, createdAt: 1, updatedAt: 1 } as const;
 
 describe('Artifact coarse-kind transport', () => {
+    it('preserves the typed Team classification refusal and generic server retryability', async () => {
+        const options = { sharedWithTeamId: 'team-selected', teamResourceKind: 'projectDocuments' as const, retry: 'none' as const };
+        await expect(fetchArtifactListPage({ token: 'team-classification-unavailable' }, { ...options,
+            request: async () => Response.json({ error: 'artifact_content_unavailable' }, { status: 503 }),
+        })).rejects.toMatchObject({ code: 'artifact_content_unavailable', status: 503, canTryAgain: true });
+        await expect(fetchArtifactListPage({ token: 'team-classification-generic-error' }, { ...options,
+            request: async () => Response.json({ error: 'upstream_unavailable' }, { status: 503 }),
+        })).rejects.toMatchObject({ code: undefined, status: 503, canTryAgain: true, message: 'Failed to fetch artifacts: 503' });
+    });
+    it('retains safe locked Team rows without requiring ciphertext or a recipient key', async () => {
+        const paths: string[] = [];
+        const locked = { id: 'locked-team-artifact', ownerAccountId: 'author', access: 'view', encryptionMode: 'e2ee',
+            kind: 'other', kindHint: null, headerVersion: 2, bodyVersion: 3, seq: 4, createdAt: 1, updatedAt: 2,
+            publicAudience: 'retained', sharedTeamIds: ['team-selected'], sharedWithTeamScope: 'group',
+            availability: { kind: 'locked', reason: 'encryption_material_unavailable' } };
+        const page = await fetchArtifactListPage({ token: 'locked-team-page' }, {
+            sharedWithTeamId: 'team-selected', teamResourceKind: 'otherArtifacts', limit: 1, cursor: 'frontier', retry: 'none',
+            request: async path => { paths.push(path); return Response.json({ items: [locked], hasUnclassified: false,
+                coverage: { status: 'complete', unclassifiedCount: 0 } }); },
+        });
+        expect(page.items).toEqual([locked]);
+        const query = new URL(paths[0]!, 'https://home.invalid').searchParams;
+        expect(query.get('sharedWithTeamId')).toBe('team-selected');
+        expect(query.get('teamResourceKind')).toBe('otherArtifacts');
+        expect(query.get('cursor')).toBe('frontier');
+        expect(query.has('includeBody')).toBe(false);
+    });
     it('preserves received membership and structural continuation through the existing header transport', async () => {
         const paths: string[] = [];
         const selection = { audience: 'received' as const, kinds: ['bot_template.v1'], limit: 1, cursor: 'frontier' };

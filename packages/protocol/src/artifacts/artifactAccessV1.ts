@@ -11,7 +11,7 @@ import { AccountEncryptionModeSchema } from '../features/payload/capabilities/en
 import { ResourceAccessLevelV1Schema, ResourceCallerAccessV1Schema, ResourceAccessGrantRowV1Schema,
   ResourceRecipientKeyEnvelopeInputV1Schema, ResourceRecipientCensusRowV1Schema,
   ResourceRecipientKeyEnvelopeCommitResponseV1Schema, ResourceRecipientKeyEnvelopeCommitInputV1Schema,
-  ResourceAccessRecipientCensusV1Schema, resourceRecipientAccountIdsAreUnique } from '../teams/resourceGrantAccessV1.js';
+  ResourceAccessRecipientCensusV1Schema, resourceRecipientAccountIdsAreUnique, ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
 import {
   SessionDataKeyEnvelopeBytesV1Schema,
 } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
@@ -22,6 +22,11 @@ export const ArtifactAccessLevelV1Schema = ResourceAccessLevelV1Schema;
 export type ArtifactAccessLevelV1 = z.infer<typeof ArtifactAccessLevelV1Schema>;
 export const ArtifactCallerAccessV1Schema = ResourceCallerAccessV1Schema;
 export type ArtifactCallerAccessV1 = z.infer<typeof ArtifactCallerAccessV1Schema>;
+
+/** Authorized inventory metadata survives unavailable encryption material. */
+export const ArtifactLockedAvailabilityV1Schema = z.strictObject({ kind: z.literal('locked'),
+  reason: z.literal('encryption_material_unavailable') });
+export type ArtifactLockedAvailabilityV1 = z.infer<typeof ArtifactLockedAvailabilityV1Schema>;
 
 export const ArtifactAccessGrantsListInputV1Schema = lazyZodSchema(() => z.strictObject({ artifactId: z.string().check(z.minLength(1)) }));
 export const ArtifactAccessGrantSetInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessGrantsListInputV1Schema, {
@@ -133,10 +138,16 @@ export const ArtifactHttpReadV1Schema = lazyZodSchema(() => z.strictObject({
   header: z.string(), headerVersion: z.number(), body: z.string(), bodyVersion: z.number(),
   publicAudience: z.enum(['retained', 'none']),
   sharedTeamIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   provenance: z.optional(z.nullable(z.string())), provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
   dataEncryptionKey: z.string(), seq: z.number(), createdAt: z.number(), updatedAt: z.number(),
 }));
 export type ArtifactHttpReadV1 = z.infer<typeof ArtifactHttpReadV1Schema>;
+/** No private header, body, provenance or encryption envelope is valid in this branch. */
+export const ArtifactHttpLockedListItemV1Schema = lazyZodSchema(() => z.extend(z.omit(ArtifactHttpReadV1Schema, {
+  header: true, body: true, provenance: true, provenanceDataEncryptionKey: true, dataEncryptionKey: true, encryptionMode: true,
+}), { availability: ArtifactLockedAvailabilityV1Schema, encryptionMode: z.optional(AccountEncryptionModeSchema) }));
+export type ArtifactHttpLockedListItemV1 = z.infer<typeof ArtifactHttpLockedListItemV1Schema>;
 
 /** Create returns the authoritative inserted-row fact; reads keep their existing shape. */
 export const ArtifactCreateHttpResponseV1Schema = lazyZodSchema(() => z.extend(ArtifactHttpReadV1Schema, {

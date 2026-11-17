@@ -13,6 +13,19 @@ const encodeCursor = (row: Readonly<{ artifactId: string }>) => row.artifactId;
 const completeKindCoverage = { status: 'complete', unclassifiedCount: 0 } as const;
 
 describe('Artifact coarse selection', () => {
+  it('keeps a Team bucket on one structural page including a sparse search and retained legacy hints', async () => {
+    const options = artifactActionListSelectionV1(ArtifactListInputV1Schema.parse({
+      sharedWithTeamId: 'team', teamResourceKind: 'otherArtifacts', limit: 2, search: 'chosen',
+    }));
+    const requests: unknown[] = [];
+    const row = { artifactId: 'legacy', header: { title: 'Chosen legacy' }, createdAt: 1, updatedAt: 2 };
+    const result = await listArtifactHeadersV1({ options, encodeCursor,
+      readPage: async request => { requests.push(request); return { items: [row], nextCursor: 'frontier', kindCoverage: completeKindCoverage }; },
+      readBodies: async () => { throw new Error('Team discovery must not open resource bodies'); },
+    });
+    expect(result).toEqual({ items: [row], nextCursor: 'frontier', coverage: 'complete', kindCoverage: completeKindCoverage });
+    expect(requests).toEqual([{ sharedWithTeamId: 'team', teamResourceKind: 'otherArtifacts', limit: 2 }]);
+  });
   it('keeps received template discovery to one structural header page, including sparse searches and partial coverage', async () => {
     const input = ArtifactListInputV1Schema.parse({ audience: 'received', kinds: ['bot_template.v1'], limit: 2, search: 'chosen' });
     const options = artifactActionListSelectionV1(input);

@@ -2,7 +2,7 @@ import { projectArtifactHttpRead } from '@/app/artifacts/artifactHttpRead';
 import { createArtifactHttpMutation, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
-import { ArtifactCoarseKindV1Schema, ArtifactStoredKindV1Schema, ArtifactKindWriteBatchInputV1Schema,
+import { ArtifactCoarseKindV1Schema, ArtifactStoredKindV1Schema, ArtifactTeamResourceKindV1Schema, type ArtifactTeamResourceKindV1, ArtifactKindWriteBatchInputV1Schema,
     ArtifactKindWriteBatchResponseV1Schema, ArtifactKindCoverageV1Schema, type ArtifactKindWriteBatchResponseV1, type ArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { createServerFeatureGatedRouteApp } from '@/app/features/catalog/serverFeatureGate';
 import { registerArtifactEditProposalRoutes } from './artifactEditProposalRoutes';
@@ -20,8 +20,9 @@ import {
     setArtifactAccessGrantInTx,
     reportArtifactTemplateAcceptedVersionInTx,
     type ArtifactListItemForCaller,
+    type ArtifactInventoryItemForCaller,
 } from "@/app/artifacts/artifactAccessService";
-import { ArtifactHttpReadV1Schema, ArtifactCreateHttpResponseV1Schema, ArtifactReadBatchHttpInputV1Schema, ArtifactReadBatchHttpResponseV1Schema,
+import { ArtifactHttpReadV1Schema, ArtifactCreateHttpResponseV1Schema, ArtifactHttpLockedListItemV1Schema, ArtifactReadBatchHttpInputV1Schema, ArtifactReadBatchHttpResponseV1Schema,
     type ArtifactReadBatchResponseV1, type ArtifactReadHeadersBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { Fastify } from "../../types";
 import { z } from "zod/mini";
@@ -38,6 +39,7 @@ import { ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema, Art
 import { ArtifactBlobReadResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ArtifactAccountEncryptionMigrationInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
+import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { ApprovalArtifactStateV1Schema, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { createArtifactUpdateHttpInputV1Schema } from '@/app/artifacts/artifactMutationHttpContract';
 import { createArtifactCreateHttpInputV1Schema } from '@happier-dev/protocol';
@@ -69,15 +71,19 @@ const artifactListItemSchema = z.object({
     ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName,
     publicAudience: z.enum(['retained', 'none']),
     sharedTeamIds: z.optional(z.array(z.string())),
+    sharedWithTeamScope: ArtifactHttpReadV1Schema.shape.sharedWithTeamScope,
     encryptionMode: ArtifactAccessRecipientCensusResponseV1Schema.shape.encryptionMode,
 });
 
-function projectArtifactListItem(artifact: ArtifactListItemForCaller) {
+const artifactInventoryItemSchema = z.union([artifactListItemSchema, ArtifactHttpLockedListItemV1Schema]);
+
+function projectArtifactReadableListItem(artifact: ArtifactListItemForCaller) {
     return {
         ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
         id: artifact.id, kind: artifact.kind, ...(artifact.kindHint === undefined ? {} : { kindHint: artifact.kindHint }), ownerAccountId: artifact.ownerAccountId, access: artifact.access,
         publicAudience: artifact.publicAudience,
         ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: [...artifact.sharedTeamIds] }),
+        ...(artifact.sharedWithTeamScope === undefined ? {} : { sharedWithTeamScope: artifact.sharedWithTeamScope }),
         encryptionMode: artifact.encryptionMode, header: privacyKit.encodeBase64(artifact.header), headerVersion: artifact.headerVersion,
         ...(artifact.body === undefined ? {} : { body: privacyKit.encodeBase64(artifact.body) }), bodyVersion: artifact.bodyVersion,
         provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
@@ -85,6 +91,16 @@ function projectArtifactListItem(artifact: ArtifactListItemForCaller) {
         dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey), seq: artifact.seq,
         createdAt: artifact.createdAt.getTime(), updatedAt: artifact.updatedAt.getTime(),
     };
+}
+
+function projectArtifactListItem(artifact: ArtifactInventoryItemForCaller) {
+    if (!('availability' in artifact)) return projectArtifactReadableListItem(artifact);
+    return { id: artifact.id, kind: artifact.kind, kindHint: artifact.kindHint,
+        ownerAccountId: artifact.ownerAccountId, ownerDisplayName: artifact.ownerDisplayName,
+        access: artifact.access, publicAudience: artifact.publicAudience,
+        sharedTeamIds: artifact.sharedTeamIds, sharedWithTeamScope: artifact.sharedWithTeamScope, encryptionMode: artifact.encryptionMode,
+        availability: artifact.availability, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
+        seq: artifact.seq, createdAt: artifact.createdAt.getTime(), updatedAt: artifact.updatedAt.getTime() };
 }
 
 /** Retain the exact read's owner recovery versus granted-caller refusal semantics. */
@@ -241,6 +257,8 @@ export function artifactsRoutes(app: Fastify) {
                 includeBody: z.optional(z.literal('true')),
                 ownerAccountId: z.optional(z.string()),
                 audience: z.optional(z.literal('received')),
+                sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
+                teamResourceKind: z.optional(ArtifactTeamResourceKindV1Schema),
                 kind: z.optional(ArtifactCoarseKindV1Schema),
                 kinds: z.optional(z.string()),
                 approvalStates: z.optional(z.string()),
@@ -249,19 +267,22 @@ export function artifactsRoutes(app: Fastify) {
                 unclassified: z.optional(z.enum(['true', 'coarse', 'approval'])),
             }),
             response: {
-                200: z.union([z.array(artifactListItemSchema), z.object({ items: z.array(artifactListItemSchema), hasUnclassified: z.boolean(),
+                200: z.union([z.array(artifactInventoryItemSchema), z.object({ items: z.array(artifactInventoryItemSchema), hasUnclassified: z.boolean(),
                     coverage: z.optional(ArtifactKindCoverageV1Schema) })]),
                 400: z.object({ error: z.literal('Failed to get artifacts') }),
+                503: z.object({ error: z.literal('artifact_content_unavailable') }),
             }
         }
     }, async (request, reply) => {
         const userId = request.userId;
         const query = request.query as { limit?: number; cursor?: string; includeBody?: 'true'; ownerAccountId?: string; audience?: 'received';
+            sharedWithTeamId?: string; teamResourceKind?: ArtifactTeamResourceKindV1;
             kind?: ArtifactCoarseKindV1; kinds?: string; approvalStates?: string; approvalSessionIds?: string;
             browserListed?: 'true'; unclassified?: 'true' | 'coarse' | 'approval' };
         const listLimit = typeof query.limit === "number" ? query.limit : DEFAULT_ARTIFACT_LIST_LIMIT;
         const cursor = parseArtifactListCursor(query.cursor);
         if (query.cursor && !cursor) return reply.code(400).send({ error: 'Failed to get artifacts' });
+        if (query.teamResourceKind !== undefined && query.sharedWithTeamId === undefined) return reply.code(400).send({ error: 'Failed to get artifacts' });
         if ([query.kind !== undefined, query.kinds !== undefined, query.browserListed !== undefined, query.unclassified !== undefined].filter(Boolean).length > 1
             || (query.unclassified !== undefined && query.includeBody === 'true')) return reply.code(400).send({ error: 'Failed to get artifacts' });
         let kinds: string[] | undefined;
@@ -290,17 +311,27 @@ export function artifactsRoutes(app: Fastify) {
         }
 
         const page = await listArtifactHeaderPageForCaller({ actorAccountId: userId, limit: listLimit, cursor,
+            sharedWithTeamId: query.sharedWithTeamId, teamResourceKind: query.teamResourceKind,
+            ...(query.sharedWithTeamId && request.authAuthority
+                ? { authentication: readTeamOperationAuthenticationFromRequest(request) } : {}),
             includeBody: query.includeBody === 'true', ownerAccountId: query.ownerAccountId, audience: query.audience, kind: query.kind, kinds,
             approvalStates, approvalSessionIds,
             ...(query.browserListed ? { browserListed: true } : {}),
-            unclassified: query.unclassified === 'coarse' || query.unclassified === 'approval' ? query.unclassified : query.unclassified === 'true' });
+            unclassified: query.unclassified === 'coarse' || query.unclassified === 'approval' ? query.unclassified : query.unclassified === 'true' })
+            .catch((error: unknown) => {
+                if (error && typeof error === 'object' && 'code' in error && error.code === 'source_unavailable') return null;
+                throw error;
+            });
+        if (page === null) return reply.code(503).send({ error: 'artifact_content_unavailable' });
 
         const projected = page.items.map(projectArtifactListItem);
         if (query.kind === undefined && kinds === undefined && query.browserListed === undefined && query.unclassified === undefined
-            && approvalStates === undefined && approvalSessionIds === undefined && query.audience === undefined) return reply.send(projected);
+            && approvalStates === undefined && approvalSessionIds === undefined && query.audience === undefined
+            && query.sharedWithTeamId === undefined) return reply.send(projected);
         return reply.send({ items: projected, hasUnclassified: page.hasUnclassified,
             ...(kinds !== undefined || query.browserListed !== undefined || query.unclassified !== undefined
-                || approvalStates !== undefined || approvalSessionIds !== undefined || query.audience !== undefined ? { coverage: page.coverage } : {}) });
+                || approvalStates !== undefined || approvalSessionIds !== undefined || query.audience !== undefined
+                || query.sharedWithTeamId !== undefined ? { coverage: page.coverage } : {}) });
     });
 
     // A transport batch reuses independent canonical CAS transactions and publication.
@@ -347,7 +378,7 @@ export function artifactsRoutes(app: Fastify) {
                 continue;
             }
             if ('projection' in response) {
-                response.items.push({ artifactId, ok: true, artifact: projectArtifactListItem(read.artifact) });
+                response.items.push({ artifactId, ok: true, artifact: projectArtifactReadableListItem(read.artifact) });
                 continue;
             }
             if (read.artifact.body === undefined) throw new Error('Full Artifact read did not capture its body');

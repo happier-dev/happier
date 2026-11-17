@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, deriveArtifactStoredKindV1, tryDeriveArtifactStoredKindV1, decodeArtifactKindV1, ArtifactStoredKindV1Schema,
   frameArtifactKindWriteBatchesV1, ArtifactKindWriteBatchInputV1Schema, ArtifactKindWriteBatchResponseV1Schema,
-  ArtifactKindCoverageV1Schema, deriveArtifactKindWriteItemV1, writeArtifactKindBatchesV1 } from './artifactKindV1.js';
+  ArtifactKindCoverageV1Schema, deriveArtifactKindWriteItemV1, writeArtifactKindBatchesV1,
+  deriveArtifactTeamResourceKindV1 } from './artifactKindV1.js';
+
+describe('Team Artifact resource buckets', () => {
+  it('partitions indexed kinds and actual Source context documents without dropping legacy or contributed rows', () => {
+    const bucket = (kind: string | null, sourceContextDocument = false) =>
+      deriveArtifactTeamResourceKindV1({ storedKind: kind, sourceContextDocument });
+    expect(bucket('v1:prompt:prompt_doc.v2', true)).toBe('projectDocuments');
+    expect(bucket('v1:prompt:prompt_doc.v2')).toBe('prompts');
+    expect(bucket('v1:skill:prompt_bundle.v2', true)).toBe('prompts');
+    expect(bucket('v1:other:workflow-definition.v1', true)).toBe('workflows');
+    for (const kind of [null, 'prompt', 'other', 'v1:other:memory_doc.v1',
+      'v1:other:contributed.test.v1', 'v1:widget_definition:widget-definition.v1']) {
+      expect(bucket(kind, true)).toBe('otherArtifacts');
+    }
+  });
+});
 
 describe('Artifact coarse kind', () => {
   it('indexes library families without disclosing private header fields', () => {

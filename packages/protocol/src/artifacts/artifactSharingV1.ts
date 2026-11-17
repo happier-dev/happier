@@ -2,7 +2,9 @@ import type { ArtifactCallerAccessV1 } from './artifactAccessV1.js';
 import type { ArtifactAccessGrantsListResponseV1 } from './artifactAccessV1.js';
 import type { ArtifactPublicAudienceV1 } from './artifactActionsV1.js';
 import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
-import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, THEME_PROFILE_ARTIFACT_KIND_V1, getArtifactContentDeliveryPolicyV1, type ArtifactContentDeliveryPolicyV1 } from './artifactKindV1.js';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, PROMPT_DOC_ARTIFACT_KIND_V2, PROMPT_BUNDLE_ARTIFACT_KIND_V2,
+  WORKFLOW_DEFINITION_ARTIFACT_KIND_V1, THEME_PROFILE_ARTIFACT_KIND_V1, getArtifactContentDeliveryPolicyV1,
+  type ArtifactContentDeliveryPolicyV1 } from './artifactKindV1.js';
 import { isArtifactHtmlHeaderV1 } from './artifactHtmlV1.js';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '../approvals/approvalArtifactKindV1.js';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
@@ -87,7 +89,7 @@ export type ArtifactKindPolicyV1 = Readonly<{
 }> & ArtifactContentDeliveryPolicyV1;
 
 export const workflowDefinitionArtifactSharingAdapterV1 = {
-  kind: 'workflow-definition.v1',
+  kind: WORKFLOW_DEFINITION_ARTIFACT_KIND_V1,
   canShare: (resource: ArtifactSharingResourceV1) => {
     const parsed = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(resource.header);
     if (!parsed.success || parsed.data.definitionId !== resource.artifactId) return false;
@@ -103,7 +105,7 @@ function readBody(resource: ArtifactSharingResourceV1): unknown {
 }
 
 export const promptDocArtifactSharingAdapterV1 = {
-  kind: 'prompt_doc.v2',
+  kind: PROMPT_DOC_ARTIFACT_KIND_V2,
   canShare(resource: ArtifactSharingResourceV1) {
     try {
       return PromptDocArtifactHeaderV1Schema.safeParse(resource.header).success
@@ -113,7 +115,7 @@ export const promptDocArtifactSharingAdapterV1 = {
 } as const satisfies ArtifactSharingKindAdapterV1;
 
 export const promptBundleArtifactSharingAdapterV1 = {
-  kind: 'prompt_bundle.v2',
+  kind: PROMPT_BUNDLE_ARTIFACT_KIND_V2,
   canShare(resource: ArtifactSharingResourceV1) {
     try {
       const schemaId = PromptBundleSchemaIdV1Schema.safeParse(resource.header.bundleSchemaId);

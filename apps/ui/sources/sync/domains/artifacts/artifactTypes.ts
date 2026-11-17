@@ -1,6 +1,8 @@
 import type { ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactBodyEnvelopeV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { ArtifactOrganizationHeaderV1 } from '@happier-dev/protocol/artifacts/artifactOrganizationV1';
 import type { ArtifactPublicAudienceV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { ArtifactHttpLockedListItemV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import type { ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import type { ArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -27,6 +29,7 @@ export interface Artifact {
     encryptionMode: 'plain' | 'e2ee';
     publicAudience?: ArtifactPublicAudienceV1;
     sharedTeamIds?: readonly string[];
+    sharedWithTeamScope?: ResourceTeamShareScopeV1;
     header: string;  // Base64 encoded encrypted JSON { "title": string | null }
     headerVersion: number;
     body?: string;  // Base64 encoded encrypted JSON { "body": string | null } - only in full fetch
@@ -38,6 +41,11 @@ export interface Artifact {
     createdAt: number;
     updatedAt: number;
 }
+
+/** Team discovery can retain an admitted row without disclosing unavailable content or key envelopes. */
+export type ArtifactLockedListItem = ArtifactHttpLockedListItemV1;
+
+export type ArtifactListItem = Artifact | ArtifactLockedListItem;
 
 /**
  * Decrypted artifact header
