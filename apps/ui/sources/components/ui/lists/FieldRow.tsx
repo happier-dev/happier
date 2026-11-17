@@ -1,11 +1,14 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { InlineCode } from '@/components/ui/text/InlineCode';
 import { Typography } from '@/constants/Typography';
+
+/** A path or command has no spaces to break at; on web it wraps anywhere instead of running past the row. Native text already breaks long words. */
+const WRAP_LONG_TOKENS: TextStyle = Platform.OS === 'web' ? ({ overflowWrap: 'anywhere' } as TextStyle) : {};
 
 /** The label column: wide enough for a short phrase ("Before it starts"), so every value shares one edge. */
 const FIELD_LABEL_WIDTH_PX = 128;
@@ -96,11 +99,13 @@ const styles = StyleSheet.create((theme) => ({
   valueText: {
     ...happierPageTextMetrics('rowTitle'),
     ...Typography.default(),
+    ...WRAP_LONG_TOKENS,
     color: theme.colors.text.primary,
   },
   codeValueText: {
     ...happierPageTextMetrics('rowTitle'),
     ...Typography.mono(),
+    ...WRAP_LONG_TOKENS,
     color: theme.colors.text.primary,
   },
   noteText: {

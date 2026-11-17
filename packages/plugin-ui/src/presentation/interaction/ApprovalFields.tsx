@@ -163,8 +163,9 @@ export type HappierApprovalFieldsProps<TSource = never> =
        */
       anatomy?: 'table' | 'stack';
       /**
-       * `card` (default): the open card's inset table. `page`: the page's facts beneath the thing asked, each value
-       * row read as an Item like the page's Status row: its name as the title, its value as the detail on the right.
+       * `card` (default): the open card's inset table. `page`: a short facts list on the page beneath the thing
+       * asked (a script's command): no inset, the compact key column and a page row's description size, the keys a
+       * step quieter than their values.
        */
       density?: 'card' | 'page';
       /** The last line of the fields (a Technical details disclosure). */
@@ -181,9 +182,7 @@ type ApprovalFieldsStyleKey =
   | HappierApprovalFieldsTextRole
   | 'pageEntryGroup'
   | 'pageEntryLabel'
-  | 'pageEntryValue'
-  | 'pageItemTitle'
-  | 'pageItemDetail';
+  | 'pageEntryValue';
 
 function useApprovalFieldsLook<TSource>(
   props: HappierApprovalFieldsLook<TSource>,
@@ -235,9 +234,6 @@ function useApprovalFieldsLook<TSource>(
       },
       pageEntryLabel: { ...description, ...ink('mutedText') },
       pageEntryValue: { ...description, ...ink('secondaryText') },
-      // A page's value row reads as an Item: its name as the row title, its value as the detail on the right.
-      pageItemTitle: { ...value, ...ink('text') },
-      pageItemDetail: { ...value, ...ink('secondaryText'), textAlign: 'right' },
     };
   const renderText = props.renderText ?? renderDefaultText;
   return {
@@ -470,16 +466,7 @@ export function HappierApprovalFields<TSource = never>(
                 label={row.label}
                 value={row.value}
               >
-                {(resolved) => page ? (
-                  <>
-                    <View style={{ flexShrink: 1, minWidth: 0 }}>
-                      {text('tableLabel', resolved.label, styles.pageItemTitle)}
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
-                      {text('value', resolved.value, styles.pageItemDetail)}
-                    </View>
-                  </>
-                ) : (
+                {(resolved) => (
                   <>
                     <View style={labelColumn}>{keyText(resolved.label)}</View>
                     <View style={{ flex: 1, minWidth: 0 }}>
