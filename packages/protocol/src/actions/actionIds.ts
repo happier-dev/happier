@@ -1056,7 +1056,17 @@ export const RUNTIME_ACTION_IDS_V1 = [
 ] as const;
 
 export type ActionId = typeof ACTION_IDS[number];
-export const ActionIdSchema: z.ZodMiniEnum<{ [Id in ActionId]: Id }> = lazyZodSchema(() => z.enum(ACTION_IDS));
+export const ActionIdSchema: z.ZodMiniEnum<{ [Id in ActionId]: Id }> = lazyZodSchema(() => {
+  const schema = z.enum(ACTION_IDS);
+  // Declarations carry an id-shaped reference, not a snapshot of host membership.
+  // Keep the enum parser as the admission authority for executable host ids.
+  const projection = z.string().check(z.regex(/^[a-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*$/u));
+  schema._zod.processJSONSchema = (context, _json, params) => {
+    z.core.process(projection, context, params);
+    context.seen.get(schema)!.ref = projection;
+  };
+  return schema;
+});
 export type ActionIdFamilyV1 = keyof typeof ACTION_ID_FAMILIES_V1;
 export const ActionIdFamilyV1Schema = lazyZodSchema(() => z.enum(
   Object.keys(ACTION_ID_FAMILIES_V1) as [ActionIdFamilyV1, ...ActionIdFamilyV1[]],

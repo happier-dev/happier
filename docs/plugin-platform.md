@@ -656,6 +656,12 @@ python3 -c 'import sys,json,collections; c=collections.Counter((l[1:6],d.get("pl
 
 ## Manifest admission (0.3 development source)
 
+Host Action id references in generated declaration JSON Schemas use the id string
+grammar, rather than copying the host's closed Action enum. `ActionIdSchema`
+retains membership validation at host admission; adding an unrelated host Action
+therefore does not change plugin declarations. This is an unreleased 0.3
+projection relaxation and needs no compatibility adapter.
+
 HostAccess request declarations and their Action, Hook and dynamic Resource
 references share one request-id grammar. Request ids such as `deploy.manage`
 are not contribution local ids. Ordinary reference admission still rejects
