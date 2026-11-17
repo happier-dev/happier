@@ -4,6 +4,8 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '../../actions/actionIds.js';
 import type { PluginSourceCustodyV1 } from '../runtime/sourceCustody.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { evaluateInputPredicate } from '../../inputs/inputPredicates.js';
+import { pluginActionDeclarationIsReadOnlyForInput } from './readOnly.js';
+export { pluginActionDeclarationIsReadOnlyForInput } from './readOnly.js';
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
 import {
   PluginDiagnosticDataV1Schema,
@@ -45,15 +47,6 @@ import { projectActionInputJsonSchemaIssues } from '../../actions/executor/actio
 
 const PLUGIN_ACTION_FAILURE_FALLBACK_CODE = 'plugin_action_execution_failed';
 const PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE = 'Plugin operation failed';
-
-/** Read authority is explicit and input-sensitive; `safe` also covers non-read effects. */
-export function pluginActionDeclarationIsReadOnlyForInput(
-  declaration: Pick<PluginActionContributionV2, 'readOnly'>,
-  input: unknown,
-): boolean {
-  return declaration.readOnly === true || typeof declaration.readOnly === 'object'
-    && declaration.readOnly !== null && evaluateInputPredicate(declaration.readOnly, input);
-}
 
 /**
  * Stable, non-secret Action failure projection shared by every realm that
