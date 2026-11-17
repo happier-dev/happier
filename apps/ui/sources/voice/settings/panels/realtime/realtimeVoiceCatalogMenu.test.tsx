@@ -29,6 +29,7 @@ const { useRealtimeVoiceCatalog, useRealtimeCatalogMenuItems, useRealtimeCatalog
 const { createBundledConversationUi } = await import('@/voice/credentials/bundledConversationClient');
 const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
 const { readDeclaredVoiceSettingsCatalog } = await import('./voiceCatalog');
+const { useBundledConversationProviderSettings } = await import('./useBundledConversationProviderSettings');
 const { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t, tLoose } = await import('@/text');
 const initialLanguage = getPreferredLanguage();
 const initialStorage = storage.getState();
@@ -61,6 +62,36 @@ afterEach(async () => { standardCleanup(); await runtime.dispose(); await accoun
 afterAll(() => { setPreferredLanguageFromSettings(initialLanguage); });
 
 describe('the shared realtime voice catalog', () => {
+  it('opens the declared voice picker before its provider runtime has activated', async () => {
+    await runtime.dispose();
+    runtime = createElevenLabsSettingsRuntimeTestHarness();
+    expect(createBundledConversationUi(runtime.entry.providerId)?.client).toBeNull();
+    const demand = await import('@/voice/session/voiceProviderRuntimeDemand');
+    let activation: Promise<void> | undefined;
+    const unsubscribe = demand.subscribeVoiceProviderSettingsRuntimeDemand(() => {
+      if (!activation && demand.getVoiceProviderSettingsRuntimeDemand().has(runtime.entry.providerId)) {
+        activation = runtime.register();
+        demand.bindVoiceProviderRuntimeDemandActivation(new Set([runtime.entry.providerId]), activation);
+      }
+    });
+    try {
+      const picker = await renderHook(() => {
+        const settings = useBundledConversationProviderSettings(storage(state => state.settings.voice));
+        const choice = settings.sessionChoice;
+        if (!choice) throw new Error('Declared conversation voice choice missing');
+        return useRealtimeVoiceCatalog({ providerId: choice.providerId, catalogAvailable: choice.catalogAvailable,
+          credentialUsable: true, targetKey: choice.targetKey });
+      });
+      await act(async () => picker.getCurrent().requestCatalog());
+      expect(picker.getCurrent().catalog.phase).not.toBe('idle');
+      await waitForTestEvent(picker.subscribe, picker.getCurrent, value => value.catalog.phase !== 'loading');
+      expect(picker.getCurrent().catalog).toMatchObject({ phase: 'ready', rows: [
+        { id: 'hpp4J3VqNfWAUOO0d1Us', name: 'Happier voice' },
+      ] });
+      expect(demand.getVoiceProviderSettingsRuntimeDemand().has(runtime.entry.providerId)).toBe(false);
+      expect(account.writes).toHaveLength(0);
+    } finally { unsubscribe(); }
+  });
   it('publishes no equal provider catalog rows to passive readers and retains unaffected voices', async () => {
     const params = { providerId: runtime.entry.providerId, catalogAvailable: true, credentialUsable: true,
       targetKey: 'equal-provider-catalog-voice-perf-1106' };

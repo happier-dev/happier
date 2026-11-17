@@ -138,16 +138,16 @@ export function useBundledConversationProviderSettings(voice: VoiceSettings): Re
         config: VoiceProviderSettingsJsonValueV1Schema.parse(speechConfig),
         targetKey: JSON.stringify([tts.provider, entry?.providerSettings?.schemaVersion ?? voice.providers[tts.provider]?.schemaVersion,
           readCatalogConfig(tts.provider, speechConfig), readCatalogCredentialBindings(voice, tts.provider),
-          machineId, scope, registrationsRevision]),
+          machineId, scope]),
         catalogAvailable: Boolean(entry && declaration) };
     }
     const entry = registry.get(providerId);
     const declaration = entry && entry.kind !== 'voice.turn-support.v1' ? entry.declaration ?? null : null;
     return { providerId, providerTitleKey: resolveSelectedVoiceProviderTitleKey(voice, registry),
       declaration, config: VoiceProviderSettingsJsonValueV1Schema.parse(config ?? {}),
-      catalogAvailable: Boolean(bundledUi?.client), targetKey: JSON.stringify([providerId, owner?.schemaVersion ?? envelope?.schemaVersion,
+      catalogAvailable: Boolean(declaration && readSessionVoiceSettingFieldV1(declaration)), targetKey: JSON.stringify([providerId, owner?.schemaVersion ?? envelope?.schemaVersion,
         config ? readCatalogConfig(providerId, config) : envelope, readCatalogCredentialBindings(voice, providerId),
-        machineId, scope, registrationsRevision]) };
+        machineId, scope]) };
   }, [bundledUi, config, envelope, machineId, owner, providerId, registrationsRevision, scope, voice]);
   return { providerId, bundledUi, descriptor, owner, resolved, config, sessionChoice };
 }
