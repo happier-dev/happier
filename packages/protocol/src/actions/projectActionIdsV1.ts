@@ -1,4 +1,19 @@
 import { RPC_METHODS } from '../rpc/methods.js';
+import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1, PROJECT_DEFINITION_INSPECT_ACTION_ID } from './projectDefinitionActionIdsV1.js';
+import { PROJECT_SOURCE_READ_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
+
+export const PROJECT_SETUP_SET_ACTION_ID_V1 = 'projects.setup.set' as const;
+export const PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 = {
+  sourceRead: PROJECT_SOURCE_READ_ACTION_ID_V1, artifactRead: 'artifact.get', artifactCreate: 'artifact.create', inspect: PROJECT_DEFINITION_INSPECT_ACTION_ID,
+} as const;
+export function isProjectSetupSetChildActionIdV1(actionId: string): actionId is typeof PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1[keyof typeof PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1] {
+  return Object.values(PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1).some(childId => childId === actionId);
+}
+export function readProjectSetupSetChildRpcEffectV1(rootActionId: string, method: string): typeof PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect | null {
+  return rootActionId === PROJECT_SETUP_SET_ACTION_ID_V1
+    && method === PROJECT_DEFINITION_ACTION_RPC_METHODS_V1[PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect]
+    ? PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect : null;
+}
 
 export const PROJECT_PREPARE_ACTION_ID_V1 = 'projects.prepare' as const;
 

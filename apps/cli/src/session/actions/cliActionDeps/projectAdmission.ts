@@ -10,6 +10,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
+type RequesterArtifactReadOptions = Omit<NonNullable<Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[1]>, 'authorization'>;
 export type CliProjectAdmission = Readonly<{
   resolveProjectHomeIdentity: () => Promise<string>;
   projectHomeAdmission: (serverId?: string, context?: ActionExecutorContext) => Promise<CliProjectAdmissionFailure | null>;
@@ -18,7 +19,7 @@ export type CliProjectAdmission = Readonly<{
   projectRowsAuthority: (context?: ActionExecutorContext, effectActionId?: string, signal?: AbortSignal) => ProjectAccountRowsInput;
   assertProjectRequesterCurrent: (context?: ActionExecutorContext) => Promise<void>;
   readProjectRows: (selection: ProjectAccountRowsSelection, signal?: AbortSignal, context?: ActionExecutorContext, effectActionId?: string) => ReturnType<typeof readProjectAccountRows>;
-  readProjectRequesterArtifact: (ref: Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[0], options: Readonly<{ signal?: AbortSignal }> | undefined, context: ActionExecutorContext) => ReturnType<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>;
+  readProjectRequesterArtifact: (ref: Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[0], options: RequesterArtifactReadOptions | undefined, context: ActionExecutorContext) => ReturnType<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>;
 }>;
 export function createCliProjectAdmission(
   params: Pick<CliActionDepsParams, 'serverId' | 'serverIdentityId' | 'credentials' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport'>,
@@ -106,7 +107,7 @@ export function createCliProjectAdmission(
     return await withProjectHome(() => readProjectAccountRows({ ...projectRowsAuthority(context, effectActionId, signal), selection }));
   };
   const readProjectRequesterArtifact = async (ref: Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[0],
-    options: Readonly<{ signal?: AbortSignal }> | undefined, context: ActionExecutorContext) => {
+    options: RequesterArtifactReadOptions | undefined, context: ActionExecutorContext) => {
     const authorization = context.externalActionExecutionAuthorization;
     if (!authorization) return null;
     await assertProjectRequesterCurrent(context);

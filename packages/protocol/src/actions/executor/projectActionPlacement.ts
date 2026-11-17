@@ -56,7 +56,7 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
     const opened = ProjectDefinitionInspectOutputSchema.safeParse(inspection.result);
     if (!opened.success) return failure('invalid_action_output');
     if (opened.data.definition.document?.status === 'invalid') return failure('invalid_manifest');
-    const manifest = opened.data.definition.document?.manifest;
+    const manifest = opened.data.effectiveDefinition?.effectiveManifest ?? opened.data.definition.document?.manifest;
     const script = actionId === 'projects.script.run' ? parsed.data as AdmittedActionInputById['projects.script.run'] : undefined;
     const named = script?.selection.kind === 'named' ? manifest?.scripts?.[script.selection.name] : undefined;
     if (script?.selection.kind === 'named' && !named) return failure('project_script_not_found');

@@ -51,7 +51,9 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { isScmRefineInputRpcPurposeV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
-import { PROJECT_PREPARE_ACTION_ID_V1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, readProjectSetupSetChildRpcEffectV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
+import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
@@ -141,8 +143,10 @@ import { hasCurrentSessionActionRpcSourceBinding, hasCurrentSessionActionRpcSour
     hasCurrentSessionScopedMachineAccessInTx, hasCurrentMachineAccessForSessionInTx } from '@/app/api/socket/sessionScopedBinding';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowReadRequestV1Schema,
     ProjectAccountRowListRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import { ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateInputV1Schema,
+import { ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateInputV1Schema, ProjectSourcePublicationPatchV1Schema,
     ProjectSourcesDeleteInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { PROJECT_SOURCE_LIST_ACTION_ID_V1, PROJECT_SOURCE_READ_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
+import { PROJECT_DEFINITION_INSPECT_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema, ProjectTrustReadRequestV1Schema,
     ProjectTrustListRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigReadRequestV1Schema,
@@ -1412,6 +1416,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         registryRead: isRegistryAppUpdateReadEffect(binding, effectActionId),
         sectionArchive: isSessionSectionArchiveEffectV1(binding.actionId, effectActionId),
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
+        projectSetupSet: binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1 && isProjectSetupSetChildActionIdV1(effectActionId),
     };
     const configureBindings = binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
         && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
@@ -2343,6 +2348,48 @@ function isScmReviewedMarksHttpPurpose(proof: ExternalActionExecutionRequestProo
     } catch { return false; }
 }
 
+function isSelectedProjectSourceReadHttpPurpose(homeId: string, proof: ExternalActionExecutionRequestProof): boolean {
+    if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    const url = new URL(proof.path, 'http://home.invalid');
+    const match = /^\/v1\/projects\/sources\/([^/]+)$/u.exec(url.pathname);
+    if (!match || url.hash !== '' || url.searchParams.size !== 1) return false;
+    try {
+        const sourceId = decodeURIComponent(match[1]);
+        return match[1] === encodeURIComponent(sourceId) && ProjectSourcesReadInputV1Schema.safeParse({
+            serverId: url.searchParams.get('serverId'), sourceId }).success
+            && url.searchParams.get('serverId') === homeId;
+    } catch { return false; }
+}
+
+/** Source publication reuses the Artifact codec's scoped reads and envelope writer, never grants. */
+function isProjectSourceSetupPreparationHttpPurpose(proof: ExternalActionExecutionRequestProof): boolean {
+    if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+    const url = new URL(proof.path, 'http://home.invalid');
+    if (url.hash !== '') return false;
+    if (proof.method.toUpperCase() === 'POST' && url.search === '') {
+        return proof.body !== null && typeof proof.body === 'object'
+            && 'projectSourceId' in proof.body && typeof proof.body.projectSourceId === 'string'
+            && proof.body.projectSourceId.length > 0 && isArtifactRecipientKeyPreparationHttpPurpose(proof);
+    }
+    if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    const query = Object.fromEntries(url.searchParams);
+    if (Object.keys(query).length !== url.searchParams.size || !query.projectSourceId
+        || Object.keys(query).some(key => key !== 'projectSourceId' && key !== 'projectSourcePatch')) return false;
+    const census = url.pathname.endsWith('/access/recipients');
+    if (query.projectSourcePatch !== undefined) {
+        if (!census) return false;
+        try { if (!ProjectSourcePublicationPatchV1Schema.safeParse(JSON.parse(query.projectSourcePatch)).success) return false; }
+        catch { return false; }
+    }
+    const match = /^\/v1\/artifacts\/([^/?#]+)(?:\/access\/recipients)?$/u.exec(url.pathname);
+    if (!match) return false;
+    let artifactId: string;
+    try { artifactId = decodeURIComponent(match[1]); } catch { return false; }
+    if (proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, { id: artifactId, ...query })) return false;
+    const unscoped = { ...proof, path: url.pathname, routeInput: { id: artifactId } };
+    return census ? isArtifactRecipientKeyPreparationHttpPurpose(unscoped) : readArtifactGetHttpPurpose(unscoped) !== null;
+}
+
 /** Metadata purposes of an original Project root; domain routes retain row/CAS/audience admission. */
 function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
@@ -2363,13 +2410,16 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     const readsExecutionConfig = actionId === 'projects.script.run' || actionId === 'projects.compute.exec'
         || actionId === 'localServices.launcher.start' || actionId === 'localServices.actions.restartManaged'
         || actionId === 'approval.request.create' || actionId === 'approval.request.decide';
-    if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'projects.inspect' || readsExecutionConfig) {
+    if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID || readsExecutionConfig) {
+        if (isAccountEncryptionCurrentnessHttpRead(proof) || readArtifactGetHttpPurpose(proof) !== null) return true;
+        if (actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID && (isSelectedProjectSourceReadHttpPurpose(verified.binding.serverIdentityId, proof)
+            || /^\/v1\/artifacts\/[^/?#]+\?/u.test(proof.path) && isProjectSourceSetupPreparationHttpPurpose(proof))) return true;
         if (url.search !== '' || url.hash !== '') return false;
         if (method === 'GET' && proof.body === undefined) return readsExecutionConfig && url.pathname === '/v1/account/encryption';
         if (method !== 'POST') return false;
         // Finite work and inspection use admitted private requester custody for
         // Account topology. A signed Project root is not a catalog credential.
-        const readsAccountRows = !Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && actionId !== 'projects.inspect';
+        const readsAccountRows = !Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && actionId !== PROJECT_DEFINITION_INSPECT_ACTION_ID;
         if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) return readsAccountRows && ProjectAccountRowReadRequestV1Schema.safeParse(proof.body).success;
         if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return readsAccountRows && ProjectAccountRowListRequestV1Schema.safeParse(proof.body).success;
         if (url.pathname === `${PROJECT_TRUST_ROUTE_V1}/read`) return ProjectTrustReadRequestV1Schema.safeParse(proof.body).success;
@@ -2379,11 +2429,14 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     }
     const sourcePath = '/v1/projects/sources';
     if (actionId.startsWith('projects.sources.')) {
+        if (actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1 && isProjectSourceSetupPreparationHttpPurpose(proof)) return true;
+        if ((actionId === PROJECT_SOURCE_READ_ACTION_ID_V1 || actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1)
+            && isSelectedProjectSourceReadHttpPurpose(verified.binding.serverIdentityId, proof)) return true;
         if (method === 'GET' && proof.body === undefined
+            && url.hash === ''
             && url.searchParams.getAll('serverId').length === 1
             && url.searchParams.get('serverId') === verified.binding.serverIdentityId) {
-            return actionId === 'projects.sources.list' && url.pathname === sourcePath
-                || actionId === 'projects.sources.read' && /^\/v1\/projects\/sources\/[^/]+$/u.test(url.pathname);
+            return actionId === PROJECT_SOURCE_LIST_ACTION_ID_V1 && url.pathname === sourcePath;
         }
         if (url.search !== '') return false;
         const create = actionId === 'projects.sources.create' && method === 'POST' && url.pathname === sourcePath
@@ -2412,7 +2465,7 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
         && (url.pathname === '/v1/account/authoring-memory' || url.pathname === '/v1/machines');
     if (method !== 'POST') return false;
     return url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read` || url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
-        || actionId !== 'projects.list' && url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`;
+        || getActionSpec(actionId).sideEffectClass === 'write' && url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`;
 }
 
 /** Match the canonical schema and transport rather than a parallel route permission. */
@@ -2918,6 +2971,25 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
+    if (verified.signedChildPurpose.sibling.projectSetupSet) {
+        // The keyholding host checked decoded root operands once before issuing
+        // this signed child. Home keeps each Source/Artifact access decision.
+        const child = verified.effectActionId;
+        if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+        if (child === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.sourceRead)
+            return isSelectedProjectSourceReadHttpPurpose(verified.binding.serverIdentityId, proof);
+        if (child === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactRead)
+            return readArtifactGetHttpPurpose(proof) !== null
+                || /^\/v1\/artifacts\/[^/?#]+\?/u.test(proof.path) && isProjectSourceSetupPreparationHttpPurpose(proof);
+        if (child === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactCreate) {
+            if (proof.method.toUpperCase() === 'GET' && proof.body === undefined && proof.path === '/v1/account/encryption') return true;
+            if (proof.method.toUpperCase() !== 'POST' || proof.path !== '/v1/artifacts') return false;
+            const create = ArtifactJsonCreateHttpInputV1Schema.safeParse(proof.body);
+            return create.success && create.data.kind === PROJECT_SETUP_ARTIFACT_STORED_KIND_V1
+                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, proof.body));
+        }
+        return false;
+    }
     if (isMachinePresetFiniteOperationActionIdV1(root)) {
         const admission = verified.binding.presetPreparationAdmission;
         if (!admission || verified.effectActionId !== root) return false;
@@ -4634,10 +4706,12 @@ export async function verifyExternalActionMachineRpcExecution(
 
     const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
         effectActionId: execution.effectActionId, method: request.method.slice(separator + 1) });
+    const setupSetChild = readProjectSetupSetChildRpcEffectV1(binding.actionId, request.method.slice(separator + 1)) === execution.effectActionId;
+    if (setupSetChild && !request.originalActionEnvelope) return null;
     const creationEffect = readSessionActionChildCreationRpcEffectV1(request.method.slice(separator + 1), binding,
         { machineId: request.method.slice(0, separator), installationId: execution.installationId }, execution.reviewedChild);
     if ((binding.actionId === 'projects.service.relocate' || creationEffect !== null
-        || isSessionStopChildRootV1(binding.actionId) || setupPlanChild) && request.originalActionEnvelope) {
+        || isSessionStopChildRootV1(binding.actionId) || setupPlanChild || setupSetChild) && request.originalActionEnvelope) {
         const envelope = ExternalActionRequestEnvelopeSchema.safeParse(request.originalActionEnvelope);
         const separator = request.method.indexOf(':');
         const machineId = request.method.slice(0, separator);
@@ -4647,6 +4721,7 @@ export async function verifyExternalActionMachineRpcExecution(
             effectActionId: execution.effectActionId, method: request.method.slice(separator + 1), target: execution.target,
             params: request.params, ...(envelope.success && envelope.data.v === 1 ? { rootInput: envelope.data.input } : {}) }) ? 'session.stop' : null
             : setupPlanChild ? 'machines.setup.plan'
+            : setupSetChild ? PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect
             : creationEffect !== null ? creationEffect
             : readProjectServiceMoveChildEffectV1(request.method.slice(separator + 1));
         if (!envelope.success || separator < 1 || effect !== execution.effectActionId
@@ -4656,9 +4731,16 @@ export async function verifyExternalActionMachineRpcExecution(
             || execution.installationId !== binding.installationId
             || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId,
                 machineId: binding.machineId, envelope: envelope.data })
-            || creationEffect === null && !stopChild && !setupPlanChild && envelope.data.v === 1 && readProjectServiceMoveChildMachineV1(envelope.data.input, effect) !== machineId
-            || creationEffect === null && !stopChild && !setupPlanChild && envelope.data.v === 1 && typeof request.params !== 'string'
+            || creationEffect === null && !stopChild && !setupPlanChild && !setupSetChild && envelope.data.v === 1 && readProjectServiceMoveChildMachineV1(envelope.data.input, effect) !== machineId
+            || creationEffect === null && !stopChild && !setupPlanChild && !setupSetChild && envelope.data.v === 1 && typeof request.params !== 'string'
                 && !isProjectServiceMoveChildInputV1(envelope.data.input, effect, machineId, request.params)) return null;
+        if (setupSetChild && envelope.data.v === 1) {
+            const root = ProjectSetupSetInputV1Schema.safeParse(envelope.data.input);
+            const wrapper = TargetedActionRpcRequestV1Schema.safeParse(request.params);
+            if (!root.success || root.data.workspace.machineId !== machineId
+                || typeof request.params !== 'string' && !isProjectSetupSetChildInputV1(root.data,
+                    execution.effectActionId, wrapper.success ? wrapper.data.input : request.params, binding.serverIdentityId)) return null;
+        }
         if (setupPlanChild && envelope.data.v === 1 && (typeof envelope.data.input !== 'object'
             || envelope.data.input === null || !('homeId' in envelope.data.input)
             || envelope.data.input.homeId !== binding.serverIdentityId

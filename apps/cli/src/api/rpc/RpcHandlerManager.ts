@@ -58,7 +58,8 @@ import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterT
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedProjectSetupSetChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
@@ -627,6 +628,7 @@ export class RpcHandlerManager {
                 && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === sessionAgentReadinessChild
               || parsedInputAuthorization.data.binding.actionId === 'projects.service.relocate'
                 && workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readProjectServiceMoveChildEffectV1(targetMethod)
+              || workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readProjectSetupSetChildRpcEffectV1(parsedInputAuthorization.data.binding.actionId, targetMethod)
               || workspaceSyncSourceExecution.data.externalActionExecution.effectActionId === readSessionActionChildCreationRpcEffectV1(
                 targetMethod, parsedInputAuthorization.data.binding, machineAdmission.data,
                 workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild)
@@ -1201,15 +1203,16 @@ export class RpcHandlerManager {
                     effectActionId: workspaceSyncSourceExecution?.success
                         ? workspaceSyncSourceExecution.data.externalActionExecution.effectActionId : undefined, method: targetMethod });
                 const deploymentChild = decryptedDeploymentChild;
+                const setupSetChild = readProjectSetupSetChildRpcEffectV1(callerInputAuthorization.binding.actionId, targetMethod);
                 if (deploymentChild && (deploymentChild.machineId !== this.scopePrefix
                     || !machineAdmission?.success || deploymentChild.installationId !== machineAdmission.data.installationId)) {
                     return await deny('caller_input_authorization');
                 }
-                const child = sessionAgentReadinessChild ?? (setupPlanChild ? 'machines.setup.plan'
+                const child = sessionAgentReadinessChild ?? setupSetChild ?? (setupPlanChild ? 'machines.setup.plan'
                     : deploymentChild ? deploymentChild.actionId : stopChild ? targetMethod === RPC_METHODS.STOP_SESSION ? 'session.stop' : null
                     : creationChild !== null ? creationChild
                     : readProjectServiceMoveChildEffectV1(targetMethod));
-                const review = sessionAgentReadinessChild ? isReviewedSessionAgentReadinessChild : setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
+                const review = sessionAgentReadinessChild ? isReviewedSessionAgentReadinessChild : setupSetChild ? isReviewedProjectSetupSetChild : setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
                     : creationChild !== null ? isReviewedSessionActionCreationChild : isReviewedServiceMoveChild;
                 if (!child || !await review({ authorization: callerInputAuthorization,
                     envelope: originalActionEnvelope.data, signal: controller.signal,
@@ -1218,7 +1221,7 @@ export class RpcHandlerManager {
                         ? { reviewedChild: workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild } : {}),
                     ...(stopChild ? { target: workspaceSyncSourceExecution?.success
                         ? workspaceSyncSourceExecution.data.externalActionExecution.target : undefined } : {}),
-                    ...(creationChild !== null || deploymentChild || setupPlanChild || sessionAgentReadinessChild ? { method: targetMethod } : {}) })) {
+                    ...(creationChild !== null || deploymentChild || setupPlanChild || setupSetChild || sessionAgentReadinessChild ? { method: targetMethod } : {}) })) {
                     return await deny('caller_input_authorization');
                 }
                 if (child === 'localServices.launcher.start') {

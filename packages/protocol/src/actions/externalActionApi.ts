@@ -29,6 +29,7 @@ export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionId
 import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
+import type { ProjectSourceArtifactReadOptionsV1 } from '../projects/sources/projectSourceAttachmentAdmissionV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
@@ -1598,7 +1599,7 @@ export type ExternalActionRequesterAccountProjectionV1 = Readonly<{
   }>): Promise<Readonly<{ rootPath: string; requestedPath?: string }> | null>;
   isCurrent(): Promise<boolean>;
   readArtifact(ref: PromptArtifactRefV1 & Readonly<{ serverId: string }>,
-    options?: Readonly<{ signal?: AbortSignal; authorization?: ExternalActionExecutionAuthorizationV1 }>): Promise<Readonly<{
+    options?: ProjectSourceArtifactReadOptionsV1 & Readonly<{ authorization?: ExternalActionExecutionAuthorizationV1 }>): Promise<Readonly<{
       artifactId: string; header: unknown; promptLibraryArtifact?: PromptLibraryStoredArtifact;
       /** Only documents within the root's admitted signed purpose; never an unrelated root's full-content port. */
       document?: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>;

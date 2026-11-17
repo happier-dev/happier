@@ -4,6 +4,8 @@ import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '../../proje
 import { ProjectContextUpdateInputV1Schema, ProjectContextUpdateOutputV1Schema } from '../../projects/projectContextV1.js';
 import { ProjectVisibilitySetInputV1Schema, ProjectVisibilitySetOutputV1Schema } from '../../projects/projectVisibilityV1.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../projects/projectOrganizationV1.js';
+import { ProjectSetupSetInputV1Schema, ProjectSetupSetOutputV1Schema } from '../../projects/projectSetupSetV1.js';
+import { PROJECT_SETUP_SET_ACTION_ID_V1 } from '../projectActionIdsV1.js';
 import { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Schema, ProjectWorkspaceForgetInputV1Schema, ProjectWorkspaceForgetOutputV1Schema } from '../../projects/projectWorkspaceActionsV1.js';
 import { ProjectServicesPinInputV1Schema, ProjectServicesPinOutputV1Schema } from '../../projects/projectServicesActionsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -38,6 +40,23 @@ export const ProjectsListInputSchema = lazyZodSchema(() => z.strictObject({
 
 function createProjectContextActionSpecs() {
   return Object.freeze([
+  {
+    id: PROJECT_SETUP_SET_ACTION_ID_V1, approval: { result: 'required' }, title: 'Change Project setup',
+    description: 'Accept or detach one reviewed Shared setup, or edit private setup overrides. Preserves personal bindings and never grants execution consent.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    approvalScope: input => ({ subjects: [{ kind: 'project', ...ProjectSetupSetInputV1Schema.parse(input).projectRef }] }),
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_setup_set' },
+    cli: { commands: [{ path: ['projects', 'setup', 'set'], visibility: 'canonical' }] },
+    inputSchema: lazyZodSchema(() => ProjectSetupSetInputV1Schema), outputSchema: lazyZodSchema(() => ProjectSetupSetOutputV1Schema),
+    invocationServerIdForInput: actionInputServerId(lazyZodSchema(() => ProjectSetupSetInputV1Schema), input => input.projectRef.serverId),
+    inputHints: { fields: [
+      { path: 'projectRef', title: 'Qualified Project', widget: 'json', required: true },
+      { path: 'workspace', title: 'Accepted checkout', widget: 'json', required: true },
+      { path: 'expectedRevision', title: 'Reviewed organization revision', widget: 'json', required: true },
+      { path: 'intent', title: 'Shared selection or personal edit', widget: 'json', required: true },
+    ] },
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'paths.list_recent', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List recent paths',

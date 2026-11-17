@@ -4,6 +4,8 @@ import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendi
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { ActionExecutorContext } from './types.js';
 import { readDeploymentRoleRootInputV1 } from './deploymentRoleChild.js';
+import { PROJECT_SETUP_SET_ACTION_ID_V1 } from '../projectActionIdsV1.js';
+import { isProjectSetupSetChildInputV1 } from '../../projects/projectSetupSetV1.js';
 
 const rootActionIds = ['scm.diffSummary.refine', 'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'] as const;
 type RootActionId = typeof rootActionIds[number];
@@ -83,7 +85,12 @@ export function isScmRefineInputRpcPurposeV1(execution: ExternalActionMachineRpc
 
 /** Only an actual host child can spend the parent; possessing its carrier does not authorize direct sends. */
 export function readHostRootInputCredentialActionV1(actionId: string, input: unknown,
-  context: ActionExecutorContext, hostInternal: boolean): RootActionId | NonNullable<ReturnType<typeof readDeploymentRoleRootInputV1>>['actionId'] | null {
+  context: ActionExecutorContext, hostInternal: boolean): RootActionId | typeof PROJECT_SETUP_SET_ACTION_ID_V1
+    | NonNullable<ReturnType<typeof readDeploymentRoleRootInputV1>>['actionId'] | null {
+  if (hostInternal && context.projectSetupSetRootInput
+    && context.externalActionExecutionAuthorization?.binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1
+    && isProjectSetupSetChildInputV1(context.projectSetupSetRootInput, actionId, input,
+      context.externalActionExecutionAuthorization.binding.serverIdentityId)) return PROJECT_SETUP_SET_ACTION_ID_V1;
   const deployment = readDeploymentRoleRootInputV1(context, actionId, input, hostInternal);
   if (deployment) return deployment.actionId;
   const authorization = context.externalActionExecutionAuthorization;

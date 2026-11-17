@@ -23,7 +23,8 @@ export type ProjectDefinitionWorkspace = z.infer<typeof ProjectDefinitionWorkspa
 /** Query demand, not execution authority. Lists carry summaries; opened rows request exact native details. */
 export const ProjectDefinitionInspectReadSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.enum(['overview', 'rail']), detectedRows: z.number().check(z.int(), z.nonnegative()) }),
-  z.strictObject({ kind: z.enum(['scripts', 'imports', 'guidance', 'editor', 'create', 'tools', 'services', 'setup', 'placement', 'applications']) }),
+  z.strictObject({ kind: z.enum(['scripts', 'imports', 'guidance', 'create', 'tools', 'services', 'setup', 'placement', 'applications']) }),
+  z.strictObject({ kind: z.literal('editor'), target: z.optional(z.literal('repository')) }),
   z.strictObject({ kind: z.literal('detail'), sources: ProjectDefinitionDetectionV1Schema.shape.entries }),
   z.strictObject({ kind: z.literal('execution'), command: z.optional(z.strictObject({
     usage: z.enum(['script', 'service', 'setup']), name: z.string().check(z.minLength(1)),

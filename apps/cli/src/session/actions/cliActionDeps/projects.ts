@@ -12,6 +12,7 @@ import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
 import { updateProjectOrganizationV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
+import { setProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createCliProjectTrustAction } from '../projectTrustAction';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -61,8 +62,24 @@ export function createCliProjectActionDeps(
     approvalsStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
     exactHome: CliActionExactHomeTarget;
   }>,
-): Pick<ActionExecutorDeps, 'projectsWorkspaceUpdate' | 'projectsServicesPin' | 'projectsWorkspaceForget' | 'projectsContextUpdate' | 'projectAction' | 'projectsOrganizationUpdate' | 'projectsVisibilitySet' | 'projectsList' | 'projectWorkspaceRefs' | 'projectWorkerAction' | 'projectDefinitionAction' | 'projectsOpen'> {
+): Pick<ActionExecutorDeps, 'projectsWorkspaceUpdate' | 'projectsServicesPin' | 'projectsWorkspaceForget' | 'projectsContextUpdate' | 'projectAction' | 'projectsOrganizationUpdate' | 'projectsSetupSet' | 'projectsVisibilitySet' | 'projectsList' | 'projectWorkspaceRefs' | 'projectWorkerAction' | 'projectDefinitionAction' | 'projectsOpen'> {
   return {
+    projectsSetupSet: async ({ input, context, executeCanonicalAction }) => {
+      const refused = await projectAccountAdmission(input.projectRef.serverId, context);
+      if (refused) return { ok: false, errorCode: refused.errorCode };
+      const serverId = await resolveProjectHomeIdentity();
+      const rows = await readProjectRows({ key: { kind: 'workspace-ref', serverId, id: input.workspace.workspaceId } },
+        context.signal, context, 'projects.setup.set');
+      const resolved = resolveWorkspaceRefV1(rows.workspaceRefs, { ...input.workspace, serverId, id: input.workspace.workspaceId });
+      if (resolved.kind !== 'resolved' || projectWorkspaceRefV1(resolved.ref).projectKey !== input.projectRef.projectKey) {
+        return { ok: false, errorCode: 'project_workspace_association_mismatch' };
+      }
+      const { mutateProjectAccountOrganization } = await import('@/workspaces/projectAccountRows');
+      return withProjectHome(() => setProjectSetupV1({ execute: executeCanonicalAction,
+        mutateOrganization: mutation => mutateProjectAccountOrganization({ ...mutation,
+          ...projectRowsAuthority(context, 'projects.setup.set', mutation.signal), serverId: mutation.serverId }),
+      }, { ...input, projectRef: { ...input.projectRef, serverId }, workspace: { ...input.workspace, serverId } }, context));
+    },
     projectsWorkspaceUpdate: async ({ serverId, workspaceId, label, pinned, projectKey }: ProjectWorkspaceUpdateInputV1,
       context?: ActionExecutorContext): Promise<ProjectWorkspaceUpdateOutputV1> => {
       const refused = await projectAccountAdmission(serverId, context);

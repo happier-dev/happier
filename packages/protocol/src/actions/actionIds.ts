@@ -1,4 +1,5 @@
 import { PROJECT_STARTER_ACTION_IDS_V1 } from './specs/projectStartersActionIdsV1.js';
+import { PROJECT_SETUP_SET_ACTION_ID_V1 } from './projectActionIdsV1.js';
 import { SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1 } from './actionIdsSimulatorV1.js';
 export * from './actionIdsSimulatorV1.js';
 import { BROWSER_RECORDING_ACTION_IDS_V1, COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
@@ -86,7 +87,7 @@ export function isWorkspaceSyncRelationshipControlActionId(actionId: string): ac
  * consumer that binds such an Action to the Project row transport (the server's external-execution admission).
  */
 export const PROJECT_ACCOUNT_ROW_ACTION_IDS_V1 = ['projects.list', 'projects.workspace.update', 'projects.workspace.forget',
-    'projects.context.update', 'projects.organization.update', 'projects.visibility.set', 'projects.services.pin'] as const;
+    'projects.context.update', 'projects.organization.update', PROJECT_SETUP_SET_ACTION_ID_V1, 'projects.visibility.set', 'projects.services.pin'] as const;
 export function isProjectAccountRowActionIdV1(actionId: string): actionId is (typeof PROJECT_ACCOUNT_ROW_ACTION_IDS_V1)[number] {
     return (PROJECT_ACCOUNT_ROW_ACTION_IDS_V1 as readonly string[]).includes(actionId);
 }
@@ -441,6 +442,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'projects.open',
     'projects.context.update',
     'projects.organization.update',
+    PROJECT_SETUP_SET_ACTION_ID_V1,
     'projects.visibility.set',
     'projects.workspace.update',
     'projects.workspace.forget',

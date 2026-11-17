@@ -2,7 +2,8 @@ import { createProjectFromStarter } from './starters.js';
 import { PROJECT_STARTER_CREATE_ACTION_ID_V1 } from '../../specs/projectStartersActionIdsV1.js';
 import { isWorkspaceActionId } from '../../workspaceActionFamily.js';
 import { completeActionResult } from '../resultProjection.js';
-import { isProjectActionIdV1 } from '../../projectActionIdsV1.js';
+import { isProjectActionIdV1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '../../projectActionIdsV1.js';
+import { isProjectSetupSetChildInputV1 } from '../../../projects/projectSetupSetV1.js';
 import { isProjectDefinitionActionId } from '../../projectDefinitionActionFamily.js';
 import type { ProjectContextUpdateInputV1Schema } from '../../../projects/projectContextV1.js';
 import { OpenProjectResultV1Schema, type OpenProjectInputV1Schema } from '../../../projects/openProjectV1.js';
@@ -30,6 +31,16 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, parsed, ctx, executeHostChild } = inv;
+  if (actionId === PROJECT_SETUP_SET_ACTION_ID_V1) {
+    if (!deps.projectsSetupSet) return clientActionUnavailable(actionId);
+    const input = parsed.data as AdmittedActionInputById[typeof PROJECT_SETUP_SET_ACTION_ID_V1];
+    const childContext = { ...ctx, projectSetupSetRootInput: input };
+    return { ok: true, result: await deps.projectsSetupSet({ input,
+      context: ctx, executeCanonicalAction: (childId, childInput) => isProjectSetupSetChildInputV1(input, childId, childInput, ctx.serverIdentityId ?? undefined)
+        ? executeHostChild(childId, childInput, childId === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect
+          ? { ...childContext, externalActionTarget: { kind: 'machine', machineId: input.workspace.machineId } } : childContext)
+        : Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' }) }) };
+  }
   if (actionId === PROJECT_STARTER_CREATE_ACTION_ID_V1) {
     const input = parsed.data as AdmittedActionInputById[typeof PROJECT_STARTER_CREATE_ACTION_ID_V1];
     return createProjectFromStarter(input, (childId, childInput) => executeHostChild(childId, childInput,

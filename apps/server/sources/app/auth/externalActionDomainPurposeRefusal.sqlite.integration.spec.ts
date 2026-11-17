@@ -5,10 +5,11 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import tweetnacl from 'tweetnacl';
-import { decodeBase64 } from 'privacy-kit';
+import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
   MACHINE_PLAIN_DATA_KEY_MARKER,
+  ARTIFACT_PLAIN_DATA_KEY_MARKER,
   encodePlainMachineStoredContent,
 } from '@happier-dev/protocol';
 import {
@@ -17,9 +18,10 @@ import {
   bindExternalActionExecutionAuthorizationHttpPathV1,
   encodeExternalActionResolvedTargetV1,
   signExternalActionMachineRequestV1,
+  signExternalActionMachineRpcRequestV1,
 } from '@happier-dev/protocol/actions';
 import { auth } from '@/app/auth/auth';
-import { verifyExternalActionDomainExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
+import { verifyExternalActionDomainExecutionRequest, verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import type { Fastify as AppFastify } from '@/app/api/types';
@@ -29,6 +31,9 @@ import {
   type LightSqliteHarness,
 } from '@/testkit/lightSqliteHarness';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
+import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
@@ -179,6 +184,70 @@ it('names the refusing reviewed-purpose check without changing admission', async
       expect.soft({ actionId, method, path, ...(await verify(root, actionId, method, path, body)) })
         .toEqual({ actionId, method, path, ...expected });
     }
+    // Source sharing prepares its protected setup through the original signed
+    // root. The receiving Source/Artifact owners still admit every selected record.
+    const sourceUpdate = await mint('projects.sources.update', { serverId: homeId,
+      sourceId: 'selected-source', expectedRevision: 1, patch: { audience: [] } });
+    if (typeof sourceUpdate === 'string') throw new Error(`Source update did not mint: ${sourceUpdate}`);
+    const selectedSource = `/v1/projects/sources/selected-source?serverId=${encodeURIComponent(homeId)}`;
+    const scopedArtifact = '/v1/artifacts/setup?projectSourceId=selected-source';
+    const publicationPatch = encodeURIComponent(JSON.stringify({ audience: [] }));
+    const census = `/v1/artifacts/setup/access/recipients?projectSourceId=selected-source&projectSourcePatch=${publicationPatch}`;
+    for (const path of [selectedSource, scopedArtifact, census, '/v1/account/encryption/currentness']) {
+      expect((await verify(sourceUpdate, 'projects.sources.update', 'GET', path, undefined)).admitted).toBe(true);
+    }
+    const envelopeCommit = { artifactId: 'setup', projectSourceId: 'selected-source', projectSourcePatch: { audience: [] },
+      expectedDataEncryptionKey: encodeBase64(new Uint8Array(SESSION_DATA_KEY_ENVELOPE_BYTES_V1)), recipientKeyEnvelopes: [] };
+    expect((await verify(sourceUpdate, 'projects.sources.update', 'POST',
+      '/v1/artifacts/setup/access/key-envelopes', envelopeCommit)).admitted).toBe(true);
+    expect((await verify(sourceUpdate, 'projects.sources.update', 'POST',
+      '/v1/artifacts/other/access/key-envelopes', envelopeCommit)).admitted).toBe(false);
+    for (const path of ['/v1/artifacts/setup', `${scopedArtifact}&unexpected=true`,
+      `${scopedArtifact}&projectSourceId=other`, '/v1/artifacts/setup/access/grants',
+      '/v1/artifacts/setup/access/recipients?projectSourceId=selected-source&projectSourcePatch=%7B%22name%22%3A%22wrong%22%7D']) {
+      expect((await verify(sourceUpdate, 'projects.sources.update', 'GET', path, undefined)).admitted).toBe(false);
+    }
+    expect((await verify(sourceUpdate, 'artifact.access.grants.set', 'GET', census, undefined)).admitted).toBe(false);
+    const inspect = await mint('projects.inspect', { workspace: { id: 'workspace', serverId: homeId,
+      machineId: machine.id, rootPath: '/tmp/project', createdAtMs: 1 } });
+    if (typeof inspect === 'string') throw new Error(`Project inspect did not mint: ${inspect}`);
+    for (const path of [selectedSource, scopedArtifact, '/v1/artifacts/accepted-setup']) {
+      expect((await verify(inspect, 'projects.inspect', 'GET', path, undefined)).admitted).toBe(true);
+    }
+    expect((await verify(inspect, 'projects.inspect', 'GET', census, undefined)).admitted).toBe(false);
+    const setupInput = { projectRef: { serverId: homeId, projectKey: 'project' },
+      workspace: { serverId: homeId, workspaceId: 'workspace', machineId: machine.id, rootPath: '/tmp/project' },
+      expectedRevision: 'absent', intent: { kind: 'accept', sourceId: 'selected-source' } };
+    const setup = await mint('projects.setup.set', setupInput);
+    if (typeof setup === 'string') throw new Error(`Project setup did not mint: ${setup}`);
+    for (const [effect, path] of [['projects.sources.read', selectedSource],
+      ['artifact.get', scopedArtifact], ['artifact.get', '/v1/artifacts/accepted-setup']] as const) {
+      expect((await verify(setup, effect, 'GET', path, undefined)).admitted).toBe(true);
+    }
+    const acceptedDetail = { id: crypto.randomUUID(), kind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1,
+      header: '{}', body: '{}', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER };
+    expect((await verify(setup, 'artifact.create', 'POST', '/v1/artifacts', acceptedDetail)).admitted).toBe(true);
+    expect((await verify(setup, 'artifact.create', 'POST', '/v1/artifacts', { ...acceptedDetail, kind: 'doc' })).admitted).toBe(false);
+    expect((await verify(setup, 'artifact.update', 'POST', '/v1/artifacts/accepted-setup', {})).admitted).toBe(false);
+    expect((await verify(setup, 'artifact.get', 'GET', census, undefined)).admitted).toBe(false);
+    const setupEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: setup.binding.requestId,
+      target: { kind: 'machine', machineId: machine.id }, input: setupInput });
+    const inspectMethod = `${machine.id}:${PROJECT_DEFINITION_ACTION_RPC_METHODS_V1['projects.inspect']}`;
+    const inspectRepository = { workspace: setupInput.workspace, read: { kind: 'editor', target: 'repository' } };
+    const verifySetupInspection = async (params: unknown, includeOriginal = true) => {
+      const requestId = crypto.randomUUID();
+      const execution = { v: 1 as const, authorization: setup, effectActionId: 'projects.inspect', target: setup.binding.target,
+        installationId: machine.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({
+          authorizationToken: setup.token, effectActionId: 'projects.inspect', target: setup.binding.target,
+          installationId: machine.installationId!, method: inspectMethod, requestId, params, privateKey: keys.secretKey }) };
+      return verifyExternalActionMachineRpcExecution(execution, { method: inspectMethod, requestId, params,
+        ...(includeOriginal ? { originalActionEnvelope: setupEnvelope } : {}) });
+    };
+    expect(await verifySetupInspection(inspectRepository)).not.toBeNull();
+    expect(await verifySetupInspection({ ...inspectRepository,
+      workspace: { ...setupInput.workspace, rootPath: '/tmp/another-project' } })).toBeNull();
+    expect(await verifySetupInspection({ ...inspectRepository, reviewSharedSetup: { sourceId: 'selected-source' } })).toBeNull();
+    expect(await verifySetupInspection(inspectRepository, false)).toBeNull();
     const root = await mint('machines.managed.acquire', { homeId });
     if (typeof root === 'string') throw new Error('Bound Setup acquisition did not mint');
     const managed = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,

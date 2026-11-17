@@ -13,6 +13,8 @@ import type { createCliArtifactActions } from '../artifactActions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { PROJECT_SETUP_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 export function createCliArtifactsActionDeps(
   params: Pick<CliActionDepsParams, 'machineActionDirectTargetTransport' | 'onPublicLinkIssued' | 'consumeArtifactSignedInLinkSecret' | 'onArtifactSignedInLinkOpened' | 'serverHttpBaseUrl' | 'serverId'>,
   { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, mutateRawAccountSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore, readWidgetTitles, widgetAccountScope, isWidgetScopeCurrent }: Readonly<{
@@ -40,9 +42,17 @@ export function createCliArtifactsActionDeps(
 ): Pick<ActionExecutorDeps, 'artifactAction' | 'artifactAccessAction'> {
   return {
     artifactAction: async (args) => {
-      if (!roleArtifactStore) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const authorization = args.context.externalActionExecutionAuthorization;
+      const setupDecision = authorization?.binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1;
+      const requesterStore = setupDecision ? readRequesterDeploymentArtifactStore(authorization) : null;
+      if (setupDecision && !requesterStore) return { ok: false, errorCode: 'project_requester_authority_unavailable', error: 'project_requester_authority_unavailable' };
+      const store = requesterStore ?? roleArtifactStore;
+      if (!store) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      // The captured content owner also supplies new revision attribution.
+      const context = { ...artifactCallerContext(args.context),
+        ...(requesterStore && authorization ? { runtimeAccountId: authorization.binding.accountId } : {}) };
       const { createCliArtifactActions } = await import("../artifactActions");
-      const execute = createCliArtifactActions({ store: roleArtifactStore, onPublicLinkIssued: params.onPublicLinkIssued,
+      const execute = createCliArtifactActions({ store, onPublicLinkIssued: params.onPublicLinkIssued,
         consumeArtifactSignedInLinkSecret: params.consumeArtifactSignedInLinkSecret,
         onArtifactSignedInLinkOpened: params.onArtifactSignedInLinkOpened,
         authorizationHeaders: (context, effectActionId) => async request => {
@@ -62,8 +72,8 @@ export function createCliArtifactsActionDeps(
           }
           const rawSettings = await readRawRoleSettings({ requireCurrentNetwork: true });
           signal?.throwIfAborted();
-          let targetRead: ReturnType<typeof roleArtifactStore.read> | undefined;
-          const readTarget = () => targetRead ??= roleArtifactStore.read(artifactId, { signal, includeSharedAudience: false });
+          let targetRead: ReturnType<typeof store.read> | undefined;
+          const readTarget = () => targetRead ??= store.read(artifactId, { signal, includeSharedAudience: false });
           await prepareAccountRoleArtifactDeletionV1({ artifactId, expectedRevision, signal, accountId: homeAccountId, rawSettings,
             // The Role snapshot lifetime governs predecessor Settings cleanup;
             // ordinary Artifact reads/deletion use the captured Artifact credentials.
@@ -104,8 +114,8 @@ export function createCliArtifactsActionDeps(
             ...(signal ? { signal } : {}), timeoutMs: null });
         } });
       return params.serverHttpBaseUrl
-        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => execute({ ...args, context: artifactCallerContext(args.context) }))
-        : execute({ ...args, context: artifactCallerContext(args.context) });
+        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => execute({ ...args, context }))
+        : execute({ ...args, context });
     },
     artifactAccessAction: async (args) => {
       if (!roleArtifactStore) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

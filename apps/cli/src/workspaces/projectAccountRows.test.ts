@@ -893,4 +893,20 @@ describe('Project Account row transport', () => {
       : { status: 200, data: { status: 'conflict', key: graphKey, revision: 5 } });
     expect(await createProjectAccountSnapshotMutation(credentials)(snapshot => ({ ...snapshot, workspaceRefs: [] }))).toEqual({ status: 'conflict' });
   });
+  it('prepares protected detail before selecting its pointer through the existing organization CAS', async () => {
+    const rows: unknown[] = [];
+    const post = boundary(rows);
+    const detail = deferred();
+    const update = mutateProjectAccountOrganization({ credentials, serverId: 'home-a', projectKey: 'project',
+      expectedRevision: 'absent', mutate: async value => {
+        await detail.promise;
+        return { ...value, setupContent: { artifactId: 'prepared-detail', headerVersion: 1, bodyVersion: 1 } };
+      } });
+    detail.resolve();
+    expect(await update).toMatchObject({ status: 'updated', value: {
+      setupContent: { artifactId: 'prepared-detail', headerVersion: 1, bodyVersion: 1 },
+    } });
+    expect(post.mock.calls.filter(([url]) => url.endsWith('/mutate'))).toHaveLength(1);
+  });
+
 });

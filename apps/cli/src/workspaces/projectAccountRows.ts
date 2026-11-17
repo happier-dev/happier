@@ -618,8 +618,13 @@ export async function migrateProjectPromptStackSkillRules(input: Readonly<{
 export async function mutateProjectAccountOrganization(input: ReadInput & Readonly<{
   serverId: string;
   projectKey: string;
+}> & Readonly<{
+  /** Pure edits may inspect a held row; an async content producer needs an explicit CAS basis. */
   expectedRevision?: number | 'absent';
   mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1;
+} | {
+  expectedRevision: number | 'absent';
+  mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1 | Promise<ProjectAccountOrganizationV1>;
 }>): Promise<Readonly<{ status: 'updated'; key: Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>; revision: number; value: ProjectAccountOrganizationV1 }> | Readonly<{ status: 'conflict'; revision: number }>> {
   return await runWithServerHttpBaseUrl(resolveServerHttpBaseUrl(), async () => {
     const key = { kind: 'project-organization' as const, serverId: input.serverId, projectKey: input.projectKey };
@@ -629,7 +634,7 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
       // A held organization row this mutation would not change publishes nothing.
       const heldIdentity = buildProjectAccountRowPhysicalKeyV1(key);
       const heldRow = heldSnapshot.organizations.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === heldIdentity);
-      if (heldRow && isDeepStrictEqual(input.mutate(heldRow.value), heldRow.value)) {
+      if (heldRow && isDeepStrictEqual(await input.mutate(heldRow.value), heldRow.value)) {
         await assertRequesterCurrent(input);
         return { status: 'updated', key, revision: heldRow.revision, value: heldRow.value };
       }
@@ -642,7 +647,7 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
     const row = snapshot.organizations.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === identity);
     const observedRevision = snapshot.rows.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === identity)?.revision ?? 'absent';
     if (input.expectedRevision !== undefined && input.expectedRevision !== observedRevision) return { status: 'conflict', revision: observedRevision === 'absent' ? -1 : observedRevision };
-    const value = input.mutate(row?.value ?? {});
+    const value = await input.mutate(row?.value ?? {});
     if (row && isDeepStrictEqual(value, row.value)) {
       if (active?.scopeKey === snapshot.scopeKey) acceptSnapshot(input, snapshot);
       heldSlot?.store(snapshot);

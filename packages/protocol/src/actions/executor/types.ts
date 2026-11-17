@@ -875,6 +875,8 @@ export type ActionExecutorContext = Readonly<{
   externalActionExecutionAuthorization?: ExternalActionExecutionAuthorizationV1;
   /** Exact admitted public envelope retained locally for closed Project SOURCE routing. */
   originalActionEnvelope?: import('../externalActionApi.js').ExternalActionRequestEnvelope;
+  /** Host-only decoded setup root, retained only for this invocation's finite child purposes. */
+  projectSetupSetRootInput?: import('../../projects/projectSetupSetV1.js').ProjectSetupSetInputV1;
   /** Host-captured authenticated Workflow operand; never accepted from public Action context. */
   workflowPreparation?: import('../externalActionApi.js').ExternalActionWorkflowPreparationV1;
   /** Process-local Machine signer; capture signs only the canonical stored approval input. */
@@ -2267,6 +2269,10 @@ export type ActionExecutorDeps = Readonly<{
   projectsContextUpdate?: (args: ProjectContextUpdateInputV1, context?: ActionExecutorContext) => Promise<ProjectContextUpdateOutputV1>;
   projectsVisibilitySet?: (args: import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetOutputV1>;
   projectsOrganizationUpdate?: (args: import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateOutputV1>;
+  projectsSetupSet?: (args: Readonly<{ input: import('../../projects/projectSetupSetV1.js').ProjectSetupSetInputV1;
+    context: ActionExecutorContext;
+    executeCanonicalAction: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>;
+  }>) => Promise<import('../../projects/projectSetupSetV1.js').ProjectSetupSetOutputV1>;
   projectsWorkspaceUpdate?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceUpdateInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceUpdateOutputV1>;
   projectsServicesPin?: (args: import('../../projects/projectServicesActionsV1.js').ProjectServicesPinInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectServicesActionsV1.js').ProjectServicesPinOutputV1>;
   projectsWorkspaceForget?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetOutputV1>;

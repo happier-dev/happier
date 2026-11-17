@@ -26,6 +26,8 @@ import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
+import { PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizationHttpResult } from './externalActionAuthorizationHttp';
 import axios from '@/api/client/credentialAxios';
@@ -179,6 +181,19 @@ async function readReviewedSessionSpawnInput(
     ? preparation.success ? preparation.data.sessionDraft : null
     : root);
   return parsed.success ? admitSessionSpawnNewActionInputV2(parsed.data) : null;
+}
+
+/** The receiving checkout opens the unchanged setup decision through requester custody. */
+export async function isReviewedProjectSetupSetChild(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown; method?: string; signal?: AbortSignal;
+}>): Promise<boolean> {
+  const binding = input.authorization.binding;
+  if (binding.actionId !== PROJECT_SETUP_SET_ACTION_ID_V1 || !input.method
+    || readProjectSetupSetChildRpcEffectV1(binding.actionId, input.method) !== input.actionId) return false;
+  const root = ProjectSetupSetInputV1Schema.safeParse(await readReviewedExternalActionInput(input));
+  return root.success && root.data.workspace.machineId === input.machineId
+    && isProjectSetupSetChildInputV1(root.data, input.actionId, input.params, binding.serverIdentityId);
 }
 
 /** A finite target Plan retains the unchanged combined root and requester custody. */
@@ -1306,6 +1321,13 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
   const authorization = input.context?.externalActionExecutionAuthorization;
   const target = input.context?.externalActionTarget;
   if (!authorization || !target || !input.requestId) return null;
+  if (authorization.binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1) {
+    const root = input.context?.projectSetupSetRootInput;
+    const method = input.method.slice(input.method.indexOf(':') + 1);
+    if (!root || target.kind !== 'machine' || target.machineId !== root.workspace.machineId
+      || readProjectSetupSetChildRpcEffectV1(authorization.binding.actionId, method) !== input.effectActionId
+      || !isProjectSetupSetChildInputV1(root, input.effectActionId, input.params, authorization.binding.serverIdentityId)) return null;
+  }
   const effectActionId = ExternalActionActionIdV1Schema.parse(input.effectActionId);
   const admittedChild = readHostAdmittedReviewedChildHttpProofV1(input.context);
   const reviewedChild = admittedChild?.actionId === effectActionId
@@ -1361,6 +1383,7 @@ export function readExternalActionSourceMachineRpcSigner(
     return { machineId: admission.sourceMachineId, installationId: admission.sourceInstallationId };
   }
   if ((binding.actionId === 'session.spawn_new' || binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start'
+    || binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1
     || isSessionStopChildRootV1(binding.actionId) || (binding.deploymentChildRoot === true)
     || isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })) && binding.target.kind === 'machine'
     && binding.target.machineId === binding.machineId) return { machineId: binding.machineId, installationId: binding.installationId };
@@ -1396,6 +1419,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
     effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN });
   const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
     effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1) });
+  const setupSetChild = readProjectSetupSetChildRpcEffectV1(binding.actionId, input.method.slice(input.method.indexOf(':') + 1)) === input.effectActionId;
   const nativeCredentialChild = readSessionSpawnNativeCredentialChildV1({ rootActionId: binding.actionId,
     effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1),
     managedAdmission: input.managedAdmission, params: input.params });
@@ -1416,7 +1440,8 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
     || isSessionStopChildRootV1(binding.actionId) && !stopChild
     || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
       || input.method !== `${binding.machineId}:${binding.actionId}`)
-    || !stopChild && (input.target.kind !== 'machine' || binding.machineId !== input.target.machineId
+    || binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1 && !setupSetChild
+    || !stopChild && !setupSetChild && (input.target.kind !== 'machine' || binding.machineId !== input.target.machineId
       || !externalActionTargetsEqualV1(binding.target, input.target))
     || binding.actionId === 'projects.service.relocate'
       && readProjectServiceMoveChildEffectV1(input.method.slice(input.method.indexOf(':') + 1)) !== input.effectActionId
@@ -1425,7 +1450,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
       || deploymentChild.actionId !== deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, deploymentChild.actionId)
       || input.effectActionId !== deploymentChild.actionId
       || input.method !== `${deploymentChild.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`)
-    || binding.actionId !== 'projects.service.relocate' && !creationEffect && !stopChild && !deploymentChild && !nativeCredentialChild && !setupPlanChild
+    || binding.actionId !== 'projects.service.relocate' && !creationEffect && !stopChild && !deploymentChild && !nativeCredentialChild && !setupPlanChild && !setupSetChild
       && !input.method.startsWith(`${binding.machineId}:`)) return null;
   return createExternalActionMachineRpcExecution({
     context: { ...input.context, surface: 'rpc', externalActionExecutionAuthorization: input.authorization, externalActionTarget: input.target },

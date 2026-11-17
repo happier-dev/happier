@@ -2436,16 +2436,21 @@ describe('admitted requester Action projection', () => {
       body: JSON.stringify(receipt.content), revision: { headerVersion: 1, bodyVersion: 1 } } };
   }
 
-  it('opens app update content through its unchanged signed requester proof without an ambient bearer', async () => {
+  it.each(['registries.updates.check', 'projects.sources.update', 'projects.setup.set'] as const)(
+    'opens %s content through its unchanged signed requester proof without an ambient bearer', async actionId => {
     const artifactId = '11111111-1111-4111-8111-111111111111';
     const candidate = createPreparedDeploymentFixture({ serverId: 'stable-home', artifactId });
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: {
-      ...authorization.binding, actionId: 'registries.updates.check',
-      registryAppUpdateAdmission: { environments: [{ environmentId: 'staging', expectedRevision: 1 }] },
+      ...authorization.binding, actionId,
+      ...(actionId === 'registries.updates.check'
+        ? { registryAppUpdateAdmission: { environments: [{ environmentId: 'staging', expectedRevision: 1 }] } } : {}),
     } });
+    const sourceScope = actionId === 'projects.sources.update'
+      ? { projectSourceId: 'source', projectSourcePatch: { audience: [] } } : {};
+    const artifactPath = `/v1/artifacts/${artifactId}${sourceScope.projectSourceId ? '?projectSourceId=source' : ''}`;
     let live = true;
     vi.spyOn(axios, 'post').mockImplementation(async url => {
-      expect(String(url)).toBe('https://requester-home.test/v1/actions/registries.updates.check/execution-authorization/verify');
+      expect(String(url)).toBe(`https://requester-home.test/v1/actions/${actionId}/execution-authorization/verify`);
       return { status: live ? 200 : 403, data: live ? { ok: true } : {} };
     });
     const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
@@ -2453,7 +2458,7 @@ describe('admitted requester Action projection', () => {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       } };
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-      if (url !== `https://requester-home.test/v1/artifacts/${artifactId}`) throw new Error('unexpected_app_content_read');
+      if (url !== `https://requester-home.test${artifactPath}`) throw new Error('unexpected_app_content_read');
       return { status: 200, data: { id: artifactId, ownerAccountId: 'bob', access: 'owner', encryptionMode: 'plain',
         header: encodePlainArtifactStoredContent(candidate.artifact.header),
         body: encodePlainArtifactStoredContent({ body: candidate.artifact.body }),
@@ -2468,7 +2473,7 @@ describe('admitted requester Action projection', () => {
       serverIdentityId: 'stable-home', bootstrap: bootstrap({ token: 'bob-ordinary', encryption: null }, async () => live) });
     if (!projected?.requesterAccountProjection) throw new Error('registry_account_projection_required');
     const ref = { kind: 'doc' as const, serverId: 'home-profile', artifactId };
-    expect(await projected.requesterAccountProjection.readArtifact(ref, { authorization: projected })).toMatchObject({
+    expect(await projected.requesterAccountProjection.readArtifact(ref, { ...sourceScope, authorization: projected })).toMatchObject({
       document: { artifactId, header: candidate.artifact.header, body: candidate.artifact.body },
     });
     const contentReads = () => reads.mock.calls.filter(([url]) => String(url).includes('/v1/artifacts/'));
@@ -2477,9 +2482,9 @@ describe('admitted requester Action projection', () => {
     expect(headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
     expect(headers).not.toHaveProperty('Authorization');
     const count = contentReads().length;
-    expect(await projected.requesterAccountProjection.readArtifact(ref)).toBeNull();
+    expect(await projected.requesterAccountProjection.readArtifact(ref, sourceScope)).toBeNull();
     live = false;
-    expect(await projected.requesterAccountProjection.readArtifact(ref, { authorization: projected })).toBeNull();
+    expect(await projected.requesterAccountProjection.readArtifact(ref, { ...sourceScope, authorization: projected })).toBeNull();
     expect(contentReads()).toHaveLength(count);
   });
 

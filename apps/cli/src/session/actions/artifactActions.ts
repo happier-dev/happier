@@ -3,6 +3,7 @@ import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifa
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { artifactActionListSelectionV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { PROJECT_SETUP_SET_ACTION_ID_V1, isProjectSetupSetChildActionIdV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import type { ActionExecutorContext, ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
 import type { ArtifactSignedInLinkOpenedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
@@ -44,13 +45,17 @@ export function createCliArtifactActions(params: Readonly<{
     // requester's E2EE envelope, which the Bot cannot and must not open.
     const approvedReplayActionId = args.context.approvedActionReplay
       ? args.context.externalActionExecutionAuthorization?.binding.actionId : undefined;
+    const setupDecision = args.context.externalActionExecutionAuthorization?.binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1;
     const useRequesterEffectAuthorization = Boolean(args.context.externalActionCredential)
       || Boolean(args.context.externalActionExecutionAuthorization
-        && (args.context.surface !== 'agent' || args.context.approvedActionReplay));
+        && (args.context.surface !== 'agent' || args.context.approvedActionReplay
+          || setupDecision));
     const effectAuthorization = args.actionId === 'doc.edit.accept' || args.actionId === 'doc.edit.decline'
       || useRequesterEffectAuthorization ? resolveAuthorization : undefined;
+    const setupReplayChild = approvedReplayActionId === PROJECT_SETUP_SET_ACTION_ID_V1
+      && isProjectSetupSetChildActionIdV1(args.actionId);
     const readAuthorization = args.actionId === 'artifact.get' && approvedReplayActionId
-      && approvedReplayActionId !== args.actionId ? undefined : effectAuthorization;
+      && approvedReplayActionId !== args.actionId && !setupReplayChild ? undefined : effectAuthorization;
     signal?.throwIfAborted();
     try {
       if ((args.context.externalActionCredential || args.context.externalActionExecutionAuthorization) && !resolveAuthorization) {
@@ -79,14 +84,17 @@ export function createCliArtifactActions(params: Readonly<{
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           if ('uploadPath' in input) {
             return await params.store.create({ artifactId: input.artifactId, header: input.header,
-              ...await readUpload(args.context, input, signal), savedBy, ...(signal ? { signal } : {}) });
+              ...await readUpload(args.context, input, signal), savedBy, ...(signal ? { signal } : {}),
+              ...(effectAuthorization ? { authorizationHeaders: effectAuthorization(args.context, args.actionId) } : {}) });
           }
-          return await params.store.create({ ...input, savedBy, ...(signal ? { signal } : {}) });
+          return await params.store.create({ ...input, savedBy, ...(signal ? { signal } : {}),
+            ...(effectAuthorization ? { authorizationHeaders: effectAuthorization(args.context, args.actionId) } : {}) });
         }
         case 'artifact.get': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const artifact = await params.store.read(input.artifactId, { signal, includeSharedAudience: false,
-            ...('readOnly' in args && args.readOnly ? { prepareRecipients: false } : {}),
+            projectSourceId: input.projectSourceId,
+            ...(setupDecision || 'readOnly' in args && args.readOnly ? { prepareRecipients: false } : {}),
             ...(readAuthorization ? { authorizationHeaders: readAuthorization(args.context, args.actionId) } : {}) });
           return { artifact: artifact ? projectArtifactDocumentV1(artifact) : null };
         }

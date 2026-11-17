@@ -50,6 +50,18 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
     expect(resolve(AGENT_SIGN_IN_PREPARE_RPC_METHOD, { ...binding, target: { kind: 'machine', machineId: 'other' } })).toBeNull();
   });
+
+  it('limits a protected setup decision to its repository inspection RPC', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1: methods } = await import('../../../../actions/projectDefinitionActionIdsV1.js');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'setup-root', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId: 'projects.setup.set',
+      requestId: 'accept', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    expect(resolve(methods['projects.inspect'], binding)).toBe('projects.inspect');
+    expect(resolve(methods['projects.manifest.update'], binding)).toBeNull();
+  });
   it.each(['execution.run.start', 'execution.run.ensure', 'execution.run.ensure_or_start'] as const)(
     'retains %s only for passive preflight on its installed Machine', async actionId => {
       const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');

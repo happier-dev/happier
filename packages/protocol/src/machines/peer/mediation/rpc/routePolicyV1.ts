@@ -1,7 +1,7 @@
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
 import { readSessionActionChildCreationRpcEffectV1 } from '../../../../sessions/creation/sessionCreationActionIdsV1.js';
 import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
-import { isProjectWorkspaceSyncPreparationActionV1 } from '../../../../actions/projectActionIdsV1.js';
+import { isProjectWorkspaceSyncPreparationActionV1, PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
 import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 } from '../../../../actions/operations/actionIdsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
@@ -1156,6 +1156,7 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
       ? binding.actionId : null;
   }
+  if (binding?.actionId === PROJECT_SETUP_SET_ACTION_ID_V1) return readProjectSetupSetChildRpcEffectV1(binding.actionId, method);
   const creation = readSessionActionChildCreationRpcEffectV1(method, binding, selectedTarget, reviewedChild);
   if (creation !== null) return creation;
   if (method === RPC_METHODS.CAPABILITIES_DESCRIBE && binding && isExecutionRunStartActionIdV1(binding.actionId)) {

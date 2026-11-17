@@ -54,6 +54,8 @@ import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/depl
 import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
+import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
+import { PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 
 /** Captured Account ports, not a private Session birth or an admission grant. */
 export type RequesterAccountActionCustody = Readonly<{
@@ -131,9 +133,14 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
           || options?.authorization?.token !== authorization.token
           || !sameStrictJsonValue(options.authorization.binding, root)) return null;
         const artifact = await runWithServerHttpBaseUrl(http.serverHttpBaseUrl, () => artifacts.read(ref.artifactId, {
-          includeSharedAudience: false, prepareRecipients: false, ...(options.signal ? { signal: options.signal } : {}),
+          includeSharedAudience: false,
+          prepareRecipients: root.actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1 && options.projectSourceId !== undefined,
+          ...(options.projectSourceId ? { projectSourceId: options.projectSourceId } : {}),
+          ...(options.projectSourcePatch ? { projectSourcePatch: options.projectSourcePatch } : {}),
+          ...(options.signal ? { signal: options.signal } : {}),
           authorizationHeaders: async req => {
-            const headers = await http.createRequestHeaders({ ...req, effectActionId: root.actionId,
+            const headers = await http.createRequestHeaders({ ...req,
+              effectActionId: root.actionId === PROJECT_SETUP_SET_ACTION_ID_V1 ? PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactRead : root.actionId,
               ...(options.signal ? { signal: options.signal } : {}) });
             if (!headers) throw new Error('action_forbidden');
             return { ...headers };
@@ -324,7 +331,9 @@ async function projectAdmittedAccountCustody(
           const appUpdate = root.actionId === 'registries.updates.check' && root.registryAppUpdateAdmission !== undefined;
           const preparation = root.deploymentPreparationAdmission;
           const setup = deploymentPreparationOperationForActionV1(root.actionId) === 'setup' && preparation?.operation === 'setup';
-          const signedDocument = appUpdate || setup;
+          const sourcePublication = root.actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1 && options?.projectSourceId !== undefined;
+          const acceptedSetup = root.actionId === PROJECT_SETUP_SET_ACTION_ID_V1;
+          const signedDocument = appUpdate || setup || sourcePublication || acceptedSetup;
           const supplied = ExternalActionExecutionAuthorizationV1Schema.safeParse(options?.authorization);
           const http = options?.authorization?.requesterHttpProjection;
           if (signedDocument && (!supplied.success || supplied.data.token !== parsed.data.token || !sameStrictJsonValue(supplied.data.binding, root)
@@ -334,7 +343,8 @@ async function projectAdmittedAccountCustody(
             || !await http.isCurrent())) return null;
           const authorizationHeaders: import('@/api/artifacts/accountArtifactStore').ArtifactRequestAuthorizationHeaders | undefined = signedDocument
             ? async request => {
-              const headers = http && await http.createRequestHeaders({ ...request, effectActionId: root.actionId,
+              const headers = http && await http.createRequestHeaders({ ...request,
+                effectActionId: acceptedSetup ? PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactRead : root.actionId,
                 ...(options?.signal ? { signal: options.signal } : {}) });
               if (!headers || headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== parsed.data.token)
                 throw Object.assign(new Error('project_requester_authority_unavailable'), { code: 'project_requester_authority_unavailable' });
@@ -342,7 +352,9 @@ async function projectAdmittedAccountCustody(
             } : undefined;
           const artifact = await runWithServerHttpBaseUrl(bootstrap.serverHttpBaseUrl,
             () => artifacts.read(ref.artifactId, { ...(options?.signal ? { signal: options.signal } : {}), includeSharedAudience: false,
-              ...(authorizationHeaders ? { authorizationHeaders, prepareRecipients: false } : {}) }));
+              ...(options?.projectSourceId ? { projectSourceId: options.projectSourceId } : {}),
+              ...(options?.projectSourcePatch ? { projectSourcePatch: options.projectSourcePatch } : {}),
+              ...(authorizationHeaders ? { authorizationHeaders, prepareRecipients: sourcePublication } : {}) }));
           if (!artifact || artifact.artifactId !== ref.artifactId) return null;
           const promptLibraryArtifact = projectAccountArtifactToPromptLibraryStoredArtifact(artifact);
           return { artifactId: artifact.artifactId, header: artifact.header,

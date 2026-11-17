@@ -201,7 +201,9 @@ import { WaitActionInputV1Schema } from './specs/wait.js';
 import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from './specs/actionOperations.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './executor/actionFailureEnvelope.js';
 import { AccountNoticeArtifactBodyV1Schema, readAccountNoticeArtifactV1, readOwnedNoticeArtifactV1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../activity/usageNoticeArtifactV1.js';
-import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSharedSetupV1Schema } from '../projects/projectSetupV1.js';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSharedSetupV1Schema, ProjectSetupContentV1Schema } from '../projects/projectSetupV1.js';
+import { PROJECT_SETUP_SET_ACTION_ID_V1 } from './projectActionIdsV1.js';
+import { isProjectSetupSetChildInputV1 } from '../projects/projectSetupSetV1.js';
 import { ARTIFACT_CREATE_ACTION_ID_V1 } from '../artifacts/artifactActionIdsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
 import { resolveActionOriginationPreferenceFailureV1 } from './executor/actionOriginationPreferences.js';
@@ -2261,6 +2263,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   // parent's consent or host-reviewed admission services.
   const ordinaryChildContext = (context: ActionExecutorContext): ActionExecutorContext => {
     const { bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
+      projectSetupSetRootInput: _parentSetupRoot,
       presentUserApproval: _parentApproval, approvedActionReplay: _parentReplay,
       hostReviewedChild: _parentReviewedChild, admittedHostReviewedChildren: _parentReviewedChildren,
       invocationServices: _parentServices, executeHostReviewedChildAction: _parentHostChildAction, ...caller } = context;
@@ -4460,6 +4463,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.artifactAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const artifactInput = (parsed.data as z.infer<(typeof ArtifactActionInputSchemasV1)[typeof artifactActionId]>);
         const internalKindRefusal = { ok: false as const, errorCode: 'artifact_kind_internal', error: 'artifact_kind_internal' };
+        // Only this host's finite setup child may author the private copy.
+        // A public context field alone cannot establish child authority; routed roots
+        // also keep their admitted original Action binding.
+        const setupDecisionChild = hostInternal && ctx.projectSetupSetRootInput !== undefined
+          && (!ctx.externalActionExecutionAuthorization
+            || ctx.externalActionExecutionAuthorization.binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1)
+          && isProjectSetupSetChildInputV1(ctx.projectSetupSetRootInput, artifactActionId, artifactInput, ctx.serverIdentityId ?? undefined);
+        const isAcceptedSetupCreate = setupDecisionChild && artifactActionId === ARTIFACT_CREATE_ACTION_ID_V1;
         // Setup publication is an addressed, reviewed document write. Browser
         // visibility does not decide authoring; accepted copies retain their owner.
         const isSharedSetupArtifact = (artifact: Readonly<{ header: { kind?: unknown }; body?: unknown }>): boolean => {
@@ -4497,7 +4508,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // Other hidden documents keep their specialized write policy. A shared setup
         // publication must match its closed body schema; retagging alone cannot admit it.
         if ('header' in artifactInput && !getArtifactKindPolicyV1(artifactInput.header.kind).browserListed
-          && !isSharedSetupCreateInput && !isNoticeUpdateInput
+          && !isSharedSetupCreateInput && !isNoticeUpdateInput && !isAcceptedSetupCreate
           || artifactActionId === 'artifact.publish_from_file' && 'kind' in artifactInput
             && !getArtifactKindPolicyV1(artifactInput.kind).browserListed) return internalKindRefusal;
         if ((artifactActionId === 'artifact.update' || artifactActionId === 'artifact.delete' || artifactActionId === 'artifact.export'
@@ -4548,8 +4559,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (approval.success) return { ok: true, result: approval.data };
         if (artifactActionId === 'artifact.get') {
           const opened = ArtifactActionOutputSchemasV1['artifact.get'].parse(result);
+          let acceptedSetupRead = false;
+          if (opened.artifact?.access === 'owner' && opened.artifact.header.kind === PROJECT_SETUP_ARTIFACT_KIND_V1
+            && typeof opened.artifact.body === 'string') {
+            try { acceptedSetupRead = ProjectSetupContentV1Schema.safeParse(JSON.parse(opened.artifact.body) as unknown).success; }
+            catch { acceptedSetupRead = false; }
+          }
           if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).browserListed
-            && !isSharedSetupArtifact(opened.artifact) && !readOwnedNotice(opened.artifact)) return internalKindRefusal;
+            && !isSharedSetupArtifact(opened.artifact) && !readOwnedNotice(opened.artifact) && !acceptedSetupRead) return internalKindRefusal;
           return { ok: true, result: opened };
         }
         if (artifactActionId === 'artifact.list') {

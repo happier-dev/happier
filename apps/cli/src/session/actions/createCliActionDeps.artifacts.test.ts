@@ -52,6 +52,11 @@ import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { decodeBase64, decryptWithDataKey, encodeBase64, encryptWithDataKey,
   libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
+import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
+import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), request: vi.fn(), isCancel: () => false }));
 vi.mock('axios', async importOriginal => {
@@ -93,6 +98,86 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       readActionsSettings: () => settings,
     });
   }
+  it('creates and reopens protected setup detail with signed requester custody instead of the daemon Account', async () => {
+    const machineKey = new Uint8Array(32).fill(29);
+    const contentPublicKey = encodeBase64(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey);
+    const wrappingSecret = new Uint8Array(32).fill(7);
+    const keyPair = tweetnacl.sign.keyPair();
+    const target = { kind: 'machine' as const, machineId: 'local-machine' };
+    const tokenId = '22222222-2222-4222-8222-222222222222';
+    const accountId = 'setup-requester';
+    const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'setup-root-proof', binding: {
+      accountId, principalId: accountId, credentialId: tokenId, grant: API_TOKEN_FULL_GRANT_V1,
+      accountEncryptionMode: 'e2ee', serverIdentityId: 'physical-home', machineId: target.machineId,
+      custodianAccountId: 'daemon-owner', installationId: 'installation', actionId: 'projects.setup.set',
+      requestId: 'setup-decision', requestEnvelopeDigest: 'd'.repeat(43), target,
+    }, requesterHttpProjection: { accountId, serverId: 'home', serverIdentityId: 'physical-home',
+      serverHttpBaseUrl: 'https://setup-home.test', accountEncryptionMode: 'e2ee', isCurrent: async () => true,
+      createRequestHeaders: async () => ({ 'x-test-root': 'setup-key-acquisition' }) } };
+    http.request.mockImplementation(async request => {
+      expect(new URL(request.url).pathname).toBe('/v1/auth/api-tokens/encryption-access');
+      return { status: 200, data: { v: 1, accountId, tokenId,
+        encryptionAccess: wrapApiTokenEncryptionAccessV1({ context: { serverIdentityId: 'physical-home', accountId, tokenId, contentPublicKey },
+          wrappingSecret, contentPrivateKey: machineKey, randomBytes: length => new Uint8Array(length).fill(1) }) } };
+    });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      features: { artifacts: { queryHints: { enabled: true } } }, capabilities: {},
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    let stored: ReturnType<typeof readCarrierMutation> | undefined;
+    const assertSigned = (method: string, path: string, config: { headers?: Record<string, string> } | undefined, body?: unknown) => {
+      expect(config?.headers?.Authorization).toBeUndefined();
+      expect(config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+      const effectActionId = method === 'POST' ? 'artifact.create' : 'artifact.get';
+      expect(config?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe(effectActionId);
+      expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId,
+        target, installationId: 'installation', requestId: 'setup-decision', method, path,
+        ...(body === undefined ? {} : { body }), publicKey: keyPair.publicKey,
+        signature: config!.headers![EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]! })).toBe(true);
+    };
+    http.get.mockImplementation(async (url: string, config) => {
+      const path = new URL(url).pathname;
+      assertSigned('GET', path, config);
+      if (path === '/v1/account/encryption/currentness') return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }) };
+      if (stored && path === `/v1/artifacts/${stored.id}`) return { status: 200, data: {
+        ...stored, ownerAccountId: accountId, access: 'owner', encryptionMode: 'e2ee', publicAudience: 'none',
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+      throw new Error(`Unexpected setup detail read ${path}`);
+    });
+    http.post.mockImplementation(async (url: string, body, config) => {
+      expect(new URL(url).pathname).toBe('/v1/artifacts');
+      assertSigned('POST', '/v1/artifacts', config, body);
+      stored = readCarrierMutation(body);
+      expect(stored.dataEncryptionKey).not.toBe(ARTIFACT_PLAIN_DATA_KEY_MARKER);
+      expect(stored.body).not.toContain('project_setup.v1');
+      return { status: 200, data: { id: stored.id, headerVersion: 1, bodyVersion: 1 } };
+    });
+    const retire = retainApiTokenDeploymentContentAccess(authorization, { contentPublicKey,
+      wrappingSecret: encodeBase64(wrappingSecret, 'base64url') });
+    const custody = await prepareApiTokenDeploymentAccountProjection(authorization);
+    try {
+      expect(custody).not.toBeNull();
+      const daemonToken = `header.${Buffer.from(JSON.stringify({ sub: 'daemon-owner' })).toString('base64url')}.signature`;
+      const host = createCliActionDeps({ token: daemonToken, credentials: { token: daemonToken, encryption: null },
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverIdentityId: 'physical-home',
+        serverHttpBaseUrl: 'https://setup-home.test', externalActionMachineRequestPrivateKey: keyPair.secretKey,
+        externalActionMachineInstallationId: 'installation' });
+      const context = { surface: 'agent' as const, authority: 'account_automation' as const, approvedActionReplay: {},
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target };
+      const body = JSON.stringify({ kind: 'project_setup.v1', setupOverrides: { version: 1 } });
+      const created = ArtifactActionOutputSchemasV1['artifact.create'].parse(await host.artifactAction!({ actionId: 'artifact.create',
+        input: { header: { kind: 'project_setup.v1' }, body }, context }));
+      await expect(host.artifactAction!({ actionId: 'artifact.get', input: { artifactId: created.artifactId }, context }))
+        .resolves.toMatchObject({ artifact: { artifactId: created.artifactId, body,
+          provenance: { savedBy: { kind: 'agent', accountId } } } });
+      const uncaptured = { ...authorization };
+      Reflect.deleteProperty(uncaptured, 'requesterAccountProjection');
+      await expect(host.artifactAction!({ actionId: 'artifact.create', input: { header: { kind: 'project_setup.v1' }, body },
+        context: { ...context, externalActionExecutionAuthorization: uncaptured } }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
+      expect(http.post).toHaveBeenCalledTimes(1);
+    } finally { custody?.dispose(); retire(); }
+  });
   it('projects native Artifact metadata onto the strict get document while preserving content and missing reads', async () => {
     const header = { kind: 'doc.v1', title: 'Team document' };
     const row = { id: artifactId, ownerAccountId: 'owner', ownerDisplayName: 'Document owner',
