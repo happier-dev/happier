@@ -67,6 +67,9 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
   assert.match(source, /resolve-release-resume\.mjs[\s\S]*--mode resolve/);
   assert.equal((source.match(/\/jobs\?filter=latest&per_page=50/g) ?? []).length, 1, 'one canonical origin retrieval owns nested completion evidence');
   assert.match(source, /--jobs-json "\$RUNNER_TEMP\/resume-jobs.json"/);
+  const resolveStep = resolveJob.steps.find((step) => /--mode resolve/.test(step.run ?? ''));
+  // The resolver reads public releases and tags to recover legacy published candidates.
+  assert.equal(resolveStep?.env?.GH_TOKEN, '${{ github.token }}', 'resolve step can call the GitHub API');
   // GitHub's run listing endpoints returned transient HTTP 502s three times on 2026-11-17.
   assert.match(source, /gh_api_paginate_retry\(\) \{[\s\S]*for attempt in 1 2 3/, 'origin retrieval retries transient GitHub API failures');
   assert.match(source, /gh_api_paginate_retry "repos\/\$\{GH_REPO\}\/actions\/runs\/\$\{ORIGIN_RUN_ID\}\/jobs\?filter=latest&per_page=50" "\$RUNNER_TEMP\/resume-jobs.json"/);
