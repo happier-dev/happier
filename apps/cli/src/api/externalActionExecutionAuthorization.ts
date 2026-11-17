@@ -36,7 +36,7 @@ import { MachineSetupApplyInputV1Schema, managedMachineActionEndpointPathV1 } fr
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { ManagedPresetAcquireOriginV1 } from '@happier-dev/cli-common/machines/managed';
 import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkflowPlacement } from './managedPresetOrigination';
-import { projectExternalActionManagedAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomBytes } from 'node:crypto';
 
@@ -1175,9 +1175,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     const root = minted.authorization.binding;
     // Home's authority is signed alongside the operand; compare the request
     // against the canonical operand projection without re-deciding that fact.
-    const managedOperand = root.managedAdmission && 'authority' in root.managedAdmission
-      ? projectExternalActionManagedAdmissionV1(root.managedAdmission.actionId, root.managedAdmission.input)
-      : root.managedAdmission;
+    const managedOperand = projectExternalActionManagedAdmissionOperandV1(root.managedAdmission);
     if (!('authentication' in root) || root.authentication.kind !== authentication.data.kind
       || root.authentication.tokenEpoch !== authentication.data.tokenEpoch || root.accountId !== accountId
       || root.custodianAccountId !== custodianAccountId || root.serverIdentityId !== input.serverIdentityId

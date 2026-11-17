@@ -3,9 +3,9 @@ import { prepareManagedAcquireProvisionerAdmissionV1, prepareManagedPowerProvisi
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { StoredCredentials } from '@/persistence';
 import { readCurrentAccountPluginExecutionDeclarations } from '@/plugins/runtime/accountPluginActivationSource';
-import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isManagedControlAdmissionActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedControlAdmissionActionIdV1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { openManagedMachineRead } from './readManagedMachine';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
@@ -50,7 +50,8 @@ export async function prepareCliManagedProvisionerAdmission(
             .filter(({ role }) => role === 'preparationInspect' || role === 'preparationDestroy')
             .map(({ action, role }) => ({ action: { pluginId: launch.provider.pluginId, localId: action }, role })) };
     }
-    if (isManagedControlAdmissionActionIdV1(request.actionId) || request.actionId === 'machines.managed.inspect') {
+    if (isManagedControlAdmissionActionIdV1(request.actionId) || request.actionId === 'machines.managed.inspect'
+        || request.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) {
         const input = ManagedMachineActionInputSchemasV1[request.actionId].parse(request.input);
         if ('when' in input && input.when !== 'now') return null;
         const options = 'includeGuestDiagnostics' in input && input.includeGuestDiagnostics ? { includeGuestDiagnostics: true as const } : undefined;
@@ -62,13 +63,16 @@ export async function prepareCliManagedProvisionerAdmission(
         const parsed = ManagedMachineActionOutputSchemasV1['machines.managed.get'].safeParse(result);
         if (!parsed.success)
             return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
+        const structural = unwrapManagedMachineReadV1(parsed.data);
+        if (structural.id !== input.managedId || structural.homeId !== input.homeId) {
+            return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
+        }
+        if (structural.controller && request.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1)
+            return prepareManagedPowerProvisionerAdmissionV1(structural, readSelected, request.actionId, options);
         if (!account.credentials) return { ok: false as const, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
         try {
             const machine = await openManagedMachineRead({ credentials: account.credentials, serverHttpBaseUrl: account.serverUrl,
                 read: parsed.data, ...(request.context.signal ? { signal: request.context.signal } : {}) });
-            if (machine.id !== input.managedId || machine.homeId !== input.homeId) {
-                return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
-            }
             return prepareManagedPowerProvisionerAdmissionV1(machine, readSelected, request.actionId, options);
         } catch {
             request.context.signal?.throwIfAborted();

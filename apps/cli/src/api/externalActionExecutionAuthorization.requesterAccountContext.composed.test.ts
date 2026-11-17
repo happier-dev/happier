@@ -722,13 +722,17 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope: prepared.envelope });
       const workspaceSync = prepared.envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(actionId, prepared.envelope.input)
         : prepared.envelope.workspaceSyncAdmission;
-      const managedAdmission = actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete'
+      let managedAdmission = actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete'
         ? prepared.envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, prepared.envelope.input)
           : prepared.envelope.managedAdmission
         : options.scopedManagedController || actionId === 'machines.managed.bootstrap.retry'
         ? projectExternalActionManagedAdmissionV1(actionId,
           { homeId: homeIdentityId, managedId: options.scopedControllerMismatch === 'resource' ? 'other-resource' : 'retained-machine',
             ...(actionId === 'machines.managed.bootstrap.retry' ? { expectedIntentRevision: 2 } : {}) }) : undefined;
+      if (managedAdmission?.actionId === 'machines.managed.bootstrap.retry') managedAdmission = { ...managedAdmission,
+        input: { ...managedAdmission.input, guestCli: { source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{
+          target: { os: 'linux', arch: 'x64' }, sha256: 'b'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/x64',
+        }] } } };
       const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'exact-home-root', binding: {
         accountId: 'bob', authentication: { kind: options.authenticationKind ?? 'account', tokenEpoch: 7 }, accountEncryptionMode: mode,
         serverIdentityId: homeIdentityId, custodianAccountId: options.custodianAccountId ?? 'alice', machineId: 'alice-machine',
@@ -1326,13 +1330,19 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         });
         const input = ManagedMachineActionInputSchemasV1['machines.managed.bootstrap.retry'].parse({
           homeId: homeIdentityId, managedId: 'retained-machine', expectedIntentRevision: 2,
+          guestCli: { source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{
+            target: { os: 'linux', arch: 'x64' }, sha256: 'a'.repeat(64), url: 'https://requester.example/forged.tar.gz',
+          }] },
         });
         const result = await executor.execute('machines.managed.bootstrap.retry', input,
           { surface: 'cli', actionRequestId: 'request-1' });
-        expect(result).toMatchObject({ errorCode: 'fixture_receipt' });
+        expect(result, JSON.stringify(result)).toMatchObject(refused);
         const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
         expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId: 'bob',
           machineId: 'alice-machine', installationId: 'alice-installation', actionId: 'machines.managed.bootstrap.retry' });
+        expect(received.executionAuthorization?.binding.managedAdmission).toMatchObject({
+          input: { guestCli: { payloads: [{ sha256: 'b'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/x64' }] } },
+        });
         expect(received.executionAuthorization?.binding.requestEnvelopeDigest)
           .toBe(computeExternalActionRequestEnvelopeDigestV1(received.envelope));
         expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,

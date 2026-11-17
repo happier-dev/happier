@@ -6,7 +6,7 @@ import { projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-com
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import axios from '@/api/client/credentialAxios';
 import { MachineProvisionerSnapshotResultV1Schema, readMachineProvisionerSessionPlacementV1, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isExternalActionManagedWakeRootV1, readExternalActionManagedRetryGuestCliV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { redactManagedMachineCredentialReferences, ManagedMachineFullV1Schema, ManagedMachineV1Schema,
     isManagedOpaquePresetMachineV1, type ManagedControllerV1, type ManagedMachineFullV1,
     type ManagedMachineV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -52,7 +52,8 @@ import { executeManagedMachineAcquire, readManagedGuestDiagnostics, createManage
 import { openManagedNativeChannel } from '@happier-dev/cli-common/machines/managed/nativeChannel';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
-import { resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { readManagedGuestCliIdentity, resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { readManagedGuestCliLocalPayloadRoot } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 import { runBoundSessionSetup } from './boundSessionSetup';
 import type { ManagedGuestLocalStop } from './managedRetentionPolicy';
 import { MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -1221,7 +1222,11 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const needsPresetPolicy = isManagedPresetAcquireInputV1(acquisition)
                     && (options.acquisitionMode === 'resource-bound' || delegated || acquisition.retention === undefined || acquisition.wakeOnAcceptedMessage === undefined);
                 if ((needsPresetPolicy || options.runCreationContinuation) && !options.context?.originalActionEnvelope) throw new ManagedMachineControllerError('admission_unavailable');
-                const admission = await executeManagedMachineAcquire({ host: 'native',
+                const guestCli = options.acquisitionMode === 'resource-bound' ? undefined
+                    : await readManagedGuestCliIdentity({ homeUrl: input.serverUrl, signal: options.signal,
+                        ...(input.guestCliFetch ? { fetchImpl: input.guestCliFetch } : {}) });
+                const admission = await executeManagedMachineAcquire({ host: 'native', guestCli, remotePayloadAvailable: true,
+                    localPayloadAvailable: Boolean(readManagedGuestCliLocalPayloadRoot()),
                     admit: async () => {
                         const admit = async (presetPolicy?: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
                             preparation?: Readonly<{ provisioner: MachineProvisionerContributionV1; open: ManagedPresetDefinitionOpener }>) => {
@@ -1355,7 +1360,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     const accepted: ManagedAcceptedV1 = { managedId: retained.machine.id, operation: { operationId } };
                     options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: retained.machine.id } });
                     options.context?.operationAcceptance?.accept(accepted);
-                    await reconcileOnce({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action, hydrator });
+                    await reconcileOnce({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action, hydrator,
+                        guestCli: readExternalActionManagedRetryGuestCliV1(options.context?.externalActionExecutionAuthorization?.binding) });
                     return accepted;
                 }
                 const result = retained.machine.submittedNativeEffect && !options.policyPurpose

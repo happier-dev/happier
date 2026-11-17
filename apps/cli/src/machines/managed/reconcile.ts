@@ -60,6 +60,8 @@ export type ManagedMachineReconciliationInput = Readonly<{
     machine: ManagedMachineFullV1;
     action: ManagedMachineActionIdV1;
     includeGuestDiagnostics?: true;
+    /** Home-issued snapshot from this explicit Retry root's verified admission. */
+    guestCli?: import('@happier-dev/protocol/features').GuestCliIdentityV1;
     rebuild?: DevcontainerRebuildIntentV1;
     hydrator?: ManagedPresetHydrator;
     credentialConfigurations?: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'];
@@ -793,6 +795,7 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
     try {
         const enrollment = await runManagedMachineEnrollment({ correlation, homeCorrelation, target, carrier, signal: params.options.signal,
             replacePayload: params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
+            ...(params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 ? { guestCli: params.guestCli } : {}),
             onInstalled: enrollmentInput.onInstalled,
             reviewedChild: params.options.context?.hostReviewedChild,
             accountCredentials: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)?.credentials,

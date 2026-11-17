@@ -1,13 +1,17 @@
 import { readdir } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
-import { buildBootstrapRootCommand, SystemTaskExecutionError, type ManagedNativePayloadInstallation, type ManagedNativeBootstrapIO } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { buildBootstrapRootCommand, installManagedGuestCliViaRemoteDownload, SystemTaskExecutionError, type ManagedNativePayloadInstallation, type ManagedNativeBootstrapIO } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { installRemoteFirstPartyComponentPayload } from '@happier-dev/cli-common/systemTasks';
 import { deliverManagedNativeFile } from './nativeFileDelivery';
 
 /** Node/filesystem strategy only; shared enrollment owns placement and identity. */
 export async function installManagedNativePayload(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>> {
   const { channel, signal, dedicatedIdentity, home, os, arch, remoteHomeDir, resource, exec, putFile, bootstrapExec, cleanupExec } = input;
+  if (input.guestCliPayload) return await installManagedGuestCliViaRemoteDownload({
+    homeUrl: input.homeUrl, channel, os, arch, remoteHomeDir, signal, guestCliPayload: input.guestCliPayload,
+    runRemoteText: command => exec({ command: `export HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION=1; ${command}`, signal }),
+  });
   return await installRemoteFirstPartyComponentPayload({
     requireHomePayload: true,
     homeUrl: input.homeUrl,

@@ -57,7 +57,7 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
 import { createDaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
 import { ManagedAdmissionComputeInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineEnrollmentIdentityV1Schema, ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
@@ -1602,13 +1602,16 @@ describe('executeExternalAction', () => {
     const accountPrincipal = { accountId: 'requester', authority,
       authentication: { kind: 'account' as const, tokenEpoch: 7 } };
     const target = { kind: 'machine' as const, machineId: 'controller' };
+    const guestCli = (sha256: string) => ({ source: 'home-payload' as const, line: '0.3', channel: 'stable' as const,
+      payloads: [{ target: { os: 'linux' as const, arch: 'x64' as const }, sha256,
+        url: '/v1/runtime/guest-cli/payloads/linux/x64' }] });
     // This matrix tests compute admission/Ask, not guest administrator or
     // isolation setup. A sandbox creation demands neither optional child.
     const input: JsonValue = actionId === 'machines.managed.acquire' ? { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off' as const,
       homeId: 'srv_home', controller: { machineId: target.machineId, installationId: 'installation' },
       launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
       retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
-    } } : { homeId: 'srv_home', managedId: 'retained', expectedIntentRevision: 0 };
+    } } : { homeId: 'srv_home', managedId: 'retained', expectedIntentRevision: 0, guestCli: guestCli('a'.repeat(64)) };
     const binding = { accountId: accountPrincipal.accountId, authentication: accountPrincipal.authentication,
       serverIdentityId: 'srv_home', actionId, requestId: 'reviewed-request', target };
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(23) };
@@ -1620,7 +1623,8 @@ describe('executeExternalAction', () => {
     }) : { v: 1 as const, input, target, requestId: binding.requestId };
     const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
     const managedProjection = projectExternalActionManagedAdmissionV1(actionId, input);
-    const recoveryAdmission = managedProjection?.actionId === 'machines.managed.bootstrap.retry' ? managedProjection : undefined;
+    const recoveryAdmission = managedProjection?.actionId === 'machines.managed.bootstrap.retry'
+      ? { ...managedProjection, input: { ...managedProjection.input, guestCli: guestCli('b'.repeat(64)) } } : undefined;
     const rawAuthorization = { v: 1 as const, token: 'signed-account-root', binding: { ...binding,
       machineId: target.machineId, custodianAccountId: custody === 'own' ? accountPrincipal.accountId : 'alice', installationId: 'installation',
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: mode,
@@ -1716,6 +1720,13 @@ describe('executeExternalAction', () => {
       managedMachineAction: async request => {
         expect(request.context).toMatchObject({ authority, actionRequestId: binding.requestId,
           externalActionExecutionAuthorization: authorization, runtimeAccountId: accountPrincipal.accountId });
+        if (request.actionId === 'machines.managed.get') return ManagedMachineFullV1Schema.parse({
+          id: 'retained', homeId: 'srv_home', custodianAccountId: accountPrincipal.accountId,
+          controller: { machineId: target.machineId, installationId: 'installation' },
+          launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+          allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        });
         effects++;
         return { managedId: 'retained' };
       },
@@ -1775,7 +1786,7 @@ describe('executeExternalAction', () => {
       ? openExternalActionResponseV2({ envelope: admitted.response, binding, material, request: envelope })
       : admitted.response.v === 1 ? admitted.response.execution : null : null;
     if (authority === 'present_user') {
-      expect(result).toMatchObject({ ok: true, result: { managedId: 'retained' } });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { managedId: 'retained' } });
       expect(confirm).toHaveBeenCalledOnce();
       expect(artifacts.size).toBe(0);
       expect(effects).toBe(1);

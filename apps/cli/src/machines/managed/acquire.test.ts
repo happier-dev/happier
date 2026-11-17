@@ -167,6 +167,9 @@ const managedProviderOperationAuthority = createManagedProviderOperationAuthorit
 });
 const accountInputs = {
     credentials: { token: 'token', encryption: null }, managedProviderOperationAuthority,
+    // Home capability HTTP is a boundary; cases may replace this released
+    // supplier descriptor with a source Home and its exported archives.
+    guestCliFetch: async () => Response.json({ capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } }),
     homeTarget: { profileId: null, homeServerIdentityId: 'home', descriptor: null,
         canonicalAuthUrl: 'https://home.example', applicationUrl: 'https://home.example', webappUrl: 'https://home.example',
         credentialDestination: null, preferredTransport: 'https' as const, authority: 'current_connection' as const },
@@ -183,11 +186,11 @@ function nativeAccountReferenceManifest(localIds: readonly string[]) {
         })) },
     });
 }
-function driver() {
+function driver(options: Readonly<{ guestCliFetch?: typeof fetch }> = {}) {
     // Only the absent native module-loading boundary is substituted. Empty
     // contribution resolution still uses the real canonical registry owner.
     const runtimeRegistry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
-    return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
+    return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs, ...options });
 }
 
 /**
@@ -4396,18 +4399,35 @@ describe('managed acquisition durable custody', () => {
         machineKey.fill(0);
     });
     it('acknowledges the existing operation only after durable admission and never repurchases a possibly existing allocation', async () => {
+        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
+        onTestFinished(() => vi.unstubAllEnvs());
         const events: string[] = [];
+        const guestCli = { source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{
+            target: { os: 'linux', arch: 'x64' }, sha256: 'a'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/x64',
+        }] };
+        const features = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ capabilities: { guestCli } }));
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url) => {
             events.push(String(url));
             return { status: 200, data: { machine, replayed: true } };
         });
-        const result = await driver().execute('machines.managed.acquire', input, {
+        const result = await driver({ guestCliFetch: globalThis.fetch }).execute('machines.managed.acquire', input, {
             requestId: 'request',
             context: { operationAcceptance: { operationId: 'operation', accept: () => { events.push('accepted'); } } },
         });
         expect(result).toEqual({ managedId: 'managed', operation: { operationId: 'operation' } });
         expect(events).toEqual(['https://home.example/v1/machines/managed/controller/admit', 'accepted']);
         expect(post.mock.calls[0]?.[1]).toEqual({ input, requestId: 'request', continuationPresent: false });
+        expect(features).toHaveBeenCalledOnce();
+    });
+    it('refuses a source Home without an export or controller payload before durable paid admission', async () => {
+        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
+        onTestFinished(() => vi.unstubAllEnvs());
+        const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machine, replayed: true } });
+        const guestCliFetch = async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } });
+        await expect(driver({ guestCliFetch }).execute('machines.managed.acquire', input, {
+            requestId: 'missing-payload', context: { operationAcceptance: { operationId: 'operation', accept() {} } },
+        })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+        expect(post).not.toHaveBeenCalled();
     });
     it('refuses resource-bound mode for an unattested one-off before admission', async () => {
         const post = vi.spyOn(axios, 'post');

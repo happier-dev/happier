@@ -14,7 +14,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 import { ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, isExternalActionRequestWithinLimit, isExternalActionRequestVersionAllowedForAccountModeV1, projectExternalActionExecutionResultV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionApprovalDecisionAdmissionV1,
-  projectRegistryAppUpdateAdmissionV1, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  projectRegistryAppUpdateAdmissionV1, projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentReadAdmissionV1, projectExternalActionDeploymentLinkEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -601,8 +601,7 @@ async function executeExternalActionRequest(input: Readonly<{
       throw new TypeError('Missing managed admission projection');
     }
     const recoveryAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.managedAdmission : undefined;
-    const recoveryOperand = recoveryAdmission && 'authority' in recoveryAdmission
-      ? projectExternalActionManagedAdmissionV1(recoveryAdmission.actionId, recoveryAdmission.input) : recoveryAdmission;
+    const recoveryOperand = projectExternalActionManagedAdmissionOperandV1(recoveryAdmission);
     if (recoveryOperand && !sameStrictJsonValue(managedAdmission, recoveryOperand)) {
       throw new TypeError('Managed recovery input mismatch');
     }

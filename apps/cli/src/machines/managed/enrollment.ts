@@ -37,6 +37,7 @@ export async function runManagedMachineEnrollment(input: Readonly<{
   /** The creating Action owns both the task question and its transient requester delivery. */
   operationId?: string;
   replacePayload?: boolean;
+  guestCli?: import('@happier-dev/protocol/features').GuestCliIdentityV1;
   onInstalled?(): Promise<void>;
   reviewedChild?: HostReviewedChildPortV1;
   accountCredentials?: StoredCredentials;
