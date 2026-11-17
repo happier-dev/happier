@@ -26,6 +26,7 @@ import { getMachineDisplayName, getMachineSentenceName } from '@/utils/sessions/
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
+import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { isManagedControllerCandidate, useManagedControllerScope } from './useManagedControllerScope';
@@ -101,7 +102,10 @@ function MachinePresetPrepareSection(props: Readonly<{
             subtitleLines={0} mode="info" showChevron={false}
             rightElement={<Switch testID="machine-preset.prepare.keep.switch" accessibilityLabel={t('machinePresets.prepareKeep')}
                 value={enabled} disabled={!onChange} onValueChange={next => onChange?.({ ...props.preparation, enabled: next })} />} />
-        {showsImage ? <Item testID="machine-preset.preparation" title={status} subtitleLines={0} mode="info" showChevron={false}
+        {/* A ready image says the storage it keeps when the builder measured it; an unknown size stays unsaid (S1). */}
+        {showsImage ? <Item testID="machine-preset.preparation" title={status}
+            {...(preparation.estimates?.storageBytes != null ? { subtitle: formatMachineBytes(preparation.estimates.storageBytes, 'storage') } : {})}
+            subtitleLines={0} mode="info" showChevron={false}
             loading={active} accessoryLayout="adaptive" rightElement={action ?? undefined} /> : null}
         {/* Only while an image is kept ready: what a Happier update does to it, with its cost (lab F5). */}
         {enabled ? <SegmentedChoiceItem<WhenHappierUpdates> testID="machine-preset.prepare.updates" testIDPrefix="machine-preset.prepare.updates"
