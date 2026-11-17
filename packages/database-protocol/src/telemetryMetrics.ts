@@ -1,0 +1,36 @@
+import { z } from 'zod/mini';
+import { HealthCheckResultV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { asProtocolZod, projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
+import { DatabaseTelemetryMetricIntervalV1Schema } from './databaseTelemetryMetricSeries.js';
+
+const result = asProtocolZod(HealthCheckResultV1ProtocolSchema);
+const text = z.string().check(z.minLength(1));
+const time = z.number().check(z.int(), z.nonnegative());
+const routeStatistic = z.enum(['p50', 'p95', 'errorRate']);
+const route = z.strictObject({ method: text, route: text });
+const runtime = z.strictObject({ kind: z.literal('runtime'), metricName: text,
+    dimensions: z.optional(z.array(z.strictObject({ name: text, value: z.union([z.string(), z.number(), z.boolean()]) }))),
+    statistic: z.enum(['latest', 'sum', 'mean', 'p50', 'p95']) });
+/** Saved key flows always name emitted routes or runtime metric identities. */
+export const TelemetryKeyFlowMeasureV1Schema = z.union([
+    z.strictObject({ kind: z.literal('route'), routes: z.array(route).check(z.minLength(1)), statistic: routeStatistic }), runtime,
+]);
+const selection = { environmentId: text, serviceName: text, serviceVersion: z.optional(text) };
+export const TelemetryKeyFlowConfigV1Schema = z.strictObject({ ...selection, measure: TelemetryKeyFlowMeasureV1Schema,
+    windowMs: z.number().check(z.int(), z.positive()),
+    threshold: z.strictObject({ operator: z.enum(['above', 'below']), value: z.number() }) });
+/** Whole-service HTTP is a demand read; it does not author a saved route check. */
+export const TelemetryMetricsReadInputV1Schema = z.strictObject({ ...selection, serverId: text, since: time, until: time,
+    measure: z.union([TelemetryKeyFlowMeasureV1Schema,
+        z.strictObject({ kind: z.literal('http'), statistic: z.union([routeStatistic, z.literal('requests')]) })]) });
+export const TelemetryMetricsReadResultV1Schema = z.strictObject({ result,
+    routes: z.array(z.strictObject({ method: z.string(), route: z.string(), result })),
+    trend: z.array(DatabaseTelemetryMetricIntervalV1Schema) });
+export const TelemetryMetricsReadResultV1ProtocolSchema = projectZodProtocolSchema(TelemetryMetricsReadResultV1Schema);
+export const TelemetryMetricsReadInputV1ProtocolSchema = projectZodProtocolSchema(TelemetryMetricsReadInputV1Schema);
+export const TelemetryKeyFlowMeasureV1ProtocolSchema = projectZodProtocolSchema(TelemetryKeyFlowMeasureV1Schema);
+export const TelemetryKeyFlowConfigV1ProtocolSchema = projectZodProtocolSchema(TelemetryKeyFlowConfigV1Schema);
+export type TelemetryMetricsReadResultV1 = z.infer<typeof TelemetryMetricsReadResultV1Schema>;
+export type TelemetryMetricsReadInputV1 = z.infer<typeof TelemetryMetricsReadInputV1Schema>;
+export type TelemetryKeyFlowConfigV1 = z.infer<typeof TelemetryKeyFlowConfigV1Schema>;
+export type TelemetryKeyFlowMeasureV1 = z.infer<typeof TelemetryKeyFlowMeasureV1Schema>;

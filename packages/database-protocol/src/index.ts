@@ -14,3 +14,4 @@ export * from './databaseSelectedExport.js';
 export * from './databaseCaptureCosts.js';
 export * from './databaseAppUsage.js';
 export * from './databaseTelemetryMetricSeries.js';
+export * from './telemetryMetrics.js';
