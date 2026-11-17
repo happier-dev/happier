@@ -261,7 +261,6 @@ export function GlassAppearanceSection() {
 /** One effective-state owner for Settings, the popover and draft Personalize choices. */
 export function GlassEffectiveStateLine(props: Readonly<{
     settings: GlassMaterialSettings;
-    inset?: 'sheet' | 'none';
     /** Only a state that constrains the choice (reduce transparency, Solid in a browser), and no desktop download. */
     constraintsOnly?: boolean;
 }>) {
@@ -299,7 +298,6 @@ export function GlassEffectiveStateLine(props: Readonly<{
         } : undefined}
         showChevron={false}
         titleStyle={styles.effectiveState}
-        style={props.inset === 'none' ? styles.effectiveStateRow : undefined}
         bottomElement={Platform.OS === 'web' && !environment.desktopWindow && !props.constraintsOnly ? <View style={styles.downloadAction}><TextLinkButton tone="strong" testID="appearance-desktop-download" label={t('setupOnboarding.webDesktopOnlyDesktopAppButton')} onPress={() => { void openExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL); }} /></View> : undefined}
     />;
 }
@@ -314,7 +312,6 @@ const styles = StyleSheet.create(theme => ({
     homePreviewCard: { flex: 1, borderTopLeftRadius: theme.borderRadius.md, borderTopRightRadius: theme.borderRadius.md },
     // The slider spans the row under its label and value, as the Look page's Strength does.
     tintSlider: { alignSelf: 'stretch' },
-    effectiveStateRow: { paddingHorizontal: 0 },
     effectiveState: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.secondary },
     downloadAction: { flexDirection: 'row', alignSelf: 'flex-start' },
 }));

@@ -156,7 +156,7 @@ export function LookChoices(props: Readonly<{ flow: Pick<PersonalizeFlow, 'draft
                         preview: <GlassPresetPreview preset={preset} settings={draft.glassSettings} palette={theme} />,
                     }))}
                 />
-                <GlassEffectiveStateLine inset="none" settings={draft.glass === 'custom' ? draft.glassSettings
+                <GlassEffectiveStateLine settings={draft.glass === 'custom' ? draft.glassSettings
                     : { ...draft.glassSettings, ...resolveGlassPresetSettingsDelta(draft.glassSettings, draft.glass) }} />
                 <View style={styles.inlineAction}>
                     <RoundButton
