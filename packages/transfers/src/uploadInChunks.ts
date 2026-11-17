@@ -1,3 +1,5 @@
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+
 export type ChunkUploadProgress = Readonly<{ uploadedBytes: number; totalBytes: number }>;
 type TransferResult = Readonly<{ success: boolean; error?: string; errorCode?: string }>;
 type UploadInit = TransferResult & Readonly<{ uploadId?: string; chunkSizeBytes?: number }>;
@@ -41,7 +43,11 @@ export async function uploadInChunks<TInit extends UploadInit, TChunk extends Tr
             if (bytes.byteLength !== length) return { success: false, error: 'Failed to read upload chunk' };
             let request: TRequest;
             try { request = await params.prepareChunk({ uploadId, index, bytes, init }); }
-            catch { return { success: false, error: 'Upload chunk encryption failed' }; }
+            catch (error) {
+                // Public prose stays fixed; only the canonical closed cause (class, known code, phase) rides the private carrier.
+                return withActionFailureCauseDiagnostic({ success: false as const, error: 'Upload chunk encryption failed' },
+                    error, 'transfer.upload.prepare_chunk');
+            }
             const chunk = params.signal ? await params.sendChunk(request, params.signal) : await params.sendChunk(request);
             if (!chunk || chunk.success !== true) return { success: false, error: chunk?.error ?? 'Upload chunk failed',
                 ...(chunk?.errorCode ? { errorCode: chunk.errorCode } : {}) };
