@@ -49,8 +49,10 @@ describe('bundled Account declaration publication', () => {
   });
   it.each(['deploy-vercel', 'deploy-cloudflare', 'deployment-neon', 'deployment-supabase'])(
     'keeps %s deployment target demand discoverable without putting descriptors into first paint', async id => {
-    const source: unknown = JSON.parse(readFileSync(new URL(`../../assets/bundled-plugin-manifests/${id}.json`, import.meta.url), 'utf8'));
-    const admitted = ingestPluginManifestV2(source);
+    const source = await importPluginAuthorRuntimeModules(async sourceImport =>
+      await sourceImport(new URL(`../../../../packages/plugins/${id}/src/manifest.ts`, import.meta.url).href,
+        import.meta.url) as Readonly<{ PLUGIN_MANIFEST: unknown }>);
+    const admitted = ingestPluginManifestV2(source.PLUGIN_MANIFEST);
     if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
     const full = await projectBundledPluginUiDeclaration({ packageName: `@happier-dev/plugins-${id}`,
       packageVersion: '0.0.0', manifest: admitted.manifest, artifactGraphs: [] });
@@ -84,9 +86,16 @@ describe('bundled Account declaration publication', () => {
         const current: unknown = JSON.parse(readFileSync(new URL(
           `../../assets/bundled-plugin-manifests/${id}.json`, import.meta.url), 'utf8'));
         if (!isRecord(current) || !isRecord(current.contributes)) throw new Error(`Missing bundled ${id}`);
+        const currentAdmission = ingestPluginManifestV2(current);
+        if (!currentAdmission.ok) throw new Error(JSON.stringify(currentAdmission.diagnostics));
         // Keep the real Account declaration; unrelated contribution references
         // are outside this filesystem publication fixture.
-        const admitted = ingestPluginManifestV2(id === 'qwen' ? current : {
+        const admitted = ingestPluginManifestV2(id === 'qwen' ? {
+          ...currentAdmission.manifest,
+          contributes: { ...currentAdmission.manifest.contributes,
+            agents: currentAdmission.manifest.contributes.agents?.map(agent => ({ ...agent, connectedAccounts: [] })),
+          },
+        } : {
           schemaVersion: 2, id: current.id, version: '0.0.0',
           displayName: id === 'machine-fly' ? { key: 'plugins.fly.name', fallback: 'Fly' } : id,
           runtime: { apiVersion: 1 },

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
@@ -919,7 +919,7 @@ describe('bundled plugin installed runtime publication', () => {
     }
   });
 
-  it('does not resolve source staging through ignored plugin package outputs', () => {
+  it('includes public producer Plugin exports in the canonical runtime workspace closure', () => {
     expect(selectCanonicalRuntimeWorkspacePackageRoots([
       {
         packageName: '@happier-dev/plugin-sdk',
@@ -935,6 +935,8 @@ describe('bundled plugin installed runtime publication', () => {
       },
     ])).toEqual({
       '@happier-dev/plugin-sdk': '/repo/packages/plugin-sdk',
+      '@happier-dev/plugins-codex': '/repo/packages/plugins/codex',
+      '@happier-dev/plugins-kimi': '/repo/apps/cli/node_modules/@happier-dev/plugins-kimi',
     });
   });
 
@@ -1191,6 +1193,12 @@ describe('CLI bundled plugin registry projection', () => {
       const packageName = '@happier-dev/plugins-machine-fly';
       const packageRoot = writeWorkspacePackageFixture({ repoRoot, workspacePath: 'packages/plugins/machine-fly', packageName });
       writeBundledPluginSourceInputs({ repoRoot, pluginId: 'machine-fly', writePackageJson: false });
+      for (const resource of manifest.contributes.resources ?? []) {
+        if (!('path' in resource) || typeof resource.path !== 'string' || !resource.path.startsWith('assets/i18n/')) continue;
+        const target = join(packageRoot, resource.path);
+        mkdirSync(dirname(target), { recursive: true });
+        cpSync(new URL(`../../../../packages/plugins/machine-fly/${resource.path}`, import.meta.url), target);
+      }
       writeCliBundledHostPackage({ happyCliDir, bundledDependencies: [packageName] });
       mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
       writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), serializeCanonicalPluginManifest(manifest));

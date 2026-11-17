@@ -1,7 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { createSourceFile, isIdentifier, isVariableStatement, ModuleKind, ScriptTarget, transpileModule } from 'typescript';
+import { fileURLToPath } from 'node:url';
+import { createSourceFile, isIdentifier, isObjectLiteralExpression, isPropertyAssignment, isVariableStatement, ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { readBundledPluginPublicationFailures } from '../../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
@@ -13,6 +15,7 @@ import { serializeCanonicalPluginManifest } from '../../src/plugins/manifest/ser
 import { renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
 import { renderBundledVoiceEntriesTs, renderBundledVoiceSelectionOptionsTs } from './bundledPlugins/voice.ts';
 import type { BundledFirstPartyVoiceProjectionSource, BundledPluginPackage } from './bundledPlugins/projectionFacts.ts';
+import { QWEN_UI_DESCRIPTOR } from '../../../../packages/plugins/qwen/src/ui/descriptor.ts';
 
 // Prepare the publisher's genuine source graph outside individual scenarios,
 // matching the adjacent Account declaration publication harness.
@@ -206,15 +209,19 @@ describe('scoped bundled publication', () => {
       const providerRequirements = providerAgent.manifest.contributes.agents?.[0]?.providerRequirements;
       if (!providerRequirements) throw new Error('Expected real Claude Provider requirements');
       const qwen: BundledPluginPackage = { pluginPackageId: 'qwen', pluginId: admitted.manifest.id,
-        packageName: '@happier-dev/plugins-qwen', packageVersion: '0.0.0', agentId: 'qwen', manifest: admitted.manifest };
+        packageName: '@happier-dev/plugins-qwen', packageVersion: '0.0.0', agentId: 'qwen',
+        agentUiDescriptor: QWEN_UI_DESCRIPTOR,
+        manifest: { ...admitted.manifest, contributes: { ...admitted.manifest.contributes,
+          agents: admitted.manifest.contributes.agents?.map(agent => ({ ...agent, connectedAccounts: [] })),
+        } } };
       const revise = (ownedEnvKeys: string[], permissionModeMapping: { default: string } | undefined): BundledPluginPackage => {
         const manifest = ingestPluginManifestV2({ ...qwen.manifest, contributes: { ...qwen.manifest.contributes,
           agents: qwen.manifest.contributes.agents?.map(agent => {
-            if (agent.runtime.kind !== 'acp') throw new Error('Expected real Qwen ACP declaration');
-            const { permissionModeMapping: _old, ...definition } = agent.runtime.definition ?? {};
+            if (agent.runtime.kind !== 'custom') throw new Error('Expected real Qwen custom runtime declaration');
+            const { permissionModeMapping: _old, ...runtime } = agent.runtime;
             return { ...agent, providerRequirements: { ...providerRequirements,
               authIsolation: { ...providerRequirements.authIsolation, ownedEnvKeys } },
-              runtime: { ...agent.runtime, definition: { ...definition, ...(permissionModeMapping ? { permissionModeMapping } : {}) } } };
+              runtime: { ...runtime, ...(permissionModeMapping ? { permissionModeMapping } : {}) } };
           }),
         } });
         if (!manifest.ok) throw new Error(JSON.stringify(manifest.diagnostics));
@@ -235,11 +242,27 @@ describe('scoped bundled publication', () => {
         parseGeneratorCliArgs(['--root', fixture.repoRoot, '--mode', 'write', '--workspace', 'plugins-qwen']),
         { protocol: { ingestPluginManifestV2 } }, lease,
       ), { lockPath: join(fixture.repoRoot, 'publication.lock') });
-      // Compare the retained executable expression with the full canonical renderer,
-      // including nested permission mapping insertion/removal and unchanged UI facts.
-      const coreAndUi = (source: string) => source.slice(source.indexOf('const QWEN_CORE:'),
-        source.indexOf('export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES:'));
-      expect(coreAndUi(readFileSync(fixture.uiPath, 'utf8'))).toBe(coreAndUi(render(current)));
+      // Read the executable CORE literals, not only the manifest declaration map.
+      // The descriptor is required: a missing CORE must fail rather than compare two empty slices.
+      const coreFacts = (source: string) => {
+        const parsed = createSourceFile('generated.ts', source, ScriptTarget.Latest);
+        const declaration = parsed.statements.flatMap(statement => isVariableStatement(statement)
+          ? [...statement.declarationList.declarations] : []).find(entry => isIdentifier(entry.name) && entry.name.text === 'QWEN_CORE');
+        if (!declaration?.initializer || !isObjectLiteralExpression(declaration.initializer)) throw new Error('Missing Qwen CORE');
+        const properties = declaration.initializer.properties;
+        const value = (name: string): unknown => {
+          const property = properties.find(entry => isPropertyAssignment(entry) && entry.name.getText(parsed) === name);
+          if (!property || !isPropertyAssignment(property)) throw new Error(`Missing Qwen CORE ${name}`);
+          return runInNewContext(`(${property.initializer.getText(parsed)})`);
+        };
+        return { providerOwnedEnvironmentKeys: value('providerOwnedEnvironmentKeys'), permissions: value('permissions') };
+      };
+      const actual = coreFacts(readFileSync(fixture.uiPath, 'utf8'));
+      expect(actual).toEqual(coreFacts(render(current)));
+      expect(actual.providerOwnedEnvironmentKeys).toEqual(['NEW_API_KEY']);
+      expect(actual.permissions).toEqual({ promptProtocol: 'codexDecision',
+        ...(transition === 'remove' ? {} : { permissionModeMapping: { default: 'new' } }),
+      });
     } finally { fixture.cleanup(); }
   });
 
@@ -349,13 +372,43 @@ describe('scoped bundled publication', () => {
     } finally { fixture.cleanup(); }
   });
 
-  it.each([false, true])('scoped write rejects an invalid target (packageArtifacts=%s)', async (packageArtifacts) => {
+  it.each([false, true])('scoped write reports an invalid target without replacing its publication (packageArtifacts=%s)', async (packageArtifacts) => {
     const fixture = await createScopedPublicationFixture();
     try {
       const published = readFileSync(fixture.catalog, 'utf8');
+      const assetPath = join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json');
+      const artifactPath = join(fixture.repoRoot, 'packages/plugins/inspector/.happier-plugin/plugin.json');
+      const asset = readFileSync(assetPath, 'utf8');
+      const artifact = readFileSync(artifactPath, 'utf8');
       writeFileSync(join(fixture.repoRoot, 'packages/plugins/inspector/src/manifest.ts'), 'throw new Error("Target manifest is mid-edit");');
-      await expect(main(['--root', fixture.repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector', ...(packageArtifacts ? ['--package-artifacts'] : [])])).rejects.toThrow(/Target manifest is mid-edit/u);
+      const result = await main(['--root', fixture.repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector', ...(packageArtifacts ? ['--package-artifacts'] : [])]);
+      expect(result).toEqual({ publishedPackageNames: [], failures: [expect.objectContaining({
+        packageName: '@happier-dev/plugins-inspector', diagnostic: expect.objectContaining({
+          code: 'plugin_manifest_invalid', message: expect.stringContaining('Target manifest is mid-edit'),
+        }),
+      })] });
       expect(readFileSync(fixture.catalog, 'utf8')).toBe(published);
+      expect(readFileSync(assetPath, 'utf8')).toBe(asset);
+      expect(readFileSync(artifactPath, 'utf8')).toBe(artifact);
+      await expect(main(['--root', fixture.repoRoot, '--mode', 'check', '--workspace', 'plugins-inspector']))
+        .rejects.toThrow(/Target manifest is mid-edit/u);
+      if (!packageArtifacts) {
+        const cli = await new Promise<{ code: number; stdout: string }>((resolve, reject) => {
+          execFile(process.execPath, ['--conditions=happier-source', '--experimental-strip-types',
+            '--import', fileURLToPath(new URL('../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url)),
+            fileURLToPath(new URL('./generateBundledPluginEntries.ts', import.meta.url)),
+            '--root', fixture.repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector'],
+          { cwd: fixture.repoRoot, env: { ...process.env, HAPPIER_WORKSPACE_BUNDLE_PUBLICATION_MODE: 'artifact' } },
+          (error, stdout) => {
+            if (error && typeof error.code !== 'number') { reject(error); return; }
+            resolve({ code: error?.code ?? 0, stdout });
+          });
+        });
+        expect(cli.code).toBe(1);
+        expect(JSON.parse(cli.stdout.trim().split('\n').at(-1) ?? '')).toEqual(result);
+        expect(readFileSync(assetPath, 'utf8')).toBe(asset);
+        expect(readFileSync(artifactPath, 'utf8')).toBe(artifact);
+      }
     } finally { fixture.cleanup(); }
   });
 
@@ -384,7 +437,17 @@ describe('scoped bundled publication', () => {
         diagnostic: expect.objectContaining({ message: expect.stringContaining('resources/registry/apps.json') }),
       })]);
       vi.stubEnv('HAPPIER_WORKSPACE_BUNDLE_PUBLICATION_MODE', 'artifact');
-      await expect(publish()).rejects.toThrow(/resources\/registry\/apps\.json/u);
+      const installedManifest = join(root, '.happier-plugin/plugin.json');
+      const before = readFileSync(installedManifest, 'utf8');
+      const result = await publish();
+      expect(result).toEqual({ publishedPackageNames: [], failures: [expect.objectContaining({
+        packageName: '@happier-dev/plugins-inspector', diagnostic: expect.objectContaining({
+          code: 'plugin_package_build_failed', message: expect.stringContaining('resources/registry/apps.json'),
+        }),
+      })] });
+      expect(readFileSync(installedManifest, 'utf8')).toBe(before);
+      const retained = JSON.parse(readFileSync(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json'), 'utf8'));
+      expect(retained.contributes.registrySources).toEqual([]);
       const packagePath = join(root, 'package.json');
       const packageJson = JSON.parse(readFileSync(packagePath, 'utf8')) as { files: string[] };
       writeFileSync(packagePath, JSON.stringify({ ...packageJson, files: [...packageJson.files, 'resources'] }));
@@ -407,13 +470,30 @@ describe('scoped bundled publication', () => {
     } finally { fixture.cleanup(); }
   });
 
-  it.each([['write', []], ['check', ['--workspace', 'plugins-inspector']]] as const)('strict %s rejects invalid foreign source', async (mode, selector) => {
+  it.each([['write', []], ['check', ['--workspace', 'plugins-inspector']]] as const)('%s reports invalid foreign source without publishing it', async (mode, selector) => {
     const fixture = await createScopedPublicationFixture();
     try {
       const published = readFileSync(fixture.catalog, 'utf8');
+      const assetPath = join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/neighbor.json');
+      const artifactPath = join(fixture.repoRoot, 'packages/plugins/neighbor/.happier-plugin/plugin.json');
+      const asset = readFileSync(assetPath, 'utf8');
+      const artifact = readFileSync(artifactPath, 'utf8');
       writeFileSync(join(fixture.repoRoot, 'packages/plugins/neighbor/src/manifest.ts'), 'throw new Error("Foreign manifest is mid-edit");');
-      await expect(main(['--root', fixture.repoRoot, '--mode', mode, ...selector])).rejects.toThrow(/Foreign manifest is mid-edit/u);
+      if (mode === 'check') {
+        await expect(main(['--root', fixture.repoRoot, '--mode', mode, ...selector])).rejects.toThrow(/Foreign manifest is mid-edit/u);
+      } else {
+        const result = await main(['--root', fixture.repoRoot, '--mode', mode, ...selector]);
+        expect(result).toMatchObject({ failures: [expect.objectContaining({
+          packageName: '@happier-dev/plugins-neighbor', diagnostic: expect.objectContaining({
+            code: 'plugin_manifest_invalid', message: expect.stringContaining('Foreign manifest is mid-edit'),
+          }),
+        })] });
+        if (!result) throw new Error('Expected publication result');
+        expect(result.publishedPackageNames).not.toContain('@happier-dev/plugins-neighbor');
+      }
       expect(readFileSync(fixture.catalog, 'utf8')).toBe(published);
+      expect(readFileSync(assetPath, 'utf8')).toBe(asset);
+      expect(readFileSync(artifactPath, 'utf8')).toBe(artifact);
     } finally { fixture.cleanup(); }
   });
 
