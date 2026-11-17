@@ -190,7 +190,7 @@ export function registerScmHandlers(
     // requester's Project SCM runs as the daemon user, like its file effects and shell.
     // Ingress admits anyone else only to a local repository read; closed host calls keep their runner.
     const runAsAdmittedRequester = async (context: RpcHandlerContext | undefined, method: string,
-        projectRoot: string | undefined, input: unknown, run: () => unknown): Promise<unknown> => {
+        projectRoot: string | undefined, input: unknown, selected: WorkspaceSource, run: () => unknown): Promise<unknown> => {
         if (!deps?.resolveRequester || !context) return await run();
         const requester = await deps.resolveRequester(context);
         try {
@@ -210,7 +210,10 @@ export function registerScmHandlers(
                     ? await readOwner(target).catch(() => 'unavailable' as const) : null;
                 if (member === 'unavailable') return refused('agent_isolation_unavailable');
                 if (member && hosting) return refused('credential_scope_denied');
-                if (member) return await runAsMember(context, member, method, projectRoot, input);
+                // A member's placed Session already selected its target source: Git runs there, never
+                // on this Machine as the member (SEC1116H §4b).
+                if (member) return selected.kind === 'local'
+                    ? await runAsMember(context, member, method, projectRoot, input) : await run();
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
             if (!isScmLocalRepositoryReadRpcMethod(method)) return await run();
@@ -232,7 +235,8 @@ export function registerScmHandlers(
             handler: RpcHandler<TRequest, TResponse>,
         ): void {
             rpcHandlerManager.registerHandler(method, (request, context) => {
-                return runWithWorkspaceSource(selectSource(request, context), () => {
+                const selected = selectSource(request, context);
+                return runWithWorkspaceSource(selected, () => {
                 const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
                 const machinePolicy = deps?.accessPolicy ?? resolveFilesystemAccessPolicy();
                 const wrapped = request && typeof request === 'object' && 'kind' in request
@@ -245,7 +249,7 @@ export function registerScmHandlers(
                 const root = target?.success && target.data.target.kind === 'machine'
                     ? target.data.target.project?.directory : undefined;
                 // A member read never resolves the selected root here: the member child does.
-                return runAsAdmittedRequester(context, method, root, target?.success ? target.data.input : request, () => {
+                return runAsAdmittedRequester(context, method, root, target?.success ? target.data.input : request, selected, () => {
                 const scoped = root ? resolveCwd(root, workingDirectory, machinePolicy) : null;
                 // A selected root can narrow Machine access, never expand it.
                 // Resolve this on the receiving filesystem, including symlinks.

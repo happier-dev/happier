@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 import type { RpcHandler } from '@/api/rpc/types';
+import type { ApiMachineClient } from '@/api/apiMachine';
 import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
@@ -24,11 +25,14 @@ const devcontainerImage = process.env.HAPPIER_TEST_SCM_DEVCONTAINER_IMAGE;
 const dockerPath = process.env.HAPPIER_TEST_SCM_DOCKER_BIN ?? 'docker';
 
 describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('directory-only daemon SCM placement', () => {
-    it.each([true, false].flatMap(placed => [
-        { placed, method: RPC_METHODS.SCM_STATUS_SNAPSHOT, operation: {} },
-        { placed, method: RPC_METHODS.SCM_COMMIT_CREATE, operation: { message: 'panel change', scope: { kind: 'all-pending' } } },
-        { placed, method: RPC_METHODS.SCM_REMOTE_PUSH, operation: { remote: 'origin', branch: 'main' } },
-    ]))('keeps $method hooks at their workspace authority (placed=$placed)', async ({ placed, method, operation }) => {
+    const status = { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, operation: {} };
+    const commit = { method: RPC_METHODS.SCM_COMMIT_CREATE, operation: { message: 'panel change', scope: { kind: 'all-pending' } } };
+    const push = { method: RPC_METHODS.SCM_REMOTE_PUSH, operation: { remote: 'origin', branch: 'main' } };
+    it.each([
+        ...[true, false].flatMap(placed => [status, commit, push].map(request => ({ placed, memberFolder: false, ...request }))),
+        // SEC1116H §4b: Manage on a member's folder whose placed Session shares the root.
+        ...[status, commit].map(request => ({ placed: true, memberFolder: true, ...request })),
+    ])('keeps $method hooks at their workspace authority (placed=$placed, member folder=$memberFolder)', async ({ placed, memberFolder, method, operation }) => {
         const directory = await mkdtemp(join(tmpdir(), 'scm-directory-'));
         const root = join(directory, 'workspace-sync');
         const destination = join(directory, 'destination.git');
@@ -123,9 +127,26 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({ contributes: {}, scmHostingProvidersById: new Map() }),
             })]);
             const handlers = new Map<string, RpcHandler>();
+            // The member child is a separate OS account; reaching it at all means the member's own
+            // host account would run the placed Session's hooks.
+            const memberLaunches: string[] = [];
+            const requester = { serverId: 'home', accountId: 'member-account', machineId: 'machine', installationId: 'installation' };
             registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, root,
-                { registry, selectWorkspaceSource: admission.selectWorkspaceSource });
-            const response = await handlers.get(method)!({ cwd: root, ...operation });
+                { registry, selectWorkspaceSource: admission.selectWorkspaceSource,
+                    ...(memberFolder ? {
+                        resolveRequester: async () => ({ identity: { kind: 'owner_person' as const, requester: { ...requester, accountId: 'owner-account' } },
+                            dispose: async () => {} }),
+                        nativeOperationRuntime: {
+                            readMemberFolderOwner: async () => ({ kind: 'isolated' as const, separationRequired: true, requester }),
+                            prepareNativeOperation: (async () => {
+                                memberLaunches.push(method);
+                                throw Object.assign(new Error('member child'), { code: 'agent_isolation_unavailable' });
+                            }) as unknown as ApiMachineClient['prepareNativeOperation'],
+                        },
+                    } : {}) });
+            const response = await handlers.get(method)!({ cwd: root, ...operation },
+                memberFolder ? { signal: new AbortController().signal } : undefined);
+            expect(memberLaunches).toEqual([]);
             // A target may refuse a capability, but must never retry it on the host.
             expect(response, JSON.stringify(response)).toMatchObject({ success: placed ? expect.any(Boolean) : true });
             const executions = await readFile(join(root, '.git/executions'), 'utf8');
