@@ -759,14 +759,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             readMessagesRevision: () => 0,
             subscribeHistorySources: () => () => {},
             resolveProviderLabel: () => 'Voice provider',
-            deleteSession: async () => ({ success: true }),
             retireLocalSession: (targetSessionId) => syncWithTranscriptRetirement.retireLocalSession(targetSessionId),
             runCarrierOperation: async (operation) => await operation(),
             now: () => new Date('2026-08-10T00:00:00.000Z'),
         });
 
         await consumer.open();
-        await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+        await expect(consumer.clear(async () => {})).resolves.toEqual({ cleared: true });
 
         expect(storage.getState().sessions[sessionId]).toBeUndefined();
         expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();

@@ -233,6 +233,9 @@ function createVoiceConversationActionSpecs() {
   return VOICE_CONVERSATION_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
   id, approval: { result: 'required' },
   approvalPolicy: { uiConfirmation: 'direct' },
+  ...(id === 'ui.voice_global.history.clear' ? {
+    hostReviewedChildren: [{ action: 'session.delete', role: 'delete' }],
+  } : {}),
   ...(id === 'ui.voice_global.set_muted' ? { safetyForInput: (input: unknown) => {
     const parsed = VoiceConversationActionInputSchemas['ui.voice_global.set_muted'].safeParse(input);
     return parsed.success && parsed.data.muted === true ? 'safe' as const : undefined;

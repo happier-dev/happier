@@ -105,7 +105,7 @@ describe('canonical History Account boundary', () => {
     }
   });
 
-  it('keeps cold discovery, hydration, transcript paging and carrier deletion on the admitted Account', async () => {
+  it('keeps cold discovery, hydration and transcript paging on the admitted Account', async () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { switchConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
     const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -124,7 +124,6 @@ describe('canonical History Account boundary', () => {
     historyHttp.answer(homeId, '/v2/sessions', { body: { sessions: [wire], hasNext: false, nextCursor: null } });
     historyHttp.answer(homeId, '/v2/sessions/archived', { body: { sessions: [], hasNext: false, nextCursor: null } });
     historyHttp.answer(homeId, `/v2/sessions/${sessionId}`, { body: { session: wire } });
-    historyHttp.answer(homeId, `DELETE /v1/sessions/${sessionId}`, { body: { success: true } });
     const page = (seq: number, hasMore: boolean) => SessionMessagesPageV1Schema.parse({ messages: [{
       id: `voice-${seq}`, localId: null, seq, createdAt: seq, messageRole: 'agent',
       content: { t: 'plain', v: buildRealtimeConversationRawRecord({ id: `voice-${seq}`, role: 'assistant', text: `Voice ${seq}` }) },
@@ -141,10 +140,6 @@ describe('canonical History Account boundary', () => {
       expect(historyHttp.requests.filter(request => request.path.startsWith(`/v1/sessions/${sessionId}/messages`))).toHaveLength(1);
       await consumer.loadOlder();
       expect(consumer.read().rows.map(row => row.text)).toEqual(['Voice 10', 'Voice 20']);
-      await consumer.clear();
-      expect(consumer.read().rows).toEqual([]);
-      expect(storage.getState().sessions[sessionId]).toBeUndefined();
-      expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
       const credentials = await TokenStorage.getCredentialsForServerUrl('https://history-owner.test');
       expect(credentials).not.toBeNull();
       const requests = historyHttp.requests.filter(request => request.path.includes(sessionId) || request.path === '/v2/sessions/lookup-by-tags');
@@ -222,7 +217,6 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
       readMessages: () => [],
       readMessagesRevision: () => 0,
       subscribeMessages: () => () => {},
-      deleteSession: async () => ({ success: true }),
       retireLocalSession: () => undefined,
       ...overrides,
     });
@@ -343,7 +337,6 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
       readMessages: () => [],
       readMessagesRevision: () => 0,
       subscribeMessages: () => () => {},
-      deleteSession: async () => ({ success: true }),
       retireLocalSession: () => undefined,
     };
     const registry = createVoiceProviderRegistry({});
@@ -392,10 +385,6 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
       readMessages: () => [],
       readMessagesRevision: () => 0,
       subscribeMessages: () => () => {},
-      deleteSession: async (_sessionId, authority) => {
-        seenAuthorities.push(authority);
-        return { success: true };
-      },
       retireLocalSession: () => undefined,
     };
     const registry = createVoiceProviderRegistry({});

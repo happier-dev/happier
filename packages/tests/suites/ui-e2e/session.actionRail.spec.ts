@@ -1,9 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
-import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+import { resolveTestDbProvider, startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebScriptFetchTotalTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -25,6 +26,17 @@ import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/d
 import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
 import { openSessionListRowMenu, selectSessionListRowMenuItem } from '../../src/testkit/uiE2e/sessionListRowMenu';
+import { accountScopedCryptoMaterialFromCliAccessKey, readCliAccessKey } from '../../src/testkit/cliAccessKey';
+import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
+import { fetchJson } from '../../src/testkit/http';
+import { fetchSessionV2, patchSessionMetadataEnvelopeTupleV1 } from '../../src/testkit/sessions';
+import {
+  buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+  openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataEnvelopeV1Schema,
+} from '@happier-dev/protocol';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
+import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -45,6 +57,7 @@ test.describe('ui e2e: session action rail', () => {
 
   const suiteDir = run.testDir('session-action-rail-suite');
   const cliHomeDir = resolve(join(suiteDir, 'cli-home'));
+  const dbProvider = resolveTestDbProvider(process.env, { fallbackProvider: 'sqlite' });
 
   let server: StartedServer | null = null;
   let ui: StartedUiWeb | null = null;
@@ -60,7 +73,7 @@ test.describe('ui e2e: session action rail', () => {
 
     server = await startServerLight({
       testDir: suiteDir,
-      dbProvider: 'sqlite',
+      dbProvider,
       extraEnv: {
         HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
@@ -242,6 +255,139 @@ test.describe('ui e2e: session action rail', () => {
       const diagnosticsPath = testInfo.outputPath('browser-diagnostics.txt');
       await writeFile(diagnosticsPath, diagnostics);
       await testInfo.attach('browser-diagnostics', { path: diagnosticsPath, contentType: 'text/plain' });
+    }
+  });
+
+  test('History Clear stops and deletes a running native Voice conversation', async ({ page }, testInfo) => {
+    test.setTimeout(900_000);
+    if (!server || !ui || !uiBaseUrl) throw new Error('missing server/ui fixtures');
+
+    const serverUrl = server.baseUrl;
+    const browserDiagnostics = collectBrowserDiagnostics({ page });
+    const testDir = resolve(join(suiteDir, 'voice-history-clear'));
+    const actionCliHome = resolve(join(testDir, 'cli-home'));
+    const controlText = `History Clear native control ${run.runId}`;
+    const progress = { controlCompleted: false, carrierSeeded: false, historyVisible: false, clearSubmitted: false };
+    let runDaemon: StartedDaemon | null = null;
+    let sessionId: string | null = null;
+    let accountMode: string | null = null;
+    let terminalServerStatus: number | null = null;
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await mkdir(actionCliHome, { recursive: true });
+      await writeFile(join(actionCliHome, 'AGENTS.md'), '# UI e2e fixture\n', 'utf8');
+      runDaemon = await authenticateAndStartDaemon({
+        page, testDir, cliHomeDir: actionCliHome, serverUrl, uiBaseUrl,
+        extraEnv: {
+          HOME: actionCliHome,
+          HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
+          HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: join(testDir, 'fake-claude.jsonl'),
+          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-history-clear-${run.runId}`,
+          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-history-clear-invocation-${run.runId}`,
+        },
+      });
+      daemon = runDaemon;
+      const activeDaemon = runDaemon;
+      const trackedSessions = async () => {
+        const response = await daemonControlPostJson<{ children: readonly { happySessionId?: string }[] }>({
+          port: activeDaemon.state.httpPort, path: '/list', controlToken: activeDaemon.state.controlToken,
+        });
+        expect(response.status).toBe(200);
+        return response.data.children;
+      };
+      const repoDir = join(testDir, 'repo');
+      await createGitRepoWithChanges({ repoDir, fileCount: 1 });
+      sessionId = await spawnSessionFromDaemon({ daemon: activeDaemon, directory: repoDir, browserAccess: { page, serverUrl } });
+      await page.goto(`${uiBaseUrl}/session/${sessionId}?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('session-composer-input')).toBeVisible({ timeout: 120_000 });
+      await page.getByTestId('session-composer-input').fill(controlText);
+      await expect(page.getByTestId('session-composer-send')).toBeEnabled();
+      await page.getByTestId('session-composer-send').click();
+      await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 120_000 });
+      expect((await trackedSessions()).some(child => child.happySessionId === sessionId)).toBe(true);
+      progress.controlCompleted = true;
+
+      // Seed only the Voice owner marker through the real metadata API. The native
+      // runner, workspace, shared ciphertext and the real control turn stay intact.
+      const accessKey = await readCliAccessKey(actionCliHome);
+      if (!accessKey) throw new Error('missing paired fixture credentials');
+      const headers = { Authorization: `Bearer ${accessKey.token}`,
+        ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
+      const modeResponse = await fetchJson<unknown>(`${serverUrl}/v1/account/encryption`, { headers });
+      expect(modeResponse.status).toBe(200);
+      const accountEncryption = AccountEncryptionModeResponseSchema.parse(modeResponse.data);
+      accountMode = accountEncryption.mode;
+      expect(accountMode).toBe('e2ee');
+      const session = await fetchSessionV2(serverUrl, accessKey.token, sessionId);
+      expect(session.active).toBe(true);
+      expect(session.metadataLayoutVersion).toBe(1);
+      const expectedOwnerMetadata = SessionOwnerMetadataEnvelopeV1Schema.parse(session.ownerMetadata);
+      const material = accountScopedCryptoMaterialFromCliAccessKey(accessKey);
+      const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: accountEncryption.mode, envelope: expectedOwnerMetadata, material });
+      if (!opened.ok) throw new Error(`cannot open native Voice fixture owner metadata: ${opened.reason}`);
+      await patchSessionMetadataEnvelopeTupleV1({ baseUrl: serverUrl, token: accessKey.token, sessionId, patch: {
+        mode: 'owner', metadataLayoutVersion: 1, expectedOwnerMetadata,
+        sharedMetadata: { ciphertext: session.metadata, expectedVersion: session.metadataVersion },
+        ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material, randomBytes, ownerMetadata: {
+          ...opened.ownerMetadata,
+          system: { ...opened.ownerMetadata.system,
+            ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }),
+          },
+        } }),
+        agentState: { ciphertext: session.agentState, expectedVersion: session.agentStateVersion },
+      } });
+      progress.carrierSeeded = true;
+
+      await page.goto(`${uiBaseUrl}/settings/voice?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('settings.voice.intent.history')).toBeVisible({ timeout: 120_000 });
+      await page.getByTestId('settings.voice.intent.history').click();
+      const history = page.getByTestId('voice-history-screen');
+      await expect(history).toBeVisible({ timeout: 120_000 });
+      const conversation = page.getByTestId(`voice-history-conversation-${sessionId}`);
+      await expect(conversation).toBeVisible({ timeout: 120_000 });
+      // History opens native conversations in their real Session transcript.
+      await conversation.click();
+      await expect(page.getByText(controlText, { exact: true })).toBeVisible({ timeout: 120_000 });
+      await expect(page.getByText('FAKE_CLAUDE_OK_1', { exact: true }).first()).toBeVisible({ timeout: 120_000 });
+      await page.goBack({ waitUntil: 'domcontentloaded' });
+      await expect(history).toBeVisible({ timeout: 120_000 });
+      await expect(conversation).toBeVisible({ timeout: 120_000 });
+      progress.historyVisible = true;
+      await page.screenshot({ path: testInfo.outputPath('voice-history-before-clear.png') });
+
+      await expect(page.getByTestId('voice-history-clear')).toBeEnabled();
+      await page.getByTestId('voice-history-clear').click();
+      const confirm = page.getByTestId('web-modal-confirm');
+      await expect(confirm).toHaveCount(1);
+      await expect(confirm).toBeEnabled();
+      await confirm.click();
+      progress.clearSubmitted = true;
+      await expect(conversation).toHaveCount(0, { timeout: 120_000 });
+      await expect.poll(async () => (await trackedSessions()).some(child => child.happySessionId === sessionId),
+        { timeout: 120_000 }).toBe(false);
+      const deleted = await fetchJson<unknown>(`${serverUrl}/v2/sessions/${sessionId}`, {
+        headers,
+      });
+      terminalServerStatus = deleted.status;
+      expect(terminalServerStatus).toBe(404);
+      await page.screenshot({ path: testInfo.outputPath('voice-history-after-clear.png') });
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, browserDiagnostics());
+    } finally {
+      const evidencePath = testInfo.outputPath('voice-history-clear-runtime.json');
+      await writeFile(evidencePath, JSON.stringify({
+        dbProvider, accountMode, sessionId, progress, terminalServerStatus, serverUrl, uiMode: ui.mode,
+        uiUrl: page.url(), daemonPid: runDaemon?.state.pid ?? null,
+        actionMessage: await page.getByTestId('voice-history-action-message').allTextContents().catch(() => []),
+        servingProcess: ui.proc ? { pid: ui.proc.child.pid, argv: ui.proc.child.spawnargs } : null,
+      }, null, 2));
+      await testInfo.attach('voice-history-clear-runtime', { path: evidencePath, contentType: 'application/json' });
+      const diagnosticsPath = testInfo.outputPath('browser-diagnostics.txt');
+      await writeFile(diagnosticsPath, browserDiagnostics());
+      await testInfo.attach('browser-diagnostics', { path: diagnosticsPath, contentType: 'text/plain' });
+      await runDaemon?.stop().catch(() => {});
+      if (daemon === runDaemon) daemon = null;
     }
   });
 

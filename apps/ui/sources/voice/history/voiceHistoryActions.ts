@@ -74,7 +74,8 @@ type VoiceHistoryActionRequest = { [Id in VoiceHistoryActionId]: Readonly<{ acti
 
 /** Input has already passed the Protocol executor's exact Action schema. */
 export async function executeVoiceHistoryAction(request: VoiceHistoryActionRequest,
-  ports: VoiceHistoryActionPorts, isCurrent: () => boolean) {
+  ports: VoiceHistoryActionPorts, isCurrent: () => boolean,
+  deleteSession: (sessionId: string) => Promise<void>) {
   const assertCurrent = () => { if (!isCurrent()) throw new VoiceHistoryOperationSupersededError(); };
   try {
     assertCurrent();
@@ -111,7 +112,7 @@ export async function executeVoiceHistoryAction(request: VoiceHistoryActionReque
         return { fileName: artifact.fileName, mimeType: artifact.mimeType, rowCount: artifact.rowCount, range: artifact.range };
       }
       case 'ui.voice_global.history.clear': {
-        const result = await ports.consumer.clear();
+        const result = await ports.consumer.clear(deleteSession);
         assertCurrent();
         return result;
       }

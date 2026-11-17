@@ -1,4 +1,5 @@
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
+import { requireActionSuccess } from './actionResult';
 import { createPrivateLabelActionOpener, createPrivateLabelActionPreparer } from '@/sync/ops/privateLabels/privateLabelClient';
 import { openMachinePoolActionOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateViewV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
@@ -2394,7 +2395,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         // The Protocol executor admitted this exact action's input before entering the host port.
         return await executeVoiceHistoryAction({ actionId, input } as Parameters<typeof executeVoiceHistoryAction>[0], opts?.voiceHistory ?? {
           consumer: getDefaultVoiceHistoryConsumer(), saveExportArtifact: saveVoiceHistoryExportArtifact,
-        }, isCurrent);
+        }, isCurrent, async sessionId => {
+          const child = context.hostReviewedChild;
+          if (!child) throw new HappyError('credential_scope_denied', false, { code: 'credential_scope_denied' });
+          const result = await child.invoke({ action: 'session.delete', role: 'delete', input: { sessionId } });
+          requireActionSuccess(result, 'session.delete');
+        });
       }
       const opensMicrophone = actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.recover'
         || actionId === 'ui.voice_global.new_conversation' || actionId === 'ui.voice_global.continue_conversation'

@@ -39,7 +39,7 @@ import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/ac
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
-import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { answerExternalActionAccountForHome, createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { SessionStopResultSchema, isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
@@ -1641,6 +1641,57 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(effects).toEqual(['archive:section-inactive-member', `archive:${sessionId}`,
       ...(outcome === 'disabled' ? [] : [`stop:${sessionId}`]), ...(outcome === 'stopped' ? [`archive:${sessionId}`] : [])]);
     expect(storage.getState().sessionArchiveOperations).toEqual({});
+  });
+
+  it.each(['stopped', 'refused'] as const)('clears native Voice History through reviewed Session deletion (%s)', async outcome => {
+    const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/control/contract');
+    const { SessionMessagesPageV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionMessagesPageV1');
+    const { buildRealtimeConversationRawRecord } = await import('@/voice/transcript/VoiceTranscriptProjector');
+    const { createDefaultVoiceHistoryConsumer } = await import('@/voice/history/defaultVoiceHistoryConsumer');
+    const sessionId = 'native-voice-history';
+    const read = installSession(sessionId, { machineId: 'machine-a', flavor: 'opencode',
+      ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) });
+    await installRevocableVoiceSettings();
+    let deleted = false;
+    const effects: string[] = [];
+    homes.answer(serverId, '/v2/sessions', { select: () => ({ body: {
+      sessions: deleted ? [] : [read()], hasNext: false, nextCursor: null,
+    } }) });
+    homes.answer(serverId, '/v2/sessions/archived', { body: { sessions: [], hasNext: false, nextCursor: null } });
+    homes.answer(serverId, `/v1/sessions/${sessionId}/messages`, { body: SessionMessagesPageV1Schema.parse({
+      messages: [{ id: 'answer', localId: null, seq: 1, createdAt: 1, messageRole: 'agent',
+        content: { t: 'plain', v: buildRealtimeConversationRawRecord({ id: 'answer', role: 'assistant', text: 'Paris.' }) } }],
+      hasMore: false, nextBeforeSeq: null,
+    }) });
+    // The Machine is the external boundary here. Its lifecycle executor owns
+    // Stop/cleanup/Home deletion; Clear forwards the original Action once.
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: 'machine-a', actionId: 'session.delete', tokenEpoch: 0,
+      execute(input, context) {
+        expect(input).toEqual({ sessionId });
+        expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user' });
+        effects.push('native-delete');
+        if (outcome === 'refused') return { ok: false, errorCode: 'session_stop_failed', error: 'session_stop_failed' };
+        deleted = true;
+        return { success: true };
+      },
+      failure: result => result && typeof result === 'object' && Reflect.get(result, 'ok') === false
+        ? { errorCode: 'session_stop_failed', error: 'session_stop_failed' } : null,
+    });
+    homes.answer(serverId, 'GET /v1/machines', { body: [boundary.machine] });
+    const consumer = createDefaultVoiceHistoryConsumer();
+    const executor = createDefaultActionExecutor({ voiceHistory: { consumer, saveExportArtifact: async () => {} } });
+    const search = await executor.execute('ui.voice_global.history.search', { query: 'Paris', refresh: true }, context());
+    expect(search, JSON.stringify(search)).toMatchObject({ ok: true, result: { rows: [{ text: 'Paris.' }] } });
+    const result = await executor.execute('ui.voice_global.history.clear', {}, { ...context(),
+      presentUserConfirmation: { actionId: 'ui.voice_global.history.clear' } });
+    expect(result, JSON.stringify({ result, effects, requests: homes.requests.map(({ path, method }) => ({ path, method })) })).toMatchObject(outcome === 'stopped'
+      ? { ok: true, result: { cleared: true } } : { ok: false, errorCode: 'session_stop_failed' });
+    expect(effects).toEqual(['native-delete']);
+    expect(outgoing).toEqual([]);
+    expect(homes.requestsFor(`/v1/sessions/${sessionId}`)).toHaveLength(0);
+    expect(deleted).toBe(outcome === 'stopped');
+    expect(consumer.read().rows.map(row => row.text)).toEqual(outcome === 'stopped' ? [] : ['Paris.']);
   });
 
   it('refuses a disabled stop through the shared lifecycle adapter used by single and bulk commands', async () => {

@@ -18,6 +18,13 @@ import { buildVoiceTranscriptHistorySessionMetadata, isVoiceTranscriptHistorySes
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 
+// The standalone Action host has no mounted dialog renderer. Keep confirmation
+// policy and presentation real, and answer the person-choice boundary.
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock({ confirmResult: true }).module;
+});
+
 const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -100,7 +107,7 @@ describe('History through the default Action composition', () => {
       loadOlderMessages: async () => ({ loaded: 0, hasMore: false, status: 'no_more' }),
       readMessages: () => [], readMessagesRevision: () => 0,
       subscribeHistorySources: () => () => {}, resolveProviderLabel: () => '',
-      deleteSession: async () => ({ success: true }), retireLocalSession: () => {},
+      retireLocalSession: () => {},
       runCarrierOperation: async operation => await operation(), now: () => new Date(0),
     });
     const executor = createDefaultActionExecutor({ voiceHistory: { consumer, saveExportArtifact: async () => {} } });
@@ -372,10 +379,18 @@ describe('History through the default Action composition', () => {
       readMessagesRevision: () => revision,
       subscribeHistorySources: () => () => {},
       resolveProviderLabel: () => 'OpenAI',
-      deleteSession: async id => { sessions.delete(id); return { success: true }; },
       retireLocalSession: id => { sessions.delete(id); },
       runCarrierOperation: async operation => await operation(),
       now: () => new Date('2026-10-24T12:00:00Z'),
+    });
+    const request = account.request.getMockImplementation()!;
+    account.request.mockImplementation(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v1/sessions/history' && init?.method === 'DELETE') {
+        sessions.delete('history');
+        return Response.json({ success: true });
+      }
+      return request(input, init);
     });
     let exported: VoiceHistoryExportArtifact | null = null;
     const executor = createDefaultActionExecutor({ voiceHistory: { consumer,
@@ -396,8 +411,12 @@ describe('History through the default Action composition', () => {
     const artifact = exported as VoiceHistoryExportArtifact | null;
     expect(JSON.parse([...artifact!.chunks()].join('')).entries.map((row: { id: string }) => row.id)).toEqual(['oldest', 'latest']);
     // An automated clear cannot reach deletion before the canonical approval owner admits it.
-    const denied = await executor.execute('ui.voice_global.history.clear', {}, context);
-    expect(denied.ok).toBe(false);
+    const beforeApproval = consumer.read();
+    const pending = await executor.execute('ui.voice_global.history.clear', {}, context);
+    expect(pending).toMatchObject({ ok: true, result: {
+      kind: 'approval_request_created', actionId: 'ui.voice_global.history.clear', artifactId: expect.any(String),
+    } });
+    expect(consumer.read()).toEqual(beforeApproval);
     expect(sessions.has('history')).toBe(true);
     const clear = await executor.execute('ui.voice_global.history.clear', {}, { ...context, surface: 'ui', authority: 'present_user',
       presentUserConfirmation: { actionId: 'ui.voice_global.history.clear' } });

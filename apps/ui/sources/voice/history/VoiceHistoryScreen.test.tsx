@@ -129,10 +129,15 @@ function voiceMessage(input: Readonly<{
     : { ...common, kind: 'agent-text' };
 }
 
+let deleteHistorySession = async (_sessionId: string): Promise<unknown> => undefined;
+type HistoryScreenFixtureDeps = VoiceHistoryConsumerDeps & { deleteSession: typeof deleteHistorySession };
+
 function createDeps(
   messages: Message[],
-  overrides: Partial<VoiceHistoryConsumerDeps> = {},
+  overrides: Partial<HistoryScreenFixtureDeps> = {},
 ): VoiceHistoryConsumerDeps {
+  const { deleteSession = vi.fn(async () => undefined), ...consumerOverrides } = overrides;
+  deleteHistorySession = deleteSession;
   return {
     readScopeKey: () => 'server-a/account-a',
     captureScope: vi.fn(async () => ({ key: 'server-a/account-a' })),
@@ -147,11 +152,10 @@ function createDeps(
     readMessagesRevision: () => 0,
     subscribeHistorySources: () => () => {},
     resolveProviderLabel: readProviderLabel,
-    deleteSession: vi.fn(async () => ({ success: true })),
     retireLocalSession: vi.fn(),
     runCarrierOperation: async (operation) => await operation(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
-    ...overrides,
+    ...consumerOverrides,
   };
 }
 
@@ -186,6 +190,15 @@ describe('VoiceHistoryScreen', () => {
     account = await createVoiceSettingsAccountTestHarness(settingsParse({}), {
       features: createRootLayoutFeaturesResponse({ capabilities: { session: { ...features.capabilities.session,
         pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } } } }),
+    });
+    const request = account.request.getMockImplementation()!;
+    account.request.mockImplementation(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v1/sessions/voice-history-session' && init?.method === 'DELETE') {
+        await deleteHistorySession('voice-history-session');
+        return Response.json({ success: true });
+      }
+      return request(input, init);
     });
   });
   afterEach(() => {
@@ -829,10 +842,7 @@ describe('VoiceHistoryScreen', () => {
     expect(screen.findByTestId('voice-history-export')).not.toBeNull();
 
     await answerClearDialog(screen);
-    expect(deleteSession).toHaveBeenCalledWith(
-      'voice-history-session',
-      { key: 'server-a/account-a' },
-    );
+    expect(deleteSession).toHaveBeenCalledWith('voice-history-session');
     expect(retireLocalSession).toHaveBeenCalledWith(
       'voice-history-session',
       { key: 'server-a/account-a' },

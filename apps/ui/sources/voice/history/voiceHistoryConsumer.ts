@@ -5,7 +5,6 @@ import {
 
 import type { Message } from "@happier-dev/session-core/messages";
 import { prepareTranscriptMessageBody } from '@/components/sessions/transcript/messageDisplayText';
-import type { SessionDeleteResult } from '@/sync/ops/sessions';
 import { compareVoiceTranscriptOrder } from '@/voice/transcript/voiceTranscriptOrder';
 import type { TranscriptOlderPageLoadResult } from "@happier-dev/session-core/messages";
 import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
@@ -111,12 +110,8 @@ export type VoiceHistoryConsumerDeps<
    */
   subscribeHistorySources(listener: () => void, sessionId: string | null): () => void;
   resolveProviderLabel(source: VoiceHistoryProviderSource | null): string;
-  deleteSession(
-    sessionId: string,
-    scope: TScope,
-  ): Promise<SessionDeleteResult>;
   /**
-   * Retires the local half of the deletion the scoped server DELETE above just
+   * Retires the local half of the deletion the admitted Session Action just
    * performed, by the same exact address: the same Session id can be cached from
    * another Home, whose carrier this clear never touched.
    */
@@ -199,7 +194,7 @@ export type VoiceHistoryConsumer = Readonly<{
   read(query?: string): VoiceHistorySnapshot;
   loadOlder(query?: string): Promise<VoiceHistorySnapshot>;
   exportHistory(input: Readonly<{ range: 'loaded' | 'all'; query?: string }>): Promise<VoiceHistoryExportArtifact>;
-  clear(): Promise<Readonly<{ cleared: boolean }>>;
+  clear(deleteSession: (sessionId: string) => Promise<void>): Promise<Readonly<{ cleared: boolean }>>;
   /**
    * External-store pair for the rendered History snapshot and read lifecycle.
    * `getRevision` changes when `read()` or `getReadState()` could answer differently — the
@@ -589,7 +584,7 @@ export function createVoiceHistoryConsumer<
         range: input.range,
       };
     },
-    async clear() {
+    async clear(deleteSession) {
       const epoch = beginOperation();
       pendingOpen = null;
       readState = 'ready';
@@ -600,17 +595,9 @@ export function createVoiceHistoryConsumer<
         if (!sessionId || !capturedScope || !isScopeCurrent()) return { cleared: false };
         const deletingScope = capturedScope;
         for (const deletingSessionId of [...sessionIds]) {
-          const result = await deps.deleteSession(deletingSessionId, deletingScope);
-          // `session_absent` is the server confirming that this exact carrier is
-          // gone or was never ours, so it joins the deleted path: the binding and
-          // its decrypted rows must be retired even when no socket deletion update
-          // ever reaches this device. Every other failure — a lost delete
-          // condition above all — leaves the carrier alive and retryable, so local
-          // history is preserved rather than discarded on a transient conflict.
-          if (!result.success && result.code !== 'session_absent') {
-            assertOperationCurrent(epoch);
-            throw new Error(result.message || 'Voice History could not be cleared');
-          }
+          // Session deletion owns active→Stop→delete and already-absent success.
+          // A typed refusal escapes unchanged and leaves this carrier retryable.
+          await deleteSession(deletingSessionId);
           const isExactDeletedBindingCurrent = () => (
             sessionIds.includes(deletingSessionId)
             && scopeKey === deletingScope.key

@@ -5,10 +5,6 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storage';
-import {
-  sessionDeleteWithServerAccountAuthority,
-  type SessionDeleteResult,
-} from '@/sync/ops/sessions';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import {
   captureServerRequestAuthorityForServerAccountScope,
@@ -162,15 +158,6 @@ export type DefaultVoiceHistoryRuntime = Readonly<{
   readMessages(sessionId: string): readonly Message[];
   readMessagesRevision(sessionId: string): number;
   subscribeMessages(listener: () => void, sessionId: string | null): () => void;
-  /**
-   * The canonical scoped client result, not a narrowed copy of it: the typed
-   * `session_absent` / `session_delete_conflict` outcome is what decides whether
-   * History retires its decrypted rows, so this seam must not erase it.
-   */
-  deleteSession(
-    sessionId: string,
-    authority: ServerAccountRequestAuthority,
-  ): Promise<SessionDeleteResult>;
   retireLocalSession(sessionId: string, serverId: string | null): void;
 }>;
 
@@ -232,8 +219,6 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
         ?? source?.contributionId
         ?? t('voiceAssistant.label');
     },
-    deleteSession: (sessionId, scope) =>
-      runtime.deleteSession(sessionId, scope.authority),
     retireLocalSession: (sessionId, scope) => runtime.retireLocalSession(sessionId, scope.authority.scope.serverId),
     runCarrierOperation: operation => operation(),
     now: () => new Date(),
@@ -282,7 +267,6 @@ export function createDefaultVoiceHistoryConsumer() {
     subscribeMessages: (listener, sessionId) => storage.subscribe(() => { listener(); }, {
       sessionMessages: sessionId ? [sessionId] : [], profileScope: true,
     }),
-    deleteSession: sessionDeleteWithServerAccountAuthority,
     retireLocalSession: (sessionId, serverId) => sync.retireLocalSession(sessionId, serverId),
   };
   return createDefaultVoiceHistoryConsumerFromRuntime(runtime, providerRegistry);

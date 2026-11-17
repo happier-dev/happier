@@ -26,9 +26,6 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import type {
-    ServerAccountRequestAuthority,
-} from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import {
     sessionRpcWithServerAccountScope,
@@ -72,7 +69,6 @@ import type { SessionStopResult } from '@happier-dev/protocol/sessions/control/c
 import { readSessionMetadataMutationFailureCodeV1, type SessionMetadataMutationFailureCodeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionRollbackRpcResultSchema } from '@happier-dev/protocol/sessions/rollback';
 import { SessionAuthoringValueV1Schema } from '@happier-dev/protocol/sessions/authoring/index';
-import { readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -1577,77 +1573,6 @@ export async function sessionStopWithServerScope(
 }
 
 export { sessionArchiveWithServerScope, sessionUnarchiveWithServerScope, type SessionArchiveResponse } from './sessionArchive';
-
-/**
- * Why a session delete failed, when the server said something the caller can act on.
- *
- * - `session_absent`: the server answered 404 — the session is gone, or was never
- *   owned by this Account. Nothing further will ever delete it, so a caller holding
- *   local state for that exact id may safely retire it.
- * - `session_active`: the Session must be stopped before deletion. The Session and
- *   its local state remain live.
- * - `session_delete_conflict`: the server answered 409 — it found the session but
- *   lost the delete condition to a concurrent write. The session still exists and
- *   the same delete can be retried; local state must be kept.
- *
- * Absent is deliberately not folded into the generic failure: collapsing the two
- * either strands decrypted local rows for a session the server no longer has, or
- * discards live rows on a transient conflict.
- */
-export type SessionDeleteFailureCode = 'session_absent' | 'session_active' | 'session_delete_conflict';
-
-export type SessionDeleteResult = Readonly<{
-    success: boolean;
-    message?: string;
-    code?: SessionDeleteFailureCode;
-}>;
-
-function isSessionDeleteFailureCode(value: string): value is SessionDeleteFailureCode {
-    return value === 'session_absent' || value === 'session_active' || value === 'session_delete_conflict';
-}
-
-/**
- * Internal Voice-history cleanup uses its already-bound Account authority.
- * User-command deletion is admitted by the canonical session.delete Action.
- */
-async function readSessionDeleteFailure(response: Response): Promise<SessionDeleteResult> {
-    const error = await response.text().catch(() => '');
-    let payload: unknown = null;
-    try {
-        payload = JSON.parse(error);
-    } catch {
-        // The message remains useful, but an unstructured body cannot prove a typed refusal.
-    }
-    const refusal = readHomeDomainActionErrorV1(payload);
-    const code = refusal && isSessionDeleteFailureCode(refusal.code) ? refusal.code : undefined;
-    return {
-        success: false,
-        message: error || 'Failed to delete session',
-        ...(code ? { code } : null),
-    };
-}
-
-export async function sessionDeleteWithServerAccountAuthority(
-    sessionId: string,
-    authority: Pick<ServerAccountRequestAuthority, 'request'>,
-): Promise<SessionDeleteResult> {
-    try {
-        const response = await authority.request(
-            `/v1/sessions/${encodeURIComponent(sessionId)}`,
-            { method: 'DELETE' },
-        );
-        if (response.ok) {
-            await response.json().catch(() => null);
-            return { success: true };
-        }
-        return await readSessionDeleteFailure(response);
-    } catch (error) {
-        return {
-            success: false,
-            message: error instanceof Error ? error.message : 'Unknown error',
-        };
-    }
-}
 
 // Session rename types
 interface SessionRenameRequest {

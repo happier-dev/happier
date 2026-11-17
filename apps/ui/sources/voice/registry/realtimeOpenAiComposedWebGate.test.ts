@@ -1978,7 +1978,6 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     const deleteSession = vi.fn(async (sessionId: string) => {
       expect(sessionId).toBe(discoveredSessionId);
       discoveredSessionId = null;
-      return { success: true };
     });
     const consumer = createVoiceHistoryConsumer({
       readScopeKey: () => 'server/account',
@@ -1996,7 +1995,6 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0,
       subscribeHistorySources: (listener) => storage.subscribe(() => { listener(); }),
       resolveProviderLabel: () => 'OpenAI Realtime',
-      deleteSession,
       retireLocalSession: (sessionId) =>
         storage.getState().deleteSession(sessionId),
       runCarrierOperation: runVoiceTranscriptHistoryCarrierOperation,
@@ -2016,7 +2014,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       await starting;
 
       await consumer.open();
-      await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+      await expect(consumer.clear(deleteSession)).resolves.toEqual({ cleared: true });
       expect(deleteSession).toHaveBeenCalledTimes(1);
       expect(voiceSessionBindingStore.getState().getByControlSessionId(
         composed.controlSessionId,

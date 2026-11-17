@@ -11,7 +11,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { createDeferred } from '@/dev/testkit';
 
 import {
-  createVoiceHistoryConsumer,
+  createVoiceHistoryConsumer as createConsumerOwner,
   projectVoiceHistoryRows,
   type VoiceHistoryConsumerDeps,
   type VoiceHistoryProviderSource,
@@ -83,7 +83,14 @@ function agentMessage(id: string, text: string, createdAt: number): Message {
   };
 }
 
-function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHistoryConsumerDeps {
+type HistoryFixtureDeps = VoiceHistoryConsumerDeps & { deleteSession: (sessionId: string) => Promise<void> };
+
+function createConsumer(deps: HistoryFixtureDeps) {
+  const consumer = createConsumerOwner(deps);
+  return { ...consumer, clear: () => consumer.clear(deps.deleteSession) };
+}
+
+function createDeps(overrides: Partial<HistoryFixtureDeps> = {}): HistoryFixtureDeps {
   return {
     readScopeKey: () => 'server-a/account-a',
     captureScope: vi.fn(async () => ({ key: 'server-a/account-a' })),
@@ -98,7 +105,7 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
     readMessagesRevision: () => 0,
     subscribeHistorySources: () => () => {},
     resolveProviderLabel: readProviderLabel,
-    deleteSession: vi.fn(async () => ({ success: true })),
+    deleteSession: vi.fn(async () => undefined),
     retireLocalSession: vi.fn(),
     runCarrierOperation: async (operation) => await operation(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
@@ -116,10 +123,10 @@ describe('projectVoiceHistoryRows', () => {
     ]);
     const discovery = vi.fn(async () => [...owned]);
     const deleted: string[] = [];
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       discoverHistorySession: discovery,
       readMessages: id => transcripts.get(id) ?? [],
-      deleteSession: async id => { deleted.push(id); return { success: true }; },
+      deleteSession: async id => { deleted.push(id); return; },
       retireLocalSession: id => { transcripts.delete(id); },
     }));
     await consumer.open();
@@ -152,7 +159,7 @@ describe('projectVoiceHistoryRows', () => {
   it('settles warm search from loaded rows without waiting for cold transcript discovery', async () => {
     const discovery = createDeferred<string | null>();
     let discoveries = 0;
-    const consumer = createVoiceHistoryConsumer(createDeps({ discoverHistorySession: () => {
+    const consumer = createConsumer(createDeps({ discoverHistorySession: () => {
       discoveries += 1;
       return discovery.promise;
     } }));
@@ -169,7 +176,7 @@ describe('projectVoiceHistoryRows', () => {
   it('keeps an all-history export waiting for the read that search no longer blocks on', async () => {
     const refreshed = createDeferred<void>();
     const started = createDeferred<void>();
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       refreshSessionMessages: async () => { started.resolve(); await refreshed.promise; },
       readMessages: () => [agentMessage('answer', 'Release ready', 1)],
     }));
@@ -187,9 +194,9 @@ describe('projectVoiceHistoryRows', () => {
   it('retires the pending read when an independent clear fails', async () => {
     const refreshed = createDeferred<void>();
     const started = createDeferred<void>();
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       refreshSessionMessages: async () => { started.resolve(); await refreshed.promise; },
-      deleteSession: async () => ({ success: false, code: 'session_delete_conflict', message: 'Unavailable' }),
+      deleteSession: async () => { throw new Error('Unavailable'); },
     }));
     const opening = consumer.open();
     await started.promise;
@@ -203,7 +210,7 @@ describe('projectVoiceHistoryRows', () => {
   });
   it('keeps a failed discovery failed across search until an explicit refresh retries', async () => {
     let reads = 0;
-    const consumer = createVoiceHistoryConsumer(createDeps({ discoverHistorySession: async () => {
+    const consumer = createConsumer(createDeps({ discoverHistorySession: async () => {
       reads += 1;
       if (reads === 1) throw new Error('Unavailable');
       return null;
@@ -220,7 +227,7 @@ describe('projectVoiceHistoryRows', () => {
   });
   it('subscribes only to the discovered carrier and releases its message demand on clear', async () => {
     const messages = storage.getState().sessionMessages;
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       subscribeHistorySources: (listener, sessionId) => storage.subscribe(listener,
         { sessionMessages: sessionId ? [sessionId] : [] }),
     }));
@@ -315,7 +322,7 @@ describe('createVoiceHistoryConsumer', () => {
       voiceMessage({ id: 'release', role: 'user', text: 'Release planned', createdAt: 1, source: OPENAI_SOURCE }),
       voiceMessage({ id: 'other', role: 'user', text: 'Another question', createdAt: 2, source: OPENAI_SOURCE }),
     ] });
-    const consumer = createVoiceHistoryConsumer(deps);
+    const consumer = createConsumer(deps);
     expect((await consumer.search('release', true)).rows.map(row => row.id)).toEqual(['release']);
     expect((await consumer.search('question')).rows.map(row => row.id)).toEqual(['other']);
     expect(deps.discoverHistorySession).toHaveBeenCalledOnce();
@@ -325,7 +332,7 @@ describe('createVoiceHistoryConsumer', () => {
   });
   it('projects loaded messages once when applying a local search query', async () => {
     const resolveProviderLabel = vi.fn(readProviderLabel);
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => [
         voiceMessage({
           id: 'question',
@@ -371,7 +378,7 @@ describe('createVoiceHistoryConsumer', () => {
     ];
     let projectionRevision = 1;
     const resolveProviderLabel = vi.fn(readProviderLabel);
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => messages,
       readProjectionRevision: () => projectionRevision,
       resolveProviderLabel,
@@ -411,7 +418,7 @@ describe('createVoiceHistoryConsumer', () => {
     ];
     let messagesRevision = 7;
     const resolveProviderLabel = vi.fn(readProviderLabel);
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => [...messages],
       readMessagesRevision: () => messagesRevision,
       resolveProviderLabel,
@@ -452,7 +459,7 @@ describe('createVoiceHistoryConsumer', () => {
         source: OPENAI_SOURCE,
       }),
     ];
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => [...messages],
       readMessagesRevision: () => messagesRevision,
       readProjectionRevision: () => projectionRevision,
@@ -515,7 +522,7 @@ describe('createVoiceHistoryConsumer', () => {
     const discoverHistorySession = vi.fn()
       .mockImplementationOnce(async () => await firstDiscovery)
       .mockResolvedValueOnce('voice-history-new');
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       discoverHistorySession,
     }));
 
@@ -548,7 +555,7 @@ describe('createVoiceHistoryConsumer', () => {
       resolveOlderPage = resolve;
     });
     const loadOlderMessages = vi.fn(async () => await olderPage);
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       discoverHistorySession: vi.fn(async () => carrierSessionId),
       loadOlderMessages,
       readMessages: (sessionId) => [
@@ -589,7 +596,7 @@ describe('createVoiceHistoryConsumer', () => {
         source: XAI_SOURCE,
       }),
     ];
-    const deleteSession = vi.fn(async () => ({ success: true }));
+    const deleteSession = vi.fn(async () => undefined);
     const retireLocalSession = vi.fn();
     const deps = createDeps({
       readMessages: () => loaded,
@@ -606,7 +613,7 @@ describe('createVoiceHistoryConsumer', () => {
       deleteSession,
       retireLocalSession,
     });
-    const consumer = createVoiceHistoryConsumer(deps);
+    const consumer = createConsumer(deps);
 
     await expect(consumer.open()).resolves.toMatchObject({
       sessionId: 'voice-history-session',
@@ -623,7 +630,6 @@ describe('createVoiceHistoryConsumer', () => {
     await expect(consumer.clear()).resolves.toEqual({ cleared: true });
     expect(deleteSession).toHaveBeenCalledWith(
       'voice-history-session',
-      { key: 'server-a/account-a' },
     );
     expect(retireLocalSession).toHaveBeenCalledWith(
       'voice-history-session',
@@ -674,7 +680,7 @@ describe('createVoiceHistoryConsumer', () => {
       };
     });
     const resolveProviderLabel = vi.fn(readProviderLabel);
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => loaded,
       readMessagesRevision: () => messagesRevision,
       loadOlderMessages,
@@ -722,7 +728,7 @@ describe('createVoiceHistoryConsumer', () => {
     const loaded: Message[] = [];
     let pageIndex = 0;
     const TOTAL_PAGES = 80;
-    const pagedConsumer = createVoiceHistoryConsumer(createDeps({
+    const pagedConsumer = createConsumer(createDeps({
       readMessages: () => loaded,
       loadOlderMessages: vi.fn(async () => {
         pageIndex += 1;
@@ -751,7 +757,7 @@ describe('createVoiceHistoryConsumer', () => {
     expect(pagedPayload.entries.map((entry: { id: string }) => entry.id))
       .toEqual(Array.from({ length: TOTAL_PAGES }, (_, index) => `page-${TOTAL_PAGES - index}`));
 
-    const rowConsumer = createVoiceHistoryConsumer(createDeps({
+    const rowConsumer = createConsumer(createDeps({
       readMessages: () => Array.from({ length: 5_001 }, (_, index) => voiceMessage({
         id: `row-${index}`,
         role: 'assistant',
@@ -766,7 +772,7 @@ describe('createVoiceHistoryConsumer', () => {
     expect(rowArtifact.rowCount).toBe(5_001);
     expect(JSON.parse([...rowArtifact.chunks()].join('')).entries).toHaveLength(5_001);
 
-    const byteConsumer = createVoiceHistoryConsumer(createDeps({
+    const byteConsumer = createConsumer(createDeps({
       readMessages: () => [
         voiceMessage({
           id: 'oversized',
@@ -790,7 +796,7 @@ describe('createVoiceHistoryConsumer', () => {
     let scope = 'server-a/account-a';
     const discoverHistorySession = vi.fn<() => Promise<string | null>>(async () => null);
     const refreshSessionMessages = vi.fn(async () => undefined);
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readScopeKey: () => scope,
       captureScope: async () => ({ key: scope }),
       discoverHistorySession,
@@ -813,13 +819,13 @@ describe('createVoiceHistoryConsumer', () => {
     let carrierSessionId: string | null = 'voice-history-old';
     const refreshSessionMessages = vi.fn(async () => undefined);
     const retireLocalSession = vi.fn();
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       discoverHistorySession: vi.fn(async () => carrierSessionId),
       refreshSessionMessages,
       deleteSession: vi.fn(async (sessionId) => {
         expect(sessionId).toBe('voice-history-old');
         carrierSessionId = null;
-        return { success: true };
+        return;
       }),
       retireLocalSession,
     }));
@@ -856,7 +862,7 @@ describe('createVoiceHistoryConsumer', () => {
       }),
     ];
     let attempt = 0;
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => loaded,
       loadOlderMessages: vi.fn(async () => {
         attempt += 1;
@@ -898,7 +904,7 @@ describe('createVoiceHistoryConsumer', () => {
         source: OPENAI_SOURCE,
       }),
     ];
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => loaded,
       loadOlderMessages: vi.fn(async () => ({
         loaded: 0,
@@ -912,9 +918,9 @@ describe('createVoiceHistoryConsumer', () => {
   });
 
   it('deletes the carrier while an active targetless attempt retains its exact old binding', async () => {
-    const deleteSession = vi.fn(async () => ({ success: true }));
+    const deleteSession = vi.fn(async () => undefined);
     const retireLocalSession = vi.fn();
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       deleteSession,
       retireLocalSession,
     }));
@@ -923,7 +929,6 @@ describe('createVoiceHistoryConsumer', () => {
     await expect(consumer.clear()).resolves.toEqual({ cleared: true });
     expect(deleteSession).toHaveBeenCalledWith(
       'voice-history-session',
-      expect.objectContaining({ key: 'server-a/account-a' }),
     );
     expect(retireLocalSession).toHaveBeenCalledWith(
       'voice-history-session',
@@ -937,7 +942,7 @@ describe('createVoiceHistoryConsumer', () => {
 
   it('retires the exact carrier and its decrypted rows when the server confirms it absent', async () => {
     const retireLocalSession = vi.fn();
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readMessages: () => [
         voiceMessage({
           id: 'stale-row',
@@ -947,14 +952,9 @@ describe('createVoiceHistoryConsumer', () => {
           source: OPENAI_SOURCE,
         }),
       ],
-      // No socket deletion update ever arrives here: the HTTP answer alone has
-      // to retire the binding, or a device that misses the socket echo keeps
-      // showing decrypted rows for history the server no longer has.
-      deleteSession: vi.fn(async () => ({
-        success: false,
-        code: 'session_absent' as const,
-        message: 'Session not found or not owned by user',
-      })),
+      // The Session Action treats an absent carrier as successful deletion.
+      // History still retires its local rows when no socket update arrives.
+      deleteSession: async () => {},
       retireLocalSession,
     }));
     await consumer.open();
@@ -970,12 +970,8 @@ describe('createVoiceHistoryConsumer', () => {
 
   it('keeps the carrier and stays retryable when the server lost the delete condition', async () => {
     const retireLocalSession = vi.fn();
-    const deleteSession = vi.fn(async () => ({
-      success: false,
-      code: 'session_delete_conflict' as const,
-      message: 'Session delete condition was lost',
-    }));
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const deleteSession = vi.fn(async (): Promise<void> => { throw new Error('Session delete condition was lost'); });
+    const consumer = createConsumer(createDeps({
       readMessages: () => [
         voiceMessage({
           id: 'live-row',
@@ -997,7 +993,7 @@ describe('createVoiceHistoryConsumer', () => {
     expect(consumer.read()).toMatchObject({ sessionId: 'voice-history-session' });
     expect(consumer.read().rows).toHaveLength(1);
 
-    deleteSession.mockResolvedValueOnce({ success: true } as never);
+    deleteSession.mockResolvedValueOnce(undefined);
     await expect(consumer.clear()).resolves.toEqual({ cleared: true });
     expect(retireLocalSession).toHaveBeenCalledWith(
       'voice-history-session',
@@ -1007,11 +1003,8 @@ describe('createVoiceHistoryConsumer', () => {
 
   it('keeps an unclassified clear failure retryable without retiring local history', async () => {
     const retireLocalSession = vi.fn();
-    const consumer = createVoiceHistoryConsumer(createDeps({
-      deleteSession: vi.fn(async () => ({
-        success: false,
-        message: 'Failed to delete session',
-      })),
+    const consumer = createConsumer(createDeps({
+      deleteSession: vi.fn(async () => { throw new Error('Failed to delete session'); }),
       retireLocalSession,
     }));
     await consumer.open();
@@ -1024,7 +1017,7 @@ describe('createVoiceHistoryConsumer', () => {
   });
 
   it('drops its stale local binding even when post-delete local cache retirement reports a failure', async () => {
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       retireLocalSession: () => {
         throw new Error('local cache retirement failed');
       },
@@ -1038,12 +1031,12 @@ describe('createVoiceHistoryConsumer', () => {
   it('rejects a stale clear completion without wiping a newer account binding', async () => {
     let scopeKey = 'server-a/account-a';
     let carrierSessionId = 'voice-history-a';
-    let resolveDelete!: (result: { success: boolean }) => void;
-    const deleteResult = new Promise<{ success: boolean }>((resolve) => {
+    let resolveDelete!: () => void;
+    const deleteResult = new Promise<void>((resolve) => {
       resolveDelete = resolve;
     });
     const retireLocalSession = vi.fn();
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       readScopeKey: () => scopeKey,
       captureScope: async () => ({ key: scopeKey }),
       discoverHistorySession: vi.fn(async () => carrierSessionId),
@@ -1061,7 +1054,7 @@ describe('createVoiceHistoryConsumer', () => {
     await expect(consumer.open()).resolves.toMatchObject({
       sessionId: 'voice-history-b',
     });
-    resolveDelete({ success: true });
+    resolveDelete();
 
     await expect(staleClear).rejects.toMatchObject({
       name: 'VoiceHistoryOperationSupersededError',
@@ -1074,12 +1067,12 @@ describe('createVoiceHistoryConsumer', () => {
 
   it('retires an exactly rebound same-account session after its stale clear succeeds', async () => {
     const deleteStarted = createDeferred<void>();
-    let resolveDelete!: (result: { success: boolean }) => void;
-    const deleteResult = new Promise<{ success: boolean }>((resolve) => {
+    let resolveDelete!: () => void;
+    const deleteResult = new Promise<void>((resolve) => {
       resolveDelete = resolve;
     });
     const retireLocalSession = vi.fn();
-    const consumer = createVoiceHistoryConsumer(createDeps({
+    const consumer = createConsumer(createDeps({
       discoverHistorySession: vi.fn(async () => 'voice-history-session'),
       deleteSession: vi.fn(async () => { deleteStarted.resolve(); return await deleteResult; }),
       retireLocalSession,
@@ -1096,7 +1089,7 @@ describe('createVoiceHistoryConsumer', () => {
     await expect(consumer.open()).resolves.toMatchObject({
       sessionId: 'voice-history-session',
     });
-    resolveDelete({ success: true });
+    resolveDelete();
 
     await expect(staleClear).rejects.toMatchObject({
       name: 'VoiceHistoryOperationSupersededError',

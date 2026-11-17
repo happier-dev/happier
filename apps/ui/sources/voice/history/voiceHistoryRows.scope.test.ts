@@ -35,7 +35,6 @@ describe('Voice conversation transcript projection', () => {
           kind: 'user-text', text: 'oldest question', createdAt: 1 });
         return { loaded: id === 'archived' ? 1 : 0, status: 'no_more', hasMore: false };
       },
-      deleteSession: async id => { deleted.push(id); return { success: true }; },
       retireLocalSession: id => { messages.delete(id); },
       runCarrierOperation: operation => operation(), now: () => new Date(0),
     });
@@ -47,7 +46,7 @@ describe('Voice conversation transcript projection', () => {
     expect(pages).toEqual(['recent', 'archived', 'recent']);
     await consumer.exportHistory({ range: 'all' });
     expect(pages).toEqual(['recent', 'archived', 'recent']);
-    await consumer.clear();
+    await consumer.clear(async id => { deleted.push(id); });
     expect(deleted).toEqual(['recent', 'archived']);
     expect(consumer.read().rows).toEqual([]);
     await consumer.exportHistory({ range: 'all' });
