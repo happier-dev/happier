@@ -11,6 +11,7 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, type ProviderConnectionsCatalo
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1, parseProviderSettingsV1Narrow } from '../settings/v1.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../../actions/actionExecutor.js';
+import { normalizeActionsSettingsV1 } from '../../actions/actionSettings.js';
 import { createProviderActionExecuteV1 } from '../executeProviderActionV1.js';
 import { budgetInlineCompletionContext } from '../../models/descriptor.js';
 import { prepareApprovalRequest } from '../../actions/executor/approvalPreparation.js';
@@ -164,7 +165,10 @@ describe('shared Provider Account Action producer', () => {
       }));
       return false;
     } });
-    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' } as const;
+    const actionId = operation === 'create' ? 'providers.connections.create_contribution' : 'providers.connections.secrets.bind';
+    // Create/bind are direct UI edits by default; opt into Ask to exercise their confirmation review.
+    const actionsSettings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', actionsSettings } as const;
     const result = operation === 'create'
       ? await executor.execute('providers.connections.create_contribution', create, context)
       : await executor.execute('providers.connections.secrets.bind', { action: 'bindSecret', connectionId: 'pc_authority',
