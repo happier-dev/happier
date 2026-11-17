@@ -4,6 +4,13 @@ import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
+import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
+import { createApprovalChecksSceneFixture } from '@/dev/testkit/fixtures/approvalAutomaticChecksFixtures';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import type { PluginInstallReviewRow } from '@/components/settings/plugins/model/usePluginInstallReviewSet';
 
 installApprovalCommonModuleMocks({
     modal: async () => {
@@ -13,8 +20,8 @@ installApprovalCommonModuleMocks({
 });
 const account = createProviderSettingsAccountHarness();
 const { PluginInstallReviewSpecimen } = await import('./PluginInstallReviewSpecimen');
-const { readSharedConsentFacts, readCombinedReviewCopy } = await import('@/components/settings/plugins/listing/PluginInstallOnMachines');
-const { ModalProvider } = await import('@/modal');
+const { PluginInstallOnMachinesSheet, readSharedConsentFacts, readCombinedReviewCopy } = await import('@/components/settings/plugins/listing/PluginInstallOnMachines');
+const { Modal, ModalProvider } = await import('@/modal');
 const { storage } = await import('@/sync/domains/state/storage');
 
 afterEach(async () => {
@@ -80,6 +87,83 @@ it('reads a fact once only when every Machine that reported facts reported it id
     expect(readSharedConsentFacts([[identity('2.4.0'), access], [identity('2.4.0')]])).toEqual([identity('2.4.0')]);
     // One Machine's facts are its own; Machines without facts (unavailable Home, refused) do not count.
     expect(readSharedConsentFacts([[identity('2.4.0'), access], []])).toEqual([]);
+});
+
+it('reviews one Machine’s pending check consent and returns it to the mixed bulk install without implicitly approving it', async () => {
+    await account.restore({ serverIdentityId: 'srv_bulk_home', machines: [] });
+    const serverId = account.serverId;
+    const ownerAccountId = 'account-a';
+    const now = Date.now();
+    const rows: PluginInstallReviewRow[] = ['checked', 'ordinary'].map(machineId => {
+        const id = `bulk-consent-${machineId}`;
+        const input = { machineId, source: { kind: 'marketplace', sourceId: 'acme-catalog', pluginId: 'acme.storage-sync', version: '2.4.0' } };
+        const checks = machineId === 'checked'
+            ? createApprovalChecksSceneFixture('aconsent', { serverId, accountId: ownerAccountId, nowMs: now, asker: 'person' }).approval.automaticChecks
+            : undefined;
+        const request = ApprovalRequestV2Schema.parse({
+            v: 2, status: 'open', createdAtMs: now, updatedAtMs: now, createdBy: { surface: 'system' }, requestedSurface: 'ui',
+            actionId: 'plugins.install', actionArgs: input, summary: 'Install Storage Sync',
+            executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'plugins.install', input, targetSessionId: null,
+                context: { surface: 'ui', authority: 'present_user', serverId, serverIdentityId: 'srv_bulk_home',
+                    runtimeAccountId: ownerAccountId, actionRequestId: id, actionCaller: { kind: 'host' },
+                    externalActionTarget: { kind: 'machine', machineId } } }),
+            ...(checks ? { automaticChecks: { ...checks, humanApprovalRequired: true,
+                selected: checks.selected.map(selected => ({ ...selected, actionIds: ['plugins.install'] })) } } : {}),
+            preview: { actionId: 'plugins.install', actionArgs: input, summary: 'Install Storage Sync', pluginInstall: {
+                permissionsDisclosure: 'daemonEvaluated', pendingReview: { kind: 'reviewRequired', reviewKind: 'installation',
+                    pendingChangeId: `candidate-${machineId}`, reason: 'firstInstall', currentVersion: null, authorityExpansion: [],
+                    review: createPluginInstallationReviewFixture({ pluginId: 'acme.storage-sync', displayName: 'Storage Sync', version: '2.4.0' }) } } },
+        });
+        account.home.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
+            id, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request), title: request.summary,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: now, updatedAt: now, isDecrypted: true,
+        }, ownerAccountId));
+        return { kind: 'approval', artifactId: id, serverId, target: { serverIdentityId: 'srv_bulk_home', machineId },
+            targetLabel: { machine: machineId, server: 'Home' } };
+    });
+    const candidates = rows.map(row => ({ target: row.target, displayName: row.targetLabel.machine, serverLabel: 'Home',
+        availability: 'online' as const, observation: 'live' as const, observedAt: now }));
+    const screen = await renderScreen(<ModalProvider><PluginInstallOnMachinesSheet name="Storage Sync" candidates={candidates}
+        initialTarget={rows[0]!.target} review={{ pluginId: 'acme.storage-sync', rows }} run={async () => undefined}
+        onClosed={() => undefined} onClose={() => undefined} /></ModalProvider>);
+    await screen.pressByTestIdAsync('settings.plugins.installOnMachines.continue');
+    // The no-check neighbor stays eligible while consent holds only the checked Machine.
+    await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.installOnMachines.outcome.ordinary')).not.toBeNull());
+    expect(screen.findByTestId('settings.plugins.installOnMachines.install')?.props.disabled).toBe(false);
+    expect(screen.findByTestId('settings.plugins.installOnMachines.outcome.checked')).toBeNull();
+    await screen.pressByTestIdAsync('settings.plugins.installOnMachines.install');
+    await vi.waitFor(() => expect(JSON.parse(account.home.artifacts(serverId).readPlainBody('bulk-consent-ordinary') ?? 'null')).toMatchObject({
+        decision: { kind: 'approve' },
+    }));
+    const held = ApprovalRequestV2Schema.parse(JSON.parse(account.home.artifacts(serverId).readPlainBody('bulk-consent-checked')!));
+    expect(held.decision).toBeUndefined();
+    expect(held.automaticChecks?.humanDecision).toBeUndefined();
+    expect(held.automaticChecks?.consents[0]?.decision).toBe('pending');
+    expect(screen.findByTestId('settings.plugins.installOnMachines.review.checked')).not.toBeNull();
+    await screen.pressByTestIdAsync('settings.plugins.installOnMachines.review.checked');
+    await vi.waitFor(() => expect(screen.findByTestId('approvals.automatic-checks:consent')).not.toBeNull());
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.allow');
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.skip');
+    await screen.pressByTestIdAsync('approvals.reject');
+    await vi.waitFor(() => expect(JSON.parse(account.home.artifacts(serverId).readPlainBody('bulk-consent-checked') ?? 'null')).toMatchObject({
+        status: 'open', automaticChecks: { consents: [{ decision: 'skip' }] },
+    }));
+    const updated = ApprovalRequestV2Schema.parse(JSON.parse(account.home.artifacts(serverId).readPlainBody('bulk-consent-checked')!));
+    expect(updated.decision).toBeUndefined();
+    expect(updated.automaticChecks?.humanDecision).toBeUndefined();
+    // Closing the native/modal presentation boundary returns to the already-mounted bulk sheet.
+    const openedReview = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+    const modalId = vi.mocked(Modal.show).mock.results.at(-1)?.value;
+    if (!openedReview || typeof modalId !== 'string') throw new Error('Expected the in-place approval review');
+    await act(async () => { openedReview.onRequestClose?.(); Modal.hide(modalId); });
+    // The canonical Artifact update reaches the existing row; the next bulk press includes this Machine.
+    await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.installOnMachines.outcome.checked')).not.toBeNull());
+    expect(screen.findByTestId('settings.plugins.installOnMachines.install')?.props.disabled).toBe(false);
+    await screen.pressByTestIdAsync('settings.plugins.installOnMachines.install');
+    await vi.waitFor(() => expect(JSON.parse(account.home.artifacts(serverId).readPlainBody('bulk-consent-checked') ?? 'null')).toMatchObject({
+        decision: { kind: 'approve' }, automaticChecks: { humanDecision: { kind: 'approve' }, consents: [{ decision: 'skip' }] },
+    }));
+    await screen.unmount();
 });
 
 it('says "confirm once" in the header and footer only while a confirm is pending', () => {

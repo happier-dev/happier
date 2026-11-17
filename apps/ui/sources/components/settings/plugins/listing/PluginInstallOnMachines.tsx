@@ -10,6 +10,8 @@ import {
 } from '@/components/approvals/pluginInstallApprovalFacts';
 import { readApprovalActionTitle } from '@/components/approvals/approvalRequestTitle';
 import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { readApprovalAutomaticChecksShown } from '@/components/approvals/ApprovalAutomaticChecks';
+import { showApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { useApprovalReview } from '@/components/approvals/useApprovalReview';
 import { MachineSetupReviewFooter } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -607,6 +609,21 @@ function MachineApprovalReview(
     serverId: row.serverId,
   });
   const ready = review.kind === 'ready' ? review : null;
+  const reviewModalId = React.useRef<string | null>(null);
+  React.useEffect(
+    () => () => {
+      if (reviewModalId.current) Modal.hide(reviewModalId.current);
+    },
+    [],
+  );
+  const openReview = () => {
+    if (reviewModalId.current) return;
+    reviewModalId.current = showApprovalReview({
+      artifactId: row.artifactId,
+      serverId: row.serverId,
+      onDismissed: () => { reviewModalId.current = null; },
+    });
+  };
   const decideRef = React.useRef(ready?.decide);
   decideRef.current = ready?.decide;
   const settlement = ready ? describeMachineSettlement(ready) : null;
@@ -693,6 +710,13 @@ function MachineApprovalReview(
               showChevron={false}
             />
           ))}
+          {review.automaticChecks && readApprovalAutomaticChecksShown(review.automaticChecks) ? (
+            <Item
+              testID={`settings.plugins.installOnMachines.review.${row.target.machineId}`}
+              title={t('approvals.review')}
+              onPress={openReview}
+            />
+          ) : null}
           {withheldReason ? (
             <Item
               testID={`settings.plugins.installOnMachines.withheld.${row.target.machineId}`}
