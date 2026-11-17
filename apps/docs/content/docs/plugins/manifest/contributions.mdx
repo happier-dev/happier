@@ -13,6 +13,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `hooks` | Host extension points | `hooks.<id>.handler` |
 | activation cleanup | Plugin-owned resources from a successful activation | cleanup function returned by `setup` |
 | `events` | Plugin-authored event ids and payload schemas | The declaration family and `context.services.events` are available in the current generated matrix. |
+| `subjectKinds` | Plugin resource identities for Automation selection (unreleased 0.3 development source) | `subjectKinds.<id>`: `label`, optional `icon`, closed `identitySchema` and a same-plugin read-only `listAction`; see [Plugin subject identities](/plugins/api/actions-tools-commands#plugin-subject-identities-03-development-source). |
 | `agents` | AI agent declarations and runtime metadata | custom Agents: `agents.<id>.factory`; declarative ACP: host-owned |
 | `providers` | Model-provider declarations, catalogs, connection facts, and an optional cold managed-runtime facet | ordinary Providers are descriptor-only; a managed Provider uses `providers.<id>.runtime` |
 | `connectedAccountDescriptors` | A plugin-produced account service and authentication modes | `connectedAccountDescriptors.<id>.runtime` |
