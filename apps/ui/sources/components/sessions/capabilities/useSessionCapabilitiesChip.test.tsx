@@ -193,6 +193,29 @@ it('indexes rules once for a sheet inventory and retains each selected rule arra
   expect(hook.getCurrent().rules('skill', 'missing')).toBe(hook.getCurrent().rules('skill', 'also-missing'));
 });
 
+it('puts the draft chip in the row reading its attached skills, and keeps an empty draft\'s chip in overflow', async () => {
+  const render = async (selection: SessionCapabilitySelectionV1) => {
+    const hook = await renderHook(() => useNewSessionCapabilitiesChip({
+      draft: { machineId: 'machine', directory: '/repo', agentId: 'codex', targetServerId: serverId, selection, setSelection: () => {} },
+      machineName: 'MacBook',
+    }));
+    const chip = hook.getCurrent().chip;
+    await hook.unmount();
+    return chip;
+  };
+  const { resolveAgentInputControlLines } = await import('@/components/sessions/agentInput/controls/resolveAgentInputControlLines');
+  const lines = (chip: Awaited<ReturnType<typeof render>>) => resolveAgentInputControlLines({ controls: [{ ...chip.placement!,
+    controlId: 'capabilities', line: 'primary', slot: 'chip', defaultPlacement: chip.placement!.defaultPlacement ?? 'overflow', pending: false }] });
+  const attached = await render(setSessionCapabilitySelectionItemV1({}, 'skill', 'happier:hatch-pet', 'on'));
+  expect(lines(attached).primary).toEqual([attached.placement!.id]);
+  // Before any preview, the chip already names what the draft holds.
+  const { t } = await import('@/text');
+  expect(attached.collapsedContentPopover?.label).toBe(t('capabilities.session.counts', { skills: 1, mcp: 0 }));
+  expect(transport).not.toHaveBeenCalled();
+  const empty = await render({});
+  expect(lines(empty).collapsed).toEqual([empty.placement!.id]);
+});
+
 it('binds the draft chip to the preview on intent and edits only the draft', async () => {
   const hook = await renderHook(() => {
     const [selection, setSelection] =

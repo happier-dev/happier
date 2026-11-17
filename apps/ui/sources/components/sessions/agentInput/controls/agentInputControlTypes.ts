@@ -1,6 +1,6 @@
 import type { AgentInputActionBarLayout } from '@/components/sessions/agentInput/layout/actionBarLogic';
 import type { IconName } from '@/components/ui/icons/Icon';
-import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
 
 export type AgentInputPlacementContext = 'session' | 'newSession' | 'workflow' | 'discussion';
 
@@ -16,7 +16,9 @@ export type AgentInputControlPlacement = Readonly<{
     title: string;
     icon?: IconName;
     menu?: AgentInputControlMenuMetadata;
-    defaultPlacement?: NavigationPlacement;
+    /** `auto` rides the row while the control holds something (`hasContent`), and waits in + otherwise. */
+    defaultPlacement?: NavigationDefaultPlacement;
+    hasContent?: boolean;
     pending?: boolean;
 }>;
 
@@ -28,7 +30,8 @@ export type AgentInputPlacementDescriptor = Readonly<{
     menu?: AgentInputControlMenuMetadata;
     line: AgentInputControlLine;
     slot: 'chip' | 'fieldAccessory';
-    defaultPlacement: NavigationPlacement;
+    defaultPlacement: NavigationDefaultPlacement;
+    hasContent?: boolean;
     allowedPlacements?: readonly NavigationPlacement[];
     pending: boolean;
 }>;

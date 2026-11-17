@@ -38,6 +38,8 @@ export function createCapabilitiesActionChip(
   params: Readonly<{
     label: string;
     placementId?: string;
+    /** A draft's own attached-skill count: present only on a draft, where it decides the row (`auto`). */
+    attachedSkills?: number;
     attention: boolean;
     stabilityKey: string;
     popoverContent: AgentInputPopoverContent;
@@ -52,9 +54,10 @@ export function createCapabilitiesActionChip(
   return {
     key: SESSION_CAPABILITIES_CHIP_KEY,
     onIntent: params.onIntent,
-    stabilityKey: `${params.stabilityKey}:${params.label}:${params.attention ? 1 : 0}:${params.openRequest ? 'open' : ''}`,
+    stabilityKey: `${params.stabilityKey}:${params.label}:${params.attention ? 1 : 0}:${params.openRequest ? 'open' : ''}:${params.attachedSkills ?? ''}`,
     controlId: 'capabilities',
-    placement: { ...getCapabilitiesActionChipPlacement(), ...(params.placementId ? { id: params.placementId } : {}) },
+    placement: { ...getCapabilitiesActionChipPlacement(params.attachedSkills === undefined ? {} : { attachedSkills: params.attachedSkills }),
+      ...(params.placementId ? { id: params.placementId } : {}) },
     collapsedContentPopover: {
       title,
       label: params.label,

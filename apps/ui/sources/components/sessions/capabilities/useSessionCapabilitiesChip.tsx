@@ -129,6 +129,8 @@ function SessionCapabilitiesSheet(
 function useCapabilitiesChip(
   params: Readonly<{
     placementId?: string;
+    /** A draft's own attached-skill count (its selection), known before any preview. */
+    attachedSkills?: number;
     model: SessionCapabilitiesModel;
     modelInput: ModelInput;
     base: Base;
@@ -161,7 +163,11 @@ function useCapabilitiesChip(
     undo,
   } = params;
   // Unknown is never zero: until the first preview the chip names what it holds, not "0 skills".
-  const label = modelInput.view ? model.chipLabel : `${t('capabilities.skills.title')} · MCP`;
+  // A draft that holds skills names them before its preview ("1 skill"); the preview's own label takes over once loaded.
+  const attachedSkills = params.attachedSkills ?? 0;
+  const label = modelInput.view ? model.chipLabel
+    : attachedSkills > 0 ? t('capabilities.session.counts', { skills: attachedSkills, mcp: 0 })
+      : `${t('capabilities.skills.title')} · MCP`;
   const attention = model.attention || sheetAttention;
   // What this Session's sheet last knew (its rows and cost facts), in memory only: the chip outlives the open sheet.
   const knownRef = React.useRef<Readonly<{ key: string; known: SessionCapabilitiesLastKnown }> | null>(null);
@@ -179,6 +185,7 @@ function useCapabilitiesChip(
     () =>
       createCapabilitiesActionChip({
         placementId: params.placementId,
+        ...(params.attachedSkills === undefined ? {} : { attachedSkills: params.attachedSkills }),
         label,
         attention,
         stabilityKey,
@@ -222,6 +229,7 @@ function useCapabilitiesChip(
       target,
       undo,
       params.placementId,
+      params.attachedSkills,
     ],
   );
 }
@@ -268,8 +276,10 @@ export function useNewSessionCapabilitiesChip(
     () => ({ machineName, ...(machineOnline === undefined ? {} : { machineOnline }) }),
     [machineName, machineOnline],
   );
+  const attachedSkills = draft.selection?.skills?.forceIncludeSkillIds.length ?? 0;
   const chip = useCapabilitiesChip({
     placementId: params.placementId,
+    attachedSkills,
     model: popover.model,
     modelInput: popover.modelInput,
     base,
