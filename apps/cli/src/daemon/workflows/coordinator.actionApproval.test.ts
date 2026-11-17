@@ -16,6 +16,8 @@ import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/w
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 
 describe('workflow built-in Action approval holds', () => {
   it.each([
@@ -73,6 +75,14 @@ describe('workflow built-in Action approval holds', () => {
     let effects = 0;
     let approval: ApprovalRequestV2 | undefined;
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      // Replace the Artifact read boundary; binding and policy remain real.
+      readApprovalProfile: id => bindApprovalProfileV1([
+        { id: 'blank', profile: ApprovalProfileV1Schema.parse({ id: 'blank', name: 'Blank' }),
+          access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 } },
+        { id: 'ask-list', profile: ApprovalProfileV1Schema.parse({ id: 'ask-list', name: 'Ask before listing',
+          actions: { 'machines.list': { approvalRequiredSurfaces: ['agent'] } } }),
+          access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 } },
+      ], id),
       machinesList: async () => { effects++; return { items: [] }; },
       approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'profile-approval' }; },
       approvalsGet: async () => approval ?? null,
@@ -83,9 +93,7 @@ describe('workflow built-in Action approval holds', () => {
       executeStep: async () => { throw new Error('Action has no Agent step'); },
       resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async input => ({ ...buildWorkflowActionContext(input),
-        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', defaultSessionId: 'origin',
-        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalProfiles: [{ id: 'blank', name: 'Blank' },
-          { id: 'ask-list', name: 'Ask before listing', actions: { 'machines.list': { approvalRequiredSurfaces: ['agent'] } } }] }) }),
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', defaultSessionId: 'origin' }),
         observeRun: async () => { throw new Error('Listing has no execution Run'); } },
     });
     const result = await coordinator.run({ runId: 'profile-run',

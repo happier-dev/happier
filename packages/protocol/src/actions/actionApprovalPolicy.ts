@@ -335,7 +335,8 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const policyActionId = args.profileActionId ?? args.actionId;
   // The caller's approval profile replaces the Account rows of the Actions it names. Everything
   // below decides once on the merged settings, with the same floors and person-class defaults.
-  const profiled = args.settings ? resolveProfiledActionsSettingsV1(args.settings, args.context?.approvalProfileId, {
+  const profiled = args.settings || args.context?.approvalProfile?.profile
+    ? resolveProfiledActionsSettingsV1(args.settings ?? { v: 1, actions: {} }, args.context?.approvalProfileId, {
     actionId: policyActionId,
     boundProfile: args.context?.approvalProfile,
     approvalProfileTeamOrGroupDerived: args.context?.approvalProfileTeamOrGroupDerived,
