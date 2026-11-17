@@ -75,6 +75,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     sourceKey: string;
     /** The editor's Where, which seeds the set's one machine when its first trigger is added. */
     projectTarget: WorkflowProjectTargetV1 | null;
+    lifetimeSession?: Parameters<typeof saveWorkflowTriggerDraft>[0]['lifetimeSession'];
     accountLifetime?: ServerAccountScopeLifetime | null;
     initialIncomplete?: WorkflowTriggerIncomplete;
 }>): WorkflowTriggerEditing {
@@ -107,8 +108,8 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const setDraft = React.useCallback((next: WorkflowTriggerDraft) => {
         if (identityRef.current === identity) setState({ identity, draft: next });
     }, [identity]);
-    const stateRef = React.useRef({ identity, set, draft, projectTarget: params.projectTarget });
-    stateRef.current = { identity, set, draft, projectTarget: params.projectTarget };
+    const stateRef = React.useRef({ identity, set, draft, projectTarget: params.projectTarget, lifetimeSession: params.lifetimeSession });
+    stateRef.current = { identity, set, draft, projectTarget: params.projectTarget, lifetimeSession: params.lifetimeSession };
     const rowIdentities = React.useMemo(() => {
         const knownDefinitions: WorkflowTriggerKnownDefinitions = new Map();
         return {
@@ -172,6 +173,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         const outcome = await saveWorkflowTriggerDraft({
             workflow,
             project: captured.projectTarget,
+            ...(captured.lifetimeSession === undefined ? {} : { lifetimeSession: captured.lifetimeSession }),
             set: captured.set,
             draft: captured.draft,
             writer,

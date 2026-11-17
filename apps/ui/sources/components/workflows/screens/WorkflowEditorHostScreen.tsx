@@ -735,7 +735,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         return eventSeed === undefined ? undefined : { pending: [{ clientId: randomUUID(),
             when: { kind: 'pluginEvent' as const, value: null, eventRef: eventSeed.eventRef }, eventSeed }], edits: {} };
     }, [authoringSourceKey, definitionDraftSeed?.eventSeed, definitionDraftSeed?.incompleteTriggers]);
-    const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget, accountLifetime, initialIncomplete });
+    const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget,
+        ...(definitionDraftSeed?.lifetimeSession === undefined ? {} : { lifetimeSession: definitionDraftSeed.lifetimeSession }),
+        accountLifetime, initialIncomplete });
     const eventValueContext = React.useMemo(() => ({ triggerEvents: triggers.triggerEvents }), [triggers.triggerEvents]);
     const triggerInputs = useWorkflowEditorSelector(draftStore, (value) => value?.inputs ?? NO_WORKFLOW_INPUTS);
     React.useEffect(() => {

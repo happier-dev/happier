@@ -8,6 +8,7 @@ import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contribut
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
 import type { WorkflowTriggerSnapshot } from '@/components/workflows/triggers/workflowTriggerDraft';
+import type { WorkflowTriggerAddRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowTriggerIncomplete } from '@/components/workflows/triggers/workflowTriggerStarts';
 
 import { readWorkflowEditorDraftSeed, storeWorkflowEditorDraftSeed } from './workflowEditorDraftSeed';
@@ -29,6 +30,8 @@ export type WorkflowDefinitionDraftSeed = Readonly<{
     /** An unconfigured source stays with the ordinary When editor until enrollment completes. */
     eventSeed?: PluginUiOpenAutomationEventRequestV1;
     project?: WorkflowProjectTargetV1;
+    /** Session lifetime is independent of the event's watched subject and execution placement. */
+    lifetimeSession?: Extract<WorkflowTriggerAddRequestV1, { observationOnly?: never }>['lifetimeSession'];
     executionTarget?: WorkflowDraftSettingsPatchV1['executionTarget'];
     /** The sentence and full editor share the same draft and Save. */
     initialView?: 'sentence';

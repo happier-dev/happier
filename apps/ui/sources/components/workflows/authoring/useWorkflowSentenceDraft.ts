@@ -66,6 +66,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     const accountMemory = useWorkflowEditorAccountMemory(source.lifetime, { workspaceRefs: false });
     const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null,
         sourceKey: source.store.get().draftId, projectTarget: project,
+        ...(source.intent.lifetimeSession === undefined ? {} : { lifetimeSession: source.intent.lifetimeSession }),
         accountLifetime: source.lifetime, ...(source.incomplete === undefined ? {} : { initialIncomplete: source.incomplete }) });
     React.useEffect(() => {
         if (source.intent.trigger === undefined) return;

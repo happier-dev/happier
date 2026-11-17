@@ -8,6 +8,7 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -58,6 +59,10 @@ async function sourceHome() {
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             const machine = createPlainMachineReadHttpResponseFixture(url.pathname, init, accountId);
             if (machine) return machine;
+            if (url.pathname === '/v2/sessions/lifetime-session') return Response.json(createPlainSessionByIdResponseFixture(
+                createSessionFixture({ id: 'lifetime-session', active: false, metadata: {
+                    machineId: 'machine-a', path: '/repo', host: 'test',
+                } })));
             if (url.pathname === '/v1/artifacts' && init?.method === 'POST') {
                 creates.push(JSON.parse(String(init.body)));
                 const intercepted = await beforeCreate?.();
@@ -87,6 +92,24 @@ it('saves a mounted sentence once through the real definition and trigger Action
     expect(saved).toMatchObject({ metadata: { title: 'Notify production' }, definition: { blocks: [message] } });
     await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'unchanged' }); });
     expect(home.creates).toHaveLength(1);
+    expect(home.automations.creates).toHaveLength(1);
+});
+
+it('saves a Session-lifetime sentence without a Project and carries that lifetime into the full editor', async () => {
+    const home = await sourceHome();
+    const lifetimeSession = { sessionId: 'lifetime-session' };
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ name: 'Session schedule', step: message,
+        trigger, lifetimeSession }, home.lifetime));
+    const entry = hook.getCurrent().openInEditor();
+    if (!entry) throw new Error('Expected the ordinary editor entry');
+    expect(readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope))
+        .toMatchObject({ lifetimeSession });
+    await act(async () => { expect(await hook.getCurrent().save(), JSON.stringify(home.requests)).toEqual({ status: 'applied' }); });
+    expect(home.automations.creates).toHaveLength(1);
+    expect(home.automations.creates[0]).toMatchObject({ scopeSessionId: lifetimeSession.sessionId });
+    const saved = await getWorkflowDefinition({ definitionId: hook.getCurrent().saved!.definitionId, accountLifetime: home.lifetime });
+    expect(saved.definition.blocks).toEqual([message]);
+    await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'unchanged' }); });
     expect(home.automations.creates).toHaveLength(1);
 });
 
