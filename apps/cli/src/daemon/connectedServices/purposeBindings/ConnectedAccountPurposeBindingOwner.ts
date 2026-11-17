@@ -200,6 +200,8 @@ type ManagedCredentialConfigurations = NonNullable<ConnectedAccountInvocationPur
 export type ConnectedAccountPurposeBindingSubject =
   | Readonly<Omit<Extract<TeamCredentialDirectMaterialConsumerV1, { kind: 'action_operation' }>, 'purpose'> & {
       consumer: PluginContributionIdentityV1;
+      /** Host-admitted machine CLI consumers of this finite process operation. */
+      consumers?: readonly PluginContributionIdentityV1[];
       isCurrent(): boolean;
     }>
   | Readonly<Extract<TeamCredentialDirectMaterialConsumerV1, { kind: 'platform_operation' }> & {
@@ -249,6 +251,8 @@ export type ConnectedAccountPurposeBindingSubject =
       kind: 'operation';
       operationId: string;
       consumer: PluginContributionIdentityV1;
+      /** Host-admitted launch consumers, including declared machine CLIs. */
+      consumers?: readonly PluginContributionIdentityV1[];
       /**
        * The Session this operation materializes launch material for. Its
        * direct Team material opens only through that Session's Home-admitted
@@ -464,6 +468,12 @@ export type ConnectedAccountPurposeBindingOwner =
     /** One nonsecret observation of the exact selected binding; never acquires credentials. */
     readBindingObservation(input: Parameters<StablePluginConnectedAccountsOwner['getBinding']>[0]): Promise<PluginConnectedAccountBindingSummary | null>;
     readCredentialConfigurationRevision(account: QualifiedConnectedAccountRef, signal: AbortSignal): Promise<string | null>;
+    /** Reads an admitted Session selection without consulting defaults or acquiring credentials. */
+    readSessionPurposeBindingSnapshot(sessionId: string): Readonly<{
+      subjectId: string;
+      purposes: readonly QualifiedConnectedAccountPurposeV1[];
+      bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+    }> | null;
     /**
      * Canonical immutable launch snapshot for either a primary Agent session or one exact
      * execution-run owner. The run subject remains current only while its captured runner,
@@ -758,6 +768,7 @@ export function createConnectedAccountPurposeBindingOwner(
   type PurposeBindingState = Readonly<{
     subjectId: string;
     isSubjectCurrent(): boolean;
+    purposes: readonly QualifiedConnectedAccountPurposeV1[];
     coveredPurposeKeys: ReadonlySet<string>;
     bindingByPurposeKey: ReadonlyMap<string, QualifiedConnectedAccountPurposeBindingV1>;
     bindingSelectionByPurposeKey: ReadonlyMap<string, ConnectedAccountPurposeBindingIntentSelection>;
@@ -1013,17 +1024,20 @@ export function createConnectedAccountPurposeBindingOwner(
     ) {
       throw new Error(`${normalized.errorPrefix}_already_active`);
     }
-    const purposes = input.purposes.map((purpose) =>
-      QualifiedConnectedAccountPurposeV1Schema.parse(purpose)
-    );
+    const purposes = input.purposes.map((purpose) => {
+      const parsed = QualifiedConnectedAccountPurposeV1Schema.parse(purpose);
+      return Object.freeze({ ...parsed, consumer: Object.freeze(parsed.consumer) });
+    });
     const coveredPurposeKeys = new Set<string>();
+    const launchConsumers = (subject.kind === 'operation' || subject.kind === 'action_operation') && subject.consumers
+      ? subject.consumers.map(consumer => PluginContributionIdentityV1Schema.parse(consumer)) : null;
     for (const purpose of purposes) {
       if (
         normalized.expectedConsumer
-        && (
-          purpose.consumer.pluginId !== normalized.expectedConsumer.pluginId
-          || purpose.consumer.localId !== normalized.expectedConsumer.localId
-        )
+        && !(launchConsumers ?? [normalized.expectedConsumer]).some(consumer => (
+          purpose.consumer.pluginId === consumer.pluginId
+          && purpose.consumer.localId === consumer.localId
+        ))
       ) {
         throw new Error(`${normalized.errorPrefix}_consumer_mismatch`);
       }
@@ -1105,6 +1119,7 @@ export function createConnectedAccountPurposeBindingOwner(
     const state: PurposeBindingState = Object.freeze({
       subjectId: normalized.subjectId,
       isSubjectCurrent: normalized.isSubjectCurrent,
+      purposes: Object.freeze(purposes),
       coveredPurposeKeys,
       bindingByPurposeKey,
       bindingSelectionByPurposeKey,
@@ -1820,6 +1835,13 @@ export function createConnectedAccountPurposeBindingOwner(
           ? { directMaterialOrigins: input.directMaterialOrigins }
           : {}),
       });
+    },
+    readSessionPurposeBindingSnapshot(sessionId) {
+      const state = purposeBindingsBySubjectKey.get(sessionSubjectKey(sessionId));
+      if (!state || !state.isSubjectCurrent()) return null;
+      return Object.freeze({ subjectId: state.subjectId,
+        purposes: state.purposes,
+        bindings: state.bindings });
     },
     resolveBindingIntentSelection,
     async resolveBindingIntent(input) {

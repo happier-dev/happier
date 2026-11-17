@@ -9,6 +9,9 @@ import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actio
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from '@/terminal/pty/provider';
 import { applyMachineSetup } from './applyMachineSetup';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { createActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
+import { prepareFiniteConnectedAccountProcessEnvironment } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 import { createBoundMachineSetupTarget, prepareBoundMachineSetupRecipePlans } from './boundMachineSetup';
 import { ActionOperationDomainRefV1Schema, ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
@@ -81,6 +84,30 @@ describe('applyMachineSetup', () => {
     };
     return { home, spawned, updates, input, nativeRequests, controller, stopped: () => stopped };
   }
+  it('refuses broker-only tool credentials before spawning a setup script', async () => {
+    const f = await fixture(true);
+    const consumer = { pluginId: 'example.github', localId: 'gh' };
+    const service = { pluginId: 'example.github', localId: 'account' };
+    const purpose = { consumer, purpose: 'cli' };
+    const account = createForegroundPurposeOwnerFixture({ consumer, service, purpose: 'cli',
+      materializeAccount: async () => { throw new Error('Brokered selection must not acquire direct credentials'); } });
+    await account.store.update(() => ({ v: 1, bindings: [], teamResourceSelections: [{ purpose, teamId: 'team',
+      selection: { source: 'team_resource', resourceId: 'resource', deliveryMode: 'brokered' } }] }));
+    const produceProcessEnvironment = async (environment: Readonly<Record<string, string>>, signal: AbortSignal) => {
+      const admitted = await prepareFiniteConnectedAccountProcessEnvironment({
+        runtime: { ...account.owner, owner: account.owner, admitActionPurposeBindings: createActionPurposeBindingAdmission({ activatePurposeBindings: account.owner.activatePurposeBindings }) },
+        declarations: [{ consumer, declarations: [], brokeredUnavailableCode: 'github_cli_team_brokered_unavailable', snapshot: {
+          purposes: [purpose], authorizedPurposes: [{ purpose, serviceRefs: [service] }], fileMaterializationPurposes: [],
+          environmentUses: [{ purpose, serviceRefs: [service], environmentKey: 'GH_TOKEN' }],
+        } }], subject: { kind: 'action_operation', operationId: 'setup-operation', actionId: 'machines.setup.apply', pluginVersion: '0.3.0', isCurrent: () => true }, signal });
+      try { return await admitted.produce(environment, signal); } finally { admitted.dispose(); }
+    };
+    await expect(applyMachineSetup({ ...f.input, produceProcessEnvironment,
+      setup: { scripts: [{ body: 'gh auth status', affects: 'none' }] }, isCurrent: async () => true }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'github_cli_team_brokered_unavailable',
+        details: { details: { reason: 'github_cli_team_brokered_unavailable' } } });
+    expect(f.spawned).toHaveLength(0);
+  });
   it('runs a bound preset through transport IO without a target terminal, preserving typed failure and retry', async () => {
     const f = await fixture(true);
     const requests: Array<{ command: string; args: readonly string[] }> = [];

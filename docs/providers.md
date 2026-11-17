@@ -101,6 +101,24 @@ decided by GitHub's materializer, while native acceptance determines usability.
 SCM identity and Copilot refusal remain separate outcomes. Copilot's ChatGPT and
 Provider choices retain their own explicit routes. Neither source adds a gateway
 family, secret store, native credential-file writer or independent quota scheduler.
+
+In 0.3 development, machine CLIs declare authentication on their existing
+`systemTools` contribution and use the shared `machines.agents.signIn.*` Actions.
+GitHub CLI (`gh`) and 1Password CLI (`op`) declare their native status/login
+commands there. Native sign-in opens the existing machine terminal; its command
+environment excludes the tool's declared token/session overrides. GitHub native
+login retains `GH_HOST` and lets `gh` choose its configured host; native status
+uses `gh auth status` across its known hosts. Connected sign-in uses the existing
+Connected Account coordinator.
+
+GitHub CLI's `github.cli` purpose accepts the selected personal or directly
+delivered Team GitHub account as process-scoped `GH_TOKEN`. Its Git credential
+helper is scoped to github.com, resets that host's inherited helper chain, and
+preserves other inherited Git configuration. No GitHub token or Git credential
+file is written. Brokered Team delivery returns
+`github_cli_team_brokered_unavailable`; native login is not a fallback for that
+selection. With no bound account, native machine authentication remains in use.
+
 Cursor subscription usage reads the DashboardService current-period usage RPC
 with the stored OAuth access token through the existing daemon quota coordinator.
 API-key mode remains unavailable. This RPC is undocumented and may change without

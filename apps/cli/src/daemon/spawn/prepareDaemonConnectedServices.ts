@@ -319,6 +319,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                                     kind: 'operation',
                                     operationId: randomUUID(),
                                     consumer,
+                                    consumers: snapshot.purposes.map(purpose => purpose.consumer),
                                     // The Session this launch materializes for:
                                     // its direct Team material opens only
                                     // through that Session's Home-admitted

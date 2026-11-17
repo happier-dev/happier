@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AGENT_SIGN_IN_PREPARE_RPC_METHOD } from '../../../../daemon/agentSignIn.js';
 
 import beforeEffectiveAccess from './fixtures/routePolicyV1.effective-access-before.json';
 
@@ -24,6 +25,31 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('retains each native sign-in root on only its declared terminal phases', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'sign-in-root', binding: {
+      accountId: 'member', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'machines.agents.signIn.start', requestId: 'start', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    expect(resolveMachineRpcRoutePolicy(AGENT_SIGN_IN_PREPARE_RPC_METHOD).sharedMachineAccess).toBe('use');
+    for (const method of [AGENT_SIGN_IN_PREPARE_RPC_METHOD, RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_CLOSE]) {
+      expect(resolve(method, binding)).toBe(binding.actionId);
+      expect(resolve(method, binding, { machineId: 'machine', installationId: 'other' })).not.toBe(binding.actionId);
+    }
+    const cancel = { ...binding, actionId: 'machines.agents.signIn.cancel' };
+    expect(resolve(RPC_METHODS.DAEMON_TERMINAL_LIST, cancel)).toBe(cancel.actionId);
+    expect(resolve(RPC_METHODS.DAEMON_TERMINAL_CLOSE, cancel)).toBe(cancel.actionId);
+    expect(resolve(RPC_METHODS.DAEMON_TERMINAL_ENSURE, cancel)).not.toBe(cancel.actionId);
+    expect(resolve(RPC_METHODS.DAEMON_TERMINAL_INPUT, binding)).not.toBe(binding.actionId);
+    const restart = { ...binding, actionId: 'machines.agents.signIn.restart' };
+    for (const method of [AGENT_SIGN_IN_PREPARE_RPC_METHOD, RPC_METHODS.DAEMON_TERMINAL_LIST,
+      RPC_METHODS.DAEMON_TERMINAL_CLOSE, RPC_METHODS.DAEMON_TERMINAL_ENSURE]) {
+      expect(resolve(method, restart)).toBe(restart.actionId);
+    }
+    expect(resolve(AGENT_SIGN_IN_PREPARE_RPC_METHOD, { ...binding, target: { kind: 'machine', machineId: 'other' } })).toBeNull();
+  });
   it.each(['execution.run.start', 'execution.run.ensure', 'execution.run.ensure_or_start'] as const)(
     'retains %s only for passive preflight on its installed Machine', async actionId => {
       const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');

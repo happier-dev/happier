@@ -15,6 +15,9 @@ import type {
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
 import { join } from 'node:path';
 import type { AgentLaunchMaterialization, AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { appendGitConfigEnvironment } from '@/scm/gitConfigEnvironment';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 
 type CredentialFileScope = Parameters<ManagedServiceCredentialFileOwner['materialize']>[0]['scope'];
 
@@ -55,6 +58,7 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
   credentialFileOwner?: ManagedServiceCredentialFileOwner | null;
   snapshot: AgentSpawnQualifiedPurposeBindingSnapshot;
   exactPurposeBindingSubjectId?: string;
+  processEnvironment?: Readonly<Record<string, string | undefined>>;
   sessionId?: string;
   signal: AbortSignal;
   agentLaunchTarget?: AgentLaunchMaterializationTarget;
@@ -139,6 +143,15 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
       continue;
     }
     materializedEnvironment[use.environmentKey] = value;
+    if (use.gitCredentialHelper) {
+      const helper = use.gitCredentialHelper;
+      // Reset the inherited helper chain at this host before adding gh. Git
+      // must never hand this process credential to an ambient store helper.
+      const key = `credential.https://${helper.host}.helper`;
+      const config = appendGitConfigEnvironment({ ...(input.processEnvironment ?? sessionProcessEnvironment()), ...materializedEnvironment },
+        [[key, ''], [key, `!${[helper.executable, ...helper.args].map(safeBashSingleQuote).join(' ')}`]]);
+      if (config) Object.assign(materializedEnvironment, config);
+    }
     producedPurposeKeys.add(qualifiedPurposeKey(use.purpose));
   }
 

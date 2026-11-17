@@ -16,6 +16,20 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 
 import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingOwner } from './ConnectedAccountPurposeBindingOwner';
 
+describe('machine CLI purpose publication', () => {
+  it('retains declared tool purposes and removes their selection scope when the tool is removed', () => {
+    const consumer = { pluginId: 'happier.scm.forge.github', localId: 'gh' };
+    const registry = { agents: [], activationTargets: [], systemTools: [{ pluginId: consumer.pluginId,
+      definition: { id: consumer.localId, title: 'GitHub CLI', executableNames: ['gh'],
+        connectedAccountLaunch: { purpose: 'github.cli', service: 'github-account', environmentKey: 'GH_TOKEN' } } }] };
+    expect(deriveRegistryConnectedAccountPurposeAuthorizations(registry)).toEqual([{ consumer,
+      authorizedPurposes: [{ purpose: { consumer, purpose: 'github.cli' },
+        serviceRefs: [{ pluginId: consumer.pluginId, localId: 'github-account' }] }] }]);
+    expect(deriveRegistryConnectedAccountPurposeReconciliationScopes(registry, { ...registry, systemTools: [] }))
+      .toEqual([{ consumer, authorizedPurposes: [] }]);
+  });
+});
+
 import {
   deriveRegistryConnectedAccountPurposeAuthorizations,
   deriveRegistryConnectedAccountPurposeReconciliationScopes,

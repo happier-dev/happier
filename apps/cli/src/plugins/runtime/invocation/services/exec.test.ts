@@ -1,5 +1,7 @@
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { describe, expect, it, vi } from 'vitest';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { materializeSessionConnectedAccountProcessEnvironment } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
 import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { createServer } from 'node:http';
@@ -855,6 +857,36 @@ describe('createStablePluginExecService', () => {
             await expect(produceProjectLaunchEnvironmentForHost({
                 cwd: root, env: {}, projectLaunch, signal: new AbortController().signal, assertCurrent: () => undefined,
             })).rejects.toBeInstanceOf(ProjectNativeToolchainUncertainError);
+        });
+    });
+    it('applies private process credentials after native environment replacement, only for an actual launch', async () => {
+        await withTempDir('happier process credential environment ', async root => {
+            await writeFile(join(root, 'mise.toml'), '[env]\nNATIVE = "active"\n');
+            let acquisitions = 0;
+            const consumer = { pluginId: 'example.github', localId: 'gh' };
+            const service = { pluginId: 'example.github', localId: 'account' };
+            const account = createForegroundPurposeOwnerFixture({ consumer, service, purpose: 'cli',
+                materializeAccount: async () => { acquisitions++; return { kind: 'environment', env: { GH_TOKEN: 'bound-account' } }; } });
+            const lease = account.owner.activateSessionPurposeBindings({ sessionId: 'exec', purposes: [account.purpose], bindings: [account.binding] });
+            const projectLaunch = { status: 'ready' as const, reviewedEffectDigest: 'process-current-effect',
+                produceProcessEnvironment: async (environment: Readonly<Record<string, string>>, signal: AbortSignal) =>
+                    await materializeSessionConnectedAccountProcessEnvironment({ runtime: { ...account.owner, owner: account.owner },
+                        declarations: [{ consumer, declarations: [], snapshot: { purposes: [account.purpose],
+                            authorizedPurposes: [{ purpose: account.purpose, serviceRefs: [service] }], fileMaterializationPurposes: [],
+                            environmentUses: [{ purpose: account.purpose, serviceRefs: [service], environmentKey: 'GH_TOKEN' }] } }],
+                        sessionId: 'exec', environment, signal }),
+                toolchain: { root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
+                    platform: 'linux' as const, io: { resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
+                        run: async () => ({ exitCode: 0, stdout: 'NATIVE=active\0' }) } },
+            };
+            const input = { cwd: root, env: { GH_TOKEN: 'ambient' }, projectLaunch,
+                signal: new AbortController().signal, assertCurrent: () => undefined };
+            expect(await produceProjectLaunchEnvironmentForHost(input)).toEqual({ NATIVE: 'active' });
+            expect(acquisitions).toBe(0);
+            const launch = await authorizeResolvedProjectExecLaunchForHost({ ...input,
+                launch: { command: process.execPath, args: [], cwd: root, env: input.env } });
+            try { expect(launch.env).toMatchObject({ NATIVE: 'active', GH_TOKEN: 'bound-account' }); expect(acquisitions).toBe(1); }
+            finally { await launch.release(); lease.dispose(); }
         });
     });
     it('prepares the admitted complete environment without inventing an executable for environment-only setup', async () => {

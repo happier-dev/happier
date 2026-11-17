@@ -118,6 +118,7 @@ export type RequesterSessionRuntimeContext = Readonly<{
   qualifiedConnectedAccountApi: ConnectedServiceQualifiedAuthGroupApi;
   qualifiedConnectedAccountEstablishedRuntimeOwner: QualifiedConnectedAccountEstablishedRuntimeOwner;
   connectedAccountsOwner: StablePluginConnectedAccountsOwner;
+  readSessionPurposeBindingSnapshot: import('../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountPurposeBindingOwner['readSessionPurposeBindingSnapshot'];
   createManagedProviderAccountAuthority(operationAuthority: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority['operationAuthority']): import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority;
   resolveCurrentRequestAuthBinding: DaemonConnectedAccountPurposeBindingRuntime['resolveCurrentRequestAuthBinding'];
   materializeRequestAuthBearer: DaemonConnectedAccountPurposeBindingRuntime['materializeRequestAuthBearer'];

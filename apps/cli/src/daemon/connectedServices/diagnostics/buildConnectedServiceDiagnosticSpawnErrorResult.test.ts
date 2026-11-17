@@ -49,6 +49,23 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
     },
   );
 
+  it('preserves a declared launch refusal with a canonical credential cause without exposing plugin details', () => {
+    const code = 'github_cli_team_brokered_unavailable';
+    const failureCause = { code: 'credential_unavailable', phase: 'authentication',
+      failureReason: 'authentication_required', retryable: false } as const;
+    const result = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'pi',
+      error: new PluginError({ code, message: 'private provider text', retryable: false,
+        details: { failureCause, privateCredential: 'must-not-leak' } }),
+    });
+    expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorDetail: { kind: 'launch_error', code, message: expect.any(String), failureCause } });
+    expect(JSON.stringify(result)).not.toContain('private provider text');
+    expect(JSON.stringify(result)).not.toContain('must-not-leak');
+    expect(buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'pi', error: new PluginError({
+      code: 'unclassified_plugin_error', message: 'private provider text', retryable: false,
+    }) })).toBeNull();
+  });
+
   it('normalizes historical materialization failures to generic reconnect diagnostics on spawn failure', () => {
     const result = buildConnectedServiceMaterializationSpawnErrorResult({
       agentId: 'claude',

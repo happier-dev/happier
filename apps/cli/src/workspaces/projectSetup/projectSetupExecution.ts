@@ -1,5 +1,7 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -44,6 +46,7 @@ export type ProjectSetupExecutionInput = Readonly<{
     terminalSessions: Pick<TerminalPtySessionManager, 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
     environmentIo: ProjectNativeToolchainIoForHost;
     hostEnvironment?: ProcessEnvInput;
+    produceProcessEnvironment?: import('@/daemon/connectedServices/materialize/processConnectedAccountEnvironment').ConnectedAccountProcessEnvironmentProducer;
     agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     nativeExecutionIdentity?: TerminalPtyEnsureInput['nativeExecutionIdentity'];
     /** Issued only by the admitted person terminal owner, never an Action operand. */
@@ -216,7 +219,7 @@ export async function executeProjectFiniteProcess(input: ProjectFiniteProcessInp
     });
 }
 
-export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecutionInput, 'preparation' | 'environmentIo' | 'hostEnvironment' | 'platform' | 'agentIsolation' | 'executionKind' | 'requesterIdentity' | 'beforeNativeEffect'> &
+export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecutionInput, 'preparation' | 'environmentIo' | 'hostEnvironment' | 'platform' | 'agentIsolation' | 'executionKind' | 'requesterIdentity' | 'beforeNativeEffect' | 'produceProcessEnvironment'> &
     Readonly<{ operation: Pick<ProjectSetupOperationContext, 'signal'> }>, plan: PreparedProjectSetupPlan, command?: PreparedProjectSetupCommand,
     signal = input.preparation.signal ?? input.operation.signal) {
     const nativeCommandToolchain = command?.kind === 'native' ? command.resolution.nativeCommandToolchain
@@ -247,6 +250,7 @@ export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecu
                 requirements: plan.manifest?.environmentVariables ?? [], invocationEnvironment: command.resolution.environmentOverlay,
                 platform: input.platform }).environment
             : projectBaseEnvironment(input, plan),
+        ...(input.produceProcessEnvironment ? { produceProcessEnvironment: input.produceProcessEnvironment } : {}),
         toolchain: { selection: plan.toolchain, root: plan.workspace.rootPath,
             platform: input.platform ?? process.platform, io: environmentIo,
             ...(nativeCommandToolchain ? { nativeCommandToolchain } : {}),
@@ -378,7 +382,9 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
             input.operation.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code } });
             return failure(code);
         }
-        return failure(signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && typeof error.code === 'string'
+        if (signal.aborted) return failure('cancelled');
+        if (isPluginError(error)) return finish({ ok: false, ...normalizeActionExecutorThrownError(error, 'projects.prepare') });
+        return failure(error instanceof Error && 'code' in error && typeof error.code === 'string'
             ? error.code : 'project_setup_launch_refused');
     };
     const originalEnvironment = Object.freeze({ ...(input.preparation.originalEnvironment ?? admittedInput.hostEnvironment) });

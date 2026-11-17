@@ -647,10 +647,23 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     if (!executable || executable.id === undefined) return [];
     return [{ targetFamily: executable.kind === 'managedDependency' ? 'managedDependencies' : 'systemTools', reference: executable.id, path: ['transport', 'executable', 'id'] }];
   }
+  if (family === 'systemTools') {
+    const authentication = value.authentication && typeof value.authentication === 'object'
+      ? value.authentication as Readonly<Record<string, unknown>> : null;
+    const connectedServices = Array.isArray(authentication?.connectedServices) ? authentication.connectedServices : [];
+    const launch = value.connectedAccountLaunch && typeof value.connectedAccountLaunch === 'object'
+      ? value.connectedAccountLaunch as Readonly<Record<string, unknown>> : null;
+    return [
+      ...connectedServices.map((reference, index) => ({ targetFamily: 'connectedAccountDescriptors', allowQualifiedSamePlugin: true, reference,
+        path: ['authentication', 'connectedServices', index] })),
+      ...(launch?.service === undefined ? [] : [{ targetFamily: 'connectedAccountDescriptors', allowQualifiedSamePlugin: true, reference: launch.service,
+        path: ['connectedAccountLaunch', 'service'] }]),
+    ];
+  }
   if (family === 'agents') {
     const accounts = Array.isArray(value.connectedAccounts) ? value.connectedAccounts : [];
     const accountReferences = accounts.flatMap((account, index) => account && typeof account === 'object'
-      ? [{ targetFamily: 'connectedAccountDescriptors', reference: (account as Record<string, unknown>).service, path: ['connectedAccounts', index, 'service'],
+      ? [{ targetFamily: 'connectedAccountDescriptors', allowQualifiedSamePlugin: true, reference: (account as Record<string, unknown>).service, path: ['connectedAccounts', index, 'service'],
           ...((account as Readonly<Record<string, unknown>>).required === false
             ? { optionalEntryPath: ['connectedAccounts', index] } : {}) }]
       : []);
@@ -747,7 +760,7 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     ];
   }
   if (family === 'scmHostingProviders' && value.authService !== undefined) {
-    return [{ targetFamily: 'connectedAccountDescriptors', reference: value.authService, path: ['authService'] }];
+    return [{ targetFamily: 'connectedAccountDescriptors', allowQualifiedSamePlugin: true, reference: value.authService, path: ['authService'] }];
   }
   if (family === 'ui.renderers') {
     if (value.kind === 'reactNative') return [{ targetFamily: 'generated.uiArtifacts', reference: value.artifact, path: ['artifact'] }];

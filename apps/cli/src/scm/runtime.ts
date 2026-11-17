@@ -1,4 +1,5 @@
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { appendGitConfigEnvironment } from './gitConfigEnvironment';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isAbsolute, relative, sep } from 'path';
 import path from 'node:path';
@@ -317,12 +318,10 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
 function withEmptySafeDirectory(input: ScmCommandInput): ScmCommandInput {
     if (path.basename(input.bin).replace(/\.exe$/i, '') !== 'git') return input;
     const environment = { ...sessionProcessEnvironment(), ...input.env };
-    const raw = environment.GIT_CONFIG_COUNT ?? '';
-    const count = raw === '' ? 0 : /^[ \t\n\r\f\v]*[+-]?\d+$/.test(raw) ? Number(raw) : NaN;
+    const config = appendGitConfigEnvironment(environment, [['safe.directory', '']]);
     // A malformed count is left for Git to report, as before.
-    if (!Number.isSafeInteger(count) || count < 0) return input;
-    return { ...input, env: { ...input.env, GIT_CONFIG_COUNT: String(count + 1),
-        [`GIT_CONFIG_KEY_${count}`]: 'safe.directory', [`GIT_CONFIG_VALUE_${count}`]: '' } };
+    if (!config) return input;
+    return { ...input, env: { ...input.env, ...config } };
 }
 
 function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {

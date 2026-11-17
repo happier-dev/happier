@@ -19,15 +19,18 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
   requesterAccount: RequesterAccountActionContext;
   /** Explicit relationship custody; finite callers keep their original Account lifetime. */
   retainedCustody?: RetainedRequesterAccountCustody;
-  requesterIdentity: Exclude<HostRequesterExecutionIdentity, { kind: 'unknown' }> & { homeServerIdentityId: string };
+  requesterIdentity?: Exclude<HostRequesterExecutionIdentity, { kind: 'unknown' }> & { homeServerIdentityId: string };
   reloadController: PluginReloadController;
   signal?: AbortSignal;
 }>) {
   input.signal?.throwIfAborted();
   const account = input.requesterAccount;
   const operationContext = input.retainedCustody?.savedSecretOperationContext ?? account.savedSecretOperationContext;
-  const selected = input.requesterIdentity;
   const binding = account.authorization.binding;
+  // Credential-only finite processes consume the already admitted Action
+  // author. Native identity callers additionally supply their selected OS fact.
+  const selected = input.requesterIdentity ?? { homeServerIdentityId: binding.serverIdentityId,
+    requester: { accountId: binding.accountId, machineId: binding.machineId, installationId: binding.installationId } };
   const matches = () => readRequesterAccountActionContext(account.authorization) === account
     && binding.accountId === selected.requester.accountId
     && binding.serverIdentityId === selected.homeServerIdentityId

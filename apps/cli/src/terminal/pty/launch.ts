@@ -4,6 +4,7 @@ import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveAgentCliLaunchSpecForRuntime } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { resolveTerminalShell } from './shells';
+import { readSystemToolAuthentication, systemToolAuthenticationEnvironment, createSystemToolAuthenticationResolver } from '@/capabilities/cliAuth/systemToolAuthentication';
 
 export type TerminalLaunchProcess = Readonly<{
   file: string;
@@ -20,14 +21,14 @@ export class AgentLoginLaunchError extends Error {
   }
 }
 
-export function resolveDaemonTerminalLaunch(
+export async function resolveDaemonTerminalLaunch(
   launchRequest: DaemonTerminalLaunchIntent,
   deps: Readonly<{
     buildLaunchSpec?: typeof buildHappyCliSubprocessLaunchSpec;
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
   }> = {},
-): TerminalLaunchProcess {
+): Promise<TerminalLaunchProcess> {
   const buildLaunchSpec = deps.buildLaunchSpec ?? buildHappyCliSubprocessLaunchSpec;
   switch (launchRequest.kind) {
     case 'shell_command': {
@@ -48,6 +49,19 @@ export function resolveDaemonTerminalLaunch(
       // Generic shell resolution has no service generation or native custody.
       throw new Error('service_shell_requires_native_admission');
     case 'agent_login': {
+      const tool = readSystemToolAuthentication(launchRequest.agentId);
+      if (tool) {
+        const declaration = tool.authentication.loginLaunches.find(candidate => candidate.kind === (launchRequest.launchId ?? 'primary'));
+        if (!declaration) throw new AgentLoginLaunchError('agent_login_unsupported');
+        const env = systemToolAuthenticationEnvironment(tool, deps.env ?? process.env);
+        try {
+          const resolved = await createSystemToolAuthenticationResolver(tool, env, deps.platform).resolve({
+            toolId: tool.tool.definition.id, purpose: 'Sign this machine CLI in',
+          });
+          return { file: resolved.launch.executablePath, args: [...resolved.launch.args, ...declaration.args],
+            env: { ...env, ...resolved.launch.env } };
+        } catch { throw new AgentLoginLaunchError('agent_cli_missing'); }
+      }
       const agent = readAgentCatalogSnapshot().agentDefinitionsById.get(launchRequest.agentId);
       const auth = agent?.cliMetadata?.auth;
       const declaration = auth?.loginLaunches.find((candidate) => candidate.kind === (launchRequest.launchId ?? 'primary'));

@@ -359,6 +359,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
       if (!operationId || cancellationSignal.aborted) return fail(cancellationSignal.aborted ? 'cancelled' : 'admission_unavailable');
       const custody = createProjectNativeInvocationCustody(operation);
       let secrets: Awaited<ReturnType<typeof prepareMachineSetupSecretEnvironment>> | undefined;
+      let processCredentials: Promise<Awaited<ReturnType<ApiMachineClient['prepareConnectedAccountProcessEnvironment']>>> | undefined;
       let creation: Readonly<{ managedId: string; preset: Readonly<{ id: string; revision: number }> }> | undefined;
       let recipeLease: PluginRuntimeRegistryLease | undefined;
       const acquireRecipes = async () => recipeLease ??= await (
@@ -528,6 +529,12 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         }
         const completedScripts = new Set<number>();
         const nativeInput = { homeId: input.homeId, machineId: input.machineId,
+          produceProcessEnvironment: async (environment: Readonly<Record<string, string>>, processSignal: AbortSignal) => {
+            processCredentials ??= params.apiMachine.prepareConnectedAccountProcessEnvironment({
+              authorization, requesterAccountId, ...(context.sessionActionOrigin?.caller.sessionId ? { sessionId: context.sessionActionOrigin.caller.sessionId } : {}),
+              operationId, actionId: mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply', signal: cancellationSignal });
+            return await (await processCredentials).produce(environment, processSignal);
+          },
           ...(creation ? { preset: creation.preset } : {}), requesterAccountId, userHomeDirectory: homedir(),
           ...(elevation ? { elevation } : {}), operation, signal: cancellationSignal, terminalSessions,
           settleNative: () => custody.release(),
@@ -633,12 +640,15 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         if (reportedRunning) await report('failed', code);
         return { ok: false, ...normalizeActionExecutorThrownError(error, phase), errorCode: code };
       } finally {
-        try { await recipeLease?.release(); }
+        try { await processCredentials?.then(prepared => prepared.dispose(), () => undefined); }
         finally {
-          custody.dispose(); secrets?.dispose();
-          if (nativeStarted) {
-            try { await params.apiMachine.refreshMachineSetupUpdates(); }
-            catch (error) { logger.warn('[Machine setup] Updates observation refresh failed after settlement', error); }
+          try { await recipeLease?.release(); }
+          finally {
+            custody.dispose(); secrets?.dispose();
+            if (nativeStarted) {
+              try { await params.apiMachine.refreshMachineSetupUpdates(); }
+              catch (error) { logger.warn('[Machine setup] Updates observation refresh failed after settlement', error); }
+            }
           }
         }
       }

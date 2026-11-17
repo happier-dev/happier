@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js';
 
 export type MachineConnectionActionInputById = {
     readonly "machines.terminal.open": {
@@ -383,6 +384,27 @@ export type MachineConnectionActionResultById = {
         ok: true;
         terminalId: string;
         reused: boolean;
+    } | {
+        ok: false;
+        errorCode: string;
+        error: string;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
+        details?: unknown;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     };
     readonly "machines.terminal.list": null | {
         ok: false;
@@ -394,6 +416,27 @@ export type MachineConnectionActionResultById = {
             nativeErrno?: number | undefined;
             cwd?: string | undefined;
         };
+    } | {
+        ok: false;
+        errorCode: string;
+        error: string;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
+        details?: unknown;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: true;
         terminals: {
@@ -424,6 +467,27 @@ export type MachineConnectionActionResultById = {
                 nativeErrno?: number | undefined;
                 cwd?: string | undefined;
             };
+        } | {
+            ok: false;
+            errorCode: string;
+            error: string;
+            requestId?: string | undefined;
+            effectAttempted?: boolean | undefined;
+            details?: unknown;
+            failureCause?: ActionFailureCauseV1 | undefined;
+            goalControlFailure?: undefined | {
+                phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+            };
+            automationNotices?: ({
+                code: 'action_automation_skipped';
+                reason: string;
+                automationId: string;
+                triggerId: string;
+                workflowId: string;
+            } | {
+                code: 'action_automations_not_checked';
+                reason: string;
+            })[] | undefined;
         } | {
             ok: true;
             cwd: string;
@@ -498,6 +562,27 @@ export type MachineConnectionActionResultById = {
     } | {
         [x: string]: unknown;
         ok: true;
+    } | {
+        ok: false;
+        errorCode: string;
+        error: string;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
+        details?: unknown;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     };
     readonly "machines.terminal.restart": {
         [x: string]: unknown;
@@ -515,6 +600,27 @@ export type MachineConnectionActionResultById = {
         ok: true;
         terminalId: string;
         reused: boolean;
+    } | {
+        ok: false;
+        errorCode: string;
+        error: string;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
+        details?: unknown;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     };
     readonly "machines.capabilities.detect": {
         status: 'completed';

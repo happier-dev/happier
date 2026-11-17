@@ -14,8 +14,8 @@ import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projec
 import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectDefinitionActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
-import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignInMethods.js';
+import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isWorkspaceSyncRelationshipWriteActionId, readMachineAgentSignInOperationV1, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
+import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignInMethods.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
 
@@ -34,6 +34,7 @@ export type MachineRpcMethod =
   | typeof CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD
   | typeof CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD
   | typeof AGENT_SIGN_IN_STATUS_RPC_METHOD
+  | typeof AGENT_SIGN_IN_PREPARE_RPC_METHOD
   | (typeof WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS)[keyof typeof WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS];
 
 export type EphemeralRunnerMachineRpcAuthority =
@@ -600,6 +601,8 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   { ...serverRequired(RPC_METHODS.UI_ACTION_CHILD_EXECUTE, 'auth',
     'Client Action children retain their admitted parent Session and server-stamped requester Account; they do not act as the Machine custodian.', 'use'),
     rpcClassification: 'internal_only'  } satisfies MachineRpcRoutePolicyV1,
+  serverRequired(AGENT_SIGN_IN_PREPARE_RPC_METHOD, 'auth',
+    'Shared Machine Use prepares a declared native login command; the terminal owner decides its execution placement.', 'use'),
   actionSpecServerRequired(AGENT_SIGN_IN_STATUS_RPC_METHOD, 'auth',
     'Shared Machine Use reads native sign-in state; the daemon projects identity from the admitted role before encrypting its reply.',
     'machines.agents.signIn.status', 'use'),
@@ -1116,6 +1119,7 @@ function collectRegisteredMachineRpcMethods(): readonly string[] {
     WORKFLOW_RUN_START_METHOD,
     ACTION_INVOKE_ACTION_ID_V1,
     AGENT_SIGN_IN_STATUS_RPC_METHOD,
+    AGENT_SIGN_IN_PREPARE_RPC_METHOD,
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
     ...Object.values(ACTION_OPERATION_RPC_METHODS_V1), ...Object.values(ACTION_OPERATION_RPC_METHODS_V2),
@@ -1142,6 +1146,15 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
   reviewedChild?: ReviewedActionChildHttpProofV1): string | null {
+  const signIn = binding && readMachineAgentSignInOperationV1(binding.actionId);
+  if (binding && signIn) {
+    const phase = method === RPC_METHODS.DAEMON_TERMINAL_CLOSE
+      || signIn !== 'start' && method === RPC_METHODS.DAEMON_TERMINAL_LIST
+      || signIn !== 'cancel' && (method === AGENT_SIGN_IN_PREPARE_RPC_METHOD || method === RPC_METHODS.DAEMON_TERMINAL_ENSURE);
+    return phase && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
   const creation = readSessionActionChildCreationRpcEffectV1(method, binding, selectedTarget, reviewedChild);
   if (creation !== null) return creation;
   if (method === RPC_METHODS.CAPABILITIES_DESCRIBE && binding && isExecutionRunStartActionIdV1(binding.actionId)) {

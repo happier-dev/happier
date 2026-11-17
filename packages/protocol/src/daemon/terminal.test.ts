@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema } from './terminal';
+import { DaemonTerminalEnsureRequestSchema, DaemonTerminalEnsureResponseSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema } from './terminal';
 import { MachineTerminalOpenInputSchema } from '../actions/specs/machineTerminal';
 
 describe('daemon terminal listing V1', () => {
+  it('preserves the owning credential refusal and its reason at terminal receivers', () => {
+    const refusal = { ok: false, errorCode: 'github_cli_team_brokered_unavailable', error: 'Direct credentials are unavailable',
+      details: { reason: 'github_cli_team_brokered_unavailable' } };
+    expect(DaemonTerminalEnsureResponseSchema.parse(refusal)).toEqual(refusal);
+    expect(DaemonTerminalListResponseV1Schema.parse(refusal)).toEqual(refusal);
+  });
   it('admits the read-only projection and rejects unknown authority or process fields', () => {
     expect(DaemonTerminalListRequestV1Schema.parse({})).toEqual({});
     expect(DaemonTerminalListRequestV1Schema.safeParse({ sessionId: 'other' }).success).toBe(false);

@@ -19,17 +19,21 @@ function isAllowedGithubOrigin(origin: string): boolean {
 /** Stored credentials use the host's existing mode-aware custody in either realm. */
 export const materializeGithubCredential: NonNullable<ConnectedAccountPortableRuntime['materialize']> = async (request, context, options) => {
   if (request.kind === 'environment') {
-    if (request.keys.length !== 1 || request.keys[0] !== 'COPILOT_GITHUB_TOKEN') {
-      throw new PluginError({ code: 'github_copilot_environment_unsupported', message: 'GitHub supports only the declared Copilot token environment destination.' });
+    const key = request.keys[0];
+    if (request.keys.length !== 1 || (key !== 'COPILOT_GITHUB_TOKEN' && key !== 'GH_TOKEN')) {
+      throw new PluginError({ code: 'github_copilot_environment_unsupported', message: 'GitHub supports only its declared CLI and Copilot token environment destinations.' });
     }
     const token = (await context.credentials.get(GITHUB_TOKEN_CREDENTIAL_KEY, options))?.trim() ?? '';
-    if (!isGithubCopilotCompatibleToken(token)) {
+    if (key === 'GH_TOKEN' && !token) {
+      throw new PluginError({ code: 'credential_unavailable', message: 'GitHub connected-account credentials are unavailable.' });
+    }
+    if (key === 'COPILOT_GITHUB_TOKEN' && !isGithubCopilotCompatibleToken(token)) {
       throw new PluginError({ code: 'github_copilot_token_unsupported', message: 'Select a supported fine-grained, OAuth, or GitHub App user token for Copilot.' });
     }
-    return { kind: 'environment', env: { COPILOT_GITHUB_TOKEN: token } };
+    return { kind: 'environment', env: { [key]: token } };
   }
   if (request.kind !== 'httpHeaders') {
-    throw new Error('GitHub connected accounts support HTTP headers and the declared Copilot environment destination');
+    throw new Error('GitHub connected accounts support HTTP headers and their declared environment destinations');
   }
   if (!isAllowedGithubOrigin(request.origin)) {
     throw new Error('GitHub connected accounts cannot materialize credentials for this origin');

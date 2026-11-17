@@ -109,6 +109,8 @@ export type HostProjectNativeLaunchAdmission =
         reviewedEffectDigest: string;
         /** Complete private input from the Project composition owner, before native replacement. */
         launchEnvironment?: Readonly<Record<string, string>>;
+        /** Captured finite/Session purpose admission; invoked once at the actual process boundary. */
+        produceProcessEnvironment?: import('@/daemon/connectedServices/materialize/processConnectedAccountEnvironment').ConnectedAccountProcessEnvironmentProducer;
         verifyCurrent?: () => Promise<void>;
         toolchain: Omit<ProjectNativeToolchainInput, 'cwd' | 'env' | 'signal' | 'pluginAdapter'>;
         nativeAdapter?: Omit<ProjectNativePluginAdapterInput, 'launch'>;
@@ -943,6 +945,11 @@ async function produceHostProjectEnvironment(input: HostProjectEnvironmentInput,
         const secrets = resolveProjectSecretReferenceEnvironment(admitted.secretReferences);
         secretValues = Object.values(secrets).filter(value => value.length > 0);
         environment = { ...environment, ...secrets };
+    }
+    if (launch && admitted.produceProcessEnvironment) {
+        const produced = await admitted.produceProcessEnvironment(environment, input.signal);
+        secretValues = [...secretValues, ...produced.secretValues];
+        environment = produced.environment;
     }
     assertCurrent();
     return { ...native, env: Object.freeze({ ...environment }), secretValues };

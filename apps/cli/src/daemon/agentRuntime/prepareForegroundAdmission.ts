@@ -1025,6 +1025,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 kind: 'operation',
                 operationId: request.attemptId,
                 consumer: snapshot.purposes[0]!.consumer,
+                consumers: snapshot.purposes.map(purpose => purpose.consumer),
                 ...(request.existingSessionId ? { sessionId: request.existingSessionId } : {}),
                 isCurrent: () => true,
               },
@@ -1470,6 +1471,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   credentialFileOwner:
                     lease.registry.resolveManagedServiceCredentialFileOwner?.(),
                   snapshot: sessionPurposeBindingSnapshot,
+                  processEnvironment: { ...process.env, ...savedProfileEnvironment },
                   exactPurposeBindingSubjectId:
                     sessionPurposeBindingLease.subjectId,
                   sessionId: canonicalSessionId,

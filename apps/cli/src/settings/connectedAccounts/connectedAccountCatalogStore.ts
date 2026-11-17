@@ -22,7 +22,7 @@ import { readAccountSettingsV2Raw, replaceAccountSettingsV2RawForOwnerCutover } 
 import { normalizeCliAccountSettingsHistoryAfterTransfer } from '@/settings/accountSettings/accountSettingsHistoryNormalization';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
+import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import { runConnectedAccountBindingStage } from '@/daemon/connectedServices/purposeBindings/bindingDiagnostics';
 
 type CatalogWrite = Readonly<{ record: ConnectedAccountCatalogRecordV1; expectedRevision: number | 'absent';
@@ -170,9 +170,11 @@ export function createCliConnectedAccountCatalogStore(input: Readonly<{
           if (key !== 'purposes' || phase.purpose !== 'initialization') return source;
           const contributions = readCurrentContributionRegistry();
           return { ...source, purposeDefaultAgents: Array.from(contributions.agentDefinitionsById.keys(), agentId => {
-            const declarations = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({ agentId, contributions });
-            return { agentId, identity: declarations?.authorizedPurposes[0]?.purpose.consumer ?? null,
-              connectedAccounts: declarations?.authorizedPurposes.flatMap(scope => scope.serviceRefs[0]
+            // Legacy Agent defaults predate tool-qualified purposes. Migrate only
+            // their original consumer, never turn an Agent choice into a CLI default.
+            const declaration = resolveAgentSpawnPurposeDeclarations({ agentId, contributions });
+            return { agentId, identity: declaration?.consumer ?? null,
+              connectedAccounts: declaration?.snapshot.authorizedPurposes.flatMap(scope => scope.serviceRefs[0]
                 ? [{ purpose: scope.purpose.purpose, service: scope.serviceRefs[0] }] : []) ?? [] };
           }) };
         }, initializeRecord: writeRecord,

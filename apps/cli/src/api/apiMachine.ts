@@ -331,6 +331,9 @@ import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/
 import type { DevicesRoleMachineRoutes } from '@/daemon/roles/devices/types';
 import type { ConnectedAccountDaemonRuntime } from '@/daemon/connectedServices/ConnectedAccountDaemonRuntime';
 import type { DaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import { prepareRequesterOperationMaterial } from '@/daemon/connectedServices/purposeBindings/requesterOperationMaterial';
+import { prepareFiniteConnectedAccountProcessEnvironment, type SessionConnectedAccountProcessEnvironmentProducer } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
+import { resolveSystemToolLaunchPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
@@ -974,8 +977,9 @@ export class ApiMachineClient {
     private connectedServicePoolSelectionRead: ConnectedServicePoolSelectionRead | null = null;
     private connectedAccountPurposeBindingRuntime: Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
-        'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
-    > | null = null;
+        'activatePurposeBindings' | 'listActionFormConnectedAccountOptions' | 'owner' | 'readSessionPurposeBindingSnapshot'
+        | 'resolveCurrentSessionPurposeBindingSnapshot' | 'admitActionPurposeBindings'
+    > & Readonly<{ materializeSessionProcessEnvironment?: SessionConnectedAccountProcessEnvironmentProducer }> | null = null;
     private readonly activateCapabilitiesPurposeBindings: DaemonConnectedAccountPurposeBindingRuntime['activatePurposeBindings'] = (input) => {
         const runtime = this.connectedAccountPurposeBindingRuntime;
         if (!runtime) {
@@ -1127,6 +1131,42 @@ export class ApiMachineClient {
             installationId: this.machineRpcAdmissionBoundary.resolveInstallationId(),
             reloadController: pluginReloadController,
         });
+    }
+
+    /** Host-private process admission; no credential value enters an Action operand. */
+    async prepareConnectedAccountProcessEnvironment(input: Readonly<{
+        authorization?: import('@happier-dev/protocol').ExternalActionExecutionAuthorizationV1;
+        sessionId?: string;
+        requesterAccountId: string;
+        requesterMaterial?: Pick<Awaited<ReturnType<typeof prepareRequesterOperationMaterial>>, 'readRuntime'>;
+        operationId: string;
+        actionId: import('@happier-dev/protocol/actions').ActionId;
+        signal: AbortSignal;
+    }>) {
+        const installed = this.connectedAccountPurposeBindingRuntime;
+        if (input.sessionId) {
+            const materialize = installed?.materializeSessionProcessEnvironment;
+            if (!materialize) throw new PluginError({ code: 'credential_unavailable', message: 'Session credential bindings are unavailable', retryable: false });
+            return { produce: async (environment: Readonly<Record<string, string>>, signal: AbortSignal) =>
+                await materialize({ sessionId: input.sessionId!, requesterAccountId: input.requesterAccountId, environment, signal }),
+                dispose: async () => {} };
+        }
+        const registry = pluginReloadController.getState().activeRegistry;
+        const declarations = registry ? resolveSystemToolLaunchPurposeDeclarations(registry.contributes) : [];
+        if (!declarations.length) return { produce: async (environment: Readonly<Record<string, string>>) => ({ environment, secretValues: [] as readonly string[] }), dispose: async () => {} };
+        const account = readRequesterAccountActionContext(input.authorization);
+        const material = account && !input.requesterMaterial ? await prepareRequesterOperationMaterial({ requesterAccount: account,
+            reloadController: pluginReloadController, signal: input.signal }) : undefined;
+        try {
+            const requesterMaterial = input.requesterMaterial ?? material;
+            const runtime = requesterMaterial ? (await requesterMaterial.readRuntime(input.signal)).purposes : installed;
+            if (!runtime) throw new PluginError({ code: 'credential_unavailable', message: 'Process credential bindings are unavailable', retryable: false });
+            if (!account && input.requesterAccountId !== readAccountIdFromToken(this.token)) throw new PluginError({ code: 'credential_unavailable', message: 'Requester credential bindings are unavailable', retryable: false });
+            const prepared = await prepareFiniteConnectedAccountProcessEnvironment({ runtime, declarations,
+                subject: { kind: 'action_operation', operationId: input.operationId, actionId: input.actionId,
+                    pluginVersion: configuration.currentCliVersion, isCurrent: () => !input.signal.aborted }, signal: input.signal });
+            return { produce: prepared.produce, dispose: async () => { prepared.dispose(); await material?.dispose(); } };
+        } catch (error) { await material?.dispose(); throw error; }
     }
 
     observeActionExecution(request: Parameters<HostActionOperationRuntime['observeExecution']>[0]) {
@@ -2272,7 +2312,8 @@ export class ApiMachineClient {
                         message: 'Choose an accepted Workspace or path for this Session', retryable: false });
                     return placement.payloadPlacement;
                 },
-                nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
+                nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
+                    prepareConnectedAccountProcessEnvironment: input => this.prepareConnectedAccountProcessEnvironment(input) },
                 resolveHostHomeServerIdentityId: async signal => (await resolveExternalActionOrigin(signal))?.serverIdentityId ?? null,
                 mcpServers: { ...deps?.mcpServers, readCredentials: readExecutionRunAccountCredentials,
                     nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
@@ -3503,8 +3544,9 @@ export class ApiMachineClient {
 
     registerConnectedAccountPurposeBindingRuntime(runtime: Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
-        'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
-    >): void {
+        'activatePurposeBindings' | 'listActionFormConnectedAccountOptions' | 'owner' | 'readSessionPurposeBindingSnapshot'
+        | 'resolveCurrentSessionPurposeBindingSnapshot' | 'admitActionPurposeBindings'
+    > & Readonly<{ materializeSessionProcessEnvironment?: SessionConnectedAccountProcessEnvironmentProducer }>): void {
         this.connectedAccountPurposeBindingRuntime = runtime;
     }
 

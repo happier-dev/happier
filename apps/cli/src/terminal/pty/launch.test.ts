@@ -13,7 +13,7 @@ describe('resolveDaemonTerminalLaunch', () => {
       const file = join(dir, agentId);
       await writeFile(file, '#!/bin/sh\nexit 0\n');
       await chmod(file, 0o755);
-      const launch = resolveDaemonTerminalLaunch(
+      const launch = await resolveDaemonTerminalLaunch(
         { kind: 'agent_login', agentId },
         { env: { ...process.env, [`HAPPIER_${agentId.toUpperCase()}_PATH`]: file } },
       );
@@ -26,13 +26,13 @@ describe('resolveDaemonTerminalLaunch', () => {
     }
   });
 
-  it('uses the Happier CLI auth owner for ACP login and refuses unsupported native login', () => {
-    const launch = resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'antigravity' });
+  it('uses the Happier CLI auth owner for ACP login and refuses unsupported native login', async () => {
+    const launch = await resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'antigravity' });
     expect(launch.args.slice(-4)).toEqual(['agents', 'auth', 'login', 'antigravity']);
-    expect(() => resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'gemini' }))
-      .toThrow(expect.objectContaining({ code: 'agent_login_unsupported' }));
-    expect(() => resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'claude', launchId: 'device_code' }))
-      .toThrow(expect.objectContaining({ code: 'agent_login_unsupported' }));
+    await expect(resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'gemini' }))
+      .rejects.toThrow(expect.objectContaining({ code: 'agent_login_unsupported' }));
+    await expect(resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'claude', launchId: 'device_code' }))
+      .rejects.toThrow(expect.objectContaining({ code: 'agent_login_unsupported' }));
   });
 
   it('launches a Windows shell shim through the canonical binary-safe runner', async () => {
@@ -41,7 +41,7 @@ describe('resolveDaemonTerminalLaunch', () => {
       const file = join(dir, 'codex.cmd');
       await writeFile(file, '@echo off\r\nexit /b 0\r\n');
       await chmod(file, 0o755);
-      const launch = resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'codex' }, {
+      const launch = await resolveDaemonTerminalLaunch({ kind: 'agent_login', agentId: 'codex' }, {
         platform: 'win32', env: { ...process.env, HAPPIER_CODEX_PATH: file },
       });
       expect(launch.file).not.toBe(file);
@@ -52,14 +52,14 @@ describe('resolveDaemonTerminalLaunch', () => {
     }
   });
 
-  it('delegates attached-session launch argv to the canonical Happier CLI runtime owner', () => {
+  it('delegates attached-session launch argv to the canonical Happier CLI runtime owner', async () => {
     const buildLaunchSpec = vi.fn(() => ({
       runtime: 'binary' as const,
       filePath: '/opt/happier/bin/happier',
       args: ['attach', 'session-1'],
     }));
 
-    expect(resolveDaemonTerminalLaunch(
+    expect(await resolveDaemonTerminalLaunch(
       { kind: 'session_attach', sessionId: 'session-1' },
       { buildLaunchSpec },
     )).toEqual({
@@ -70,7 +70,7 @@ describe('resolveDaemonTerminalLaunch', () => {
     expect(buildLaunchSpec).toHaveBeenCalledWith(['attach', 'session-1']);
   });
 
-  it('delegates a typed Happier CLI launch to the same canonical runtime owner', () => {
+  it('delegates a typed Happier CLI launch to the same canonical runtime owner', async () => {
     const buildLaunchSpec = vi.fn(() => ({
       runtime: 'binary' as const,
       filePath: '/opt/happier/bin/happier',
@@ -78,7 +78,7 @@ describe('resolveDaemonTerminalLaunch', () => {
       env: { HAPPIER_HOME_DIR: '/tmp/happier' },
     }));
 
-    expect(resolveDaemonTerminalLaunch({
+    expect(await resolveDaemonTerminalLaunch({
       kind: 'happier_cli',
       args: ['agents', 'auth', 'login', 'antigravity'],
     }, { buildLaunchSpec })).toEqual({

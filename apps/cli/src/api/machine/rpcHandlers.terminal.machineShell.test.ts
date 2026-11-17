@@ -16,8 +16,71 @@ import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/instal
 import { updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { restorePluginErrorFromWire } from '@happier-dev/protocol/plugins/errors';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { createActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
+import { materializeSessionConnectedAccountProcessEnvironment } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
 
 describe('machine shell RPC custody', () => {
+  it.each(['sdk', 'restored'] as const)('retains a restored plugin credential refusal at both associated terminal launch receivers without native fallback (%s)', async errorMode => {
+    const f = await createInstalledFilesystemMachineFixture();
+    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [f.serverId]: {
+      id: f.serverId, name: 'Terminal Home', serverUrl: f.serverHttpBaseUrl, webappUrl: f.serverHttpBaseUrl,
+      createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+      homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: f.homeServerIdentityId,
+        canonicalServerUrl: f.serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: f.serverHttpBaseUrl }] }),
+    } } }));
+    await writeStoredCredentialsForServerId(f.serverId, f.bootstrap.credentials);
+    const consumer = { pluginId: 'example.github', localId: 'gh' };
+    const service = { pluginId: 'example.github', localId: 'account' };
+    const purpose = { consumer, purpose: 'cli' };
+    const account = createForegroundPurposeOwnerFixture({ consumer, service, purpose: 'cli',
+      // A plugin integration can restore its public error across its RPC boundary.
+      materializeAccount: async () => {
+        const data = { code: 'github_cli_team_brokered_unavailable', message: 'Direct gh credentials are unavailable', retryable: false };
+        throw errorMode === 'restored' ? restorePluginErrorFromWire({ name: 'PluginError', ...data })
+          : new PluginError({ ...data, details: { reason: 'github_cli_team_brokered_unavailable' } });
+      } });
+    const lease = account.owner.activateSessionPurposeBindings({ sessionId: 'refused-session', purposes: [purpose], bindings: [account.binding] });
+    const runtime = { ...account.owner, owner: account.owner };
+    f.machine.registerConnectedAccountPurposeBindingRuntime({ ...runtime,
+      activatePurposeBindings: account.owner.activatePurposeBindings,
+      admitActionPurposeBindings: createActionPurposeBindingAdmission({ activatePurposeBindings: account.owner.activatePurposeBindings }),
+      listActionFormConnectedAccountOptions: async () => { throw new Error('No account selection belongs to a retained Session'); },
+      materializeSessionProcessEnvironment: input => materializeSessionConnectedAccountProcessEnvironment({ ...input, runtime,
+        declarations: [{ consumer, declarations: [], snapshot: { purposes: [purpose],
+          authorizedPurposes: [{ purpose, serviceRefs: [service] }], fileMaterializationPurposes: [],
+          environmentUses: [{ purpose, serviceRefs: [service], environmentKey: 'GH_TOKEN' }] } }] }),
+    });
+    const get = vi.mocked(axios.get).getMockImplementation();
+    if (!get) throw new Error('Installed Home HTTP boundary is unavailable');
+    vi.spyOn(axios, 'get').mockImplementation(async (url, options) => new URL(String(url)).pathname === '/v2/sessions/refused-session'
+      ? { status: 200, data: { session: { ...createSessionNotificationContextFixture('refused-session'), encryptionMode: 'plain',
+        metadata: JSON.stringify(createTestMetadata({ machineId: f.machineId, path: f.directory })) } } } : get(url, options));
+    await expect(readOwnSessionMachineWorkspace({ credentials: f.bootstrap.credentials, serverHttpBaseUrl: f.serverHttpBaseUrl,
+      sessionId: 'refused-session', machineId: f.machineId, currentMachineHost: 'test-host', currentMachineHomeDir: '/tmp' }))
+      .resolves.toMatchObject({ rootPath: f.directory });
+    let spawned = 0;
+    const sessions = createTerminalPtySessionManager({ ptyProvider: { spawn() { spawned++; throw new Error('No native fallback may launch'); } },
+      config: readDaemonTerminalPtyConfig({}).sessionManager, env: {}, platform: 'linux' });
+    const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: f.rpcHandlerManager,
+      deps: { serverId: f.serverId, resolveHostHomeServerIdentityId: async () => f.homeServerIdentityId,
+        env: {}, workingDirectory: f.directory, sessionManager: sessions,
+        accessPolicy: { kind: 'restrictedRoots', roots: [f.directory] }, nativeOperationRuntime: f.machine,
+        accountReadRuntime: ingress => f.machine.resolveOwnSessionRuntime(ingress) } });
+    try {
+      for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+        await expect(f.invoke(method, { terminalKey: 'refused', sessionId: 'refused-session' })).resolves.toMatchObject({
+          ok: false, errorCode: 'github_cli_team_brokered_unavailable',
+          ...(errorMode === 'sdk' ? { details: { details: { reason: 'github_cli_team_brokered_unavailable' } } } : {}) });
+      }
+      expect(spawned).toBe(0);
+    } finally { registration.dispose(); lease.dispose(); }
+  });
+
   it('keeps native machine login outside Session and Project custody for every launch entry', async () => {
     await withTempDir('terminal-login-scope-', async root => {
       const handlers = new Map<string, import('../rpc/types').RpcHandler>();

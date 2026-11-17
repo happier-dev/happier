@@ -1,4 +1,6 @@
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { ActionOperationDomainRefV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { createMachineSetupNativeBackend, applyMachineSetupEffectPlans, machineSetupPlansRequireAdministratorV1,
@@ -77,6 +79,7 @@ export type ApplyMachineSetupInput = Readonly<{
   boundBasis?: MachineSetupBoundTargetBasisV1;
   secretEnvironment?: Omit<SecretReferenceOverlayEnvironmentInput, 'secretReferenceOverlay'>;
   hostEnvironment?: NodeJS.ProcessEnv;
+  produceProcessEnvironment?: import('@/daemon/connectedServices/materialize/processConnectedAccountEnvironment').ConnectedAccountProcessEnvironmentProducer;
   platform?: NodeJS.Platform;
   managedId?: string;
   terminalCustody?: TerminalPtyCustody;
@@ -258,6 +261,7 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
     return await machineNativeEffectAdmission.run({ operation: { operationId, kind: 'machine_setup', signal }, ...scope,
       ...(input.settleNative ? { settleNative: input.settleNative } : {}) }, execute);
   } catch (error) {
+    if (isPluginError(error)) return { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.apply') };
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code : signal.aborted ? 'cancelled' : 'machine_setup_apply_failed';
     return { ok: false, errorCode: code, error: code,
@@ -313,7 +317,8 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
         : await applyMachineSetupEffectPlans({ plans, signal,
         backend: createMachineSetupNativeBackend({ signal, platform, run: async command => {
           signal.throwIfAborted();
-          return runMachineSetupNativeCommand(command, { terminateOnAbort: terminateProcessTree });
+          const env = input.produceProcessEnvironment ? (await input.produceProcessEnvironment({ ...hostEnv, ...command.env }, signal)).environment : command.env;
+          return runMachineSetupNativeCommand({ ...command, ...(env ? { env } : {}) }, { terminateOnAbort: terminateProcessTree });
         } }),
         onProgress,
       });
@@ -358,6 +363,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   let env: Readonly<Record<string, string>> = hostEnv;
   const run = async (phase: string, command: string, args: readonly string[], launchEnv: Readonly<Record<string, string>>, failureCode: string, step?: number) => {
     if (signal.aborted) return fail('cancelled');
+    if (input.produceProcessEnvironment) launchEnv = (await input.produceProcessEnvironment(launchEnv, signal)).environment;
     if (input.boundTarget) {
       input.operation.operationProgress.update({ phase, label: phase === 'install' ? 'Installing machine tools' : 'Setting up machine' });
       const result = await input.boundTarget.run({ command, args, cwd: input.userHomeDirectory, env: launchEnv, signal });

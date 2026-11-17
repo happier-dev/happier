@@ -1,4 +1,5 @@
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedServiceBindingsV2, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
@@ -20,7 +21,7 @@ import type {
     ConnectedAccountPurposeAuthorizationScope,
 } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
 
-import { resolveAgentSpawnPurposeDeclarations } from './agentPurposeDeclarations';
+import { assertLaunchPurposeDeliverySupported, resolveLaunchPurposeDeclarations, mergeLaunchPurposeDeclarationSnapshots } from './agentPurposeDeclarations';
 import type { AgentSpawnPurposeAuthorizationScope, AgentSpawnPurposeContributions, AgentSpawnPurposeCatalogEntry, AgentSpawnQualifiedFileEnvironmentUse, AgentSpawnQualifiedEnvironmentUse } from './agentPurposeDeclarations';
 export { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from './agentPurposeDeclarations';
 export type { AgentSpawnPurposeContributions, AgentSpawnQualifiedPurposeDeclarationSnapshot, AgentSpawnQualifiedFileEnvironmentUse, AgentSpawnQualifiedEnvironmentUse } from './agentPurposeDeclarations';
@@ -83,13 +84,22 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
     catalogEntry?: AgentSpawnPurposeCatalogEntry | null;
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
 }>): AgentSpawnQualifiedPurposeBindingSnapshot | null {
-    const declarations = resolveAgentSpawnPurposeDeclarations(input);
-    if (!declarations) return null;
-    const snapshot = projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({
-        consumer: declarations.consumer,
-        declarations: declarations.declarations,
-        bindings: input.bindings,
+    const declarations = resolveLaunchPurposeDeclarations(input);
+    if (!declarations.length) return null;
+    assertLaunchPurposeDeliverySupported({ declarations, readDeliveryMode: scope => {
+        for (const service of scope.serviceRefs) {
+            const selection = input.bindings.bindingsByServiceId[buildQualifiedPluginContributionKey(service)];
+            if (selection?.source === 'team_resource') return selection.deliveryMode;
+        }
+        return null;
+    } });
+    const snapshots = declarations.map(declaration => {
+        return projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({ consumer: declaration.consumer,
+            declarations: declaration.declarations, bindings: input.bindings });
     });
+    const snapshot = { purposes: snapshots.flatMap(value => value.purposes), bindings: snapshots.flatMap(value => value.bindings),
+        ...(snapshots.some(value => value.directMaterialOrigins) ? { directMaterialOrigins: snapshots.flatMap(value => value.directMaterialOrigins ?? []) } : {}) };
+    const launch = mergeLaunchPurposeDeclarationSnapshots(declarations.map(declaration => declaration.snapshot));
     return {
         ...snapshot,
         ...(snapshot.directMaterialOrigins ? { directMaterialOrigins: snapshot.directMaterialOrigins.map(origin => {
@@ -98,19 +108,19 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
                 && binding.resourceId === origin.resourceId);
             return binding?.resourceId && binding.teamId ? { ...origin, teamId: binding.teamId } : origin;
         }) } : {}),
-        authorizedPurposes: declarations.snapshot.authorizedPurposes,
-        fileMaterializationPurposes: declarations.snapshot.fileMaterializationPurposes,
-        ...(declarations.snapshot.requestAuthUses
-            ? { requestAuthUses: declarations.snapshot.requestAuthUses }
+        authorizedPurposes: launch.authorizedPurposes,
+        fileMaterializationPurposes: launch.fileMaterializationPurposes,
+        ...(launch.requestAuthUses
+            ? { requestAuthUses: launch.requestAuthUses }
             : {}),
-        ...(declarations.snapshot.fileEnvironmentUses
-            ? { fileEnvironmentUses: declarations.snapshot.fileEnvironmentUses }
+        ...(launch.fileEnvironmentUses
+            ? { fileEnvironmentUses: launch.fileEnvironmentUses }
             : {}),
-        ...(declarations.snapshot.environmentUses
-            ? { environmentUses: declarations.snapshot.environmentUses }
+        ...(launch.environmentUses
+            ? { environmentUses: launch.environmentUses }
             : {}),
-        ...(declarations.snapshot.environmentUnsetUses
-            ? { environmentUnsetUses: declarations.snapshot.environmentUnsetUses }
+        ...(launch.environmentUnsetUses
+            ? { environmentUnsetUses: launch.environmentUnsetUses }
             : {}),
     };
 }

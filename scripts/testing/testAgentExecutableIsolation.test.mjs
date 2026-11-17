@@ -21,13 +21,23 @@ test('agent test setup excludes ambient PATH and Home executables but permits ex
       import { spawnSync } from 'node:child_process';
       import { existsSync } from 'node:fs';
       import { installTestHomeEnvironment } from './scripts/testing/testHomeEnvironment.mjs';
+      const invoke = command => spawnSync(command, ['--version'], {
+        shell: process.platform === 'win32', encoding: 'utf8',
+      });
+      // Native machine CLI tests use the installed tools, with a disposable Home.
+      const machineTools = ['gh', 'op'].map(command => ({ command, result: invoke(command) }))
+        .filter(({ result }) => result.status === 0);
       const home = installTestHomeEnvironment({ isolateExecutables: true });
       try {
-        const invoke = command => spawnSync(command, ['--version'], { shell: process.platform === 'win32' });
         invoke('cursor-agent');
         assert.equal(existsSync(${JSON.stringify(marker)}), false, 'ambient cursor-agent was spawned');
         assert.equal(process.env.HAPPIER_CURSOR_PATH, undefined);
         assert.notEqual(process.env.HOME, ${JSON.stringify(fixture.root)});
+        for (const { command, result: installed } of machineTools) {
+          const projected = invoke(command);
+          assert.equal(projected.status, 0, projected.stderr);
+          assert.equal(projected.stdout, installed.stdout, command + ' must use the installed native tool');
+        }
         if (process.platform !== 'win32') {
           const platform = spawnSync('uname', ['-s'], { encoding: 'utf8' });
           assert.equal(platform.status, 0, 'guest platform probe must remain available');

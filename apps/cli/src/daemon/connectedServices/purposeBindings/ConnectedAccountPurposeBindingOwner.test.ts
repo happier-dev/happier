@@ -462,6 +462,53 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     lease.dispose();
   });
 
+  it('reads the original Session selection for associated processes without acquiring or borrowing defaults', async () => {
+    const { owner, store, materializeAccount } = createOwner();
+    const selected = { purpose, target: { kind: 'account' as const, account: { service, accountId: 'session-selected' } } };
+    const lease = owner.activateSessionPurposeBindings({ sessionId: 'original-session', purposes: [purpose], bindings: [selected] });
+    await store.update(() => ({ v: 1, bindings: [{ purpose, target: { kind: 'account', account: { service, accountId: 'later-default' } } }] }));
+    const readDefaults = vi.spyOn(store, 'read');
+    try {
+      const snapshot = owner.readSessionPurposeBindingSnapshot('original-session');
+      expect(snapshot).toEqual({ subjectId: lease.subjectId, purposes: [purpose], bindings: [selected] });
+      expect(owner.readSessionPurposeBindingSnapshot('different-session')).toBeNull();
+      expect(readDefaults).not.toHaveBeenCalled();
+      expect(materializeAccount).not.toHaveBeenCalled();
+      await expect(owner.materialize({ ...authorized, exactPurposeBindingSubjectId: snapshot!.subjectId,
+        signal: new AbortController().signal, request: { kind: 'environment', keys: ['GH_TOKEN'] } }))
+        .resolves.toMatchObject({ env: { GH_TOKEN: 'token:session-selected' } });
+      expect(materializeAccount).toHaveBeenCalledOnce();
+    } finally { lease.dispose(); }
+    expect(owner.readSessionPurposeBindingSnapshot('original-session')).toBeNull();
+    const native = owner.activateSessionPurposeBindings({ sessionId: 'native-session', purposes: [purpose], bindings: [] });
+    try {
+      expect(owner.readSessionPurposeBindingSnapshot('native-session'))
+        .toEqual({ subjectId: native.subjectId, purposes: [purpose], bindings: [] });
+      expect(readDefaults).not.toHaveBeenCalled();
+    } finally { native.dispose(); }
+  });
+
+  it.each(['operation', 'action_operation'] as const)('admits a %s across its host-declared consumers while refusing an undeclared consumer', async kind => {
+    const { owner } = createOwner();
+    const cliPurpose = { consumer: { pluginId: 'happier.scm.forge.github', localId: 'gh' }, purpose: 'github.cli' };
+    const input = { subject: { kind, operationId: 'agent-and-cli', actionId: 'acme.actions/setup', pluginVersion: '1.0.0', consumer: purpose.consumer,
+      consumers: [purpose.consumer, cliPurpose.consumer], isCurrent: () => true }, purposes: [purpose, cliPurpose],
+      bindings: [{ purpose: cliPurpose, target: { kind: 'account' as const, account: { service, accountId: 'selected' } } }] };
+    const lease = owner.activatePurposeBindings(input);
+    try {
+      await expect(owner.materialize({ purpose: cliPurpose, serviceRefs: [service], exactPurposeBindingSubjectId: lease.subjectId,
+        request: { kind: 'environment', keys: ['GH_TOKEN'] }, signal: new AbortController().signal }))
+        .resolves.toMatchObject({ kind: 'environment', env: { GH_TOKEN: 'token:selected' } });
+    } finally { lease.dispose(); }
+    expect(() => owner.activatePurposeBindings({ ...input, subject: { ...input.subject, operationId: 'undeclared-cli', consumers: [purpose.consumer] } }))
+      .toThrow('connected_account_operation_binding_consumer_mismatch');
+    expect(() => owner.activatePurposeBindings({ ...input, subject: { ...input.subject, operationId: 'ordinary-action', consumers: undefined } }))
+      .toThrow('connected_account_operation_binding_consumer_mismatch');
+    expect(() => owner.activatePurposeBindings({ ...input, subject: { ...input.subject, operationId: 'unrelated-consumer' },
+      purposes: [...input.purposes, { consumer: { pluginId: 'acme.unrelated', localId: 'tool' }, purpose: 'not-admitted' }] }))
+      .toThrow('connected_account_operation_binding_consumer_mismatch');
+  });
+
   it.each(['retired', 'failed'] as const)('settles admitted credential use when materialization is %s', async failure => {
     let current = true;
     const { owner, materializeAccount } = createOwner({ resolveTarget: accountTargetResolver(['selected']), materializeAccount: async () => {

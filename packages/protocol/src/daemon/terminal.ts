@@ -3,6 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
 import { TerminalGuardStateV1Schema } from '../machines/guard/terminalGuardStateV1.js';
+import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
 
 export const DaemonTerminalErrorCodeSchema = lazyZodSchema(() => z.enum([
   'terminal_disabled',
@@ -23,12 +24,15 @@ export const DaemonTerminalErrorCodeSchema = lazyZodSchema(() => z.enum([
 ]));
 export type DaemonTerminalErrorCode = z.infer<typeof DaemonTerminalErrorCodeSchema>;
 
-export const DaemonTerminalErrorSchema = lazyZodSchema(() => z.looseObject({
+const DaemonNativeTerminalErrorSchema = lazyZodSchema(() => z.looseObject({
   ok: z.literal(false),
   errorCode: DaemonTerminalErrorCodeSchema,
   error: z.string().check(z.minLength(1)),
   spawnFailure: z.optional(SpawnFailureV1Schema),
 }));
+export const DaemonTerminalErrorSchema = lazyZodSchema(() => z.union([
+  DaemonNativeTerminalErrorSchema, ActionExecuteFailureSchema,
+]));
 export type DaemonTerminalError = z.infer<typeof DaemonTerminalErrorSchema>;
 
 export const DaemonTerminalListRequestV1Schema = lazyZodSchema(() => z.strictObject({
@@ -62,7 +66,8 @@ export type DaemonTerminalShellAvailabilityV1 = z.infer<typeof DaemonTerminalShe
 export const DaemonTerminalListResponseV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), terminals: z.array(DaemonTerminalListEntryV1Schema),
     machineShell: z.optional(DaemonTerminalShellAvailabilityV1Schema) }),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(DaemonTerminalErrorSchema),
+  z.strictObject(DaemonNativeTerminalErrorSchema.shape),
+  ActionExecuteFailureSchema,
 ]));
 export type DaemonTerminalListResponseV1 = z.infer<typeof DaemonTerminalListResponseV1Schema>;
 

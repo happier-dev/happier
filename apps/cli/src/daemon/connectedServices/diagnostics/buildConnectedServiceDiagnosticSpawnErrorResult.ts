@@ -94,8 +94,7 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   agentId: CatalogAgentId;
   error: unknown;
 }>): Extract<SpawnSessionResult, { type: 'error' }> | null {
-  if (isPluginError(input.error) && (input.error.code === 'credential_unavailable'
-    || input.error.code === 'provider_incompatible_with_agent')) {
+  if (isPluginError(input.error)) {
     const details = readRecord(input.error.details);
     const failureCause = readSessionRuntimeFailureCause(input.error, 'client_start');
     const requiredKinds = Array.isArray(details?.requiredCredentialKinds)
@@ -103,8 +102,8 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
       : [];
     const message = input.error.code === 'provider_incompatible_with_agent' && requiredKinds.length > 0
       ? `${formatAgentLikeIdForDisplay(input.agentId)} needs a Connected Account with ${requiredKinds.join(' or ')} credentials. Select a compatible account.`
-      : readSessionStartupFailurePreview(input.error.code);
-    if (failureCause && message) {
+      : readSessionStartupFailurePreview(failureCause?.code ?? input.error.code);
+    if (failureCause?.phase === 'authentication' && message) {
       return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: input.error.code,
         errorDetail: { kind: 'launch_error', code: input.error.code, message, failureCause } };

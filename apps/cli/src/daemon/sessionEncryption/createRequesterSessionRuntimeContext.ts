@@ -269,6 +269,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
     resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
     activateSessionPurposeBindings: purposes.activateSessionPurposeBindings, activatePurposeBindings: purposes.activatePurposeBindings,
+    readSessionPurposeBindingSnapshot: purposes.readSessionPurposeBindingSnapshot,
     dispose,
   });
 }

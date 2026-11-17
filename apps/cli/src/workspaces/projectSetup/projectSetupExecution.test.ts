@@ -16,6 +16,9 @@ import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocat
 import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { ProjectCommandAttachmentV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { createActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
+import { prepareFiniteConnectedAccountProcessEnvironment } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
 // Entry callers cannot supply consent carried by an already admitted executor.
 expectTypeOf<ProjectSetupPreparationInput>().not.toHaveProperty('admittedConsent');
 expectTypeOf<ProjectSetupExecutionInput['preparation']>().not.toHaveProperty('admittedConsent');
@@ -163,6 +166,31 @@ describe('finite Project setup execution', () => {
             for (const child of f.spawned) child.pty.exit(0);
             await getHostWorktreePortsOwner().release({ rootPath: f.root });
         }
+    });
+
+    it('retains a declared broker refusal at Project setup without spawning a native fallback', async () => {
+        const f = await fixture(['gh auth status']);
+        const consumer = { pluginId: 'example.github', localId: 'gh' };
+        const service = { pluginId: 'example.github', localId: 'account' };
+        const purpose = { consumer, purpose: 'cli' };
+        const account = createForegroundPurposeOwnerFixture({ consumer, service, purpose: 'cli',
+            materializeAccount: async () => { throw new Error('Brokered selection cannot acquire direct credentials'); } });
+        await account.store.update(() => ({ v: 1, bindings: [], teamResourceSelections: [{ purpose, teamId: 'team',
+            selection: { source: 'team_resource', resourceId: 'resource', deliveryMode: 'brokered' } }] }));
+        const work = f.start({}, { produceProcessEnvironment: async (environment, signal) => {
+            const admitted = await prepareFiniteConnectedAccountProcessEnvironment({
+                runtime: { ...account.owner, owner: account.owner,
+                    admitActionPurposeBindings: createActionPurposeBindingAdmission({ activatePurposeBindings: account.owner.activatePurposeBindings }) },
+                declarations: [{ consumer, declarations: [], brokeredUnavailableCode: 'github_cli_team_brokered_unavailable', snapshot: {
+                    purposes: [purpose], authorizedPurposes: [{ purpose, serviceRefs: [service] }], fileMaterializationPurposes: [],
+                    environmentUses: [{ purpose, serviceRefs: [service], environmentKey: 'GH_TOKEN' }],
+                } }], subject: { kind: 'action_operation', operationId: 'project-setup', actionId: 'projects.prepare',
+                    pluginVersion: '0.3.0', isCurrent: () => true }, signal });
+            try { return await admitted.produce(environment, signal); } finally { admitted.dispose(); }
+        } });
+        await expect(work.completion).resolves.toMatchObject({ ok: false, errorCode: 'github_cli_team_brokered_unavailable',
+            details: { details: { reason: 'github_cli_team_brokered_unavailable' } } });
+        expect(f.spawned).toHaveLength(0);
     });
 
     it('refuses trusted setup commands when the held Agent isolation authority is unavailable', async () => {

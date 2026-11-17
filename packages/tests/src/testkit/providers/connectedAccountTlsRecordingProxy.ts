@@ -22,6 +22,8 @@ export type RecordedConnectedAccountTlsRequest = Readonly<{
 export type ConnectedAccountTlsResponse = Readonly<{
   statusCode: number;
   body: unknown;
+  headers?: Readonly<Record<string, string>>;
+  rawBody?: string | Buffer;
 }>;
 
 export type ConnectedAccountTlsRecordingProxy = Readonly<{
@@ -74,13 +76,14 @@ async function readRequestBody(request: IncomingMessage): Promise<Buffer> {
 }
 
 export async function startConnectedAccountTlsRecordingProxy(input: Readonly<{
+  additionalDnsNames?: readonly string[];
   responseForRequest?: (
     request: RecordedConnectedAccountTlsRequest,
     context: Readonly<{ wasHeld: boolean }>,
   ) => ConnectedAccountTlsResponse | Promise<ConnectedAccountTlsResponse>;
 }> = {}): Promise<ConnectedAccountTlsRecordingProxy> {
   const tlsFixture = await createEphemeralTlsServerFixture({
-    additionalDnsNames: ['chatgpt.com'],
+    additionalDnsNames: ['chatgpt.com', ...(input.additionalDnsNames ?? [])],
   });
   const requests: RecordedConnectedAccountTlsRequest[] = [];
   const connectTargets: string[] = [];
@@ -117,7 +120,7 @@ export async function startConnectedAccountTlsRecordingProxy(input: Readonly<{
       hold.matched = true;
       await hold.released;
     }
-    const result = input.responseForRequest
+    const result: ConnectedAccountTlsResponse = input.responseForRequest
       ? await input.responseForRequest(entry, { wasHeld: Boolean(hold) })
       : {
           statusCode: hold ? 400 : 502,
@@ -132,8 +135,9 @@ export async function startConnectedAccountTlsRecordingProxy(input: Readonly<{
         };
     response.statusCode = result.statusCode;
     response.setHeader('content-type', 'application/json');
+    for (const [name, value] of Object.entries(result.headers ?? {})) response.setHeader(name, value);
     const finished = once(response, 'finish').catch(() => {});
-    response.end(JSON.stringify(result.body));
+    response.end(result.rawBody ?? JSON.stringify(result.body));
     await finished;
     hold?.complete();
   });

@@ -15,6 +15,7 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { writeCredentialsLegacy } from '@/persistence';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -263,6 +264,10 @@ describe('final machine native catalog scope admission', () => {
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
     machineClient = new ApiMachineClient(credentials.token, machine, undefined, { createCapabilitiesApiClient: createApiClient });
     machineClient.registerConnectedAccountPurposeBindingRuntime({ activatePurposeBindings: input => purposeOwner.activatePurposeBindings(input),
+      owner: purposeOwner,
+      readSessionPurposeBindingSnapshot: purposeOwner.readSessionPurposeBindingSnapshot,
+      resolveCurrentSessionPurposeBindingSnapshot: purposeOwner.resolveCurrentSessionPurposeBindingSnapshot,
+      admitActionPurposeBindings: createActionPurposeBindingAdmission({ activatePurposeBindings: purposeOwner.activatePurposeBindings }),
       listActionFormConnectedAccountOptions: async () => { throw new Error('Unexpected Action account listing'); } });
     machineClient.setRPCHandlers({ spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
       stopSession: async () => true, requestShutdown: () => undefined });

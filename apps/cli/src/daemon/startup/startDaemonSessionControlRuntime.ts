@@ -45,6 +45,8 @@ import axios from '@/api/client/credentialAxios';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { retireObservedSessionRunnerMetadata } from '../sessions/plainRunnerRetirement';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { materializeSessionConnectedAccountProcessEnvironment, type SessionConnectedAccountProcessEnvironmentInput } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
+import { resolveSystemToolLaunchPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { PendingSessionResumeAdmission, PendingSessionResumePort } from '../sessions/activatePendingInactiveSession';
@@ -1383,6 +1385,7 @@ export async function startDaemonSessionControlRuntime(
     activateSessionPurposeBindings?: Parameters<
       typeof executeSpawnSessionRequest
     >[0]['activateSessionPurposeBindings'];
+    sessionConnectedAccountProcessRuntime?: Parameters<typeof materializeSessionConnectedAccountProcessEnvironment>[0]['runtime'];
     resolveCurrentSessionPurposeBindingSnapshot?: ConnectedAccountPurposeBindingOwner['resolveCurrentSessionPurposeBindingSnapshot'];
     /** Home-backed Team slot bindings for a foreground Session's durable Team purpose targets. */
     resolveSessionTeamCredentialBindingIntents?: NonNullable<
@@ -15595,6 +15598,22 @@ export async function startDaemonSessionControlRuntime(
   });
   return {
     executeGuardLeftBehindAction,
+    async materializeSessionProcessEnvironment(input: SessionConnectedAccountProcessEnvironmentInput) {
+      const context = await resolveSessionAccountContext(input.sessionId);
+      try {
+        const accountId = context?.bootstrap.attribution.accountId ?? readPreviewAccountIdFromToken(params.credentials.token);
+        if (accountId !== input.requesterAccountId) throw new PluginError({ code: 'credential_unavailable',
+          message: 'Requester Session credential bindings are unavailable', retryable: false });
+        await assertSessionAccountCurrent(input.sessionId, context);
+        const runtime = context ? { owner: context.connectedAccountsOwner,
+          readSessionPurposeBindingSnapshot: context.readSessionPurposeBindingSnapshot } : params.sessionConnectedAccountProcessRuntime;
+        if (!runtime) throw new PluginError({ code: 'credential_unavailable',
+          message: 'Session credential bindings are unavailable', retryable: false });
+        const registry = pluginRuntimeController.getState().activeRegistry;
+        const declarations = registry ? resolveSystemToolLaunchPurposeDeclarations(registry.contributes) : [];
+        return await materializeSessionConnectedAccountProcessEnvironment({ ...input, runtime, declarations });
+      } finally { await releaseSessionAccountContext(context); }
+    },
     resolveExecutionRunLiveBrokerAuthority,
     sessionLiveWorkProducer,
     dispatchSessionFollowOccurrence,

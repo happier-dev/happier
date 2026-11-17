@@ -774,3 +774,40 @@ describe('ordinary Agent request-auth spawn preparation', () => {
         expect(registry.retire).toHaveBeenCalledWith(descriptor);
     });
 });
+
+describe('optional machine CLI purposes in shared probe and launch snapshots', () => {
+    it('keeps required Agent auth and includes a tool only when that tool service is selected', async () => {
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+        const consumer = { pluginId: 'acme.agent', localId: 'runtime' };
+        const contributions = {
+            agentDefinitionsById: new Map([['runtime', { identity: consumer,
+                richDefinition: { definition: { connectedAccounts: [{ purpose: 'primary', service: 'account', materializationKinds: ['environment'] }] } },
+                catalogEntry: { connectedAccountEnvironmentUses: [{ purpose: 'primary', environmentKey: 'AGENT_API_KEY' }] },
+            }]]),
+            systemTools: PLUGIN_MANIFEST.contributes.systemTools.map(definition => ({ pluginId: PLUGIN_MANIFEST.id, definition })),
+        };
+        const input = { agentId: 'runtime', contributions, bindings: { v: 2 as const,
+            bindingsByServiceId: { 'acme.agent/account': { source: 'connected' as const, selection: 'profile' as const, profileId: 'agent-work' } } } };
+        const required = { consumer, purpose: 'primary' };
+        const { resolveLaunchPurposeDeclarations } = await import('./agentPurposeDeclarations');
+        expect(resolveLaunchPurposeDeclarations({ agentId: input.agentId, contributions }).flatMap(declaration => declaration.snapshot.purposes))
+            .toEqual([required, { consumer: { pluginId: PLUGIN_MANIFEST.id, localId: 'gh' }, purpose: 'github.cli' }]);
+        const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input);
+        expect(snapshot?.purposes).toEqual([required]);
+        expect(snapshot?.bindings.map(binding => binding.purpose)).toEqual([required]);
+        expect(snapshot?.environmentUses?.map(use => use.environmentKey)).toEqual(['AGENT_API_KEY']);
+        const serviceId = `${PLUGIN_MANIFEST.id}/github-account`;
+        const native = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ ...input, bindings: { ...input.bindings,
+            bindingsByServiceId: { ...input.bindings.bindingsByServiceId, [serviceId]: { source: 'native' } } } });
+        expect(native?.purposes).toEqual([required]);
+        const bound = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ ...input, bindings: { ...input.bindings,
+            bindingsByServiceId: { ...input.bindings.bindingsByServiceId,
+                [serviceId]: { source: 'connected', selection: 'profile', profileId: 'github-work' } } } });
+        expect(bound?.purposes).toEqual([required, { consumer: { pluginId: PLUGIN_MANIFEST.id, localId: 'gh' }, purpose: 'github.cli' }]);
+        expect(bound?.environmentUses?.map(use => use.environmentKey)).toEqual(['AGENT_API_KEY', 'GH_TOKEN']);
+        expect(() => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ ...input, bindings: { ...input.bindings,
+            bindingsByServiceId: { ...input.bindings.bindingsByServiceId, [serviceId]: {
+                source: 'team_resource', resourceId: 'github-broker', deliveryMode: 'brokered',
+            } } } })).toThrow(expect.objectContaining({ code: 'github_cli_team_brokered_unavailable' }));
+    });
+});

@@ -76,7 +76,7 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     nativeIo: ProjectSetupPreparationInput['nativeIo'];
     environmentIo: ProjectSetupExecutionInput['environmentIo'];
     agentIsolation?: ProjectSetupExecutionInput['agentIsolation'];
-    nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'>;
+    nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation' | 'prepareConnectedAccountProcessEnvironment'>;
     terminalSessions: ProjectSetupExecutionInput['terminalSessions'];
     platform?: NodeJS.Platform;
     arch?: string;
@@ -765,8 +765,13 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const requesterAccount = readRequesterAccountActionContext(runtime.accountAuthorization);
             const releaseRequester = requesterAccount?.retain();
             let nativePreparation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
+            let processCredentials: Promise<Awaited<ReturnType<ApiMachineClient['prepareConnectedAccountProcessEnvironment']>>> | undefined;
             let materialLive = true;
-            const retirePreparation = async () => { materialLive = false; await nativePreparation?.dispose(); };
+            const retirePreparation = async () => {
+                materialLive = false;
+                try { await nativePreparation?.dispose(); }
+                finally { await processCredentials?.then(prepared => prepared.dispose(), () => undefined); }
+            };
             try {
             const operationId = operation.operationAcceptance?.operationId ?? operation.actionRequestId;
             if (!operationId) return failure('project_finite_operation_unavailable');
@@ -796,6 +801,14 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 }
             });
             const executionInput = (): ProjectSetupExecutionInput => ({ preparation: { ...preparation(), signal: operationSignal }, operation,
+                ...(runtime.nativeOperationRuntime ? { produceProcessEnvironment: async (environment: Readonly<Record<string, string>>, processSignal: AbortSignal) => {
+                    processCredentials ??= runtime.nativeOperationRuntime!.prepareConnectedAccountProcessEnvironment({
+                        authorization: runtime.accountAuthorization, requesterAccountId: runtime.accountId,
+                        ...(nativePreparation?.material ? { requesterMaterial: nativePreparation.material } : {}),
+                        ...(ingress.sessionActionOrigin?.caller.sessionId ? { sessionId: ingress.sessionActionOrigin.caller.sessionId } : {}),
+                        operationId, actionId: request.actionId, signal: operationSignal });
+                    return await (await processCredentials).produce(environment, processSignal);
+                } } : {}),
                 deferToolchainToLaunch: request.actionId !== 'projects.prepare',
                 beforeNativeEffect: assertNotCancelled,
                 ...commandIdentity,

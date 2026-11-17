@@ -26,6 +26,8 @@ import type { PluginActionConnectedAccountUseRequestV2 } from '@happier-dev/prot
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { projectTeamResourceSelectionToSessionPurposeBinding } from './ConnectedAccountPurposeBindingOwner';
+import type { PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
+import { resolveSystemToolLaunchPurposeDeclarations } from '../requestAuth/agentPurposeDeclarations';
 import type {
   ConnectedAccountTeamDirectMaterialOrigin,
   ConnectedAccountPurposeAuthorizationScope,
@@ -72,6 +74,7 @@ type RegistryServiceReference = string | PluginContributionIdentityV1;
 
 export type RegistryConnectedAccountPurposeAuthorizationProjection = Readonly<{
   agents: readonly RegistryAuthorizationAgent[];
+  systemTools?: readonly Readonly<{ pluginId?: string; definition: PluginSystemToolContributionV1 }>[];
   providers?: readonly RegistryAuthorizationProvider[];
   scmHostingProviders?: readonly RegistryAuthorizationScmHostingProvider[];
   activationTargets: readonly RegistryAuthorizationActivationTarget[];
@@ -745,6 +748,12 @@ export function deriveRegistryConnectedAccountPurposeAuthorizations(
       provider.identity.pluginId,
       managedDeclaration.connectedAccounts ?? [],
     );
+  }
+
+  for (const declaration of resolveSystemToolLaunchPurposeDeclarations(registry)) {
+    for (const scope of declaration.snapshot.authorizedPurposes) {
+      addPurpose(declaration.consumer, scope.purpose.purpose, scope.serviceRefs);
+    }
   }
 
   for (const provider of registry.scmHostingProviders ?? []) {

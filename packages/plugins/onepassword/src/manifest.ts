@@ -42,7 +42,13 @@ export const ONEPASSWORD_PLUGIN = definePlugin({
         id: 'onepassword-read', capability: 'process', reason: 'List, read and store selected 1Password fields.',
         scope: { envKeys: ['OP_SERVICE_ACCOUNT_TOKEN'], executables: [{ kind: 'systemTool', id: 'op' }] },
     }], optional: [] },
-    systemTools: { op: { title: '1Password CLI', executableNames: ['op'] } },
+    systemTools: { op: { title: '1Password CLI', executableNames: ['op'], authentication: {
+        status: { args: ['whoami'], signedOutExitCodes: [] },
+        loginLaunches: [{ kind: 'primary', args: ['signin'] }], connectedServices: [],
+        environment: { OP_BIOMETRIC_UNLOCK_ENABLED: 'true' },
+        unsetEnvironmentKeys: ['OP_SERVICE_ACCOUNT_TOKEN', 'OP_SESSION', 'OP_CONNECT_TOKEN', 'OP_CONNECT_HOST'],
+        unsetEnvironmentKeyPrefixes: ['OP_SESSION_'],
+    } } },
     settings: { credentials: {
         version: 1, title: '1Password', target: { kind: 'plugin' }, scope: 'account',
         fields: [{ id: SERVICE_ACCOUNT_TOKEN, title: 'Service account token',

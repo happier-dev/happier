@@ -1,8 +1,10 @@
 import { ConnectedAccountPurposeDeclarationsV1Schema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
-import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { ConnectedAccountPurposeDeclarationV1, PluginContributionIdentityV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceBindingsV2, ConnectedAccountPurposeDeclarationV1, PluginContributionIdentityV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 import type { ConnectedAccountPurposeAuthorizationScope } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 
 type AgentConnectedAccountPurposeProjection = Readonly<{
@@ -36,6 +38,7 @@ export type AgentSpawnQualifiedEnvironmentUse = Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionIdentityV1[];
     environmentKey: string;
+    gitCredentialHelper?: Readonly<{ host: string; executable: string; args: readonly string[] }>;
 }>;
 
 export type AgentSpawnPurposeCatalogEntry = Readonly<{
@@ -46,6 +49,7 @@ export type AgentSpawnPurposeCatalogEntry = Readonly<{
 }>;
 
 export type AgentSpawnPurposeContributions = Readonly<{
+    systemTools?: readonly Readonly<{ pluginId?: string; definition: PluginSystemToolContributionV1 }>[];
     agentDefinitionsById: ReadonlyMap<string, Readonly<{
         identity?: unknown;
         richDefinition?: Readonly<{
@@ -77,6 +81,7 @@ type ResolvedAgentSpawnPurposeDeclarations = Readonly<{
     consumer: PluginContributionIdentityV1;
     declarations: readonly ConnectedAccountPurposeDeclarationV1[];
     snapshot: AgentSpawnQualifiedPurposeDeclarationSnapshot;
+    brokeredUnavailableCode?: string;
 }>;
 
 function resolveAgentContribution(
@@ -302,6 +307,74 @@ export function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
     });
 }
 
+/** Cold catalogs retain all tool choices. A probe or launch binding snapshot includes
+ * optional machine tools only when their service has an explicit connected selection;
+ * required Agent purposes remain complete, including unbound native choices. */
+export function resolveLaunchPurposeDeclarations(input: Parameters<typeof resolveAgentSpawnPurposeDeclarations>[0] & Readonly<{
+    bindings?: ConnectedServiceBindingsV2;
+}>): readonly ResolvedAgentSpawnPurposeDeclarations[] {
+    const agent = resolveAgentSpawnPurposeDeclarations(input);
+    if (!agent) return [];
+    const tools = resolveSystemToolLaunchPurposeDeclarations(input.contributions).filter(declaration =>
+        !input.bindings || declaration.snapshot.authorizedPurposes.some(scope => scope.serviceRefs.some(service => {
+            const selection = input.bindings?.bindingsByServiceId[buildQualifiedPluginContributionKey(service)];
+            return selection !== undefined && selection.source !== 'native';
+        })));
+    return [agent, ...tools];
+}
+
+/** The same tool purposes also apply to admitted processes with no Agent. */
+export function resolveSystemToolLaunchPurposeDeclarations(contributions: Pick<AgentSpawnPurposeContributions, 'systemTools'>): readonly ResolvedAgentSpawnPurposeDeclarations[] {
+    return (contributions.systemTools ?? []).flatMap<ResolvedAgentSpawnPurposeDeclarations>(({ pluginId, definition }) => {
+        const launch = definition.connectedAccountLaunch;
+        if (!pluginId || !launch) return [];
+        const consumer = { pluginId, localId: definition.id };
+        const purpose = { consumer, purpose: launch.purpose };
+        const service = typeof launch.service === 'string' ? { pluginId, localId: launch.service } : launch.service;
+        const scope = { purpose, serviceRefs: [service] };
+        return [{ consumer, declarations: [{ purpose: launch.purpose, service: launch.service, materializationKinds: ['environment'] }],
+            ...(launch.brokeredUnavailableCode ? { brokeredUnavailableCode: launch.brokeredUnavailableCode } : {}),
+            snapshot: { purposes: [purpose], authorizedPurposes: [scope], fileMaterializationPurposes: [],
+                environmentUses: [{ ...scope, environmentKey: launch.environmentKey,
+                    // Bundled gh declares one system command on the admitted
+                    // process PATH, shared with native tool lookup.
+                    ...(launch.gitCredentialHelper ? { gitCredentialHelper: { ...launch.gitCredentialHelper,
+                        executable: definition.executableNames[0]! } } : {}) }],
+                environmentUnsetUses: (launch.unsetEnvironmentKeys ?? []).map(environmentKey => ({ ...scope, environmentKey })),
+            } }];
+    });
+}
+
+/** Both compatibility Session ingress and qualified finite admissions consume
+ * the declared tool's delivery contract; callers supply the selected fact. */
+export function assertLaunchPurposeDeliverySupported(input: Readonly<{
+    declarations: readonly ResolvedAgentSpawnPurposeDeclarations[];
+    readDeliveryMode(scope: AgentSpawnPurposeAuthorizationScope): 'direct' | 'brokered' | null;
+}>): void {
+    for (const declaration of input.declarations) {
+        if (!declaration.brokeredUnavailableCode) continue;
+        for (const scope of declaration.snapshot.authorizedPurposes) {
+            if (input.readDeliveryMode(scope) !== 'brokered') continue;
+            throw new PluginError({ code: declaration.brokeredUnavailableCode,
+                message: 'This machine CLI requires direct Connected Account delivery.', retryable: false,
+                details: { reason: declaration.brokeredUnavailableCode,
+                    failureCause: { code: 'credential_unavailable', phase: 'authentication', failureReason: 'authentication_required', retryable: false } } });
+        }
+    }
+}
+
+export function mergeLaunchPurposeDeclarationSnapshots(snapshots: readonly AgentSpawnQualifiedPurposeDeclarationSnapshot[]): AgentSpawnQualifiedPurposeDeclarationSnapshot {
+    return {
+        purposes: snapshots.flatMap(snapshot => snapshot.purposes),
+        authorizedPurposes: snapshots.flatMap(snapshot => snapshot.authorizedPurposes),
+        fileMaterializationPurposes: snapshots.flatMap(snapshot => snapshot.fileMaterializationPurposes),
+        ...(snapshots.some(snapshot => snapshot.requestAuthUses) ? { requestAuthUses: snapshots.flatMap(snapshot => snapshot.requestAuthUses ?? []) } : {}),
+        ...(snapshots.some(snapshot => snapshot.fileEnvironmentUses) ? { fileEnvironmentUses: snapshots.flatMap(snapshot => snapshot.fileEnvironmentUses ?? []) } : {}),
+        ...(snapshots.some(snapshot => snapshot.environmentUses) ? { environmentUses: snapshots.flatMap(snapshot => snapshot.environmentUses ?? []) } : {}),
+        ...(snapshots.some(snapshot => snapshot.environmentUnsetUses) ? { environmentUnsetUses: snapshots.flatMap(snapshot => snapshot.environmentUnsetUses ?? []) } : {}),
+    };
+}
+
 export function resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn(
     input: Readonly<{
         agentId: string;
@@ -309,5 +382,6 @@ export function resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn(
         catalogEntry?: AgentSpawnPurposeCatalogEntry | null;
     }>,
 ): AgentSpawnQualifiedPurposeDeclarationSnapshot | null {
-    return resolveAgentSpawnPurposeDeclarations(input)?.snapshot ?? null;
+    const declarations = resolveLaunchPurposeDeclarations(input);
+    return declarations.length ? mergeLaunchPurposeDeclarationSnapshots(declarations.map(declaration => declaration.snapshot)) : null;
 }

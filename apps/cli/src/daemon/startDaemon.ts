@@ -2557,6 +2557,7 @@ export async function startDaemon(
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
       purgeBrowserStorageForSessionDeleted,
       processLeftBehindPass: sessionControlLeftBehindPass,
+      materializeSessionProcessEnvironment,
     } = await startDaemonSessionControlRuntime({
       acquireServiceExportForward,
       agentIsolation,
@@ -2840,6 +2841,7 @@ export async function startDaemon(
       },
       activateSessionPurposeBindings:
         connectedAccountPurposeBindingRuntime.activateSessionPurposeBindings,
+      sessionConnectedAccountProcessRuntime: connectedAccountPurposeBindingRuntime,
       resolveCurrentSessionPurposeBindingSnapshot:
         connectedAccountPurposeBindingRuntime
           .resolveCurrentSessionPurposeBindingSnapshot,
@@ -2872,6 +2874,9 @@ export async function startDaemon(
     });
 
     requestManagedServiceRecovery = requestManagedServiceRecoveryFromSessionControl;
+    machineRpcRouteAttachments.attachConnectedAccountPurposeBindingRuntime({
+      ...connectedAccountPurposeBindingRuntime, materializeSessionProcessEnvironment,
+    });
     machineRpcRouteAttachments.attachMachineReachabilityRoutes(createDaemonMachineReachabilityRoutes({
       getMachineClient: () => apiMachine, target: machineResourceTarget, agentIsolation, adminAccess: machineAdminAccessRoutes, ownerRemainder,
     }));

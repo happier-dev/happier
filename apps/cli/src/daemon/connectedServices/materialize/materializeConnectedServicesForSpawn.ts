@@ -322,6 +322,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         },
         credentialFileOwner,
         snapshot,
+        processEnvironment: params.processEnv,
         ...(params.exactPurposeBindingSubjectId
           ? { exactPurposeBindingSubjectId: params.exactPurposeBindingSubjectId }
           : {}),

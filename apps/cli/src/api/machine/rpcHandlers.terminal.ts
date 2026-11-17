@@ -28,6 +28,8 @@ import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWor
 import { createProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { resolveMachineRpcWorkingDirectory } from './resolveMachineRpcWorkingDirectory';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import {
@@ -100,7 +102,7 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   terminalRegistry?: TerminalProcessRegistry;
   admissionDrain?: DaemonAdmissionDrain;
   operationRuntime?: Pick<HostActionOperationRuntime, 'observeExecution'>;
-  resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent) => TerminalLaunchProcess;
+  resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent) => TerminalLaunchProcess | Promise<TerminalLaunchProcess>;
   projectFiniteRuntime?: (ingress: RpcHandlerContext) => ProjectTerminalRuntime | null | Promise<ProjectTerminalRuntime | null>;
   /** Requester Account reads for Session and accepted Project custody. */
   accountReadRuntime?: (ingress: RpcHandlerContext) => MachineTerminalOwnSessionReadRuntime | null | Promise<MachineTerminalOwnSessionReadRuntime | null>;
@@ -116,7 +118,7 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   ownerRemainder?: import('@/daemon/processes/endOwnerRemainder').OwnerRemainderPort;
   agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   /** Same Machine native-operation owner used by Session, raw execution and MCP. */
-  nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'>;
+  nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation' | 'prepareConnectedAccountProcessEnvironment'>;
 }>;
 
 export type MachineTerminalAccountReadRuntime = Readonly<{
@@ -176,9 +178,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const terminalRegistry = params.deps?.terminalRegistry ?? getSharedTerminalProcessRegistry();
   const resolveLaunch = params.deps?.resolveLaunch
     ?? ((launch) => resolveDaemonTerminalLaunch(launch, { env, platform: params.deps?.platform }));
-  const resolveRequestedLaunch = (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' | 'service_shell' }> | undefined) => {
+  const resolveRequestedLaunch = async (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' | 'service_shell' }> | undefined) => {
     try {
-      return { ok: true as const, launchProcess: launch ? resolveLaunch(launch) : undefined };
+      return { ok: true as const, launchProcess: launch ? await resolveLaunch(launch) : undefined };
     } catch (error) {
       return err(error instanceof AgentLoginLaunchError ? error.code : 'terminal_spawn_failed');
     }
@@ -579,6 +581,31 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     }
   };
 
+  const prepareAssociatedTerminalLaunch = async (input: Readonly<{
+    launchProcess?: TerminalLaunchProcess;
+    nativeSignIn: boolean;
+    context: RpcHandlerContext | undefined;
+    requesterAccountId: string;
+    sessionId: string | undefined;
+    terminalKey: string;
+    actionId: Parameters<ApiMachineClient['prepareConnectedAccountProcessEnvironment']>[0]['actionId'];
+  }>): Promise<TerminalLaunchProcess | undefined> => {
+    const runtime = params.deps?.nativeOperationRuntime;
+    if (!input.sessionId || input.nativeSignIn || !runtime || !input.context) return input.launchProcess;
+    const credentials = await runtime.prepareConnectedAccountProcessEnvironment({
+      authorization: input.context.callerInputAuthorization, requesterAccountId: input.requesterAccountId,
+      sessionId: input.sessionId, operationId: input.context.transportRequestId ?? input.terminalKey,
+      actionId: input.actionId, signal: input.context.signal });
+    try {
+      const base = input.launchProcess ?? resolveTerminalShell(env, params.deps?.platform ?? process.platform);
+      const original = Object.fromEntries(Object.entries({ ...env, ...base.env })
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+      const produced = await credentials.produce(original, input.context.signal);
+      // Keep native removals explicit when later shell owners merge host env.
+      return { ...base, env: { ...Object.fromEntries(Object.keys(original).map(key => [key, undefined])), ...produced.environment } };
+    } finally { await credentials.dispose(); }
+  };
+
   const prepareNativeShell = async (cwd: string, launchProcess: TerminalLaunchProcess | undefined,
     context: RpcHandlerContext, requesterIdentity: HostRequesterExecutionIdentity,
     nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>) => {
@@ -733,18 +760,21 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
-    const launch = resolveRequestedLaunch(parsed.data.launch);
+    const launch = await resolveRequestedLaunch(parsed.data.launch);
     if (!launch.ok) return launch;
     const sessionId = params.deps?.requiredSessionId ?? parsed.data.sessionId
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
     const projectCustody = 'custody' in cwd && cwd.custody?.kind === undefined ? cwd.custody : undefined;
-    const warm = requesterIdentity.kind === 'owner_person' && projectCustody && getSessionManager().list().some(terminal => !terminal.ended
+    const warm = 'custody' in cwd && cwd.custody && getSessionManager().list().some(terminal => !terminal.ended
       && terminal.terminalKey === parsed.data.terminalKey && terminal.sessionId === sessionId
-      && sameTerminalCustody(getSessionManager().getCustody(terminal.terminalId), projectCustody));
+      && sameTerminalCustody(getSessionManager().getCustody(terminal.terminalId), cwd.custody!));
     if (projectCustody && !warm && params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
     let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
     let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
     try {
+      if (!warm) launch.launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess: launch.launchProcess,
+        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
+        sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.open' });
       if (requesterIdentity.kind !== 'owner_person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
@@ -759,8 +789,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (preparation) prepared = { ...preparation, release: async () => {
         try { await preparation.release(); } finally { await nativeOperation?.dispose(); }
       } };
-    } catch {
+    } catch (error) {
       await nativeOperation?.dispose();
+      if (isPluginError(error)) return { ok: false as const, ...normalizeActionExecutorThrownError(error) };
       return unavailableIdentityTransport();
     }
     if (!context || context.signal.aborted) {
@@ -926,7 +957,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
     if (params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
-    const launch = resolveRequestedLaunch(parsed.data.launch);
+    const launch = await resolveRequestedLaunch(parsed.data.launch);
     if (!launch.ok) return launch;
     const sessionId = params.deps?.requiredSessionId ?? parsed.data.sessionId
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
@@ -935,6 +966,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
     let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
     try {
+      launch.launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess: launch.launchProcess,
+        nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
+        sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.restart' });
       if (requesterIdentity.kind !== 'owner_person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
@@ -949,7 +983,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (preparation) prepared = { ...preparation, release: async () => {
         try { await preparation.release(); } finally { await nativeOperation?.dispose(); }
       } };
-    } catch { await nativeOperation?.dispose(); return unavailableIdentityTransport(); }
+    } catch (error) {
+      await nativeOperation?.dispose();
+      if (isPluginError(error)) return { ok: false as const, ...normalizeActionExecutorThrownError(error) };
+      return unavailableIdentityTransport();
+    }
     let handedOff = false;
     try {
       let restartCwd = cwd;

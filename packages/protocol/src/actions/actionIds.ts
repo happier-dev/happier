@@ -1072,6 +1072,12 @@ export function isExecutionRunStartActionIdV1(value: string): boolean {
   return value === 'execution.run.start' || value === 'execution.run.ensure' || value === 'execution.run.ensure_or_start';
 }
 
+/** Native sign-in lifecycle roots retain only their declared terminal phases. */
+export function readMachineAgentSignInOperationV1(value: string): 'start' | 'cancel' | 'restart' | null {
+  const [start, , cancel, restart] = ACTION_ID_FAMILIES_V1.machine_agent_sign_in;
+  return value === start ? 'start' : value === cancel ? 'cancel' : value === restart ? 'restart' : null;
+}
+
 export function isRuntimeActionIdV1(value: string): value is RuntimeActionIdV1 {
   return RUNTIME_ACTION_ID_V1_SET.has(value);
 }

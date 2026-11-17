@@ -103,6 +103,7 @@ export type DaemonConnectedAccountActionFormOption = DaemonPluginActionFormConne
 
 export type DaemonConnectedAccountPurposeBindingRuntime = Readonly<{
   owner: StablePluginConnectedAccountsOwner;
+  readSessionPurposeBindingSnapshot: ConnectedAccountPurposeBindingOwner['readSessionPurposeBindingSnapshot'];
   readBindingObservation: ConnectedAccountPurposeBindingOwner['readBindingObservation'];
   readCredentialConfigurationRevision: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'];
   activatePurposeBindings:
@@ -907,6 +908,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
 
   return Object.freeze({
     owner,
+    readSessionPurposeBindingSnapshot: bindingOwner.readSessionPurposeBindingSnapshot,
     readBindingObservation: bindingOwner.readBindingObservation,
     readCredentialConfigurationRevision: bindingOwner.readCredentialConfigurationRevision,
     activatePurposeBindings: bindingOwner.activatePurposeBindings,

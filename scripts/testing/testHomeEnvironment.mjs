@@ -64,14 +64,14 @@ export function assertTestHomePath(homeDir, root = process.env.HAPPIER_TEST_HOME
   }
 }
 
-// Agent suites need real OS utilities, but must never discover installed coding
-// agents. Project only these test tools into a disposable bin; never retain a
+// Agent suites need real OS utilities and machine CLIs, but must never discover
+// installed coding agents. Project only these test tools into a disposable bin; never retain a
 // host PATH directory (even /usr/bin can contain an installed agent).
 function isolateTestExecutables(root) {
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
   const hostPath = String(process.env.PATH ?? '').split(delimiter).filter(Boolean);
-  const tools = ['node', 'git', 'sh', 'bash', 'env', 'ps', 'stat', 'date', 'sed', 'awk', 'grep',
+  const tools = ['node', 'git', 'gh', 'op', 'sh', 'bash', 'env', 'ps', 'stat', 'date', 'sed', 'awk', 'grep',
     'cat', 'readlink', 'realpath', 'sleep', 'mkdir', 'mkfifo', 'rm', 'chmod', 'dirname', 'basename',
     'head', 'tail', 'tr', 'cut', 'sort', 'uniq', 'find', 'xargs', 'wc', 'cp', 'mv', 'tar', 'gzip', 'which', 'id', 'uname', 'getent',
     'nohup', 'true', 'flock', 'sha256sum', 'shasum', 'rg', 'stty'];

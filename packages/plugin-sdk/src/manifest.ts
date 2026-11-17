@@ -1,3 +1,4 @@
+import type { PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 import type { PluginServiceLaunchEnvironmentContributionV1 } from '@happier-dev/protocol/plugins/contributions/serviceLaunchEnvironments';
 // Portable declarative grammar is projected by the single Action DTO producer.
 import type { PluginDeclarativeToneV2 as DtoPluginDeclarativeToneV2, PluginDeclarativeControlV2 as DtoPluginDeclarativeControlV2, PluginDeclarativeActionNodeV2 as DtoPluginDeclarativeActionNodeV2, PluginContributionReference as DtoPluginContributionReference, PluginDeclarativeComposerApplyEffectV1 as DtoPluginDeclarativeComposerApplyEffectV1, PluginDeclarativeActionVariantV2 as DtoPluginDeclarativeActionVariantV2, PluginDeclarativeListNodeV2 as DtoPluginDeclarativeListNodeV2, PluginDeclarativeSectionNodeV2 as DtoPluginDeclarativeSectionNodeV2, PluginDeclarativeRowNodeV2 as DtoPluginDeclarativeRowNodeV2, PluginDeclarativeItemNodeV2 as DtoPluginDeclarativeItemNodeV2, PluginDeclarativeStateNodeV2 as DtoPluginDeclarativeStateNodeV2, PluginDeclarativeStateV2 as DtoPluginDeclarativeStateV2, PluginDeclarativeTargetedSurfaceNodeV2 as DtoPluginDeclarativeTargetedSurfaceNodeV2, PluginDeclarativeTargetedSurfaceReferenceV1 as DtoPluginDeclarativeTargetedSurfaceReferenceV1, PluginDeclarativeMetadataNodeV2 as DtoPluginDeclarativeMetadataNodeV2, PluginDeclarativeMetadataEntryV2 as DtoPluginDeclarativeMetadataEntryV2, PluginDeclarativeActionPanelNodeV2 as DtoPluginDeclarativeActionPanelNodeV2, PluginDeclarativeCollectionListNodeV2 as DtoPluginDeclarativeCollectionListNodeV2, PluginCollectionProjectedScalarFieldRefV1 as DtoPluginCollectionProjectedScalarFieldRefV1, PluginCollectionRowCommandV1 as DtoPluginCollectionRowCommandV1 } from './actions/dtos/actionDeclarativeNodeDto.generated.js';
@@ -618,6 +619,8 @@ export interface PluginManifest {
       allowedArguments?: string[];
       platforms?: ('macos' | 'linux' | 'windows')[];
       readiness?: PluginSystemToolReadinessV1;
+      authentication?: PluginSystemToolContributionV1['authentication'];
+      connectedAccountLaunch?: PluginSystemToolContributionV1['connectedAccountLaunch'];
       metadata?: Record<string, PluginJsonValueV2>;
     }>[];
     providers?: readonly (Readonly<{

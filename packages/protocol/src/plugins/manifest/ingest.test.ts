@@ -44,6 +44,22 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
+describe('machine CLI Connected Account references', () => {
+  it.each(['authentication', 'connectedAccountLaunch'] as const)('resolves %s through the connected-account family', field => {
+    const declaration = field === 'authentication' ? { authentication: {
+      status: { args: ['status'], signedOutExitCodes: [] }, loginLaunches: [],
+      connectedServices: [{ pluginId: 'com.acme.fixture', localId: 'account' }],
+    } } : { connectedAccountLaunch: { purpose: 'cli', service: 'account', environmentKey: 'CLI_TOKEN' } };
+    const tool = { id: 'cli', title: 'CLI', executableNames: ['cli'], ...declaration };
+    expect(ingestPluginManifestV2(manifest({ contributes: { systemTools: [tool],
+      connectedAccountDescriptors: [connectedAccountDescriptor('account')] } })).ok).toBe(true);
+    expect(ingestPluginManifestV2(manifest({ contributes: { systemTools: [tool] } })))
+      .toMatchObject({ ok: false, diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })]) });
+    expect(ingestPluginManifestV2(manifest({ contributes: { systemTools: [tool, { id: 'account', title: 'Wrong family', executableNames: ['other'] }] } })))
+      .toMatchObject({ ok: false, diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'plugin_manifest_wrong_family_reference' })]) });
+  });
+});
+
 describe('optional connected-account reference admission', () => {
   it('admits a native sandbox declaration through the strict Session-primary manifest reader', () => {
     const declaration = ingestPluginManifestV2(manifest({ contributes: { agents: [{

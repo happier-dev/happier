@@ -921,6 +921,8 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
               connectedAccountsOwner: materialized.connectedAccountsAuthority.owner,
               credentialFileOwner,
               snapshot: connectedAccountSnapshot,
+              processEnvironment: { ...localState.environment,
+                ...filterRunnerReviewedEnvironmentVariablesV1(manifest.preparedAuthoring.authoring.environmentVariables ?? {}) },
               sessionId: binding.sessionId,
               signal: connectedAccountMaterializationAbortController.signal,
               credentialFileScope: {

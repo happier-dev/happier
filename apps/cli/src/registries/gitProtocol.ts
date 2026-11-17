@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { removeHappierTempDir } from '@happier-dev/cli-common/tempDirs';
 import { runScmCommand } from '@/scm/runtime';
+import { appendGitConfigEnvironment } from '@/scm/gitConfigEnvironment';
 import {
   RegistryFetchErrorV1, computeGitBlobShaV1, computeGitTreeShaV1, type RegistryFetchContextV1, type RegistrySourceV1,
   type RegistrySkillSourceV1, type RegistrySkillFileBytesV1, type RegistryContentRefV1
@@ -36,17 +37,15 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
       try { header = registryTokenHeader(source, value); } catch { throw new RegistryFetchErrorV1({ state: 'auth_failed' }); }
       // Git matches scoped headers against the original URL, not redirect URLs.
       // A credentialed repository must therefore use its final HTTPS destination.
-      const rawCount = sessionProcessEnvironment().GIT_CONFIG_COUNT ?? '';
-      const inheritedCount = rawCount === '' ? 0 : /^[ \t\n\r\f\v]*[+-]?\d+$/.test(rawCount) ? Number(rawCount) : NaN;
-      // Preserve operator config (including scoped TLS trust) and its errors;
-      // derive exact indices only, leaving Git's own config limits unchanged.
-      if (inheritedCount < 0 || !Number.isSafeInteger(inheritedCount + 3)) throw new RegistryFetchErrorV1({ state: 'unreachable' });
-      env.GIT_CONFIG_COUNT = String(inheritedCount + 3);
       // extraHeader is multi-valued. Reset it at this exact source before adding
       // its managed credential, so an inherited header cannot change identity.
-      env[`GIT_CONFIG_KEY_${inheritedCount}`] = `http.${source.url}.extraHeader`; env[`GIT_CONFIG_VALUE_${inheritedCount}`] = '';
-      env[`GIT_CONFIG_KEY_${inheritedCount + 1}`] = `http.${source.url}.extraHeader`; env[`GIT_CONFIG_VALUE_${inheritedCount + 1}`] = `${header.name}: ${header.value}`;
-      env[`GIT_CONFIG_KEY_${inheritedCount + 2}`] = `http.${source.url}.followRedirects`; env[`GIT_CONFIG_VALUE_${inheritedCount + 2}`] = 'false';
+      const config = appendGitConfigEnvironment(sessionProcessEnvironment(), [
+        [`http.${source.url}.extraHeader`, ''],
+        [`http.${source.url}.extraHeader`, `${header.name}: ${header.value}`],
+        [`http.${source.url}.followRedirects`, 'false'],
+      ]);
+      if (!config) throw new RegistryFetchErrorV1({ state: 'unreachable' });
+      Object.assign(env, config);
     }
     return env;
   }
