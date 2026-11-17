@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { access, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -48,7 +49,7 @@ beforeEach(async () => {
   launch = { ...query, reviewedEffectDigest: '0'.repeat(64) };
   launch = (await readDevcontainerEffectReview(native().tools, query)).launch;
   resource = { ...launch, managedMachineId: 'managed-a', containerId, user: 'coder', workspaceRoot: '/work/custom',
-  storage: { kind: 'bind' as const, hostPath: '/host/project', childPath: '/work/custom' },
+  storage: { kind: 'child' as const, childPath: '/work/custom' },
   volumes: [{ name: 'retained-data', childPath: '/data' }] };
 });
 afterEach(async () => { vi.unstubAllEnvs(); vi.mocked(access).mockReset(); await rm(configurationRoot, { recursive: true, force: true }); });
@@ -57,7 +58,7 @@ function result(value: unknown, exitCode = 0): PluginProcessResult {
     stdout: new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value)), stderr: new Uint8Array(),
     stdoutTruncated: false, stderrTruncated: false };
 }
-function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode?: string; dns?: readonly string[]; dnsExit?: number; hostDnsExit?: number; up?: PluginProcessResult; update?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
+function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode?: string; dns?: readonly string[]; dnsExit?: number; hostDnsExit?: number; up?: PluginProcessResult; update?: PluginProcessResult; running?: boolean; paused?: boolean; absent?: boolean; deleteAbsent?: boolean; inventory?: PluginProcessResult; mounts?: unknown; id?: string; namespace?: string; canceledWrite?: boolean; replacementId?: string; rowScoped?: boolean }> = {}) {
   const requests: Parameters<ExecService['run']>[0][] = [];
   let running = overrides.running ?? true;
   let observedId = overrides.id ?? containerId;
@@ -77,7 +78,7 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode
     }
     if (request.args?.[0] === 'read-configuration') return result({ configuration: JSON.parse(await readFile(
       request.args[request.args.indexOf(request.args.includes('--override-config') ? '--override-config' : '--config') + 1]!, 'utf8')),
-      workspace: { workspaceFolder: '/work/custom', workspaceMount: `type=bind,source=${configurationRoot},target=/work/custom` }, mergedConfiguration: { remoteUser: 'coder', workspaceFolder: '/work/custom' },
+      workspace: { workspaceFolder: '/work/custom', workspaceMount: 'type=volume,source=owned,target=/work/custom' }, mergedConfiguration: { remoteUser: 'coder', workspaceFolder: '/work/custom' },
       featuresConfiguration: { featureSets: [] } });
     if (request.args?.[0] === 'image') return result([{ Id: 'sha256:image', Config: { Labels: {} } }]);
     if (request.args?.[0] === 'up') {
@@ -102,13 +103,12 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; networkMode
     }
     if (request.args?.[0] === 'rm') removed = true;
     if (request.args?.[0] === 'ps') return overrides.inventory ?? result(request.args.some(arg => arg.startsWith('label=')) ? `${observedId}\n` : '');
-    if (request.args?.[0] === 'inspect' && overrides.absent) return result('', 1);
+    if (request.args?.[0] === 'inspect' && (overrides.absent || removed && overrides.deleteAbsent)) return result('', 1);
     if (request.args?.[0] === 'inspect') return result([{ Id: observedId, Image: 'sha256:authored-image', HostConfig: { Dns: overrides.dns ?? [], ...(overrides.runtime === 'podman'
       ? { CpuQuota: cpuCores * 100000, CpuPeriod: 100000 } : { NanoCpus: cpuCores * 1e9 }), Memory: memoryBytes, NetworkMode: overrides.networkMode ?? 'bridge' }, State: { Running: running, Paused: overrides.paused ?? false },
       Config: { Labels: { 'devcontainer.local_folder': launch.workspaceFolder, 'devcontainer.config_file': launch.configPath,
         'happier.managed-machine': managedMachineId } },
-      Mounts: overrides.mounts ?? [{ Type: 'bind', Source: '/host/project', Destination: '/work/custom' },
-        { Type: 'volume', Name: 'retained-data', Destination: '/data' }] }]);
+      Mounts: overrides.mounts ?? [{ Type: 'volume', Name: 'retained-data', Destination: '/data' }] }]);
     return result('');
   } };
   const tools = { exec,
@@ -147,7 +147,7 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
       return options.runResult ?? result(`${currentId}\n`);
     }
     if (args[0] === 'inspect') return removed ? result('', 1) : result([{ Id: currentId, Image: containerImageId, Config: { Labels: labels }, State: { Running: running, Paused: false },
-      Mounts: [options.hostPath ? { Type: 'bind', Source: options.hostPath, Destination: '/workspace' }
+      Mounts: [options.hostPath && requests.some(request => request.args?.[0] === 'run' && request.args.some(arg => arg.startsWith('type=bind'))) ? { Type: 'bind', Source: options.hostPath, Destination: '/workspace' }
         : { Type: 'volume', Name: volume, Destination: '/workspace' }] }]);
     if (args[0] === 'exec') {
       // Minimal images provide these operations through the required shell,
@@ -473,7 +473,7 @@ describe('Devcontainer native roles', () => {
   });
 
   it.each([
-    { kind: 'inline', config: '{ // Saved JSONC configuration\n "image": "example:latest", "mounts": ["type=bind,source=/host/data,target=/data"], }' },
+    { kind: 'inline', config: '{ // Saved JSONC configuration\n "image": "example:latest", "mounts": [{"type":"volume","source":"data","target":"/data"}], }' },
   ])('materializes a preset $kind configuration and creates a separate container per Machine', async configuration => {
     const query = DevcontainerReviewQuerySchema.parse({ workspaceFolder: configurationRoot, configPath: '',
       configuration: { ...configuration, image: '' } });
@@ -483,10 +483,10 @@ describe('Devcontainer native roles', () => {
     expect(JSON.parse(await readFile(launch.configPath, 'utf8'))).toMatchObject({ image: 'example:latest' });
     expect(launch).toMatchObject({ configuration });
     expect(reviewed.effectReview.effects).toContainEqual(expect.objectContaining({ kind: 'mount', details: expect.arrayContaining([
-      `type=bind,source=${configurationRoot},target=/work/custom`,
+      'type=volume,source=owned,target=/work/custom',
     ]) }));
     if (configuration.kind === 'inline') expect(reviewed.effectReview.effects).toContainEqual(expect.objectContaining({ kind: 'mount',
-      details: expect.arrayContaining(['type=bind,source=/host/data,target=/data']) }));
+      details: expect.arrayContaining(['volume: data → /data']) }));
     const other = await readDevcontainerEffectReview(h.tools, { workspaceFolder: configurationRoot,
       configuration: { kind: 'inline', config: '{"image":"example:other"}' } });
     expect(other.launch.configPath).not.toBe(launch.configPath);
@@ -622,15 +622,45 @@ describe('Devcontainer native roles', () => {
     expect(h.requests.find(request => request.args?.[0] === 'start')?.args).toEqual(['start', containerId]);
     expect(await h.provider.inspect(retained)).toMatchObject({ availability: 'present', power: 'running' });
   });
-  it('uses an explicitly selected host bind without rewriting its ownership or requiring a setup script', async () => {
-    const hostPath = await mkdtemp(join(configurationRoot, 'host,workspace-'));
+  it.skipIf(process.platform === 'win32')('keeps an agent-planted Git hook out of the selected host project', async () => {
+    const hostPath = await mkdtemp(join(configurationRoot, 'host-workspace-'));
+    const guestPath = await mkdtemp(join(configurationRoot, 'guest-workspace-'));
+    const marker = join(configurationRoot, 'host-hook-ran');
+    const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' });
+    for (const cwd of [hostPath, guestPath]) {
+      git(cwd, 'init', '-q', '-b', 'main');
+      git(cwd, 'config', 'user.name', 'Test');
+      git(cwd, 'config', 'user.email', 'test@example.com');
+      await writeFile(join(cwd, 'notes.txt'), 'initial\n');
+      git(cwd, 'add', 'notes.txt');
+      git(cwd, 'commit', '-qm', 'initial');
+    }
     const h = imageNative('docker', { hostPath });
-    const reviewed = await readDevcontainerEffectReview(h.tools, { workspaceFolder: hostPath, configuration: { kind: 'image', image: 'example:latest' } });
-    expect(await h.provider.acquire(reviewed.launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: {
-      storage: { kind: 'bind', hostPath, childPath: '/workspace' }, volumes: [],
-    } } });
-    expect(h.requests.find(request => request.args?.[0] === 'run')?.args).toContain(`type=bind,"source=${hostPath}",target=/workspace`);
-    expect(h.requests.some(request => request.args?.includes('chown'))).toBe(false);
+    const nativeRun = h.tools.exec.run;
+    const agentCommand = `printf '#!/bin/sh\\ntouch "${marker}"\\n' > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit; printf 'agent edit\\n' > notes.txt`;
+    // Docker Exec is the system boundary. Its real shell writes into the root
+    // selected by the actual provider run request, so a bind exposes the host.
+    h.tools.exec.run = async (request, options) => {
+      if (request.args?.at(-1) === agentCommand) {
+        const mount = h.requests.find(entry => entry.args?.[0] === 'run')?.args?.find(arg => arg.startsWith('type='));
+        execFileSync('/bin/sh', ['-c', agentCommand], { cwd: mount?.startsWith('type=bind') ? hostPath : guestPath });
+        return result('');
+      }
+      return nativeRun(request, options);
+    };
+    const provider = createDevcontainerProvider(h.tools);
+    const reviewed = await readDevcontainerEffectReview(h.tools, { workspaceFolder: hostPath,
+      configuration: { kind: 'image', image: 'example:latest' } });
+    const acquired = await provider.acquire(reviewed.launch, 'managed-a');
+    expect(acquired.kind).toBe('bound');
+    if (acquired.kind !== 'bound') throw new Error('Expected prepared image container');
+    await provider.exec(acquired.resource.value, ['sh', '-c', agentCommand]);
+    await writeFile(join(hostPath, 'notes.txt'), 'host edit\n');
+    git(hostPath, 'add', 'notes.txt');
+    git(hostPath, 'commit', '-qm', 'host change');
+    expect.soft(await access(marker).then(() => true, () => false)).toBe(false);
+    expect.soft(acquired.resource.value).toMatchObject({ storage: { kind: 'child', childPath: '/workspace' } });
+    expect(h.requests.find(request => request.args?.[0] === 'run')?.args).toContain(`type=volume,source=${h.volume},target=/workspace`);
   });
   it.each([false, true])('never offers a reconcileable installation after failed image setup, cleanup failure %s', async cleanupFailure => {
     const h = imageNative('docker', { setup: { ...result('', 2), stderr: new TextEncoder().encode('setup failed token=private-setup-token') }, cleanupFailure });
@@ -781,7 +811,7 @@ describe('Devcontainer native roles', () => {
     expect(ambiguous.requests.some(request => request.args?.[0] === 'exec')).toBe(false);
   });
 
-  it('rebuilds the exact retained installation and returns replacement identity with retained bind and external volume facts', async () => {
+  it('rebuilds the exact retained installation and returns replacement identity with its retained child workspace and volume facts', async () => {
     const { provider, requests } = native();
     expect(await provider.rebuild(resource, launch.reviewedEffectDigest)).toEqual({ kind: 'bound', resource: { origin: 'created',
       contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
@@ -792,6 +822,7 @@ describe('Devcontainer native roles', () => {
     expect(requests.find(request => request.args?.[0] === 'rm')?.args).toEqual(['rm', '--force', containerId]);
     expect(requests.find(request => request.args?.[0] === 'up')?.args).toEqual([
       'up', '--workspace-folder', launch.workspaceFolder, '--config', launch.configPath,
+      '--override-config', `${launch.configPath}.happier-workspace.json`,
       '--id-label', `devcontainer.local_folder=${launch.workspaceFolder}`, '--id-label', `devcontainer.config_file=${launch.configPath}`,
       '--id-label', 'happier.managed-machine=managed-a',
     ]);
@@ -913,15 +944,12 @@ describe('Devcontainer native roles', () => {
     expect(write?.args?.at(-1)).toContain('chmod 4755');
   });
 
-  it('detects the deepest native mount without confusing sibling-prefix paths', async () => {
+  it('refuses an extra host bind even when it does not contain the workspace', async () => {
     const { provider } = native({ mounts: [
-      { Type: 'bind', Source: '/wrong', Destination: '/work/custom2' },
-      { Type: 'bind', Source: '/host/work', Destination: '/work' },
+      { Type: 'bind', Source: '/host/other', Destination: '/other' },
       { Type: 'volume', Name: 'retained-data', Destination: '/data' },
     ] });
-    expect(await provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: {
-      storage: { kind: 'bind', hostPath: '/host/work/custom', childPath: '/work/custom' },
-    } } });
+    expect(await provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'pending' });
   });
 
   it.each([
@@ -936,10 +964,10 @@ describe('Devcontainer native roles', () => {
 
   it.each(['/work/custom ', '/work/custom\nfolder', '/work/custom\r\n'])('retains significant path bytes in the actual child root %j', async workspaceRoot => {
     const { provider } = native({ namespace: `coder\n${workspaceRoot}\n`, mounts: [
-      { Type: 'bind', Source: '/host/project', Destination: workspaceRoot },
+      { Type: 'volume', Name: 'workspace', Destination: workspaceRoot },
     ] });
     expect(await provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: {
-      workspaceRoot, storage: { kind: 'bind', hostPath: '/host/project', childPath: workspaceRoot },
+      workspaceRoot, storage: { kind: 'child', childPath: workspaceRoot },
     } } });
   });
 
@@ -948,11 +976,15 @@ describe('Devcontainer native roles', () => {
     expect(await provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'pending' });
   });
 
-  it('preserves Windows native bind identity when the workspace is below the mount', async () => {
-    const { provider } = native({ mounts: [{ Type: 'bind', Source: 'C:\\work', Destination: '/work' }] });
-    expect(await provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: {
-      storage: { kind: 'bind', hostPath: 'C:\\work\\custom', childPath: '/work/custom' },
-    } } });
+  it('retains exact legacy Windows bind cleanup while refusing Agent access and restart', async () => {
+    const { provider, requests } = native({ deleteAbsent: true, mounts: [{ Type: 'bind', Source: 'C:\\work', Destination: '/work' }] });
+    const legacy = { ...resource, storage: { kind: 'bind' as const, hostPath: 'C:\\work\\custom', childPath: '/work/custom' }, volumes: [] };
+    expect(await provider.acquire(launch, 'managed-a')).toMatchObject({ kind: 'pending' });
+    await expect(provider.exec(legacy, ['sh'])).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(await provider.power(legacy, 'start')).toMatchObject({ kind: 'refused', code: 'invalid_request' });
+    expect(requests.some(request => request.args?.[0] === 'start')).toBe(false);
+    expect(await provider.inspect(legacy)).toMatchObject({ availability: 'present' });
+    expect(await provider.destroy(legacy)).toEqual({ kind: 'confirmed' });
   });
 
   it('settles already-absent deletion only from a complete successful native inventory', async () => {

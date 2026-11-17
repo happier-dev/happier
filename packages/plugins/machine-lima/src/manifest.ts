@@ -185,7 +185,6 @@ export const LIMA_PLUGIN = definePlugin({
         { path: 'cpus', role: 'cpu', title: 'CPU cores', widget: 'integer', required: true },
         { path: 'memoryGiB', role: 'memory', title: 'Memory (GiB)', widget: 'integer', required: true },
         { path: 'diskGiB', role: 'disk', title: 'Disk (GiB)', widget: 'integer', required: true },
-        { path: 'mounts', title: 'Mounts', widget: 'json', defaultValue: [] },
       ] },
       async run(input, context) { return (await provider(context)).options(input); },
     },

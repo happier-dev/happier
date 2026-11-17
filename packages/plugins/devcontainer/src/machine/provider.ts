@@ -142,6 +142,10 @@ export function createDevcontainerProvider(input: Readonly<{
       volumes: mounts.filter(mount => mount.Type === 'volume').map(mount => ({ name: mount.Name, childPath: mount.Destination })),
     };
   }
+  function requireChildStorage(native: Record<string, unknown>) {
+    if (!Array.isArray(native.Mounts)) fail('native_observation_unavailable');
+    if (native.Mounts.some(mount => record(mount).Type === 'bind')) fail('invalid_request');
+  }
   function assertLabels(native: Record<string, unknown>, launch: DevcontainerLaunch, managedMachineId: string) {
     const labels = record(record(native.Config).Labels);
     if (Object.entries(nativeLabels(launch, managedMachineId)).some(([key, value]) => labels[key] !== value)) fail('resource_mismatch');
@@ -183,6 +187,7 @@ export function createDevcontainerProvider(input: Readonly<{
     const state = record(native.State);
     if (typeof state.Running !== 'boolean' || typeof state.Paused !== 'boolean') fail('native_observation_unavailable');
     if (running) {
+      requireChildStorage(native);
       if (!state.Running || state.Paused) fail('child_unavailable');
       await assertNamespaceCurrent(resource);
     }
@@ -192,6 +197,7 @@ export function createDevcontainerProvider(input: Readonly<{
     const native = await inspectContainer(containerId, launch, managedMachineId);
     if (!native || record(native.State).Running !== true || record(native.State).Paused !== false) fail('native_realization_unknown');
     assertLabels(native, launch, managedMachineId);
+    requireChildStorage(native);
     // Running alone does not mean an image's preparation/setup completed: a
     // detached run can succeed before IO is interrupted, or failed setup cleanup
     // can be unavailable. Only this creation path produces the guest witness.
@@ -226,8 +232,8 @@ export function createDevcontainerProvider(input: Readonly<{
           // networking stays under its existing effect review and native CLI.
           ...(useHostNetwork ? ['--network', 'host'] : []),
           ...Object.entries(nativeLabels(launch, managedMachineId)).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
-          '--mount', mountArgument([launch.workspaceFolder ? 'type=bind' : 'type=volume',
-            `source=${launch.workspaceFolder ?? `${devcontainerComposeProjectName(managedMachineId)}-workspace`}`, 'target=/workspace']),
+          '--mount', mountArgument(['type=volume',
+            `source=${devcontainerComposeProjectName(managedMachineId)}-workspace`, 'target=/workspace']),
           // Native hosts entries preserve the declared hostname/TLS identity and
           // the controller's split DNS in either native network mode.
           ...(guestHome?.addresses.flatMap(address => ['--add-host', `${new URL(guestHome.origin).hostname}:${address}`]) ?? []),
@@ -246,15 +252,12 @@ export function createDevcontainerProvider(input: Readonly<{
         if (!/^[a-f0-9]{64}$/u.test(id)) fail('native_realization_unknown');
         recoveryReference = id;
         const prepare = async () => {
-          if (!launch.workspaceFolder) {
-            // Docker creates an absent image workspace as root. Give only the
-            // volume root to the image's actual user; never chown host binds or
-            // recursively rewrite retained project contents.
-            const identity = output(await childExec(launch, id, ['sh', '-c', 'id -u; id -g'], undefined, false, managedMachineId)).trim().split(/\r?\n/u);
-            if (identity.length !== 2 || identity.some(value => !/^\d+$/u.test(value))) fail('child_namespace_unavailable');
-            const ownership = await run(input.docker, ['exec', '--user', '0', id, 'chown', `${identity[0]}:${identity[1]}`, '/workspace']);
-            if (!completed(ownership)) { nativeCause = commandFailure(ownership, command); fail('native_setup_failed'); }
-          }
+          // Docker creates an absent image workspace as root. Give only the
+          // volume root to the image's actual user; retain existing file ownership.
+          const identity = output(await childExec(launch, id, ['sh', '-c', 'id -u; id -g'], undefined, false, managedMachineId)).trim().split(/\r?\n/u);
+          if (identity.length !== 2 || identity.some(value => !/^\d+$/u.test(value))) fail('child_namespace_unavailable');
+          const ownership = await run(input.docker, ['exec', '--user', '0', id, 'chown', `${identity[0]}:${identity[1]}`, '/workspace']);
+          if (!completed(ownership)) { nativeCause = commandFailure(ownership, command); fail('native_setup_failed'); }
           if (source.setupScript) {
             const setup = await childExec(launch, id, ['sh', '-c', source.setupScript], undefined, false, managedMachineId);
             if (!completed(setup)) { nativeCause = commandFailure(setup, command); fail('native_setup_failed'); }
@@ -404,7 +407,8 @@ export function createDevcontainerProvider(input: Readonly<{
     async power(raw: DevcontainerResource, intent: 'start' | 'stop') {
       let issued = false;
       try {
-        const { resource } = await exact(raw);
+        const { resource, native } = await exact(raw);
+        if (intent === 'start') requireChildStorage(native);
         if (intent === 'start' && !imageSource(resource)) await assertDevcontainerEffectReview(nativeInput, resource, resource.reviewedEffectDigest);
         issued = true;
         const result = intent === 'stop'

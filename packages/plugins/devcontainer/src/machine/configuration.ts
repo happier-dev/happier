@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { canonicalizePath, isCanonicalAbsolutePathInsideRoot, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 import type { DevcontainerLaunch, DevcontainerReviewQuery } from './schemas.js';
@@ -10,8 +10,28 @@ export function devcontainerNativeFlags(launch: Pick<DevcontainerLaunch, 'worksp
   if (!launch.workspaceFolder || !launch.configPath) throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
   return ['--workspace-folder', launch.workspaceFolder,
     '--config', launch.configuration?.kind === 'inline' ? join(dirname(launch.configPath), 'devcontainer.json') : launch.configPath,
-    ...(launch.configuration?.kind === 'inline' ? ['--override-config', launch.configPath] : []),
+    '--override-config', managedWorkspaceConfigurationPath(launch.configPath),
     ...(launch.runtime === 'podman' ? ['--docker-path', 'podman'] : [])];
+}
+
+function managedWorkspaceConfigurationPath(configPath: string): string {
+  return `${configPath}.happier-workspace.json`;
+}
+
+/** Keep native relative references anchored at the authored file while placing
+ * Project files on this Machine's own volume. Compose owns its service volumes. */
+async function materializeManagedWorkspaceConfiguration(launch: Omit<DevcontainerLaunch, 'reviewedEffectDigest'>) {
+  if (!launch.workspaceFolder || !launch.configPath) throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
+  const value = (await import('json5')).default.parse<unknown>(await readFile(launch.configPath, 'utf8'));
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
+  const configuration = value as Record<string, unknown>;
+  const workspaceFolder = typeof configuration.workspaceFolder === 'string' ? configuration.workspaceFolder
+    : '/workspaces/${localWorkspaceFolderBasename}';
+  const effective = 'dockerComposeFile' in configuration ? configuration : { ...configuration, workspaceFolder,
+    workspaceMount: `type=volume,source=\${localEnv:COMPOSE_PROJECT_NAME}-workspace,target=${workspaceFolder}` };
+  await writeAtomicTextFile({ path: await containedDevcontainerPath(launch.workspaceFolder, managedWorkspaceConfigurationPath(launch.configPath)),
+    contents: JSON.stringify(effective) });
+  return launch;
 }
 
 export async function containedDevcontainerPath(root: string, candidate: string): Promise<string> {
@@ -24,9 +44,7 @@ export async function containedDevcontainerPath(root: string, candidate: string)
  * existing file authority. Content names let distinct presets share a workspace. */
 export async function materializeDevcontainerConfiguration(query: DevcontainerReviewQuery): Promise<Omit<DevcontainerLaunch, 'reviewedEffectDigest'>> {
   if (query.configuration?.kind === 'image') {
-    if (query.workspaceFolder && !isAbsolute(query.workspaceFolder)) throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
     return { ...(query.runtime ? { runtime: query.runtime } : {}),
-      ...(query.workspaceFolder ? { workspaceFolder: await canonicalizePath(query.workspaceFolder) } : {}),
       configuration: { kind: 'image' as const, image: query.configuration.image,
         ...(query.configuration.setupScript ? { setupScript: query.configuration.setupScript } : {}) } };
   }
@@ -36,7 +54,8 @@ export async function materializeDevcontainerConfiguration(query: DevcontainerRe
   const source = query.configuration;
   if (!source || source.kind === 'file') {
     if (!query.configPath || !isAbsolute(query.configPath)) throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
-    return { ...(query.runtime ? { runtime: query.runtime } : {}), workspaceFolder, configPath: await containedDevcontainerPath(workspaceFolder, query.configPath) };
+    return materializeManagedWorkspaceConfiguration({ ...(query.runtime ? { runtime: query.runtime } : {}), workspaceFolder,
+      configPath: await containedDevcontainerPath(workspaceFolder, query.configPath) });
   }
   let value: unknown;
   try { value = (await import('json5')).default.parse<unknown>(source.config); }
@@ -49,5 +68,5 @@ export async function materializeDevcontainerConfiguration(query: DevcontainerRe
   const configPath = await containedDevcontainerPath(workspaceFolder, join(directory, `happier-${digest}.json`));
   await writeAtomicTextFile({ path: configPath, contents: content });
   const configuration: NonNullable<DevcontainerLaunch['configuration']> = { kind: 'inline', config: source.config };
-  return { ...(query.runtime ? { runtime: query.runtime } : {}), workspaceFolder, configPath, configuration };
+  return materializeManagedWorkspaceConfiguration({ ...(query.runtime ? { runtime: query.runtime } : {}), workspaceFolder, configPath, configuration });
 }

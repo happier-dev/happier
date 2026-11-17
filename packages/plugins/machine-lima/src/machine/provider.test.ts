@@ -35,6 +35,14 @@ function processBoundary(handler: (args: readonly string[], options?: Parameters
 }
 
 describe('public Lima native leaf', () => {
+  it('refuses host-folder mounts before native VM creation', async () => {
+    const boundary = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
+    const provider = createLimaProvider(boundary.executor);
+    const requested = { ...launch, mounts: [{ location: '/host/project', mountPoint: '/workspace', writable: true }] };
+    await expect(provider.options(requested)).rejects.toThrow();
+    await expect(provider.acquire({ managedId, launch: requested })).rejects.toThrow();
+    expect(boundary.effects).toEqual([]);
+  });
   it.each(['exec', 'stream', 'putFile', 'power', 'destroy'] as const)('%s inspects native identity only at the shared effect boundary', async role => {
     let status = 'Running';
     let present = true;

@@ -115,9 +115,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
     const imageConfig = record(nativeImage.Config);
     const effects: Effect[] = [
       { scope: 'host', kind: 'image', title: 'Container image', details: [source.image, 'Passive inspection may download the full image into the runtime cache.'] },
-      { scope: 'child', kind: 'mount', title: 'Workspace', details: [materialized.workspaceFolder
-        ? `type=bind,source=${materialized.workspaceFolder},target=/workspace`
-        : 'A separate named volume at /workspace for this Machine; retained when rebuilding or deleting its container. Its root is assigned to the image user; existing file ownership is retained.'] },
+      { scope: 'child', kind: 'mount', title: 'Workspace', details: ['A separate named volume at /workspace for this Machine; retained when rebuilding or deleting its container. Its root is assigned to the image user; existing file ownership is retained.'] },
       { scope: 'child', kind: 'lifecycle', title: 'Container startup', details: ['The image entrypoint and command are replaced by an idle shell; Dev Containers metadata hooks are not evaluated.'] },
     ];
     if (source.setupScript) effects.push({ scope: 'child', kind: 'lifecycle', title: 'Setup script', details: [source.setupScript] });
@@ -188,7 +186,23 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
     return rawTemplate && (peer !== authoredConfiguration || canonical(command) === canonical(configuration[hook]))
       ? peer[hook] : command;
   };
+  // Native readers own mount/configuration parsing. Opaque mount expressions
+  // cannot establish a container-only filesystem and remain unavailable.
+  const requireChildMounts = (value: unknown) => {
+    if (value === undefined) return;
+    if (!Array.isArray(value)) fail('native_observation_unavailable');
+    for (const mount of value) {
+      if (!isRecord(mount)) fail('native_observation_unavailable');
+      if (mount.type === 'bind') fail('invalid_request');
+      if (mount.type !== 'volume' && mount.type !== 'tmpfs') fail('native_observation_unavailable');
+    }
+  };
   const hooks = (source: Record<string, unknown>, title: string) => {
+    requireChildMounts(source.mounts);
+    if (source.runArgs !== undefined && (!Array.isArray(source.runArgs)
+      || source.runArgs.some(arg => typeof arg !== 'string' || /^(?:--(?:mount|volume|volumes-from)(?:=|$)|-[^-]*v)/u.test(arg)))) {
+      fail('native_observation_unavailable');
+    }
     for (const hook of ['onCreateCommand', 'updateContentCommand', 'postCreateCommand', 'postStartCommand', 'postAttachCommand']) {
       add('child', 'lifecycle', `${title} · ${hook}`, commands(source === configuration ? configuredHook(hook) : source[hook]));
       // Native merged configuration carries plural arrays of lifecycle commands.
@@ -303,6 +317,8 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
     add('host', 'compose', 'Compose namespace', ['${managedMachineNamespace} is derived from the existing managed row id.']);
     for (const [serviceName, value] of Object.entries(record(compose.services))) {
       const service = record(value);
+      requireChildMounts(service.volumes);
+      if (service.volumes_from !== undefined) fail('native_observation_unavailable');
       add('child', 'compose', serviceName, strings([service.command, service.entrypoint, service.image, service.user]));
       add('child', 'network', serviceName, [...strings(service.network_mode), ...Object.keys(record(service.networks)),
         ...(Array.isArray(service.ports) ? service.ports.map(port => `${String(record(port).published ?? '')}:${String(record(port).target ?? '')}`) : [])]);
@@ -320,6 +336,11 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
       return `${key}: ${String(definition.name ?? key)}${definition.external === true ? ' (external)' : ''}`;
     });
     add('child', 'network', 'Compose networks', nativeNames(compose.networks));
+    for (const value of Object.values(record(compose.volumes))) {
+      const volume = record(value);
+      if (volume.external === true || volume.driver_opts !== undefined
+        || volume.driver !== undefined && volume.driver !== 'local') fail('native_observation_unavailable');
+    }
     add('child', 'mount', 'Compose volumes', nativeNames(compose.volumes));
   }
 

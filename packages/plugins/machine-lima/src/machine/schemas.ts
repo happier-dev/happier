@@ -12,16 +12,18 @@ const vmType = defineProtocolUnion([defineProtocolLiteral('vz'), defineProtocolL
 const positiveInteger = defineProtocolNumber({ integer: true, minimum: 1 });
 const image = defineProtocolString({ minLength: 1 });
 const preparedBase = defineProtocolObject({ operationId: defineProtocolString({ minLength: 1 }) }, closed);
-const mounts = defineProtocolArray(defineProtocolObject({
+const mount = defineProtocolObject({
   location: absolutePath, mountPoint: absolutePath, writable: defineProtocolUnion([
     defineProtocolLiteral(true), defineProtocolLiteral(false),
   ]),
-}, closed));
+}, closed);
+const mounts = defineProtocolArray(mount);
+const noHostMounts = defineProtocolArray(mount, { maxItems: 0 });
 
 export const LimaLaunchSchema = defineProtocolObject({
   store: absolutePath, image, arch: architecture, vmType,
   cpus: positiveInteger, memoryGiB: positiveInteger, diskGiB: positiveInteger,
-  mounts,
+  mounts: noHostMounts,
   preparedBase: preparedBase.optional(),
 }, closed);
 
@@ -30,7 +32,7 @@ export const LimaLaunchSchema = defineProtocolObject({
 export const LimaOptionsInputSchema = defineProtocolObject({
   store: absolutePath.optional(), image: image.optional(),
   arch: architecture.optional(), vmType: vmType.optional(), cpus: positiveInteger.optional(),
-  memoryGiB: positiveInteger.optional(), diskGiB: positiveInteger.optional(), mounts: mounts.optional(),
+  memoryGiB: positiveInteger.optional(), diskGiB: positiveInteger.optional(), mounts: noHostMounts.optional(),
   preparedBase: preparedBase.optional(),
 }, closed);
 

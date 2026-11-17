@@ -128,7 +128,6 @@ export function buildCreateArgs(launch: LimaLaunch & Readonly<{ instance: string
     // username: enrollment's distinct daemon principal owns its admin policy.
     '--set', `.user.name = ${JSON.stringify(MACHINE_PROVISIONER_CLOUD_SSH_USER)}`,
     '--set', `.images = ${JSON.stringify([{ location: launch.image, arch: launch.arch }])}`,
-    '--set', `.mounts = ${JSON.stringify(launch.mounts)}`,
     // Guest services must not claim the controller's loopback ports. Lima's
     // separate ssh.localPort still provides native shell/bootstrap access.
     '--set', `.portForwards = ${JSON.stringify([
@@ -211,8 +210,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
         if (!image) throw new PluginError({ code: 'lima_image_unavailable' });
         query = { ...query, image };
       }
-      // The existing product create recipe uses --mount-none. Preserve every
-      // explicitly reviewed mount; omitted mounts keep that no-mount default.
+      // Project files use the guest filesystem; host mounts are not placement inputs.
       const explicit = LimaLaunchSchema.safeParse({ ...query, mounts: query.mounts ?? [] });
       // The controller's native info owns the store and template defaults. Never infer them from
       // the viewing device, or replace a complete retained recipe on a refresh.
@@ -284,7 +282,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
           // Lima 2.2.1 clone requires a stopped source and refuses an existing
           // destination. Only our clean build can supply this source identity.
           const cloned = await runLimaCommand({ executor, store: launch.store, instance: expected.instance, interactive: true,
-            args: ['clone', '--tty=false', '--start=false', '--set', `.mounts = ${JSON.stringify(launch.mounts)}`,
+            args: ['clone', '--tty=false', '--start=false', '--set', '.mounts = []',
               source.resource.instance, expected.instance] });
           if (cloned.exitCode !== 0) throw Object.assign(new Error('native clone failed'), { code: 'lima_clone_failed' });
           const instance = await inspectLimaInstance({ executor, ...expected });

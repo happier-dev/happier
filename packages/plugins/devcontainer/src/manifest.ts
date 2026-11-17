@@ -159,8 +159,9 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
         { path: 'runtime', title: 'Container runtime', widget: 'select', defaultValue: 'docker', options: [
           { value: 'docker', label: 'Docker' }, { value: 'podman', label: 'Podman' },
         ] },
-        { path: 'workspaceFolder', title: 'Project folder on this computer', widget: 'text',
-          description: 'Leave empty to keep files in the container. A folder here is shared with the container.',
+        { path: 'workspaceFolder', title: 'Configuration folder on this computer', widget: 'text',
+          description: 'Contains the configuration and build sources. Project files are placed separately in the container.',
+          visibleWhen: { op: 'not', predicate: { op: 'eq', path: 'configuration.kind', value: 'image' } },
           requiredWhen: { op: 'not', predicate: { op: 'eq', path: 'configuration.kind', value: 'image' } } },
         { path: 'configuration.kind', title: 'Build from', widget: 'select', defaultValue: 'image', options: [
           { value: 'image', label: 'Container image' }, { value: 'file', label: 'An existing devcontainer.json' }, { value: 'inline', label: 'Devcontainer JSON' },

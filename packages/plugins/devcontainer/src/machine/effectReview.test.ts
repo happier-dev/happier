@@ -28,12 +28,12 @@ async function reviewBoundary() {
   const nativeConfiguration: { configuration: Record<string, unknown>; workspace: Record<string, unknown>;
     mergedConfiguration: Record<string, unknown>; featuresConfiguration: Record<string, unknown> } = { configuration: { image: 'example:latest', initializeCommand: 'host-setup',
     remoteEnv: { API_TOKEN: 'private-value' }, runArgs: ['--network', 'host'],
-    mounts: ['type=bind,source=/host/data,target=/data'], features: { 'example/feature:1': {} } },
-    workspace: { workspaceFolder: '/work/project', workspaceMount: `type=bind,source=${workspaceFolder},target=/work/project` },
+    mounts: [{ type: 'volume', source: 'data', target: '/data' }], features: { 'example/feature:1': {} } },
+    workspace: { workspaceFolder: '/work/project', workspaceMount: 'type=volume,source=owned,target=/work/project' },
     mergedConfiguration: { postCreateCommands: ['child-setup'], remoteUser: 'coder', workspaceFolder: '/work/project' },
     featuresConfiguration: { featureSets: [] } };
   const compose = { services: { app: { image: 'example:latest', network_mode: 'host',
-    command: ['run-app'], volumes: [{ type: 'bind', source: '/host/data', target: '/data' }] } } };
+    command: ['run-app'], volumes: [{ type: 'volume', source: 'data', target: '/data' }] } } };
   const composeNamespace = { inherited: 'uncontrolled-project', enabled: false };
   const composeExternalEnvironment: { key?: string } = {};
   const incumbent = { present: false };
@@ -107,6 +107,22 @@ async function reviewBoundary() {
 }
 
 describe('Devcontainer public passive effect review', () => {
+  it.each(['configuration', 'mergedConfiguration', 'compose', 'runArgs'] as const)('refuses host data binds from native %s before acquiring a placed container', async origin => {
+    const boundary = await reviewBoundary();
+    boundary.nativeConfiguration.configuration.mounts = [];
+    boundary.nativeConfiguration.workspace.workspaceMount = 'type=volume,source=happierreview-workspace,target=/work/project';
+    if (origin === 'compose') {
+      await writeFile(join(boundary.workspaceFolder, '.devcontainer', 'compose.yml'), 'services:\n  app:\n    image: example:latest\n');
+      boundary.nativeConfiguration.configuration.dockerComposeFile = ['compose.yml'];
+      boundary.nativeConfiguration.configuration.service = 'app';
+      boundary.compose.services.app.volumes = [{ type: 'bind', source: '/host/data', target: '/data' }];
+    } else if (origin === 'runArgs') boundary.nativeConfiguration.configuration.runArgs = ['--volume', '/host/data:/data'];
+    else boundary.nativeConfiguration[origin].mounts = ['type=bind,source=/host/data,target=/data'];
+    await expect(boundary.handlers.get('options')!({
+      workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath,
+    }, boundary.context)).rejects.toMatchObject({ code: origin === 'compose' ? 'invalid_request' : 'native_observation_unavailable' });
+    expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
+  });
   it('reviews inline relative Dockerfiles through the native CLI', async () => {
     const boundary = await reviewBoundary();
     boundary.nativeConfiguration.configuration = { build: { dockerfile: 'Dockerfile' } };
