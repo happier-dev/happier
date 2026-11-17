@@ -72,6 +72,12 @@ Happier match the editor you already stare at all day. Imports are validated
 rather than trusted: a malformed file is rejected with a reason instead of
 producing a half-applied palette.
 
+The unreleased 0.3 client resolves local VS Code `include` files before importing.
+In a browser, select the parent JSON files together with the main theme; the first
+selected file is imported as the main theme. Native imports read accessible files
+relative to the chosen theme. A missing parent or an include cycle stops the
+import with an error, leaving your library unchanged.
+
 ## Surface finish (0.3 development)
 
 In the 0.3 development client, **Settings → Appearance → Surface finish** offers
