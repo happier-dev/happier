@@ -8,7 +8,7 @@ import axios from 'axios';
 import { resolveMessageActionReferenceSnapshotV1 } from '@/api/session/messageActionReference';
 import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -600,21 +600,26 @@ function createHostedWebPreviewProjectionRegistry() {
 
 describe('daemon contribution registry projection rpc handler', () => {
     it('reads the Agent selection without projecting unrelated contribution families', async () => {
-        const loaded = loadBundledPluginLocatorResult(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(
-            ({ pluginId }) => pluginId === 'happier.agent.claude' || pluginId === 'happier.agent.codex',
-        ));
+        const loaded = loadBundledPluginLocatorResult(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS);
         expect(loaded.pluginFailures).toEqual([]);
-        let registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+        const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: { loadedPlugins: loaded.loadedPlugins, diagnosticsByPluginId: {} },
             provenance: 'first_party',
+            admittedGraph: loaded.admittedGraph,
         }));
+        const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { contributes: registry } });
+        let currentRuntime = runtime.registry;
+        let successor: typeof runtime | undefined;
+        onTestFinished(async () => {
+            try { await successor?.dispose(); }
+            finally { await runtime.dispose(); }
+        });
         const { registerDaemonContributionRegistryProjectionHandler } = await import('./daemonContributionRegistryProjection');
         const { handlers, registrar } = createRegistrar();
-        let generation = 1;
         let serverFeatureReads = 0;
         registerDaemonContributionRegistryProjectionHandler(registrar, {
-            resolveGeneration: async () => generation,
-            resolveRegistry: async () => registry,
+            resolveGeneration: async () => currentRuntime.generation,
+            resolveRuntimeRegistry: async () => currentRuntime,
             resolveInstalledPackages: async () => [],
             // The Home feature fetch is a network boundary. Roster discovery
             // must remain independent of UI-feature availability and latency.
@@ -622,7 +627,7 @@ describe('daemon contribution registry projection rpc handler', () => {
         });
         const handler = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!;
         const full = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handler({ machineId: 'm1' }));
-        expect(Object.keys(full.projection.agentsById)).toEqual(['claude', 'codex']);
+        expect(Object.keys(full.projection.agentsById)).toEqual(expect.arrayContaining(['claude', 'codex']));
         expect(Object.keys(full.projection.familiesById).length).toBeGreaterThan(0);
         expect(serverFeatureReads).toBe(1);
         serverFeatureReads = 0;
@@ -634,8 +639,11 @@ describe('daemon contribution registry projection rpc handler', () => {
         expect(selected.automationEligibleEvents).toBeUndefined();
         expect(selected.composerSurfaceCatalog).toBeUndefined();
         expect(serverFeatureReads).toBe(0);
-        registry = createResolvedContributionRegistry({ agents: [] });
-        generation = 2;
+        successor = await createAdmittedPluginRuntimeFixture({
+            happyHomeDir: runtime.happyHomeDir, controller: runtime.controller,
+            runtimeOptions: { contributes: createResolvedContributionRegistry({ agents: [] }), pluginIds: [] },
+        });
+        currentRuntime = successor.registry;
         const empty = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handler({
             machineId: 'm1', selection: 'agents',
         }));
@@ -1935,7 +1943,8 @@ describe('daemon contribution registry projection rpc handler', () => {
                 error: 'Set up Channels first',
                 retryable: false,
                 data: {
-                    details: { privateProviderFact: 'must-not-cross' },
+                    details: { setupRequired: true },
+                    privateProviderFact: 'must-not-cross',
                     remediation: {
                         kind: 'openSettings',
                         path: '/settings/plugins/happier.channels/connections',
@@ -1958,6 +1967,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             code: 'channels_connection_required',
             message: 'Set up Channels first',
             retryable: false,
+            details: { setupRequired: true },
             remediation: {
                 kind: 'openSettings',
                 path: '/settings/plugins/happier.channels/connections',
@@ -2473,6 +2483,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             runtimeRegistry,
             actionId: 'acme.preview/open-preview',
             input: { previewId: 'preview-1' },
+            daemonHoldsApprovalWaiter: true,
             expectedContributorOccurrenceId: contributorOccurrenceId,
             requestCurrentIntent: expect.any(Function),
             approvalContext: { authority: 'account_automation', surface: 'rpc', defaultSessionId: 'session-1' },
@@ -2589,6 +2600,7 @@ describe('daemon contribution registry projection rpc handler', () => {
         expect(executePluginActionIfAvailableMock).toHaveBeenCalledWith({
             runtimeRegistry,
             actionId: 'acme.preview/composer-only-action',
+            daemonHoldsApprovalWaiter: true,
             expectedContributorOccurrenceId: '7',
             input: { title: 'Ready' },
             requestCurrentIntent: expect.any(Function),
@@ -3005,7 +3017,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                     id: 'publish',
                     dangerLevel: 'writesRemote',
                     scopes: ['global'],
-                    surfaces: ['plugin'],
+                    surfaces: ['ui'],
                     inputSchema: {
                         type: 'object',
                         properties: { title: { type: 'string' } },
@@ -3037,6 +3049,15 @@ describe('daemon contribution registry projection rpc handler', () => {
         });
         const registry = createResolvedContributionRegistry({
             agents: Object.freeze([]),
+            actions: [{
+                ...createStructuredActionFixture({ id: 'publish', placementBindings: [] }),
+                pluginId: 'acme.target',
+                definition: {
+                    ...createStructuredActionFixture({ id: 'publish', placementBindings: [] }).definition,
+                    dangerLevel: 'writesRemote', scopes: ['global'],
+                    inputSchema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'], additionalProperties: false },
+                },
+            }],
             materializationIdsByPluginId: {
                 'acme.mounted': 'materialization-current',
                 'acme.target': 'target-materialization-current',
@@ -3092,46 +3113,10 @@ describe('daemon contribution registry projection rpc handler', () => {
         vi.resetModules();
         vi.doMock('@/plugins/runtime/reload/singleton', () => ({ pluginReloadController: controller }));
         executePluginActionIfAvailableMock.mockReset();
-        executePluginActionIfAvailableMock.mockImplementation(async (request) => {
-            const targetResult = await targetActionInvocations.invoke({
-                pluginId: 'acme.target',
-                localId: 'publish',
-                input: request.input,
-                surface: request.context.caller?.kind === 'plugin'
-                    ? 'plugin'
-                    : request.context.surface ?? 'cli',
-                ...(request.context.invocationSurface
-                    ? { invocationSurface: request.context.invocationSurface }
-                    : {}),
-                ...(request.context.caller ? { caller: request.context.caller } : {}),
-                ...(request.context.isMountedCallerCurrent
-                    ? { isMountedCallerCurrent: request.context.isMountedCallerCurrent }
-                    : {}),
-                ...(request.requestCurrentIntent
-                    ? { requestCurrentIntent: request.requestCurrentIntent }
-                    : {}),
-            });
-            return targetResult.status === 'executed'
-                ? { matched: true, result: { ok: true, result: targetResult.value } }
-                : targetResult.status === 'deferred'
-                    // API-only deferred approvals cannot execute through a mounted UI projection.
-                    ? {
-                        matched: true,
-                        result: {
-                            ok: false,
-                            errorCode: 'plugin_action_current_intent_unavailable',
-                            error: 'plugin_action_current_intent_unavailable',
-                        },
-                    }
-                : {
-                    matched: true,
-                    result: {
-                        ok: false,
-                        errorCode: targetResult.code,
-                        error: targetResult.message,
-                    },
-                };
-        });
+        const realExecutor = await vi.importActual<typeof import('@/plugins/runtime/invocation/actions/executeContributedAction')>(
+            '@/plugins/runtime/invocation/actions/executeContributedAction',
+        );
+        executePluginActionIfAvailableMock.mockImplementation(realExecutor.executeContributedAction);
         const { handlers, registrar } = createRegistrar();
         const projectionModule = await import('./daemonContributionRegistryProjection');
         vi.doUnmock('@/plugins/runtime/reload/singleton');
@@ -3172,12 +3157,15 @@ describe('daemon contribution registry projection rpc handler', () => {
         await expect(handler?.(request)).resolves.toEqual({
             ok: false,
             code: 'plugin_action_current_intent_unavailable',
+            actionHandlerInvocation: 'notStarted',
         });
         expect(targetHandler).not.toHaveBeenCalled();
 
         // The person confirmed in the UI: the daemon admits that settled
         // intent directly, with no durable approval requester configured.
-        await expect(handler?.({ ...request, presentUserIntent: 'confirmed' })).resolves.toEqual({
+        await expect(handler?.({ ...request, presentUserIntent: 'confirmed' }, {
+            signal: new AbortController().signal, callerAuthority: 'present_user',
+        })).resolves.toEqual({
             ok: true,
             result: { published: true },
         });
@@ -3327,6 +3315,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             runtimeRegistry,
             actionId: 'acme.preview/open-preview',
             expectedContributorOccurrenceId: '7',
+            daemonHoldsApprovalWaiter: true,
             input: { previewId: 'preview-1' },
             requestCurrentIntent: expect.any(Function),
             approvalContext: {
@@ -4890,14 +4879,24 @@ describe('daemon contribution registry projection rpc handler', () => {
                 [`${pluginId}/repository`]: { ...inputType, pickerSurface: { ...inputType.pickerSurface!, occurrenceId: 'another-occurrence' } },
             } },
         } } };
-        expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(tampered).success).toBe(false);
+        const rejectedMount = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(tampered);
+        expect(rejectedMount.projection.familiesById.inputTypes?.entriesById[`${pluginId}/repository`]).toBeUndefined();
+        expect(rejectedMount.projection.diagnostics).toContainEqual(expect.objectContaining({
+            data: expect.objectContaining({ code: 'plugin_compatibility_projection_invalid',
+                details: expect.objectContaining({ family: 'inputTypes', entryId: `${pluginId}/repository` }) }),
+        }));
         const wrongDeclaredPicker = { ...parsed, projection: { ...parsed.projection, familiesById: {
             ...parsed.projection.familiesById, inputTypes: { ...inputTypes, entriesById: {
                 [`${pluginId}/repository`]: { ...inputType,
                     definition: { ...inputType.definition, picker: 'repository-picker-web' } },
             } },
         } } };
-        expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(wrongDeclaredPicker).success).toBe(false);
+        const rejectedPicker = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(wrongDeclaredPicker);
+        expect(rejectedPicker.projection.familiesById.inputTypes?.entriesById[`${pluginId}/repository`]).toBeUndefined();
+        expect(rejectedPicker.projection.diagnostics).toContainEqual(expect.objectContaining({
+            data: expect.objectContaining({ code: 'plugin_compatibility_projection_invalid',
+                details: expect.objectContaining({ family: 'inputTypes', entryId: `${pluginId}/repository` }) }),
+        }));
         const selectedFallback = { ...parsed, projection: { ...parsed.projection, familiesById: {
             ...parsed.projection.familiesById, inputTypes: { ...inputTypes, entriesById: {
                 [`${pluginId}/repository`]: { ...inputType,
