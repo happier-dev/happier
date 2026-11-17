@@ -9001,6 +9001,49 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await verify()).toBeNull();
     });
 
+    // The installed receiver dials archive bytes over its custodian's user-scoped RPC socket
+    // (callExactMachineRpc); the signed child packet, not the socket, proves its installation.
+    it.each([['controller', 'plain', 'user-scoped'], ['controller', 'e2ee', 'user-scoped'], ['builder', 'e2ee', 'machine-scoped']] as const)(
+        'routes a member archive download from the accepted %s holder (%s, %s receiver socket)', async (holderRole, contentMode, clientType) => {
+        const f = await fixture('account', 'account', { contentMode });
+        const holder = f[holderRole];
+        const source = f.rpc();
+        const packet = { method: source.method, requestId: source.requestId, params: source.params,
+            originalActionEnvelope: source.originalActionEnvelope, externalActionExecution: source.externalActionExecution };
+        const archiveOrigin = { environmentId: f.environment.id, deploymentId: f.receipt.id,
+            holderMachineId: holder.id, holderInstallationId: holder.installationId };
+        const deploymentChildExecution = createDeploymentChildExecutionProofV1(packet, archiveOrigin);
+        const method = `${holder.id}:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`, requestId = crypto.randomUUID(), params = 'sealed-finite-request';
+        const externalActionExecution = { v: 1 as const, authorization: f.authorization, effectActionId: 'daemon.filesystem.download',
+            target: f.authorization.binding.target, installationId: f.member.installationId, deploymentChildExecution,
+            machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: f.authorization.token,
+                effectActionId: 'daemon.filesystem.download', target: f.authorization.binding.target,
+                installationId: f.member.installationId, method, requestId, params, deploymentChildExecution: packet,
+                deploymentArchiveOrigin: archiveOrigin, privateKey: f.member.keys.secretKey }) };
+        expect(await verifyExternalActionMachineRpcExecution(externalActionExecution, { method, requestId, params }))
+            .toMatchObject({ deploymentChildSigner: { machineId: f.member.id, installationId: f.member.installationId } });
+        const forwarded: unknown[] = [];
+        const target = { id: 'archive-holder', data: { clientType: 'machine-scoped', machineId: holder.id,
+            verifiedMachineInstallationId: holder.installationId }, timeout: () => ({ emitWithAck: async (_event: string, payload: unknown) => {
+                forwarded.push(payload); return { accepted: true };
+            } }) };
+        qualifyCurrentAccountStoredContentSocket(target);
+        const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${f.account.id}:${method}` || room === target.id ? [target] : []);
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const socket = Object.assign(createAuthenticatedFakeSocket({ id: 'archive-receiver', data: clientType === 'machine-scoped'
+            ? { userId: f.account.id, clientType, machineId: f.member.id, verifiedMachineInstallationId: f.member.installationId,
+                authTokenKind: 'terminal', authAuthority: 'account_automation' }
+            : { userId: f.account.id, clientType, authTokenKind: 'terminal', authAuthority: 'account_automation' } }),
+            { handshake: { auth: { token } } });
+        qualifyCurrentAccountStoredContentSocket(socket);
+        registerSocketRpcHandlers({ userId: f.account.id, socket: socket as unknown as Socket, io });
+        let response: unknown;
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, requestId, params, externalActionExecution },
+            (value: unknown) => { response = value; });
+        expect(response).toMatchObject({ ok: true, result: { accepted: true } });
+        expect(forwarded).toHaveLength(1);
+    });
+
     it('follows only immutable rollback archive origins rather than predecessor or unrelated receipts', async () => {
         const f = await fixture('team');
         const retained = async (rollbackOfDeploymentId?: string) => db.deployment.create({ data: {

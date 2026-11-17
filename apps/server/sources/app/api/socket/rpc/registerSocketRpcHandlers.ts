@@ -1413,9 +1413,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 && params.userId === workspaceSyncSeedRouting.target.targetContext.machineAdmission.custodianAccountId);
             const archiveSigner = verifiedExternalAction?.deploymentChildSigner;
             const archiveSocketData = archiveSigner ? readSocketData(params.socket) : null;
+            // The installed receiver dials over its custodian's user-scoped RPC socket (callExactMachineRpc).
+            // Its installation signature on the child packet, verified above, proves the signer, as for a
+            // requester-transported deployment child; a different Machine's own socket is still refused.
             const verifiedArchiveSender = Boolean(archiveSigner && params.userId === archiveSigner.custodianAccountId
-                && readMachineScopedSocketMachineId(params.socket) === archiveSigner.machineId
-                && readVerifiedMachineSocketInstallationIdFromSocketData(archiveSocketData) === archiveSigner.installationId
+                && (readSocketClientType(params.socket) === 'user-scoped'
+                    || readMachineScopedSocketMachineId(params.socket) === archiveSigner.machineId
+                        && readVerifiedMachineSocketInstallationIdFromSocketData(archiveSocketData) === archiveSigner.installationId)
                 && params.socket.connected === true && (archiveSocketData?.authTokenKind === 'account' || archiveSocketData?.authTokenKind === 'terminal')
                 && archiveSocketData.ephemeralRunnerAdmission == null && archiveSocketData.apiTokenPrincipal == null
                 && await hasCurrentSocketCredential(params.userId, params.socket));
