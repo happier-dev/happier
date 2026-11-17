@@ -211,12 +211,9 @@ function RequestWaterfall({
                 : row.kind === 'query'
                   ? theme.colors.info
                   : theme.colors.mutedText,
-              annotation: [
-                formatMilliseconds(locale, row.end - row.start),
-                raised ? threw : null,
-              ]
-                .filter(Boolean)
-                .join(' · '),
+              // label | bar | duration, with the span that threw tagged once (lab p7Issues occurrence).
+              value: formatMilliseconds(locale, row.end - row.start),
+              ...(raised ? { flag: threw } : {}),
             };
           })}
           domain={waterfall.domain}

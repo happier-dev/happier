@@ -258,6 +258,30 @@ describe('neutral intervals and outcomes', () => {
     } finally { mount.unmount(); }
   });
 
+  it('draws a wide rows timeline as label | bar | value with its failure tag, and stacks the label over the bar when narrow', async () => {
+    const intervals = [
+      { id: 'root', label: 'POST /checkout', start: 0, end: 412, value: '412 ms' },
+      { id: 'receipt', label: 'buildReceipt', depth: 1, start: 350, end: 408, value: '58 ms', flag: 'threw' },
+    ];
+    const render = (width: number) => <IntervalTimeline testID="wf" theme={SURFACE_CONTEXT_THEME_FIXTURE} label="Request timeline"
+      intervals={intervals} domain={{ start: 0, end: 412 }} size="full" geometry={{ width, height: 400 }} />;
+    const mount = mountThroughReactNativeWeb(render(900));
+    try {
+      const row = query(mount.container, 'wf-select-receipt')!;
+      // One line: label (with its tag), the bar, then the value at the end.
+      expect(row.textContent).toBe('buildReceiptthrew58 ms');
+      expect(query(mount.container, 'wf-flag-receipt')!.textContent).toBe('threw');
+      expect(row.getAttribute('aria-label')).toContain('buildReceipt, threw');
+      expect(row.getAttribute('aria-label')).toContain('58 ms');
+      const line = query(mount.container, 'wf-interval-receipt')!.parentElement!.parentElement!;
+      expect(line.style.flexDirection).toBe('row');
+      await mount.render(render(320));
+      const narrowLine = query(mount.container, 'wf-interval-receipt')!.parentElement!.parentElement!;
+      expect(narrowLine.style.flexDirection).not.toBe('row');
+      expect(query(mount.container, 'wf-select-receipt')!.textContent).toBe('buildReceiptthrew58 ms');
+    } finally { mount.unmount(); }
+  });
+
   it('preserves every interval boundary, draws only witnessed spans and retains selection on resize', async () => {
     const theme = SURFACE_CONTEXT_THEME_FIXTURE;
     const intervals = [

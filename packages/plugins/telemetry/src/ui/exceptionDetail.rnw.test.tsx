@@ -324,6 +324,8 @@ describe('the Happier exception detail', () => {
     await vi.waitFor(async () => {
       await expect(page.getByText('POST /checkout · 412 ms · v1.43')).resolves.toBeDefined();
     });
+    // The span that threw carries its tag where the waterfall row is read.
+    expect((await page.getAllByRole('button')).some((target) => target.name?.includes('threw'))).toBe(true);
     await expect(page.getByText('Logs from this request')).resolves.toBeDefined();
     expect(calls.some((call) => call.localId === 'capture/query/get')).toBe(false);
     const errorLine = (await page.getAllByRole('button')).find((target) => target.name?.includes('error'));

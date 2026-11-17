@@ -322,7 +322,8 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
       props.onValuesExpandedChange?.(expanded);
     }}
     style={toggleInLegend ? { marginLeft: 'auto' } : { alignSelf: 'flex-end', marginTop: HAPPIER_DATA_METRICS.blockGapPx }}>
-    <HappierText style={text.captionStrong}>{valuesExpanded ? collapseLabel : valuesLabel}</HappierText>
+    {/* Quiet meta in the secondary ink, like the axis it sits by: never a bold word under the plot. */}
+    <HappierText style={{ ...text.caption, color: props.theme.colors.secondaryText }}>{valuesExpanded ? collapseLabel : valuesLabel}</HappierText>
   </HappierPressable> : null;
   const height = Math.max(1, (props.viewportHeight ?? (inline ? 16 : props.size === 'tile' ? 64 : 150)));
   const peakInset = props.showPeakValue ? 32 : 0;

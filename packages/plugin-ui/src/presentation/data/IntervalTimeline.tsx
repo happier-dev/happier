@@ -28,6 +28,13 @@ export type IntervalTimelineInterval = Readonly<{
   /** A source-provided texture; any meaning belongs in the consumer's label or annotation. */
   pattern?: 'solid' | 'hatched';
   annotation?: string;
+  /**
+   * `layout="rows"`: the row's one figure, drawn after its bar in a right-aligned column (a span's "58 ms").
+   * Assistive technology reads it with the annotation.
+   */
+  value?: string;
+  /** `layout="rows"`: a short failure tag beside the label ("threw"), in the failure tone; once per timeline. */
+  flag?: string;
   /** `layout="rows"`: nesting under the interval above (a span inside its request); indents the label only. */
   depth?: number;
   /** Exact domain wording for interaction only; axis, rows and selection readout retain their formatter. */
@@ -186,8 +193,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
   const lanesLayout = props.layout === 'lanes';
   const rowValues = (interval: IntervalTimelineInterval) => [...(lanesLayout ? [interval.lane ?? ''] : []), interval.label, format(interval.start, interval.startLabel),
     ...(hasIntervals ? [interval.kind === 'point' ? '' : format(interval.end, interval.endLabel)] : []), interval.annotation ?? ''];
-  const describe = (interval: IntervalTimelineInterval) => [interval.label, lanesLayout ? interval.lane : null, `${startLabel}: ${format(interval.start, interval.startLabel)}`,
-    interval.kind === 'point' ? null : `${endLabel}: ${format(interval.end, interval.endLabel)}`, interval.annotation, props.basis].filter(Boolean).join(', ');
+  const describe = (interval: IntervalTimelineInterval) => [interval.label, interval.flag, lanesLayout ? interval.lane : null, `${startLabel}: ${format(interval.start, interval.startLabel)}`,
+    interval.kind === 'point' ? null : `${endLabel}: ${format(interval.end, interval.endLabel)}`, interval.value, interval.annotation, props.basis].filter(Boolean).join(', ');
   const selected = props.intervals.find((interval) => interval.id === selectedId);
   const width = props.geometry?.width ?? measuredWidth;
   const axisStart = format(props.domain.start);
@@ -199,8 +206,10 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
     if (!validDomainFor(props.domain) || !props.ticks) return [];
     const span = props.domain.end - props.domain.start;
     const room = (label: string) => label.length * captionWidth + HAPPIER_DATA_METRICS.columnGapPx * 2;
-    const axisWidth = width === null ? null : props.layout === 'lanes' && (width >= HAPPIER_DATA_METRICS.laneSideLabelMinWidthPx)
-      ? width - HAPPIER_DATA_METRICS.laneLabelWidthPx - HAPPIER_DATA_METRICS.blockGapPx : width;
+    const axisWidth = width === null ? null : width < HAPPIER_DATA_METRICS.laneSideLabelMinWidthPx ? width
+      : props.layout === 'lanes' ? width - HAPPIER_DATA_METRICS.laneLabelWidthPx - HAPPIER_DATA_METRICS.blockGapPx
+      : width - HAPPIER_DATA_METRICS.intervalRowLabelWidthPx - HAPPIER_DATA_METRICS.blockGapPx
+        - (props.intervals.some((interval) => interval.value !== undefined) ? HAPPIER_DATA_METRICS.intervalRowValueWidthPx + HAPPIER_DATA_METRICS.blockGapPx : 0);
     const kept: { value: number; fraction: number; label: string; width: number }[] = [];
     let previousEdge = axisWidth === null ? 0 : room(axisStart);
     for (const value of [...props.ticks].sort((a, b) => a - b)) {
@@ -221,6 +230,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
   const rowHeight = (text.body.lineHeight ?? props.theme.typography.body.lineHeight) + HAPPIER_DATA_METRICS.cellPaddingVerticalPx * 2;
   const validDomain = Number.isFinite(props.domain.start) && Number.isFinite(props.domain.end) && props.domain.start < props.domain.end;
   const sideLabels = width === null || width >= HAPPIER_DATA_METRICS.laneSideLabelMinWidthPx;
+  const rowValuesShown = props.intervals.some((interval) => interval.value !== undefined);
   const plotWidth = width === null ? null : Math.max(1, width - (sideLabels ? HAPPIER_DATA_METRICS.laneLabelWidthPx + HAPPIER_DATA_METRICS.blockGapPx : 0));
   const marksOf = (interval: IntervalTimelineInterval) => projectIntervalMarks(interval, props.domain);
   // A track is the dense bar on every pointer. On native the whole track is a single target selecting the
@@ -322,9 +332,21 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
       </View>) : props.intervals.map((interval) => {
         const { start, end, span } = marksOf(interval);
         const color = interval.color ?? props.theme.colors.info;
-        const visual = <View aria-hidden importantForAccessibility="no-hide-descendants">
-            <HappierText style={interval.depth ? [text.caption, { paddingLeft: interval.depth * HAPPIER_DATA_METRICS.blockGapPx }] : text.caption}>{interval.label}</HappierText>
-            <View style={{ height: HAPPIER_DATA_METRICS.proportionHeightPx, marginTop: HAPPIER_DATA_METRICS.axisGapPx }}>
+        // Wide: label | bar | value on one line (a waterfall). Narrow: the label line (value at its end) above the bar.
+        const labelLine = <View style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_DATA_METRICS.axisGapPx * 1.5, minWidth: 0,
+          ...(interval.depth ? { paddingLeft: interval.depth * HAPPIER_DATA_METRICS.blockGapPx } : {}),
+          ...(sideLabels ? { width: HAPPIER_DATA_METRICS.intervalRowLabelWidthPx } : { alignSelf: 'stretch' }) }}>
+            <HappierText style={{ ...(sideLabels ? text.body : text.caption), flexShrink: 1 }} numberOfLines={1}>{interval.label}</HappierText>
+            {interval.flag ? <HappierText testID={props.testID ? `${props.testID}-flag-${interval.id}` : undefined}
+              style={{ ...text.captionStrong, color: props.theme.colors.danger, flexShrink: 0 }}>{interval.flag}</HappierText> : null}
+            {!sideLabels && interval.value ? <HappierText style={{ ...text.caption, marginLeft: 'auto', flexShrink: 0 }} tabularNumbers>{interval.value}</HappierText> : null}
+          </View>;
+        const valueCell = sideLabels && rowValuesShown ? <HappierText style={{ ...text.caption, width: HAPPIER_DATA_METRICS.intervalRowValueWidthPx, textAlign: 'right' }}
+          numberOfLines={1} tabularNumbers>{interval.value ?? ''}</HappierText> : null;
+        const visual = <View aria-hidden importantForAccessibility="no-hide-descendants"
+          style={sideLabels ? { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_DATA_METRICS.blockGapPx } : undefined}>
+            {labelLine}
+            <View style={{ height: HAPPIER_DATA_METRICS.proportionHeightPx, ...(sideLabels ? { flex: 1, minWidth: 0 } : { marginTop: HAPPIER_DATA_METRICS.axisGapPx }) }}>
               <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, backgroundColor: props.theme.colors.divider }} />
               {span !== null ? <View
                 testID={props.testID ? `${props.testID}-interval-${interval.id}` : undefined}
@@ -341,6 +363,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
                 style={{ position: 'absolute', left: `${end * 100}%`, width: HAPPIER_DATA_METRICS.lineStrokePx,
                   height: HAPPIER_DATA_METRICS.proportionHeightPx, backgroundColor: color }} /> : null}
             </View>
+            {valueCell}
           </View>;
         return <ChartDatum key={interval.id} testID={props.testID ? `${props.testID}-datum-${interval.id}` : undefined}
           datum={interval.datum ?? { label: interval.label, value: describe(interval), color }}
@@ -357,7 +380,10 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
       })}
       <View aria-hidden importantForAccessibility="no-hide-descendants" testID={props.testID ? `${props.testID}-axis` : undefined}
         style={{ flexDirection: 'row', justifyContent: 'space-between',
-          marginLeft: lanesLayout && sideLabels ? HAPPIER_DATA_METRICS.laneLabelWidthPx + HAPPIER_DATA_METRICS.blockGapPx : 0 }}>
+          // The axis spans the bars only: past the lane or row labels, and short of a rows timeline's values.
+          marginLeft: !sideLabels ? 0 : lanesLayout ? HAPPIER_DATA_METRICS.laneLabelWidthPx + HAPPIER_DATA_METRICS.blockGapPx
+            : HAPPIER_DATA_METRICS.intervalRowLabelWidthPx + HAPPIER_DATA_METRICS.blockGapPx,
+          marginRight: sideLabels && !lanesLayout && rowValuesShown ? HAPPIER_DATA_METRICS.intervalRowValueWidthPx + HAPPIER_DATA_METRICS.blockGapPx : 0 }}>
         <HappierText style={text.caption} tabularNumbers>{axisStart}</HappierText>
         {/* Centred on its position: a label box of its own width, pulled back by half (a zero-width box clips the text). */}
         {axisTicks.map((tick) => <View key={tick.value} style={{ position: 'absolute', left: `${tick.fraction * 100}%`, width: tick.width,
@@ -373,8 +399,9 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
         (as in StackedSeriesChart) instead of repeating the same runs as text. Without a plot the rows are the body. */}
     {showPlot ? <HappierPressable testID={props.testID ? `${props.testID}-values-toggle` : undefined}
       accessibilityLabel={valuesExpanded ? collapseLabel : valuesLabel}
-      expanded={valuesExpanded} onPress={() => setValuesExpanded((value) => !value)}>
-      <HappierText style={text.captionStrong}>{valuesExpanded ? collapseLabel : valuesLabel}</HappierText>
+      expanded={valuesExpanded} onPress={() => setValuesExpanded((value) => !value)} style={{ alignSelf: 'flex-end' }}>
+      {/* The same quiet trailing meta as StackedSeriesChart's toggle. */}
+      <HappierText style={{ ...text.caption, color: props.theme.colors.secondaryText }}>{valuesExpanded ? collapseLabel : valuesLabel}</HappierText>
     </HappierPressable> : null}
     {showPlot && !valuesExpanded ? null : <HappierDataRows theme={props.theme} label={props.label} testID={props.testID ? `${props.testID}-values` : undefined}
       density={props.size === 'inline' || props.size === 'tile' ? 'compact' : 'comfortable'}

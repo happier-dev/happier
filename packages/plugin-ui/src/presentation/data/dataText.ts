@@ -48,6 +48,9 @@ export const HAPPIER_DATA_METRICS = Object.freeze({
   laneLabelWidthPx: 112,
   /** Below this body width a lane's label sits above its tracks instead of beside them. */
   laneSideLabelMinWidthPx: 480,
+  /** A rows timeline at that width: each label beside its bar (a waterfall's span column) and the value after it. */
+  intervalRowLabelWidthPx: 240,
+  intervalRowValueWidthPx: 64,
   /** Opacity of the text colour for resting bars, a proportion's track and its fill. */
   barRestOpacity: 0.16,
   trackOpacity: 0.08,
