@@ -4,6 +4,7 @@ import { useNavigation, useRouter } from '@/components/appShell/workspace/destin
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
@@ -129,6 +130,8 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
      * scope) and receives the header and conditions to place in its list header.
      */
     presentation?: 'item-list' | 'virtualized-list' | 'embedded';
+    /** The page column (`ItemList`); a page with an aside beside its sections reads in the wide one. */
+    pageColumn?: PageColumn;
     /**
      * The page's known sections, holding their rows as skeletons while the Team is read, so the
      * page keeps its shape when the Team arrives. Without it the wait is one state under the header.
@@ -200,7 +203,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
 
     // A page with nothing to show but its condition: the header, then the condition.
     const conditionPage = (condition: React.ReactNode) => embedded ? condition : (
-        <ItemList>
+        <ItemList pageColumn={props.pageColumn}>
             {plainHeader}
             {condition}
         </ItemList>
@@ -380,7 +383,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     }
 
     return (
-        <ItemList>
+        <ItemList pageColumn={props.pageColumn}>
             {props.childRendersHeader ? null : header}
 
             <React.Fragment key={scopeKey}>

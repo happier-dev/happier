@@ -143,6 +143,7 @@ export function TeamInvitationJoinActions(
       <WelcomeActionCard
         testID="team-auth-entry-join"
         primary
+        iconName="caret-right"
         title={props.joinTitle}
         subtitle={props.joinSubtitle}
         onPress={props.onJoin}

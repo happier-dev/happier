@@ -215,7 +215,7 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
     },
     meaning: {
-        color: theme.colors.text.primary,
+        color: theme.colors.text.secondary,
     },
     notice: {
         flexDirection: 'row',

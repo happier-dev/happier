@@ -27,6 +27,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     /**
      * `button`: a centred welcome CTA with its glyph before the label, rather than an action card.
      * `row`: a quiet way in beneath the cards, on their text edge; its subtitle is the accessible hint.
+     * `link`: a quiet text action. With a subtitle it is the way out under a primary card, read as one centred line:
+     * the title, then its note after a dot.
      */
     presentation?: 'card' | 'button' | 'link' | 'row';
     iconName?: IconName;
@@ -82,6 +84,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
         : null;
     const button = props.presentation === 'button';
     const link = props.presentation === 'link';
+    const linkLine = link && Boolean(props.subtitle);
 
     if (props.unavailable) {
         return (
@@ -125,6 +128,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                         styles.card,
                         button ? styles.button : null,
                         link ? styles.link : null,
+                        linkLine ? styles.linkLineFrame : null,
                         row ? styles.row : null,
                         primary
                             ? { backgroundColor: theme.colors.button.primary.background, borderColor: theme.colors.button.primary.background }
@@ -142,10 +146,17 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                     {button && pending ? <ActivitySpinner color={foreground} /> : button && props.iconName ? (
                         <Icon testID={`${props.testID}-icon`} name={props.iconName} size={20} color={foreground} />
                     ) : null}
+                    {linkLine ? (
+                        <Text testID={`${props.testID}-text`} style={[styles.linkLine, { color: theme.colors.text.secondary }]}>
+                            <Text testID={`${props.testID}-title`} style={[styles.linkTitle, { color: theme.colors.text.primary }]}>{props.title}</Text>
+                            {props.subtitle ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`}>{` · ${props.subtitle}`}</Text> : null}
+                        </Text>
+                    ) : (
                     <View testID={`${props.testID}-text`} style={button ? styles.buttonText : styles.textBlock}>
                         <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : styles.title, { color: foreground }]}>{props.title}</Text>
                         {props.subtitle && !row ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
                     </View>
+                    )}
                     {!button && pending ? <ActivitySpinner color={foreground} /> : !button && !link && props.iconName ? (
                         <View
                             testID={accent ? `${props.testID}-accent` : undefined}
@@ -190,6 +201,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: theme.space.s10,
     },
     link: { paddingHorizontal: 0, paddingVertical: theme.space.s8, borderWidth: 0 },
+    linkLineFrame: { minHeight: 0, justifyContent: 'center' },
+    linkLine: { ...Typography.variant('label'), flexShrink: 1, textAlign: 'center' },
+    linkTitle: { ...Typography.variant('label', 'semiBold') },
     buttonText: { gap: 0, alignItems: 'center', flexShrink: 1 },
     row: { minHeight: HAPPIER_PAGE_METRICS.compactRowMinHeightPx, paddingVertical: theme.space.s4 },
     // The same frame, quieter: its words still read while its action waits.

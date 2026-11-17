@@ -131,6 +131,7 @@ export const TeamSetupScreen = React.memo(function TeamSetupScreen(
       serverId={props.serverId}
       teamId={props.teamId}
       childRendersHeader
+      pageColumn="wide"
     >
       {(context, conditions) =>
         context.archived ? null : <TeamSetupBody context={context} conditions={conditions} />
@@ -448,11 +449,11 @@ export function TeamSetupPageView(
   const { theme } = useUnistyles();
   const compact = useDeviceType() === 'phone';
   const running = run.kind === 'running';
+  const toolsOperation = run.kind !== 'idle' ? run.operationId : null;
+  // The selector draws its own card, so the heading stands alone above it, as the plan review's do below.
   const aside = (
-    <ItemGroup
-      testID="team-setup-before"
-      title={t('teams.join.setupPage.beforeYouStart')}
-    >
+    <>
+      <ItemGroup testID="team-setup-before" title={t('teams.join.setupPage.beforeYouStart')} />
       <MachineAdministrationTargetSelector
         selection={props.selection}
         presentation="context"
@@ -460,21 +461,23 @@ export function TeamSetupPageView(
         unselectedTitle={t('teams.join.setupPage.machineUnselected', { team: teamName })}
         disabled={running}
       />
-      <BareSectionContent>
-        <RoundButton
-          testID="team-setup-run"
-          size="large"
-          title={
-            machineLabel
-              ? t('teams.join.setupPage.run', { machine: machineLabel, team: teamName })
-              : t('teams.join.setUpForTeam', { team: teamName })
-          }
-          loading={running}
-          disabled={!props.canRun}
-          onPress={props.onRun}
-        />
-      </BareSectionContent>
-    </ItemGroup>
+      <ItemGroup surface="none">
+        <BareSectionContent>
+          <RoundButton
+            testID="team-setup-run"
+            size="large"
+            title={
+              machineLabel
+                ? t('teams.join.setupPage.run', { machine: machineLabel, team: teamName })
+                : t('teams.join.setUpForTeam', { team: teamName })
+            }
+            loading={running}
+            disabled={!props.canRun}
+            onPress={props.onRun}
+          />
+        </BareSectionContent>
+      </ItemGroup>
+    </>
   );
 
   return (
@@ -517,34 +520,41 @@ export function TeamSetupPageView(
         />
       ) : null}
       {props.hasPreset ? (
-        <ItemGroup
-          testID="team-setup-tools"
-          title={
-            machineLabel
-              ? t('teams.join.setupPage.toolsTitle', { machine: machineLabel })
-              : t('teams.join.setupPage.toolsTitleNoMachine')
-          }
-          description={t('teams.join.setupPage.toolsDescription', { team: teamName })}
-        >
-          {run.kind !== 'idle' && run.operationId ? (
-            <Item
-              testID="team-setup-tools-operation"
-              title={
-                run.kind === 'running'
-                  ? t('teams.join.setupPage.machineRunning', {
-                      machine: machineLabel ?? '',
-                    })
-                  : t('teams.join.setupPage.seeWhatRan')
-              }
-              onPress={() => props.onOpenOperation(run.operationId!)}
-            />
-          ) : !machineId ? (
-            <Item
-              testID="team-setup-tools-choose"
-              title={t('teams.join.setupPage.toolsChooseMachine')}
-              showChevron={false}
-            />
-          ) : props.machinePlan?.failure ? (
+        <>
+          {/* Rows sit in this section's card; the plan review and its failure are sections and cards of their
+              own, so they follow the heading instead of nesting in it. */}
+          <ItemGroup
+            testID="team-setup-tools"
+            title={
+              machineLabel
+                ? t('teams.join.setupPage.toolsTitle', { machine: machineLabel })
+                : t('teams.join.setupPage.toolsTitleNoMachine')
+            }
+            description={t('teams.join.setupPage.toolsDescription', { team: teamName })}
+          >
+            {toolsOperation ? (
+              <Item
+                testID="team-setup-tools-operation"
+                title={
+                  run.kind === 'running'
+                    ? t('teams.join.setupPage.machineRunning', {
+                        machine: machineLabel ?? '',
+                      })
+                    : t('teams.join.setupPage.seeWhatRan')
+                }
+                onPress={() => props.onOpenOperation(toolsOperation)}
+              />
+            ) : !machineId ? (
+              <Item
+                testID="team-setup-tools-choose"
+                title={t('teams.join.setupPage.toolsChooseMachine')}
+                showChevron={false}
+              />
+            ) : props.machinePlan?.failure || props.machinePlan?.plan?.machine ? null : (
+              <PageLoadingRows testID="team-setup-tools-loading" />
+            )}
+          </ItemGroup>
+          {toolsOperation || !machineId ? null : props.machinePlan?.failure ? (
             <SurfaceStateCard
               testID="team-setup-tools-failed"
               kind="error"
@@ -561,10 +571,8 @@ export function TeamSetupPageView(
               nameOf={() => machineLabel ?? ''}
               disabled={running}
             />
-          ) : (
-            <PageLoadingRows testID="team-setup-tools-loading" />
-          )}
-        </ItemGroup>
+          ) : null}
+        </>
       ) : null}
       {repositories.length > 0 ? (
         <ItemGroup
@@ -659,7 +667,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   return (
     <Item
       testID={`team-setup-repository:${props.source.id}`}
-      icon={<Icon name="github-logo" size={20} color={props.iconColor} />}
+      icon={<Icon name="git-branch" size={20} color={props.iconColor} />}
       title={nameWithOwner}
       subtitle={
         destination

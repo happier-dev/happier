@@ -40,6 +40,8 @@ import { useDeviceType } from '@/utils/platform/responsive';
  */
 const noop = () => {};
 const TEAM = teamSummaryFixture({ id: 'specimen-acme', name: 'Acme' });
+/** The Home that holds the Team, named apart from it so the header's facts line reads both. */
+const HOME_NAME = 'Acme’s Home';
 
 const SUMMARY_ROWS = buildTeamJoinedSummaryRows({
   teamName: TEAM.name,
@@ -89,7 +91,7 @@ const INVITATION = {
     inviterLabel: 'Maya Chen',
     recipientEmailMask: 'l***@acme.dev',
     team: { teamId: TEAM.id, name: TEAM.name },
-    home: { serverId: HOME_ID, displayName: 'Acme' },
+    home: { serverId: HOME_ID, displayName: HOME_NAME },
   }),
 };
 
@@ -149,9 +151,9 @@ const SOURCES_READY = { loading: false, failure: null, onRetry: noop };
 
 function SetupFrame() {
   return (
-    <ItemList>
+    <ItemList pageColumn="wide">
       <TeamSetupPageView
-        header={<TeamSetupHeader context={{ team: TEAM, address: ADDRESS, homeName: 'Acme' }} lead />}
+        header={<TeamSetupHeader context={{ team: TEAM, address: ADDRESS, homeName: HOME_NAME }} lead />}
         teamName={TEAM.name}
         selection={SELECTION}
         machineId={MACHINE_ID}
@@ -187,7 +189,7 @@ function NewMembersFrame() {
         title={t('teams.newMembers.title')}
         description={t('teams.newMembers.description')}
         teamName={TEAM.name}
-        homeName="Acme"
+        homeName={HOME_NAME}
       />
       <TeamNewMembersSourcesView
         teamName={TEAM.name}
