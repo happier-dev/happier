@@ -9,7 +9,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { configuration } from '@/configuration';
-import { createAgentIsolationMemberPreparationBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
+import { createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { readAgentLaunchFrame, type AgentLaunchPayload } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
@@ -46,11 +46,20 @@ vi.mock('@happier-dev/cli-common/process', async original => {
     return { ...actual, execFileWithDeadline: async (...args: Parameters<typeof actual.execFileWithDeadline>) => {
         const [command, argv, options] = args;
         if (command !== 'sudo' || !options.inputBytes) return actual.execFileWithDeadline(...args);
-        const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }));
+        const input = Readable.from([options.inputBytes], { objectMode: false });
+        const frame = await readAgentLaunchFrame(input, undefined, true);
+        if ('action' in frame) {
+            return (await runAgentIsolationMemberReadinessBoundary({ request: args,
+                ...(nativeOs.home ? { nativeHome: { path: nativeOs.home.path, uid: nativeOs.home.uid } } : {}),
+            }))!;
+        }
+        const stdinChunks: Buffer[] = [];
+        for await (const chunk of input) stdinChunks.push(Buffer.from(chunk));
         nativeOs.launches.push({ command, args: [...argv], frame });
         // The OS boundary runs exactly the canonical frame's command and env.
         return actual.execFileWithDeadline(frame.executable, frame.args, {
-            ...options, cwd: frame.cwd, env: { ...frame.environment }, shell: false, inputBytes: undefined,
+            ...options, cwd: frame.cwd === nativeOs.home?.workspaceRoot ? nativeOs.home.backing : frame.cwd,
+            env: { ...frame.environment }, shell: false, inputBytes: Buffer.concat(stdinChunks),
         });
     } };
 });
@@ -103,6 +112,19 @@ async function fixture() {
 }
 
 describe.skipIf(process.platform !== 'linux')('Manage raw Bash host execution', () => {
+    it('keeps finite command stdin after the native identity frame for a Use member', async () => {
+        const f = await fixture();
+        const stdin = JSON.stringify({ value: '$(printf injected); 😀\nnext line' });
+        const response = await f.capture({ command: 'cat; printf "%s" "$HAPPIER_ACTION_ID" >&2',
+            stdin, env: { HAPPIER_ACTION_ID: 'example.deploy' }, timeout: 0 }, {
+            ...f.context, machineAdmission: { ...f.context.machineAdmission!, role: 'use' },
+        });
+        expect(response).toMatchObject({ success: true, exitCode: 0, stdout: stdin, stderr: 'example.deploy' });
+        expect(nativeOs.launches).toHaveLength(1);
+        expect(nativeOs.launches[0].frame.cwd).toBe(f.member.workspaceRoot);
+        expect(f.registry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [] });
+    });
+
     it.each(['argv', 'shell'] as const)('captures useful %s effects without requiring a member RunAs frame', async mode => {
         const f = await fixture();
         vi.stubEnv('HAPPIER_DAEMON_TOKEN', 'custodian-private-token');

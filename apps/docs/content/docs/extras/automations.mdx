@@ -660,8 +660,10 @@ Activity notifications retain their public-destination HTTPS requirement.
 
 A command runs on the Run's Machine in the step workspace, with the Machine's
 normal user permissions. Write shell syntax as literal text and pass dynamic
-values through the `env` field; reference those variables using your shell's
-syntax. Input or event values cannot become command text. The result retains
+values through `stdin` as JSON or through the `env` field; reference environment
+variables using your shell's syntax. The command receives the complete JSON value
+on standard input, followed by end-of-input. Input or event values cannot become
+command text. The result retains
 `exitCode`, `stdout`, and `stderr`, including output from a failed command.
 Stopping the Run retains any definitive command response already returned.
 These are trusted-user operations, not a sandbox, and add no default step

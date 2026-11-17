@@ -15,6 +15,7 @@ export const WorkflowWebhookInputV1Schema = lazyZodSchema(() => z.strictObject({
 export const WorkflowWebhookOutputV1Schema = lazyZodSchema(() => z.strictObject({ status: z.number().check(z.int()), body: z.string() }));
 export const WorkflowMachineCommandInputV1Schema = lazyZodSchema(() => z.strictObject({
   command: z.string().check(z.minLength(1), z.refine((value) => !value.includes('\0'), 'Commands cannot contain NUL')),
+  stdin: z.optional(StrictJsonValueSchema),
   env: z.optional(z.record(z.string().check(z.minLength(1), z.refine((key) => !/[=\0]/u.test(key), 'Invalid environment key')),
     z.string().check(z.refine((value) => !value.includes('\0'), 'Environment values cannot contain NUL')))),
 }));
@@ -69,7 +70,7 @@ export const WORKFLOW_EFFECT_ACTION_SPECS_V1 = [
   },
   {
     id: 'machines.command.run', approval: {result: 'required'}, title: 'Run a command',
-    description: 'Run literal shell syntax on the selected Machine in its project workspace. Dynamic values belong only in env. Retains exit code, stdout and stderr.',
+    description: 'Run literal shell syntax on the selected Machine in its project workspace. Dynamic values belong in JSON stdin or env. Retains exit code, stdout and stderr.',
     safety: 'danger', sideEffectClass: 'danger', requiredAuthority: 'account_automation',
     executionPlacement: 'machine', placements: [],
     bindings: { mcpToolName: 'machines_command_run', rpcMethod: 'machines.command.run' },
@@ -77,6 +78,7 @@ export const WORKFLOW_EFFECT_ACTION_SPECS_V1 = [
     inputSchema: WorkflowMachineCommandInputV1Schema, outputSchema: WorkflowMachineCommandOutputV1Schema,
     inputHints: { fields: [
       { path: 'command', title: 'Command', widget: 'textarea', required: true },
+      { path: 'stdin', title: 'JSON input', widget: 'json' },
       { path: 'env', title: 'Environment', widget: 'json' },
     ] },
   },

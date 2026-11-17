@@ -1,5 +1,18 @@
 # Compatibility and version skew
 
+## Workflow command JSON input (unreleased 0.3)
+
+The closed `machines.command.run` input accepts optional strict JSON `stdin`.
+The CLI serializes that value once as UTF-8 JSON through the existing Bash RPC
+and process input adapter, closing stdin after delivery. Native identity launches
+retain their launch frame before the command's input bytes. Literal command text,
+declared environment values, cancellation and output contracts are unchanged.
+Older inputs without `stdin` remain valid; matching development Protocol and CLI
+must reload together because an older strict reader rejects the new field.
+This is an unpublished 0.3 direct cut without a migration, epoch or adapter.
+The inspected `../0.2` frontier at
+`87aaa83f6b81c92a4ceee5816df2e566ed429bc7` has no Workflow command schema.
+
 ## Prepared image freshness (unreleased 0.3)
 
 Prepared images bind authored launch, setup, reviewed source contents and selected

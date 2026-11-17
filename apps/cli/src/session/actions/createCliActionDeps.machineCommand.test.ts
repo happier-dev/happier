@@ -106,11 +106,12 @@ describe('CLI command Action host', () => {
             const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
             const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null });
             const signal = new AbortController().signal;
-            await expect(deps.machineCommandRun!({ command: 'fixed command', env: { VALUE: 'data' } }, { surface: 'cli', authority: 'present_user', serverId: 'home', signal,
+            await expect(deps.machineCommandRun!({ command: 'fixed command', stdin: { phase: 'before', value: '$(printf injected)' }, env: { VALUE: 'data' } }, { surface: 'cli', authority: 'present_user', serverId: 'home', signal,
                 externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
             })).resolves.toEqual({ exitCode: 0, stdout: 'finished', stderr: '' });
             expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'run-machine', method: RPC_METHODS.BASH,
-                request: { command: 'fixed command', env: { VALUE: 'data' }, cwd: '/workspace', cwdMode: 'explicit', timeout: 0 }, timeoutMs: null, signal }));
+                request: { command: 'fixed command', stdin: JSON.stringify({ phase: 'before', value: '$(printf injected)' }),
+                    env: { VALUE: 'data' }, cwd: '/workspace', cwdMode: 'explicit', timeout: 0 }, timeoutMs: null, signal }));
             rpc.mockResolvedValueOnce({ success: false, exitCode: 0, stdout: 'partial', stderr: '', error: 'Command timed out' });
             await expect(deps.machineCommandRun!({ command: 'fixed command' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
                 externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },

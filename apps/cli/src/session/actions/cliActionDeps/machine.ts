@@ -49,6 +49,7 @@ export function createCliMachineActionDeps(
         method: RPC_METHODS.BASH,
         context, effectActionId: 'machines.command.run',
         request: { command: input.command, ...(input.env ? { env: input.env } : {}),
+          ...(input.stdin === undefined ? {} : { stdin: JSON.stringify(input.stdin) }),
           cwd: target.project.directory, cwdMode: 'explicit', timeout: 0,
           ...(context.actionCaller?.kind === 'workflowRun'
             ? { outputTailMaxBytes: MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } : {}) },

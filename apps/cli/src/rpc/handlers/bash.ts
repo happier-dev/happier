@@ -25,6 +25,8 @@ interface BashRequest {
     /** Treat cwd literally, including the filesystem root instead of the legacy detection sentinel. */
     cwdMode?: 'explicit';
     env?: Record<string, string>;
+    /** Finite UTF-8 data, never shell syntax; close the stream after delivery. */
+    stdin?: string;
     /** Milliseconds; zero delegates the lifetime to the caller's cancellation signal. */
     timeout?: number;
     /** Opt-in caller-owned UTF-8 suffix budget; legacy callers retain full capture. */
@@ -179,6 +181,7 @@ export function registerBashHandler(
                 terminateOnAbort: terminateProcessTree,
                 ...(timeout > 0 ? { timeout } : {}),
                 env: environment,
+                ...(data.stdin === undefined ? {} : { inputBytes: Buffer.from(data.stdin, 'utf8') }),
                 ...(context?.signal ? { signal: context.signal } : {}),
                 windowsHide: true,
                 // Both machine exec paths return output. The containing Action/Workflow
@@ -219,7 +222,9 @@ export function registerBashHandler(
                 }
                 return await executeArgvRequest([nativeLaunch.command, ...nativeLaunch.args], {
                     ...options, cwd: nativeLaunch.launcherCwd ?? nativeLaunch.cwd, env: { ...nativeLaunch.env },
-                    inputBytes: nativeLaunch.stdinPreamble,
+                    inputBytes: nativeLaunch.stdinPreamble === undefined ? options.inputBytes
+                        : options.inputBytes === undefined ? nativeLaunch.stdinPreamble
+                        : Buffer.concat([nativeLaunch.stdinPreamble, options.inputBytes]),
                 }, opts.executionBudgetRegistry, attribution, opts.admissionDrain);
             }
 

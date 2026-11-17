@@ -60,6 +60,19 @@ async function settleWithin<T>(
 }
 
 describe('registerBashHandler', () => {
+    it.each(['', '{"value":"$(printf injected); 😀\\nnext line"}'])('delivers literal stdin bytes and EOF through argv capture (%j)', async stdin => {
+        const { handlers, registrar } = createRegistrar();
+        registerBashHandler(registrar as never, process.cwd());
+        const controller = new AbortController();
+        let response: unknown;
+        const pending = handlers.get(RPC_METHODS.BASH)!({
+            argv: [process.execPath, '-e', "process.stdin.pipe(process.stdout)"], stdin, timeout: 0,
+        }, { ...ownerContext(), signal: controller.signal }).then(value => { response = value; });
+        try {
+            await vi.waitFor(() => expect(response).toMatchObject({ success: true, exitCode: 0, stdout: stdin, stderr: '' }));
+        } finally { controller.abort(); await pending; }
+    });
+
     it('runs concurrent hosted Session RPC commands with their environment and explicit overrides', async () => {
         const directories = await Promise.all(['first', 'second'].map(name => mkdtemp(join(tmpdir(), 'happier-bash-' + name + '-'))));
         try {
@@ -263,14 +276,14 @@ describe('registerBashHandler', () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-bash-cancel-'));
         const marker = join(directory, 'started');
         const controller = new AbortController();
+        const script = "process.stdin.resume(); process.stdin.on('end', () => { process.stdout.write('partial'); require('node:fs').writeFileSync(process.argv[1], 'ready'); setTimeout(() => {}, 2000); })";
+        const pending = handlers.get(RPC_METHODS.BASH)!({
+            ...(mode === 'argv'
+                ? { argv: [process.execPath, '-e', script, marker] }
+                : { command: `"${process.execPath}" -e "${script}" "${marker}"` }),
+            stdin: '{"phase":"before"}', timeout: 0,
+        }, { ...ownerContext(), signal: controller.signal });
         try {
-            const script = "process.stdout.write('partial'); require('node:fs').writeFileSync(process.argv[1], 'ready'); setTimeout(() => {}, 2000)";
-            const pending = handlers.get(RPC_METHODS.BASH)!({
-                ...(mode === 'argv'
-                    ? { argv: [process.execPath, '-e', script, marker] }
-                    : { command: `"${process.execPath}" -e "${script}" "${marker}"` }),
-                timeout: 0,
-            }, { ...ownerContext(), signal: controller.signal });
             await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBe('ready'));
             expect(executionBudgetRegistry.getLiveWorkProducer().read()).toMatchObject({ coverage: 'complete', items: [{
                 category: 'finite', attribution: { kind: 'unknown' }, state: 'active',
@@ -279,6 +292,8 @@ describe('registerBashHandler', () => {
             await expect(pending).resolves.toMatchObject({ success: false, stdout: 'partial', error: 'Command cancelled' });
             expect(executionBudgetRegistry.getLiveWorkProducer().read()).toEqual({ coverage: 'complete', items: [] });
         } finally {
+            controller.abort();
+            await pending;
             await rm(directory, { recursive: true, force: true });
         }
     });
