@@ -363,6 +363,119 @@ describe('Account Workflow Library and settings', () => {
         expect(reads()).toEqual([]);
         await hook.unmount();
     });
+    it('links a built-in Workflow through the trigger owner without an Artifact grant review', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+        }) });
+        const hook = await renderHook(() => useResourceAutomationsSection({ serverId,
+            subject: { kind: 'environment', machineId: project.machineId, environmentId: 'source-environment' },
+            sourceAudience: [{ kind: 'account', accountId: 'reader' }],
+        }), { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        await act(async () => hook.getCurrent().link.setDraft({ workflow: 'builtin:review-and-converge',
+            trigger: { kind: 'schedule', enabled: true,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } }));
+        expect(hook.getCurrent().link.missingAudience).toEqual([]);
+        let outcome: Awaited<ReturnType<ReturnType<typeof useResourceAutomationsSection>['link']['submit']>> | undefined;
+        await act(async () => { outcome = await hook.getCurrent().link.submit('accept'); });
+        expect(outcome).toMatchObject({ ok: true, shared: [], write: { set: { target: { kind: 'workflow', ref: 'builtin:review-and-converge' } } } });
+        expect(rows).toHaveLength(1);
+        expect(home.requests.filter(request => request.path.includes('/access/grants'))).toEqual([]);
+        await hook.unmount();
+    });
+    it.each(['environment', 'machine'] as const)('keeps Resource Link declined read-only and awaits reviewed sharing before its one Workflow trigger write (%s)', async kind => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+        }) });
+        const { ArtifactAccessGrantSetInputV1Schema, ArtifactAccessGrantsListResponseV1Schema,
+            ArtifactAccessGrantMutationResponseV1Schema } = await import('@happier-dev/protocol/artifacts/artifactAccessV1');
+        const definitionId = '11111111-1111-4111-8111-111111111111';
+        const definition = fixture().target;
+        if (definition?.kind !== 'inline') throw new Error('Expected the fixture Workflow definition');
+        await home.artifacts(serverId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: definitionId,
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent(WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1', definitionId,
+                revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Shared check' } })),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(WorkflowDefinitionArtifactBodyV1Schema.parse({
+                kind: 'workflow-definition.v1', definition: definition.definition,
+            })) }),
+        }) });
+        const principal = { kind: 'account' as const, accountId: 'reader' };
+        const machineAddress = `/v1/machines/${project.machineId}/access`;
+        const machineGate = createDeferred<void>();
+        home.answer(serverId, `GET ${machineAddress}`, { select: async () => {
+            await machineGate.promise;
+            return { body: {
+            machineId: project.machineId, custodian: { accountId: 'account-a', displayName: 'Owner' },
+            access: { custodian: { accountId: 'account-a', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            canManage: true, ownDirectGrant: false, ownAccessSources: [],
+            grants: [{ machineId: project.machineId, principal, level: 'view', display: { name: 'Reader' }, readiness: 'ready',
+                audience: [{ accountId: 'reader', displayName: 'Reader', readiness: 'ready', reason: null, canPrepareKeys: false }],
+                removal: { losesAccessAccountIds: ['reader'] } }],
+        } }; } });
+        const grants: import('@happier-dev/protocol/artifacts/artifactAccessV1').ArtifactAccessGrantRowV1[] = [];
+        const grantGate = createDeferred<void>();
+        const grantAddress = `/v1/artifacts/${definitionId}/access/grants`;
+        const snapshot = () => ({ artifactId: definitionId, ownerAccountId: 'account-a', access: 'owner' as const, grants });
+        home.answer(serverId, `GET ${grantAddress}`, { select: () => ({ body: ArtifactAccessGrantsListResponseV1Schema.parse({
+            ...snapshot(), missingAudience: grants.length === 0 ? [principal] : [],
+        }) }) });
+        home.answer(serverId, `PUT ${grantAddress}`, { select: async raw => {
+            const input = ArtifactAccessGrantSetInputV1Schema.parse(raw);
+            await grantGate.promise;
+            grants.push({ principal: input.principal, accessLevel: input.accessLevel, createdByAccountId: 'account-a',
+                createdAt: 1, display: { name: 'Reader' } });
+            return { body: ArtifactAccessGrantMutationResponseV1Schema.parse({ ...snapshot(), changed: true }) };
+        } });
+        const hook = await renderHook(() => useResourceAutomationsSection({
+            serverId,
+            subject: kind === 'environment' ? { kind: 'environment', machineId: project.machineId, environmentId: 'source-environment' }
+                : { kind: 'machine', machineId: project.machineId },
+            ...(kind === 'environment' ? { sourceAudience: [principal] } : {}),
+        }), { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        const grantRequests = () => home.requests.filter(request => request.path.startsWith(grantAddress));
+        expect(grantRequests()).toEqual([]);
+        expect(home.requests.filter(request => request.path === machineAddress)).toEqual([]);
+        await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId,
+            trigger: { kind: 'schedule', enabled: true,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } }));
+        if (kind === 'machine') {
+            expect(hook.getCurrent().link.loading).toBe(true);
+            expect(grantRequests()).toEqual([]);
+            await act(async () => machineGate.resolve());
+        }
+        await waitForHomeGovernance(() => expect(hook.getCurrent().link.missingAudience).toEqual([principal]));
+        await act(async () => { expect(await hook.getCurrent().link.submit('decline')).toEqual({ ok: false, phase: 'declined', shared: [] }); });
+        expect(grantRequests().filter(request => request.method !== 'GET')).toEqual([]);
+        expect(rows).toEqual([]);
+        const retainedSubmit = hook.getCurrent().link.submit;
+        await act(async () => hook.getCurrent().link.setDraft({ workflow: '22222222-2222-4222-8222-222222222222',
+            trigger: { kind: 'schedule', enabled: true,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } }));
+        await act(async () => { expect(await retainedSubmit('accept')).toMatchObject({
+            ok: false, phase: 'sharing', shared: [], error: { code: 'action_account_scope_changed' },
+        }); });
+        expect(grantRequests().filter(request => request.method !== 'GET')).toEqual([]);
+        expect(rows).toEqual([]);
+        await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId,
+            trigger: { kind: 'schedule', enabled: true,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().link.missingAudience).toEqual([principal]));
+        let submit!: ReturnType<ReturnType<typeof useResourceAutomationsSection>['link']['submit']>;
+        await act(async () => { submit = hook.getCurrent().link.submit('accept'); });
+        await waitForHomeGovernance(() => expect(grantRequests().filter(request => request.method === 'PUT')).toHaveLength(1));
+        expect(rows).toEqual([]);
+        await act(async () => { grantGate.resolve(); await submit; });
+        expect(await submit).toMatchObject({ ok: true, shared: [principal], write: { set: { target: { kind: 'workflow', ref: definitionId } } } });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.workflowDefinitionId).toBe(definitionId);
+        await hook.unmount();
+    });
     it('shows the captured built-in trigger on its ordinary catalog page and opens its editor', async () => {
         const set = WorkflowTriggerSetV1Schema.parse(capturedBuiltinTriggerSet);
         serve(set);

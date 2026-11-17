@@ -31,10 +31,15 @@ import type {
 type Mutation =
     | Readonly<{ actionId: 'artifact.access.grants.set'; principal: PrincipalRefV1; accessLevel: ShareAccessLevel }>
     | Readonly<{ actionId: 'artifact.access.grants.remove'; principal: PrincipalRefV1 }>;
+type GrantMutationResult = Readonly<{ ok: true }> | Readonly<{ ok: false; error: ShareUiError }>;
+export type DocumentAudienceShareResult =
+    | Readonly<{ ok: true; shared: readonly PrincipalRefV1[] }>
+    | Readonly<{ ok: false; shared: readonly PrincipalRefV1[]; error: ShareUiError }>;
 
 type State = Readonly<{
     phase: 'initial' | 'ready' | 'error';
     response: ArtifactAccessGrantsListResponseV1 | null;
+    reviewedIdentity?: string;
     issue?: ShareUiError;
     operations: Readonly<Record<string, ShareOperationModel>>;
     confirmingRemoval: string | null;
@@ -100,7 +105,9 @@ function removalConsequences(removed: PrincipalRefV1, name: string, grants: read
     ];
 }
 
-export function useDocumentShareController(input: Readonly<{ artifactId: string; kind?: DocumentShareKind; scope: ServerAccountScope }>): Readonly<{
+export function useDocumentShareController(input: Readonly<{ artifactId: string; kind?: DocumentShareKind; scope: ServerAccountScope;
+    requestedAudience?: readonly PrincipalRefV1[];
+}> | null): Readonly<{
     model: ShareSheetModel;
     actions: ShareSheetActions;
     issue?: ShareUiError;
@@ -108,12 +115,20 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     loading: boolean;
     retryContent(): void;
     grants: readonly ArtifactAccessGrantRowV1[];
+    /** Undefined until the grant owner has completed the requested review. */
+    missingAudience: readonly PrincipalRefV1[] | undefined;
+    /** Apply only the owner's reviewed missing audience, returning acknowledged partial progress. */
+    shareMissingAudience(): Promise<DocumentAudienceShareResult>;
     privateChoices: readonly DocumentPrivateChoice[];
 }> {
-    const { artifactId, scope } = input;
+    const artifactId = input?.artifactId ?? null;
+    const scope = input?.scope ?? null;
     const viewerProfile = useShareViewerProfile(scope);
-    const dashboard = input.kind === 'widget-area-layout.v1';
-    const identity = `${scope.serverId}:${scope.accountId}:${artifactId}`;
+    const dashboard = input?.kind === 'widget-area-layout.v1';
+    const audienceRef = React.useRef(input?.requestedAudience);
+    if (!sameStrictJsonValue(audienceRef.current ?? null, input?.requestedAudience ?? null)) audienceRef.current = input?.requestedAudience;
+    const requestedAudience = audienceRef.current;
+    const identity = scope ? JSON.stringify([scope.serverId, scope.accountId, artifactId, requestedAudience]) : null;
     const [execute] = React.useState(() => createFrontDoorActionExecute());
     const [state, setState] = React.useState<State>({ phase: 'initial', response: null, operations: {}, confirmingRemoval: null });
     const [query, setQuery] = React.useState('');
@@ -130,6 +145,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     }, [identity]);
 
     const readDashboard = React.useCallback(async (): Promise<DashboardReview> => {
+        if (!scope || !artifactId) return { phase: 'ready', choices: NO_PRIVATE_CHOICES };
         // Widget layouts are internal documents: the widget owner's native Artifact transport
         // admits their read, while generic artifact.get deliberately refuses internal kinds.
         const document = await import('@/sync/ops/actions/actionAccountContext').then(async owner => {
@@ -191,7 +207,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
             });
         }));
         return { phase: 'ready', choices: [...groupChoices, ...groups.flat()] };
-    }, [artifactId, scope.serverId, scope.accountId]);
+    }, [artifactId, scope?.serverId, scope?.accountId]);
 
     const loadReview = React.useCallback(async () => {
         if (!dashboard) {
@@ -204,18 +220,22 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     }, [dashboard, identity, readDashboard]);
 
     const load = React.useCallback(async () => {
-        const result = await execute('artifact.access.grants.list', { artifactId }, {
+        if (!scope || !artifactId || identity === null) return;
+        const result = await execute('artifact.access.grants.list', { artifactId,
+            ...(requestedAudience === undefined ? {} : { requestedAudience: [...requestedAudience] }) }, {
             surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId,
         }).catch(() => null);
         if (current.current !== identity) return;
         const parsed = result?.ok ? ArtifactAccessGrantsListResponseV1Schema.safeParse(result.result) : null;
-        setState((previous) => parsed?.success
-            ? { ...previous, phase: 'ready', response: parsed.data, issue: undefined }
+        const available = parsed?.success && (requestedAudience === undefined || parsed.data.missingAudience !== undefined);
+        setState((previous) => available && parsed?.success
+            ? { ...previous, phase: 'ready', response: parsed.data, reviewedIdentity: identity, issue: undefined }
             : { ...previous, phase: 'error', issue: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result) });
-    }, [artifactId, execute, identity, scope.serverId, scope.accountId]);
+    }, [artifactId, execute, identity, scope?.serverId, scope?.accountId, requestedAudience]);
     React.useEffect(() => { void load(); void loadReview(); }, [load, loadReview]);
 
-    const mutate = React.useCallback(async (mutation: Mutation) => {
+    const mutate = React.useCallback(async (mutation: Mutation, refreshReviewedAudience = true): Promise<GrantMutationResult> => {
+        if (!scope || !artifactId) return { ok: false, error: presentDocumentShareFailure('action_account_scope_changed') };
         const key = sessionAccessSubjectKey(mutation.principal);
         lastMutation.current.set(key, mutation);
         setState((previous) => ({ ...previous, confirmingRemoval: null, operations: { ...previous.operations,
@@ -226,8 +246,10 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         const result = await execute(mutation.actionId, payload, {
             surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId,
         }).catch(() => null);
-        if (current.current !== identity) return;
         const parsed = result?.ok ? ArtifactAccessGrantMutationResponseV1Schema.safeParse(result.result) : null;
+        const issue = parsed?.success ? parsed.data.access === null ? presentDocumentShareFailure('artifact_access_revoked') : null
+            : presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result);
+        if (current.current !== identity) return issue ? { ok: false, error: issue } : { ok: true };
         setState((previous) => {
             const { [key]: _settled, ...operations } = previous.operations;
             if (parsed?.success) {
@@ -241,18 +263,39 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
                 return { ...previous, phase: 'ready', response: { ...response, access }, operations, issue: undefined };
             }
             return { ...previous,
-                operations: { ...operations, [key]: { kind: 'error', error: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result) } } };
+                operations: { ...operations, [key]: { kind: 'error', error: issue! } } };
         });
+        if (parsed?.success && requestedAudience !== undefined && refreshReviewedAudience) await load();
         setRevision((value) => value + 1);
-    }, [artifactId, execute, identity, scope.serverId, scope.accountId]);
+        return issue ? { ok: false, error: issue } : { ok: true };
+    }, [artifactId, execute, identity, scope?.serverId, scope?.accountId, requestedAudience, load]);
 
-    const response = state.response;
+    const response = input === null ? null : state.response;
     const isOwner = response?.access === 'owner';
     const editable = isOwner || response?.access === 'admin';
     const grants = response?.grants ?? NO_GRANTS;
+    const missingAudience = requestedAudience === undefined || state.phase !== 'ready' || state.reviewedIdentity !== identity
+        ? undefined : response?.missingAudience;
+    const shareMissingAudience = React.useCallback(async (): Promise<DocumentAudienceShareResult> => {
+        if (identity === null || current.current !== identity) return { ok: false, shared: [],
+            error: presentDocumentShareFailure('action_account_scope_changed') };
+        if (missingAudience === undefined) return { ok: false, shared: [],
+            error: state.issue ?? presentDocumentShareFailure('artifact_access_failed') };
+        const shared: PrincipalRefV1[] = [];
+        for (const principal of missingAudience) {
+            const result = await mutate({ actionId: 'artifact.access.grants.set', principal, accessLevel: 'view' }, false);
+            if (!result.ok) {
+                if (shared.length > 0) await load();
+                return { ok: false, shared, error: result.error };
+            }
+            shared.push(principal);
+        }
+        if (shared.length > 0) await load();
+        return { ok: true, shared };
+    }, [identity, missingAudience, state.issue, mutate, load]);
     const groupDisplayNames = useResourceGrantGroupDisplayNames({ scope, grants });
     const repairChoice = React.useCallback(async (choice: PrivateChoice, repair: 'remove' | 'viewer') => {
-        if (!editable || !choice.inputPath || current.current !== identity) return;
+        if (!scope || !editable || !choice.inputPath || current.current !== identity) return;
         setRepairs(previous => ({ ...previous, [choice.id]: { kind: 'saving' } }));
         const fresh = await readDashboard();
         if (current.current !== identity) return;
@@ -276,7 +319,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
             setRepairs(previous => ({ ...previous, [choice.id]: { kind: 'error', error:
                 presentDocumentShareFailure(result ? readFailureCode(result) : unchanged ? 'widget_repair_failed' : 'widget_instance_changed', result) } }));
         }
-    }, [editable, execute, identity, loadReview, readDashboard, scope.serverId, scope.accountId]);
+    }, [editable, execute, identity, loadReview, readDashboard, scope?.serverId, scope?.accountId]);
     const privateChoices = React.useMemo<readonly DocumentPrivateChoice[]>(() => review.choices.map(choice => {
         const operation = repairs[choice.id];
         return { id: choice.id, widget: choice.widget, ...(choice.service ? { service: choice.service } : {}),
@@ -288,8 +331,8 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
     const rows = React.useMemo<readonly ShareGrantRowModel[]>(() => grants.map((row) => {
         const principal = presentSharePrincipal({ ref: row.principal,
             name: row.principal.kind === 'group' ? groupDisplayNames.get(row.principal.groupId) ?? null : row.display.name,
-            username: row.display.username, viewerAccountId: scope.accountId,
-            profile: row.principal.kind === 'account' && row.principal.accountId === scope.accountId ? viewerProfile : null });
+            username: row.display.username, viewerAccountId: scope?.accountId,
+            profile: row.principal.kind === 'account' && row.principal.accountId === scope?.accountId ? viewerProfile : null });
         const operation = state.operations[principal.key] ?? IDLE;
         return {
             grant: row.principal,
@@ -299,10 +342,10 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
                 ? { kind: 'confirming', consequences: removalConsequences(row.principal, principal.displayName, grants, dashboard) } : { kind: 'allowed' },
             operation,
         };
-    }), [grants, groupDisplayNames, isOwner, state.operations, state.confirmingRemoval, scope.accountId, viewerProfile, dashboard]);
-    const owner = response && response.ownerAccountId === scope.accountId ? { principal: presentSharePrincipal({
+    }), [grants, groupDisplayNames, isOwner, state.operations, state.confirmingRemoval, scope?.accountId, viewerProfile, dashboard]);
+    const owner = response && response.ownerAccountId === scope?.accountId ? { principal: presentSharePrincipal({
         ref: { kind: 'account', accountId: response.ownerAccountId },
-        profile: viewerProfile, viewerAccountId: scope.accountId,
+        profile: viewerProfile, viewerAccountId: scope?.accountId,
     }) } : null;
 
     const directory = useSessionAccessDirectory({
@@ -354,9 +397,11 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         actions,
         ...(state.issue || review.issue ? { issue: state.issue ?? review.issue } : {}),
         ...(notice ? { notice } : {}),
-        loading: state.phase === 'initial' || review.phase === 'initial',
+        loading: input !== null && (state.phase === 'initial' || review.phase === 'initial'),
         retryContent: () => { void load(); void loadReview(); },
         grants,
+        missingAudience,
+        shareMissingAudience,
         privateChoices,
     };
 }

@@ -674,6 +674,34 @@ resource writers consume its verdict and keep their own wire codes (Sessions kee
 `session_access_` prefix). The collaboration people directory projects the same Account
 predicate, so share pickers offer only eligible people.
 
+In 0.3 development source, `artifact.access.grants.list` can review a manager's
+`requestedAudience` without changing grants. Its optional `missingAudience` result names
+the requested principals whose effective members still lack access, using the same
+resource-grant owner and current Team and Group membership as ordinary access. Only grant
+managers can request this review. The HTTP read carries the audience as JSON in the
+`requestedAudience` query parameter; callers that omit it keep the ordinary roster result.
+Grant mutations return their acknowledged roster, and a caller requesting an audience
+review reads again after a mutation instead of treating the mutation receipt as a new review.
+
+Resource automation presentation consumes `useResourceAutomationsSection` for its read,
+editor and Link operation. A caller opens Link with `link.setDraft({ workflow, trigger })`;
+the hook binds that Workflow, its accepted Account and the resource owner's audience to
+the existing Document sharing controller. `link.missingAudience`, `link.issue`,
+`link.loading` and `link.retryReview()` expose that owner's review. A closed Link has no
+Document acquisition. Built-in and plugin catalog references have no Artifact grants;
+their links go directly to ordinary trigger admission. `link.submit('decline')` performs no writes;
+`link.submit('accept')` awaits sharing before calling the existing editor's trigger
+writer. A sharing refusal returns `phase: 'sharing'` and the acknowledged `shared`
+principals; a later trigger-write failure returns `phase: 'link'` with the same
+acknowledgements. Retained callbacks for an old Workflow or Account refuse before sharing.
+An admitted share retains its typed acknowledgement after the selection changes, while
+the old result stays out of the new selection's review.
+An accepted Source supplies `sourceAudience`; personal Project organization rows do not
+establish a shared audience. Machine and service callers supply their addressed `serverId`;
+the hook demands the incumbent Machine grant controller only while Link is open and uses
+that owner's acknowledged audience. The controller consumes the selected-subject query;
+the public section host binding remains a separate Automations implementation prerequisite.
+
 The rule admits new shares only. An existing grant keeps working and stays removable after
 the friendship or membership ends, and nothing sweeps it; Team-derived grants still follow
 live membership. Writers that know the existing grant (Sessions, Machines, Artifacts,

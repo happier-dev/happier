@@ -395,7 +395,7 @@ function MachineServicePresent(props: Readonly<{
         </ItemGroup>
       ) : null}
       {/* What starts here by itself (OPS-AUTOMATIONS-1102 D2): triggers on this service's Machine, set up from here. */}
-      <SubjectTriggersSection subject={triggerSubject} subjectName={serviceName} />
+      <SubjectTriggersSection subject={triggerSubject} subjectName={serviceName} serverId={props.serverId} />
     </View>
   );
 }

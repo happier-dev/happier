@@ -2,7 +2,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -84,6 +84,9 @@ const host = vi.hoisted(() => ({
     grants: [] as any[],
     grantStatus: 200,
     grantError: 'not_found',
+    reviewedMissingAudience: undefined as readonly import('@happier-dev/protocol/teams/principal').PrincipalRefV1[] | undefined,
+    rejectedReviewAccountId: null as string | null,
+    grantGate: null as Promise<void> | null,
     document: { header: {} as Record<string, unknown>, body: '' },
     publicShare: null as import('@happier-dev/protocol/sharing/storedContentPublicShareV1').StoredContentPublicShareV1 | null,
     publicRequests: [] as Array<Readonly<{ method: string; body?: unknown }>>,
@@ -299,15 +302,23 @@ async function serveHome(): Promise<void> {
             host.requests.push({ method: request.method, ...(input ? { body: input } : {}) });
             if (host.grantStatus !== 200) return Response.json({ error: host.grantError }, { status: host.grantStatus });
             if (host.access === null) return Response.json({ error: 'not_found' }, { status: 404 });
+            if (request.method === 'PUT' && input.principal.kind === 'account' && input.principal.accountId === host.rejectedReviewAccountId) {
+                return Response.json({ error: 'artifact_subject_ineligible' }, { status: 403 });
+            }
+            if (request.method === 'PUT' && host.grantGate) await host.grantGate;
             const same = (row: any) => JSON.stringify(row.principal) === JSON.stringify(input.principal);
             if (request.method === 'PUT') {
                 const display = host.grants.find(same)?.display ?? (input.principal.kind === 'team' ? { name: 'Payments squad' } : { name: 'Someone' });
                 host.grants = [...host.grants.filter((row) => !same(row)),
                     { principal: input.principal, accessLevel: input.accessLevel, createdByAccountId: 'owner', createdAt: 1, display }];
+                // The HTTP fixture models the server's next audience review after its acknowledged Account grant.
+                host.reviewedMissingAudience = host.reviewedMissingAudience?.filter(principal => JSON.stringify(principal) !== JSON.stringify(input.principal));
             }
             if (request.method === 'DELETE') host.grants = host.grants.filter((row) => !same(row));
             if (request.method === 'DELETE' && host.revokeOnRemove) host.access = null;
             return Response.json({ artifactId, ownerAccountId: host.ownerAccountId, access: host.access, grants: host.access === null ? [] : host.grants,
+                ...(request.method === 'GET' && request.url.searchParams.has('requestedAudience') && host.reviewedMissingAudience !== undefined
+                    ? { missingAudience: host.reviewedMissingAudience } : {}),
                 ...(request.method === 'GET' ? {} : { changed: true }) });
         },
     });
@@ -433,6 +444,91 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('DocumentShareSheet', () => {
+    it('returns an admitted grant acknowledgement after selection changes without publishing it into the new review', async () => {
+        const reader = { kind: 'account' as const, accountId: 'new-reader' };
+        const gate = createDeferred<void>();
+        host.grantGate = gate.promise;
+        host.reviewedMissingAudience = [reader];
+        const hook = await renderHook(({ artifactId }: { artifactId: string }) => useDocumentShareController({ artifactId,
+            scope: { serverId: host.serverId, accountId: 'owner' }, requestedAudience: [reader] }),
+            { initialProps: { artifactId: 'wf-1' } });
+        await settle();
+        let pending!: ReturnType<ReturnType<typeof useDocumentShareController>['shareMissingAudience']>;
+        await act(async () => { pending = hook.getCurrent().shareMissingAudience(); });
+        await waitForHomeGovernance(() => expect(host.requests.filter(request => request.method === 'PUT')).toHaveLength(1));
+        await hook.rerender({ artifactId: 'another-workflow' });
+        await settle();
+        expect(hook.getCurrent().model.grants).not.toContainEqual(expect.objectContaining({ grant: reader }));
+        await act(async () => { gate.resolve(); await pending; });
+        expect(await pending).toEqual({ ok: true, shared: [reader] });
+        expect(hook.getCurrent().model.grants).not.toContainEqual(expect.objectContaining({ grant: reader }));
+        await hook.unmount();
+    });
+    it('refuses a retained Workflow audience review before writes after selection changes', async () => {
+        const reader = { kind: 'account' as const, accountId: 'new-reader' };
+        host.reviewedMissingAudience = [reader];
+        const hook = await renderHook(({ artifactId }: { artifactId: string }) => useDocumentShareController({ artifactId,
+            scope: { serverId: host.serverId, accountId: 'owner' }, requestedAudience: [reader] }),
+            { initialProps: { artifactId: 'wf-1' } });
+        await settle();
+        expect(hook.getCurrent().missingAudience).toEqual([reader]);
+        const submitOldReview = hook.getCurrent().shareMissingAudience;
+        await hook.rerender({ artifactId: 'another-workflow' });
+        let outcome: Awaited<ReturnType<typeof submitOldReview>> | undefined;
+        await act(async () => { outcome = await submitOldReview(); });
+        expect(outcome).toMatchObject({ ok: false, shared: [], error: { code: 'action_account_scope_changed' } });
+        expect(host.requests.filter(request => request.method !== 'GET')).toEqual([]);
+        await hook.unmount();
+    });
+    it('keeps a closed Workflow audience review idle and refuses a retained review after the selection changes', async () => {
+        const reader = { kind: 'account' as const, accountId: 'new-reader' };
+        host.reviewedMissingAudience = [reader];
+        type Review = Readonly<{ artifactId: string; scope: { serverId: string; accountId: string };
+            requestedAudience: readonly typeof reader[] }>;
+        const hook = await renderHook(({ review }: { review: Review | null }) => useDocumentShareController(review),
+            { initialProps: { review: null as Review | null } });
+        await settle();
+        expect(host.requests).toEqual([]);
+        await hook.rerender({ review: { artifactId: 'wf-1', scope: { serverId: host.serverId, accountId: 'owner' },
+            requestedAudience: [reader] } });
+        await settle();
+        expect(hook.getCurrent().missingAudience).toEqual([reader]);
+        const submitOldReview = hook.getCurrent().shareMissingAudience;
+        await hook.rerender({ review: null });
+        await settle();
+        let outcome: Awaited<ReturnType<typeof submitOldReview>> | undefined;
+        await act(async () => { outcome = await submitOldReview(); });
+        expect(outcome).toMatchObject({ ok: false, shared: [], error: { code: 'action_account_scope_changed' } });
+        expect(host.requests.filter(request => request.method !== 'GET')).toEqual([]);
+        await hook.unmount();
+    });
+    it('keeps declined sharing read-only and returns the acknowledged partial audience when a reviewed grant fails', async () => {
+        const first = { kind: 'account' as const, accountId: 'new-reader' };
+        const second = { kind: 'account' as const, accountId: 'declined-reader' };
+        host.reviewedMissingAudience = [first, second];
+        host.rejectedReviewAccountId = second.accountId;
+        const hook = await renderHook(() => useDocumentShareController({ artifactId: 'wf-1',
+            scope: { serverId: host.serverId, accountId: 'owner' }, requestedAudience: [{ kind: 'account', accountId: 'ana' }, first, second] }));
+        await settle();
+        expect(hook.getCurrent().missingAudience).toEqual([first, second]);
+        expect(host.requests.filter(request => request.method !== 'GET')).toEqual([]);
+        let outcome: Awaited<ReturnType<ReturnType<typeof useDocumentShareController>['shareMissingAudience']>> | undefined;
+        await act(async () => { outcome = await hook.getCurrent().shareMissingAudience(); });
+        await settle();
+        expect(outcome).toMatchObject({ ok: false, shared: [first], error: { code: 'artifact_subject_ineligible' } });
+        expect(host.requests.filter(request => request.method === 'PUT').map(request => request.body?.principal)).toEqual([first, second]);
+        expect(host.grants.some(row => row.principal.accountId === first.accountId)).toBe(true);
+        expect(host.grants.some(row => row.principal.accountId === second.accountId)).toBe(false);
+        host.reviewedMissingAudience = [second];
+        host.rejectedReviewAccountId = null;
+        await act(async () => { hook.getCurrent().retryContent(); });
+        await settle();
+        await act(async () => { outcome = await hook.getCurrent().shareMissingAudience(); });
+        expect(outcome).toEqual({ ok: true, shared: [second] });
+        expect(hook.getCurrent().missingAudience).toEqual([]);
+        expect(host.requests.filter(request => request.method === 'PUT').map(request => request.body?.principal)).toEqual([first, second, second]);
+        await hook.unmount();
+    });
     it.each(['database_transaction_conflict_exhausted', 'database_transaction_timeout'])('keeps %s visible and retries an idempotent grant change', async code => {
         const hook = await renderHook(() => useDocumentShareController({ artifactId: 'wf-1', scope: { serverId: host.serverId, accountId: 'owner' } }));
         await settle();
@@ -455,9 +551,12 @@ describe('DocumentShareSheet', () => {
         host.access = 'owner';
         host.ownerAccountId = 'owner';
         host.revokeOnRemove = false;
+        host.grantGate = null;
         host.grants = [ana, studio];
         host.grantStatus = 200;
         host.grantError = 'not_found';
+        host.reviewedMissingAudience = undefined;
+        host.rejectedReviewAccountId = null;
         host.document = WORKFLOW_DOCUMENT;
         host.publicShare = null;
         host.publicRequests = [];

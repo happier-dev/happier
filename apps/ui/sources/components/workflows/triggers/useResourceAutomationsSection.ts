@@ -3,8 +3,14 @@ import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deploymen
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 
+import { useDocumentShareController } from '@/components/sharing/documents/useDocumentShareController';
+import type { DocumentAudienceShareResult } from '@/components/sharing/documents/useDocumentShareController';
+import { useMachineShareController } from '@/components/sharing/machines/useMachineShareController';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import type { addWorkflowTrigger, WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -13,7 +19,16 @@ import { useAccountWorkflowEditor } from './AccountTriggersSection';
 import { projectAccountTriggerRows, type AccountTriggerRow, type TriggerSubject } from './accountTriggerRows';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 
+const NO_SHARED_AUDIENCE: readonly PrincipalRefV1[] = [];
 const EMPTY_ROWS: readonly AccountTriggerRow[] = [];
+
+export type ResourceAutomationLinkDraft = Readonly<Omit<Extract<Parameters<typeof addWorkflowTrigger>[0], { project: unknown }>,
+    'project' | 'target' | 'workflow'> & { workflow: string }>;
+export type ResourceAutomationLinkResult =
+    | Readonly<{ ok: true; shared: readonly PrincipalRefV1[]; write: WorkflowTriggerWriteResult }>
+    | Readonly<{ ok: false; phase: 'declined'; shared: readonly [] }>
+    | (Extract<DocumentAudienceShareResult, { ok: false }> & Readonly<{ phase: 'sharing' }>)
+    | Readonly<{ ok: false; phase: 'link'; shared: readonly PrincipalRefV1[]; error: unknown }>;
 
 export type ResourceAutomationsSectionInput = Readonly<{
     subject: AutomationSubjectV1;
@@ -36,7 +51,16 @@ export type ResourceAutomationsSectionRead = Readonly<{
     also: readonly AccountTriggerRow[];
     skippedNotSharedCount: number;
     project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> | undefined;
-
+    audience: readonly PrincipalRefV1[] | undefined;
+    link: Readonly<{
+        draft: ResourceAutomationLinkDraft | null;
+        setDraft(draft: ResourceAutomationLinkDraft | null): void;
+        missingAudience: ReturnType<typeof useDocumentShareController>['missingAudience'];
+        issue: ReturnType<typeof useDocumentShareController>['issue'];
+        loading: boolean;
+        retryReview(): void;
+        submit(decision: 'accept' | 'decline'): Promise<ResourceAutomationLinkResult>;
+    }>;
 }>;
 
 /** Resource section data and mutations, consuming the incumbent read and presentation lifetimes. */
@@ -66,5 +90,39 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const legacyMachineId = legacySubject?.machineId;
     const project = React.useMemo(() => props.executionContext ?? (legacyMachineId ? { machineId: legacyMachineId, directory: '~' } : undefined),
         [props.executionContext, legacyMachineId]);
-    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0, project };
+    const [linkDraft, setLinkDraft] = React.useState<ResourceAutomationLinkDraft | null>(null);
+    const machineId = subject?.kind === 'machine' ? subject.machineId : '';
+    const machineSubject = subject?.kind === 'machine';
+    const machineSharing = useMachineShareController({ machineId,
+        machineName: props.subjectName ?? machineId,
+        scope: demanded && linkDraft !== null && machineSubject && binding ? binding.scope : null });
+    const audience = machineSubject ? machineSharing.audience : props.sourceAudience;
+    const workflow = linkDraft ? parseWorkflowDefinitionRefV1(linkDraft.workflow) : null;
+    const review = useDocumentShareController(demanded && binding && workflow?.kind === 'artifact'
+        && audience !== undefined ? { scope: binding.scope, artifactId: workflow.artifactId,
+            requestedAudience: audience } : null);
+    const submitLink = React.useCallback(async (decision: 'accept' | 'decline'): Promise<ResourceAutomationLinkResult> => {
+        if (decision === 'decline') return { ok: false, phase: 'declined', shared: [] };
+        // Catalog Workflows have no Artifact grant roster; their ordinary trigger admission
+        // owns availability. Only a saved Artifact can require audience sharing here.
+        const sharing: DocumentAudienceShareResult = workflow?.kind === 'artifact'
+            ? await review.shareMissingAudience() : { ok: true, shared: NO_SHARED_AUDIENCE };
+        if (!sharing.ok) return { ...sharing, phase: 'sharing' };
+        try {
+            if (!linkDraft || !project) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+            const write = await editor.add({ ...linkDraft, project }, binding);
+            return { ok: true, shared: sharing.shared, write };
+        } catch (error) {
+            return { ok: false, phase: 'link', shared: sharing.shared, error };
+        }
+    }, [linkDraft, workflow?.kind, review.shareMissingAudience, editor.add, project, binding]);
+    const missingAudience = workflow && workflow.kind !== 'artifact' ? NO_SHARED_AUDIENCE : review.missingAudience;
+    const reviewIssue = machineSubject ? machineSharing.issue ?? review.issue : review.issue;
+    const reviewLoading = review.loading || (machineSubject && linkDraft !== null && machineSharing.loading);
+    const retryReview = machineSubject && machineSharing.issue ? machineSharing.retryContent : review.retryContent;
+    const link = React.useMemo(() => ({ draft: linkDraft, setDraft: setLinkDraft,
+        missingAudience, issue: reviewIssue, loading: reviewLoading,
+        retryReview, submit: submitLink }),
+    [linkDraft, missingAudience, reviewIssue, reviewLoading, retryReview, submitLink]);
+    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0, project, audience, link };
 }

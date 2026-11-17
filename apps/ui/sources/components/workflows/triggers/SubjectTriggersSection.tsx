@@ -46,6 +46,7 @@ export const SubjectTriggersSection = React.memo(
   function SubjectTriggersSection(
     props: Readonly<{
       subject: TriggerSubject;
+      serverId?: string;
       /** The page's own name for its subject, used in the agent's prompt and the read-back. */
       subjectName: string;
       deploymentEnvironment?: DeploymentEnvironmentRefV1;

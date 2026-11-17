@@ -97,6 +97,12 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     const [open, setOpen] = React.useState<Readonly<{ set: WorkflowTriggerSetV1; triggerId: AccountTriggerRow['triggerId']; anchor: React.RefObject<View | null>; refusal?: string; history?: boolean }> | null>(null);
     const thenOptions = useTriggerThenOptions({ ...actionOptions, libraryEnabled: open !== null, sets });
     const openTriggerAsWorkflow = useOpenTriggerAsWorkflow(props.accountLifetime);
+    const add = React.useCallback(async (request: Parameters<typeof addWorkflowTrigger>[0],
+        accountLifetime: ServerAccountScopeLifetime | null) => {
+        const write = await addWorkflowTrigger(request, { accountLifetime });
+        refresh();
+        return write;
+    }, [refresh]);
     const [pending, setPending] = React.useState<ReadonlySet<string>>(() => new Set());
     const openRow = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'> & Partial<Pick<AccountTriggerRow, 'legacy'>>, anchor: React.RefObject<View | null>) => {
         const set = sets.find((candidate) => candidate.automationId === row.automationId);
@@ -197,8 +203,8 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
             })}
         />
     );
-    return React.useMemo(() => ({ pending, open: openRow, remove, toggle, popover, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle }),
-        [pending, openRow, remove, toggle, popover, thenOptions.resolveWorkflowTitle]);
+    return React.useMemo(() => ({ pending, open: openRow, add, remove, toggle, popover, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle }),
+        [pending, openRow, add, remove, toggle, popover, thenOptions.resolveWorkflowTitle]);
 }
 
 export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;

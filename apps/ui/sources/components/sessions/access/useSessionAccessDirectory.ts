@@ -148,7 +148,7 @@ export type SessionAccessDirectory = Readonly<{
  * candidate set: a Group can be selected before its Team has a Session grant.
  */
 export function useSessionAccessDirectory(input: Readonly<{
-    scope: ServerAccountScope;
+    scope: ServerAccountScope | null;
     sessionId?: string;
     availability: SessionCollaborationAvailability;
     contextTeams: readonly SessionAccessDirectoryTeamContext[];
@@ -159,11 +159,12 @@ export function useSessionAccessDirectory(input: Readonly<{
     teamAddress?: TeamAddress;
     principalKinds?: readonly SessionAccessDirectoryKind[];
 }>): SessionAccessDirectory {
-    const { availability, enabled, operations, revision, scope, sessionId } = input;
+    const { availability, operations, revision, scope, sessionId } = input;
+    const enabled = input.enabled && scope !== null;
     const viewerProfile = useShareViewerProfile(scope);
-    const viewer = React.useMemo(() => ({ accountId: scope.accountId, profile: viewerProfile }), [scope.accountId, viewerProfile]);
+    const viewer = React.useMemo(() => ({ accountId: scope?.accountId, profile: viewerProfile }), [scope?.accountId, viewerProfile]);
     const viewerPresentationKey = JSON.stringify(viewerProfile);
-    const scopeKey = `${scope.serverId} ${scope.accountId} ${availability} ${sessionId ?? 'draft'}`;
+    const scopeKey = scope ? `${scope.serverId} ${scope.accountId} ${availability} ${sessionId ?? 'draft'}` : null;
     const contextTeams = input.contextTeams;
     const teamAddress = input.teamAddress ?? null;
     const principalKinds = input.principalKinds ?? ALL_DIRECTORY_KINDS;
@@ -239,7 +240,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             const summary = row.principalSummary;
             const principal = summary?.kind === 'group'
                 ? projectSessionAccessPrincipal(summary, viewer, openedGroupDisplayNames.get(summary.groupId))
-                : summary?.kind === 'account' && summary.accountId === scope.accountId
+                : summary?.kind === 'account' && summary.accountId === scope?.accountId
                     ? projectSessionAccessPrincipal(summary, viewer)
                     : row.principal;
             const samePrincipal = principal.displayName === row.principal.displayName
@@ -251,7 +252,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             return { ...row, principal: samePrincipal ? row.principal : principal, operation: current };
         });
         return changed ? next : rows;
-    }, [openedGroupDisplayNames, operation, scope.accountId, viewer, viewerProfile]);
+    }, [openedGroupDisplayNames, operation, scope?.accountId, viewer, viewerProfile]);
 
     /**
      * Only non-idle operations enter the section resolver keys, so an editor with
@@ -265,6 +266,7 @@ export function useSessionAccessDirectory(input: Readonly<{
         .join(','), [operations]);
 
     const loadTeams = React.useCallback(async (cursor: string | null) => {
+        if (!scope) return { rows: [], teamContexts: [], nextCursor: null };
         const outcome = await runTeamAction({
             scope,
             actionId: 'teams.list',
@@ -308,6 +310,7 @@ export function useSessionAccessDirectory(input: Readonly<{
     const loadGroupSource = React.useCallback(async (
         source: GroupTeamPage,
     ): Promise<GroupTeamPage> => {
+        if (!scope) return { ...source, failed: true };
         const cursor = source.initialized ? source.nextCursor : null;
         const outcome = await listTeamGroups({
             scope,
@@ -434,6 +437,7 @@ export function useSessionAccessDirectory(input: Readonly<{
         query: string,
         signal: AbortSignal,
     ): Promise<readonly SessionAccessCandidateRowModel[]> => {
+        if (!scope) return [];
         const existing = pagesRef.current.account;
         if (existing?.query === query && !existing.failed) return applyOperations(existing.rows);
         try {
@@ -513,6 +517,7 @@ export function useSessionAccessDirectory(input: Readonly<{
     }, [advanceGroups, applyOperations, loadFirstTeamPage, scopeKey]);
 
     const loadMore = React.useCallback((kind: SessionAccessDirectoryKind) => {
+        if (!scope) return;
         if (teamAddress) {
             if (kind === 'account') void teamMembers.loadMore();
             if (kind === 'group') void teamGroups.loadMore();

@@ -97,12 +97,12 @@ export function describeMachineRemovalConsequences(input: Readonly<{ machine: st
 }
 
 /** One Machine's permission projection; all reads and writes use canonical Actions. */
-export function useMachineShareController(input: Readonly<{ machineId: string; machineName: string; scope: ServerAccountScope; online?: boolean | null }>) {
+export function useMachineShareController(input: Readonly<{ machineId: string; machineName: string; scope: ServerAccountScope | null; online?: boolean | null }>) {
     const { machineId, machineName, scope, online } = input;
     const viewerProfile = useShareViewerProfile(scope);
     const principal = (ref: PrincipalRefV1, name: string | null) => presentSharePrincipal({ ref, name,
-        viewerAccountId: scope.accountId, profile: ref.kind === 'account' && ref.accountId === scope.accountId ? viewerProfile : null });
-    const identity = `${scope.serverId}:${scope.accountId}:${machineId}`;
+        viewerAccountId: scope?.accountId, profile: ref.kind === 'account' && ref.accountId === scope?.accountId ? viewerProfile : null });
+    const identity = scope ? `${scope.serverId}:${scope.accountId}:${machineId}` : null;
     type ConfirmUserAction = NonNullable<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>['presentUserActionConfirmation']>;
     const confirmUserAction = React.useRef<ConfirmUserAction | null>(null);
     const [execute] = React.useState(() => createFrontDoorActionExecute(undefined, {
@@ -116,7 +116,8 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     const [notice, setNotice] = React.useState<ShareUiReason>();
     const intents = React.useRef(new Map<string, Mutation>());
     const names = React.useRef(new Map<string, string>());
-    const response = state.response;
+    const responseIdentity = React.useRef<string | null>(null);
+    const response = identity !== null && responseIdentity.current === identity ? state.response : null;
     const groupLabelInputs = React.useMemo(() => response ? [
         ...response.grants.flatMap(row => row.principal.kind === 'group' && row.display.groupName !== undefined
             ? [{ id: row.principal.groupId, name: row.display.groupName }]
@@ -141,6 +142,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     // The Action policy decides whether a confirmation shows; this only words it. A grant names the
     // machine, the person and the role it gives, so "Share a machine" is never a bare question.
     confirmUserAction.current = async ({ actionId, input, context, preview }) => {
+        if (!scope) return false;
         const presentation = presentActionApproval({ actionId, actionArgs: input, preview, kind: 'confirmation', subject: machineName });
         const grant = actionId === 'machines.access.grant.set' ? MachineAccessGrantSetInputV1Schema.safeParse(input) : null;
         let message: string | null = null;
@@ -153,11 +155,11 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         return confirmActionReview({ actionId, actionArgs: input, preview,
             title: presentation.title ?? t('approvals.untitled'), summary: message,
             confirmLabel: presentation.confirmLabel ?? t('approvals.approve'), irreversible: presentation.destructive === true,
-            serverId: context.serverId ?? scope.serverId, ...(context.signal ? { signal: context.signal } : {}) });
+            serverId: context.serverId ?? scope?.serverId, ...(context.signal ? { signal: context.signal } : {}) });
     };
-    const target = React.useMemo(() => ({ serverId: scope.serverId, machineId }), [scope.serverId, machineId]);
+    const target = React.useMemo(() => scope ? ({ serverId: scope.serverId, machineId }) : null, [scope?.serverId, machineId]);
     const context = React.useMemo(() => ({ surface: 'ui' as const, source: 'ui_button' as const, authority: 'present_user' as const,
-        serverId: scope.serverId, expectedAccountId: scope.accountId }), [scope.serverId, scope.accountId]);
+        serverId: scope?.serverId, expectedAccountId: scope?.accountId }), [scope?.serverId, scope?.accountId]);
 
     const clearProjection = React.useCallback((issue: ShareUiError) => {
         pending.current?.abort();
@@ -170,7 +172,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     const load = React.useCallback(async () => {
         pending.current?.abort();
         const lifetime = lifetimeRef.current;
-        if (!lifetime || lifetime.signal.aborted) return;
+        if (!scope || !target || !lifetime || lifetime.signal.aborted) return;
         const unknownIntents = Object.entries(stateRef.current.operations).flatMap(([key, operation]) => {
             const intent = intents.current.get(key);
             return operation.kind === 'error' && operation.error.code === 'outcome_unknown' && intent
@@ -182,6 +184,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         if (request.signal.aborted || lifetime.signal.aborted) return;
         const parsed = result?.ok ? MachineAccessGrantsListResponseV1Schema.safeParse(result.result) : null;
         if (parsed?.success && parsed.data.machineId === machineId) {
+            responseIdentity.current = identity;
             // Only the requested outcome in the authoritative census resolves an
             // unacknowledged write. A different or partial result keeps the intent.
             const confirmedOperations = unknownIntents.filter(({ key, intent }) => {
@@ -209,8 +212,9 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
                     message: t('machines.sharing.readError', { machine: machineName }) } }));
             } else clearProjection(issue);
         }
-    }, [execute, target, context, machineId, machineName, clearProjection]);
+    }, [execute, target, context, machineId, machineName, clearProjection, scope?.serverId, scope?.accountId, identity]);
     React.useEffect(() => {
+        if (!scope) return;
         // Setup owns the lifetime: replayed effects must not reuse a retired signal.
         let lifetime = new AbortController();
         lifetimeRef.current = lifetime;
@@ -238,10 +242,10 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         });
         void load();
         return () => { unsubscribe(); stopCredentials(); lifetime.abort(); pending.current?.abort(); };
-    }, [load, scope.serverId, scope.accountId, machineId, machineName, clearProjection]);
+    }, [load, scope?.serverId, scope?.accountId, machineId, machineName, clearProjection]);
     // A read that failed while the Home was still being reached (right after a restart) has not settled into a
     // failure: it reads as loading, and is read again once the Home answers.
-    const homeSettling = useActiveHomeSettling(scope.serverId);
+    const homeSettling = useActiveHomeSettling(scope?.serverId);
     const retryableReadRef = React.useRef(false);
     retryableReadRef.current = state.phase === 'error' && state.issue?.retryable === true;
     const wasSettling = React.useRef(false);
@@ -251,19 +255,19 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         wasSettling.current = homeSettling;
     }, [homeSettling, load]);
     const readSettling = homeSettling && state.phase === 'error' && state.issue?.retryable === true;
-    const approval = useActionApprovalContinuation({ scopeKey: identity, serverId: scope.serverId, onExecuted: () => { void load(); } });
+    const approval = useActionApprovalContinuation({ scopeKey: identity ?? '', serverId: scope?.serverId ?? '', onExecuted: () => { void load(); } });
     const directory = useSessionAccessDirectory({ scope, availability: 'available', contextTeams: NO_TEAMS,
         operations: state.operations, revision, enabled: response?.canManage === true && state.phase === 'ready' });
     for (const row of response?.grants ?? []) names.current.set(sessionAccessSubjectKey(row.principal), grantDisplayName(row) ?? principal(row.principal, null).displayName);
-    const ownPrincipal = React.useMemo<PrincipalRefV1>(() => ({ kind: 'account', accountId: scope.accountId }), [scope.accountId]);
-    const ownKey = sessionAccessSubjectKey(ownPrincipal);
-    const isCustodian = response?.custodian.accountId === scope.accountId;
+    const ownPrincipal = React.useMemo<PrincipalRefV1 | null>(() => scope ? ({ kind: 'account', accountId: scope.accountId }) : null, [scope?.accountId]);
+    const ownKey = ownPrincipal ? sessionAccessSubjectKey(ownPrincipal) : null;
+    const isCustodian = response?.custodian.accountId === scope?.accountId;
     const canWrite = response?.canManage === true && state.phase === 'ready';
     const canLeave = response?.ownDirectGrant === true && !isCustodian && state.phase === 'ready';
 
     const mutate = React.useCallback(async (mutation: Mutation) => {
         const lifetime = lifetimeRef.current;
-        if (!lifetime || lifetime.signal.aborted) return;
+        if (!scope || !target || !lifetime || lifetime.signal.aborted) return;
         const key = sessionAccessSubjectKey(mutation.principal);
         intents.current.set(key, mutation);
         setState(previous => ({ ...previous, operations: { ...previous.operations,
@@ -347,8 +351,8 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         void mutate({ actionId: 'machines.access.grant.remove', principal: ref });
     }, [confirmingRemoval, canRemove, mutate]);
     // The work a removal would touch is read only while its review is open.
-    const workTargets = React.useMemo(() => confirmingRemoval === null ? [] : [{ machineId, scope, online: online ?? null }],
-        [confirmingRemoval === null, machineId, scope.serverId, scope.accountId, online]);
+    const workTargets = React.useMemo(() => confirmingRemoval === null || scope === null ? [] : [{ machineId, scope, online: online ?? null }],
+        [confirmingRemoval === null, machineId, scope?.serverId, scope?.accountId, online]);
     const workRead = useMachineWorkSummaries(workTargets);
     const workState = workTargets[0] ? workRead.states.get(machineWorkSummaryKey(workTargets[0])) : undefined;
     const workRequesters = workState?.kind === 'summary' && workState.summary.kind === 'current' ? workState.summary.requesters : null;
@@ -394,9 +398,9 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
                 reason: failure('recipient_encryption_incompatible', machineName, displayName ?? undefined) }
                 : { kind: 'editable', value: draft?.actionId === 'machines.access.grant.set' ? draft.level : row.level, options: ['view', 'admin'] },
             removal: removal(row.principal, removalConsequences(row.removal.losesAccessAccountIds, row.audience)), operation };
-    }), [response, state.operations, machineName, scope.accountId, viewerProfile, confirmingRemoval, workRequesters, groupDisplayNames]);
+    }), [response, state.operations, machineName, scope?.accountId, viewerProfile, confirmingRemoval, workRequesters, groupDisplayNames]);
     const inherited = (response?.ownAccessSources ?? []).filter(source => source.principal.kind !== 'account');
-    const viewerRow: MachineShareGrantRow | null = response && !isCustodian ? {
+    const viewerRow: MachineShareGrantRow | null = response && ownPrincipal && ownKey !== null && !isCustodian ? {
         grant: ownPrincipal, principal: principal(ownPrincipal, null), viewer: true,
         readiness: response.access.accessState,
         audience: [], canPrepareKeys: false,
@@ -422,7 +426,11 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         })) },
     };
     const unknownOperation = Object.values(state.operations).find(operation => operation.kind === 'error' && operation.error.code === 'outcome_unknown');
-    return { model, actions, response, guestExecution, viewerRow, inherited, canLeave, loading: state.phase === 'initial' || readSettling, issue: readSettling ? undefined : state.issue,
+    const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(() => canWrite && response
+        ? [{ kind: 'account', accountId: response.custodian.accountId }, ...response.grants.map(row => row.principal)]
+        : undefined, [canWrite, response]);
+    return { model, actions, response, guestExecution, viewerRow, inherited, canLeave, loading: scope !== null && (state.phase === 'initial' || readSettling), issue: scope === null || readSettling ? undefined : state.issue,
+        audience,
         notice: unknownOperation?.kind === 'error' ? unknownOperation.error : notice, retryContent: load, approvalId: approval.approvalId,
         prepareKeys: (ref: PrincipalRefV1) => { if (canWrite && response?.grants.some(row =>
             sessionAccessSubjectKey(row.principal) === sessionAccessSubjectKey(ref) && row.audience.some(member => member.canPrepareKeys)))

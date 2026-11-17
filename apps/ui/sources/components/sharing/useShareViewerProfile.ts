@@ -4,7 +4,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /** A viewer's profile belongs to its exact Home and Account, including on inactive-Home sheets. */
-export function useShareViewerProfile(scope: ServerAccountScope): AccountDisplayProfileV1 | null {
+export function useShareViewerProfile(scope: ServerAccountScope | null): AccountDisplayProfileV1 | null {
     return getStorage()(useShallow((state) => {
         const profile = areServerAccountScopesEqual(state.profileScope, scope) ? state.profile : null;
         return profile ? { name: profile.name, firstName: profile.firstName, lastName: profile.lastName,

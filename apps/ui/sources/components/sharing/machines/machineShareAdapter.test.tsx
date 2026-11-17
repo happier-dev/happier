@@ -79,6 +79,29 @@ describe('Machine removal consequences', () => {
 });
 
 describe('Machine sharing through the canonical controller and sheet', () => {
+    it('keeps an inactive resource audience unread and withdraws it when its accepted Account closes', async () => {
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-audience-demand.test', accountId: 'alice' }],
+            route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
+        let hook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useMachineShareController>, { active: boolean }>>> | undefined;
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            hook = await renderHook(({ active }: { active: boolean }) => useMachineShareController({
+                machineId: 'machine', machineName: 'Devbox', scope: active ? scope : null,
+            }), { initialProps: { active: false } });
+            // Account bootstrap is independent of this exact Machine audience read.
+            const reads = () => home.requests.filter(request => request.path === '/v1/machines/machine/access');
+            expect(reads()).toEqual([]);
+            expect(hook.getCurrent().audience).toBeUndefined();
+            await hook.rerender({ active: true });
+            await vi.waitFor(() => expect(hook!.getCurrent().audience).toEqual([{ kind: 'account', accountId: 'alice' }, bob]));
+            await hook.rerender({ active: false });
+            expect(hook.getCurrent().audience).toBeUndefined();
+            expect(hook.getCurrent().response).toBeNull();
+            const beforeRetry = reads().length;
+            await act(async () => { await hook!.getCurrent().retryContent(); });
+            expect(reads()).toHaveLength(beforeRetry);
+        } finally { await hook?.unmount(); await home.dispose(); }
+    });
     it('publishes no new grant projection for five equal refreshes of 128 grants and retains unchanged rows on a real change', async () => {
         let snapshot: MachineAccessGrantsListResponseV1 = { ...initial, grants: Array.from({ length: 128 }, (_, index) => ({
             ...initial.grants[0]!, principal: { kind: 'account', accountId: `person-${index}` },
