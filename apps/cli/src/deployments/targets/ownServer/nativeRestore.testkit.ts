@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DeploymentBackupManifestV1Schema } from '@happier-dev/deployment-protocol';
 
@@ -48,8 +48,12 @@ export async function installRestoreBoundary(root: string, mode: string, options
     await writeFile(join(toolDirectory, 'docker-original.cjs'), original.replace(/^#![^\n]*\n/u, ''));
     const stateFile = join(toolDirectory, 'restore-state.json');
     const eventsFile = join(toolDirectory, 'restore-events.jsonl');
-    await writeFile(stateFile, JSON.stringify({ names: mode === 'safety' ? [database] : [], mode, snapshot: nativeSnapshot,
-        runtimeImageLoaded: options === undefined, archive: archive.toString('base64') }));
+    const writeRestoreState = async (state: unknown) => {
+        await writeFile(`${stateFile}.parent.next`, JSON.stringify(state));
+        await rename(`${stateFile}.parent.next`, stateFile);
+    };
+    await writeRestoreState({ names: mode === 'safety' ? [database] : [], mode, snapshot: nativeSnapshot,
+        runtimeImageLoaded: options === undefined, archive: archive.toString('base64') });
     await writeFile(eventsFile, '');
     await writeFile(executable, `#!${process.execPath}\n` + String.raw`
 const fs = require('node:fs');
@@ -59,7 +63,14 @@ const args = process.argv.slice(2);
 const statePath = path.join(__dirname, 'restore-state.json');
 const eventsPath = path.join(__dirname, 'restore-events.jsonl');
 const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-const save = () => fs.writeFileSync(statePath, JSON.stringify(state));
+// Docker observers run in other processes: publish complete JSON, as the
+// underlying Docker fixture does, instead of exposing an in-place truncation.
+const writeState = (filename, value) => {
+    const next = filename + '.restore-' + process.pid + '.next';
+    fs.writeFileSync(next, JSON.stringify(value));
+    fs.renameSync(next, filename);
+};
+const save = () => writeState(statePath, state);
 const event = value => fs.appendFileSync(eventsPath, JSON.stringify(value)+'\n');
 // Record fixture failures without command operands, SQL, credentials or stdout.
 process.on('uncaughtExceptionMonitor', error => event({kind:'boundaryFailure',
@@ -77,7 +88,7 @@ if (args.includes('compose') && args.includes('up') && args.includes('--no-recre
     for (const row of native.containers) {
         if (selected.includes(row.Config.Labels['com.docker.compose.service'])) row.State.Status = 'running';
     }
-    fs.writeFileSync(path.join(__dirname, 'docker-state.json'), JSON.stringify(native));
+    writeState(path.join(__dirname, 'docker-state.json'), native);
     process.exit(0);
 }
 if (args.includes('compose') && args.includes('up') && state.failVolumeActivation) {
@@ -104,7 +115,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     const selected = docker.containers.filter(row => args.slice(1).includes(row.Id));
     if (selected.length !== args.length-1) throw new Error('unexpected_control_identity');
     for (const row of selected) row.State.Status = args[0] === 'start' ? 'running' : 'exited';
-    fs.writeFileSync(dockerPath,JSON.stringify(docker));
+    writeState(dockerPath, docker);
     event({kind:'nativeControl',operation:args[0],services:selected.map(row=>row.Config.Labels['com.docker.compose.service'])});
 } else if (args[0] === 'start' && args.includes('--attach')) {
     const request = JSON.parse(fs.readFileSync(path.join(__dirname, 'restic-'+args.at(-1)+'.json'), 'utf8'));
@@ -134,7 +145,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
             output = fs.readFileSync(snapshotPath);
         }
         native.operationStdoutBase64 = output.toString('base64');
-        fs.writeFileSync(path.join(__dirname, 'docker-state.json'), JSON.stringify(native));
+        writeState(path.join(__dirname, 'docker-state.json'), native);
         require('./docker-original.cjs');
     } else if (request.includes('/bin/tar')) {
         const imageIndex = request.findIndex(value => native.images[value]?.image.service === 'restic');
@@ -154,7 +165,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
             const docker = JSON.parse(fs.readFileSync(dockerPath, 'utf8'));
             docker.operationStdoutBase64 = extracted.stdout.toString('base64');
             docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = extracted.status;
-            fs.writeFileSync(dockerPath, JSON.stringify(docker));
+            writeState(dockerPath, docker);
             event({kind:'archive',operation:argv.includes('-tf') ? 'list' : 'extract',bytes:bytes.length});
             require('./docker-original.cjs');
         });
@@ -262,7 +273,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
             && !(state.initializedRepositories || []).includes(repository)) {
             docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = 10;
         }
-        fs.writeFileSync(dockerPath,JSON.stringify(docker));
+        writeState(dockerPath, docker);
         require('./docker-original.cjs');
     };
     if (argv.includes('backup') && !argv.includes('--stdin')) {
@@ -277,7 +288,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
             const dockerPath = path.join(__dirname, 'docker-state.json');
             const docker = JSON.parse(fs.readFileSync(dockerPath,'utf8'));
             docker.containers.find(row => row.Id === args.at(-1)).State.ExitCode = 7;
-            fs.writeFileSync(dockerPath,JSON.stringify(docker));
+            writeState(dockerPath, docker);
         }
         finish();
     } else if (argv.includes('backup')) {
@@ -377,7 +388,7 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
                 const dockerPath = path.join(__dirname, 'docker-state.json');
                 const docker = JSON.parse(fs.readFileSync(dockerPath,'utf8'));
                 docker.health.worker = 'unhealthy';
-                fs.writeFileSync(dockerPath,JSON.stringify(docker));
+                writeState(dockerPath, docker);
             }
             event({kind:'rename',from,to});
             if (state.mode === 'cancel') {
@@ -396,22 +407,22 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         async setDatabaseNameObservations(observations: readonly (readonly string[])[]) {
             const state = JSON.parse(await readFile(stateFile, 'utf8'));
             state.nameObservations = observations;
-            await writeFile(stateFile, JSON.stringify(state));
+            await writeRestoreState(state);
         },
         async setRepositoryMissing(repositoryPrefix: string) {
             const state = JSON.parse(await readFile(stateFile, 'utf8'));
             state.missingRepositoryPrefix = repositoryPrefix;
-            await writeFile(stateFile, JSON.stringify(state));
+            await writeRestoreState(state);
         },
         async setRepositoryConfigExitCode(exitCode: number) {
             const state = JSON.parse(await readFile(stateFile, 'utf8'));
             state.repositoryConfigExitCode = exitCode;
-            await writeFile(stateFile, JSON.stringify(state));
+            await writeRestoreState(state);
         },
         async setRepositoryCheckExitCode(exitCode: number) {
             const state = JSON.parse(await readFile(stateFile, 'utf8'));
             state.repositoryCheckExitCode = exitCode;
-            await writeFile(stateFile, JSON.stringify(state));
+            await writeRestoreState(state);
         },
     };
 }
