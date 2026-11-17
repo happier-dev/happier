@@ -24,6 +24,7 @@ import {
     resourceAdministrationSummaryLines,
     resourceAccessibilityLabel,
     resourceConnectedServiceMarkId,
+    teamCredentialListSharedState,
 } from './teamCredentialPresentation';
 import { TeamCredentialResourceFilterPicker } from './TeamCredentialResourceFilterPicker';
 import { useTeamCredentialsProjection } from './useTeamCredentialsProjection';
@@ -41,16 +42,18 @@ const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
     resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1;
     displayName: string | null;
     language: string;
+    /** The cause the list states once above its rows, so this row does not repeat it. */
+    sharedState: string | null;
 }>) {
     const router = useRouter();
-    const { address, resource, displayName } = props;
+    const { address, resource, displayName, sharedState } = props;
     const registry = useProjectedConnectedServicesRegistry();
     // Whether the Home disclosed this resource's audience and policy to this
     // viewer is the resource's own `capabilities`, which the presentation owner
     // reads: a member is shown empty grant lists and masked policy defaults
     // because they are not theirs to see, and the Team-wide management flag
     // does not answer that question for one resource.
-    const summaryLines = resourceAdministrationSummaryLines(resource);
+    const summaryLines = resourceAdministrationSummaryLines(resource, sharedState);
     return (
         <Item
             testID={`team-credentials-row:${resource.id}`}
@@ -110,6 +113,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
     const [filter, setFilter] = React.useState<TeamCredentialResourceListFilterV1>('all');
     const { featureEnabled, projection, rows, displayNames, recipientPending, error, settled, retry } = useTeamCredentialsProjection(context, search.trim() || undefined, filter);
     const showSearch = rows.length >= 10 || projection.hasMore || search.length > 0;
+    const sharedState = React.useMemo(() => teamCredentialListSharedState(rows), [rows]);
 
     if (!featureEnabled) {
         return (
@@ -204,7 +208,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
                     />
                 </ItemGroup>
             ) : null}
-            <ItemGroup>
+            <ItemGroup description={sharedState ?? undefined}>
                 {(projection.status === 'loading' || recipientPending) && rows.length === 0 ? (
                     <ItemLoadStateRows
                         testID="team-credentials-loading"
@@ -235,6 +239,7 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
                         resource={resource}
                         displayName={displayNames[resource.id] ?? null}
                         language={getPreferredLanguage()}
+                        sharedState={sharedState}
                     />
                 ))}
                 {projection.hasMore && !projection.error ? (

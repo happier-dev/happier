@@ -100,7 +100,9 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
         open(sourceHint ? teamCredentialCreatePath(address, sourceHint) : teamDetailPath(address));
     }, [open, sourceHint]);
 
-    const drafting = pathname === '/settings/teams/new';
+    // The new Team's row appears only where a Home offers this viewer creation; a refused create
+    // page explains itself, and the rail adds no draft that cannot become a Team.
+    const drafting = pathname === '/settings/teams/new' && collection.showCreateTeam;
     const total = collection.activeRows.length;
     const searchable = collection.searchable;
     const noMatches = total > 0 && collection.visibleActiveRows.length === 0;

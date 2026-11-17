@@ -20,6 +20,22 @@ import { teamSettingsPath } from './teamsRoutes';
 import { teamReadFailureLabel } from './teamMutationPresentation';
 import { useTeamReadFailureAction } from './useTeamReadFailureAction';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
+
+/**
+ * A read the page makes itself (a Group, its roster) that is not current: the page keeps what it
+ * had, and the one stale notice says so with one retry for every such read.
+ */
+export type TeamPageStaleRead = Readonly<{
+    failure: HomeDomainFailure<string> | ScopedSnapshotError | null;
+    retry: () => void;
+}>;
+
+/** Builds the Team page's header and condition banners, folding the page's own stale reads in. */
+export type TeamSectionRenderHeader = (pageReads?: readonly TeamPageStaleRead[]) => React.ReactNode;
+
+const NO_PAGE_READS: readonly TeamPageStaleRead[] = Object.freeze([]);
 
 /**
  * The page head of a Team destination: a sub-page names itself (`title`, `description`); an entity
@@ -120,7 +136,11 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     renderLoading?: () => React.ReactNode;
     /** Quiet actions at the head of a sub-page whose content has no section title to carry them. */
     renderHeaderActions?: (context: TeamSectionContext) => React.ReactNode;
-    children: (context: TeamSectionContext, header?: React.ReactNode) => React.ReactNode;
+    /**
+     * `renderHeader` is for a page that reads more than the Team (a Group and its roster): it passes
+     * those reads so one outage is one notice, not one per read.
+     */
+    children: (context: TeamSectionContext, header: React.ReactNode | undefined, renderHeader: TeamSectionRenderHeader) => React.ReactNode;
 }>) {
     const navigation = useNavigation();
     const router = useRouter();
@@ -277,7 +297,25 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     const canRestore = state.team.capabilities.restoreTeam
         && state.mutationsAvailable;
 
-    const header = (
+    // The Team's own read state, read once here so the header builder below closes over plain values.
+    const { stale: teamStale, error: teamError, archived: teamArchived } = state;
+    const renderHeader: TeamSectionRenderHeader = (pageReads = NO_PAGE_READS) => {
+        // One outage is one notice: the Team's own read and the page's reads that are not current
+        // share it, it names the first failure, and its one retry asks every one of them again.
+        const staleReads: readonly TeamPageStaleRead[] = teamStale
+            ? [{ failure: teamError ?? null, retry: refresh }, ...pageReads]
+            : pageReads;
+        const failure = staleReads.find((read) => read.failure !== null)?.failure ?? null;
+        const retryAll = () => {
+            for (const read of staleReads) read.retry();
+        };
+        const retry = { label: t('teams.unavailable.retry'), onPress: retryAll, testID: 'team-stale-retry' };
+        const staleAction = failure === null
+            ? retry
+            // The Team's own stale read always offers Retry, as it did; a page read follows the
+            // shared read-failure rule (the Action settings repair, Retry, or nothing for a refusal).
+            : readFailureAction(failure, { onPress: retryAll, testIDPrefix: 'team-stale' }) ?? (teamStale ? retry : null);
+        return (
         <>
             {embedded || props.childRendersHeader ? null : props.renderHeader ? props.renderHeader(context) : renderPlainHeader(props.renderHeaderActions?.(context))}
             {approvalId ? (
@@ -297,17 +335,17 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
                     }}
                 />
             ) : null}
-            {state.stale ? (
+            {staleReads.length > 0 ? (
                 <AttentionBanner
                     testID="team-stale"
-                    title={state.error ? teamReadFailureLabel(state.error) : t('teams.stale.label')}
-                    description={state.error ? t('teams.stale.label') : undefined}
+                    title={failure ? teamReadFailureLabel(failure) : t('teams.stale.label')}
+                    description={failure ? t('teams.stale.label') : undefined}
                     accessibilityLiveRegion="polite"
-                    action={{ label: t('teams.unavailable.retry'), onPress: refresh }}
+                    action={staleAction}
                 />
             ) : null}
 
-            {state.archived && props.restoresHere !== true ? (
+            {teamArchived && props.restoresHere !== true ? (
                 <AttentionBanner
                     testID="team-archived"
                     tone="neutral"
@@ -320,13 +358,15 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
                 />
             ) : null}
         </>
-    );
+        );
+    };
+    const header = renderHeader();
 
     if (embedded) {
         return (
             <React.Fragment key={scopeKey}>
                 {header}
-                {props.children(context)}
+                {props.children(context, undefined, renderHeader)}
             </React.Fragment>
         );
     }
@@ -334,7 +374,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     if (props.presentation === 'virtualized-list') {
         return (
             <React.Fragment key={scopeKey}>
-                {props.children(context, header)}
+                {props.children(context, header, renderHeader)}
             </React.Fragment>
         );
     }
@@ -344,7 +384,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
             {props.childRendersHeader ? null : header}
 
             <React.Fragment key={scopeKey}>
-                {props.childRendersHeader ? props.children(context, header) : props.children(context)}
+                {props.children(context, props.childRendersHeader ? header : undefined, renderHeader)}
             </React.Fragment>
         </ItemList>
     );

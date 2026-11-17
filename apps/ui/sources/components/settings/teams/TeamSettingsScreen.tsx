@@ -49,6 +49,7 @@ import {
     historyLabel,
     sessionCreationConsequence,
     sessionCreationLabel,
+    sessionHistoryChoiceOptions,
     type TeamPolicyField,
 } from './teamPolicyPresentation';
 
@@ -67,11 +68,6 @@ const EXTERNAL_SHARING_OPTIONS: readonly TeamExternalSharingPolicyV1[] = Object.
     'allowed',
     'team_admins_only',
     'disabled',
-]);
-
-const HISTORY_OPTIONS: readonly SessionHistoryAccessV1[] = Object.freeze([
-    'from_membership',
-    'all_existing',
 ]);
 
 const TeamIdentitySection = React.memo(function TeamIdentitySection(props: Readonly<{
@@ -499,11 +495,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                             testID="team-settings-history-default"
                             title={t('teams.settings.historyDefaultSection')}
                             subtitleLines={0}
-                            options={HISTORY_OPTIONS.map((option) => ({
-                                id: option,
-                                label: historyLabel(option),
-                                description: historyConsequence(option),
-                            }))}
+                            options={sessionHistoryChoiceOptions()}
                             value={policy.defaultSessionHistoryAccess}
                             onChange={(option) => choose('defaultSessionHistoryAccess', option)}
                             disabled={!canEdit}

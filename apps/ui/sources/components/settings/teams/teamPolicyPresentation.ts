@@ -6,6 +6,7 @@ import type {
     TeamSessionCreationPolicyV1,
 } from '@happier-dev/protocol/teams';
 
+import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 
 /**
@@ -69,10 +70,33 @@ export function externalSharingConsequence(policy: TeamExternalSharingPolicyV1):
     }
 }
 
-export function historyConsequence(access: SessionHistoryAccessV1): string {
+/** Whose shared sessions the history choice opens: the Team's, or one Group's within it. */
+export type SessionHistoryAudience = 'team' | 'group';
+
+export function historyConsequence(access: SessionHistoryAccessV1, audience: SessionHistoryAudience = 'team'): string {
+    if (audience === 'group') {
+        return access === 'all_existing'
+            ? t('teams.settings.consequence.groupHistoryEarlier')
+            : t('teams.settings.consequence.groupHistoryFromJoining');
+    }
     return access === 'all_existing'
         ? t('teams.settings.consequence.historyEarlier')
         : t('teams.settings.consequence.historyFromJoining');
+}
+
+const SESSION_HISTORY_ACCESS_ORDER: readonly SessionHistoryAccessV1[] = Object.freeze(['from_membership', 'all_existing']);
+
+/**
+ * The one Session-history choice: "From joining | Earlier too" with what the chosen one means
+ * beneath it. Team Settings (the default for new members), Add member, Invitation create and a
+ * Group's add all decide this same fact, so they draw it from here through `SegmentedChoiceItem`.
+ */
+export function sessionHistoryChoiceOptions(audience: SessionHistoryAudience = 'team'): ReadonlyArray<SegmentedChoiceOption<SessionHistoryAccessV1>> {
+    return SESSION_HISTORY_ACCESS_ORDER.map((access) => ({
+        id: access,
+        label: historyLabel(access),
+        description: historyConsequence(access, audience),
+    }));
 }
 
 /** How people become members, in words: the one label for an admission mode wherever it is named. */

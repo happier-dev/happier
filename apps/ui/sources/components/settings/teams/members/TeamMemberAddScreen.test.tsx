@@ -102,8 +102,13 @@ describe('TeamMemberAddScreen search', () => {
         // An irreversible-at-mint horizon must say which audience it opens history
         // to. The row's title is rendered text, not a prop of the node the testID
         // resolves to, so it is asserted where a reader would actually see it.
-        expect(screen.getTextContent()).toContain('teams.history.fromMembership');
-        expect(screen.getTextContent()).toContain('teams.history.allExisting');
+        // The same choice and words Team Settings uses for this fact: two short segments and
+        // what the chosen one means beneath them.
+        const selected = screen.findByTestId('team-member-add-history:from_membership');
+        expect(selected?.props.accessibilityState).toMatchObject({ checked: true });
+        expect(screen.getTextContent()).toContain('teams.settings.option.fromJoining');
+        expect(screen.getTextContent()).toContain('teams.settings.option.earlierToo');
+        expect(screen.getTextContent()).toContain('teams.settings.consequence.historyFromJoining');
     });
 
     it('says why a found Account cannot be chosen instead of silently disabling it', async () => {

@@ -23,6 +23,7 @@ import {
     teamCredentialRecoveryPresentation,
     resourceConnectedServiceMarkId,
     resolveTeamCredentialUsageStartTimeSeconds,
+    teamCredentialListSharedState,
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
@@ -162,6 +163,28 @@ describe('teamCredentialPresentation', () => {
         expect(audienceSummary(teamCredentialResourceFixture({
             memberGrants: [{ teamMembershipId: 'membership-1', allowedRoutes: ['brokered'] }],
         }))).toBe('1 person');
+    });
+
+    it('says one cause shared by several rows once, above the list, and keeps a lone or different cause on its row', () => {
+        const unreachable = (id: string) => teamCredentialResourceFixture({ id, readiness: { kind: 'broker_unavailable' } });
+        const first = unreachable('resource-1');
+        const second = unreachable('resource-2');
+        const healthy = teamCredentialResourceFixture({ id: 'resource-3', readiness: { kind: 'available' } });
+        const cause = resourceStateLabel(first.readiness);
+
+        const shared = teamCredentialListSharedState([first, healthy, second]);
+        expect(shared).not.toBeNull();
+        expect(shared).toContain(cause);
+        // The rows that share it no longer repeat it; their identity line stays.
+        expect(resourceAdministrationSummaryLines(first, shared)).toEqual(resourceAdministrationSummaryLines(healthy, shared));
+        expect(resourceAdministrationSummaryLines(first, shared).join('\n')).not.toContain(shared!);
+        // A screen reader still hears each row's state in the row itself.
+        expect(resourceAccessibilityLabel(first, 'Harbor')).toContain(shared!);
+
+        // One affected row keeps its own cause; two different causes are not one.
+        expect(teamCredentialListSharedState([first, healthy])).toBeNull();
+        const other = teamCredentialResourceFixture({ id: 'resource-4', readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' } });
+        expect(teamCredentialListSharedState([first, second, other])).toBeNull();
     });
 
     it('renders the Home-owned readiness instead of inferring it from audience or enabled state', () => {

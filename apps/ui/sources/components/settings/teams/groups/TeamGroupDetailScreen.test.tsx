@@ -87,6 +87,7 @@ const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/
 // Load the real screen graph during collection, after installing boundaries.
 // Cold transformation must finish before a test owns a mounted React act scope.
 const { TeamGroupDetailScreen } = await import('./TeamGroupDetailScreen');
+const groupBannerModule = await import('@/components/ui/lists/AttentionBanner');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const GROUP_GET_PATH = '/v1/teams/groups/get';
@@ -475,6 +476,16 @@ describe('TeamGroupDetailScreen', () => {
                 capabilities: { ...MANAGED_GROUP_CAPABILITIES, manageNativeMembers: false },
             }),
         });
+        // The roster the Home now answers agrees with its count; the header states what the roster shows.
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, {
+            body: {
+                items: [
+                    teamGroupMemberFixture(),
+                    teamGroupMemberFixture({ accountId: 'account-grace', membershipId: 'membership-grace' }),
+                ],
+                nextCursor: null,
+            },
+        });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1} = await import('@happier-dev/protocol/changes');
         await act(async () => {
@@ -656,7 +667,7 @@ describe('TeamGroupDetailScreen', () => {
         });
     });
 
-    it('presents Group history as a radio group and explains a failed candidate load with retry', async () => {
+    it('presents Group history as the shared segmented choice and explains a failed candidate load with retry', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUP_GET_PATH, {
             body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }),
@@ -681,11 +692,13 @@ describe('TeamGroupDetailScreen', () => {
         }
         expect(ancestor).not.toBeNull();
         expect(ancestor?.props.accessibilityLabel ?? ancestor?.props['aria-label']).toBe('teams.history.label');
-        // The horizon this choice mints is the Group's own, so both options name the
-        // Group. The generic Team wording describes a different, broader audience.
+        // The same two choices Team Settings offers, and the chosen one's consequence
+        // names the Group: the horizon this choice mints is the Group's own.
         const historyText = screen.getTextContent();
-        expect(historyText).toContain('teams.history.fromMembership');
-        expect(historyText).toContain('teams.history.allExistingGroup');
+        expect(historyText).toContain('teams.settings.option.fromJoining');
+        expect(historyText).toContain('teams.settings.option.earlierToo');
+        expect(historyText).toContain('teams.settings.consequence.groupHistoryFromJoining');
+        expect(historyText).not.toContain('teams.settings.consequence.historyFromJoining');
 
         await waitForTestId(screen, 'team-group-candidates-retry');
         expect(screen.getTextContent()).toContain('teams.errors.loadFailed');
@@ -841,7 +854,7 @@ describe('TeamGroupDetailScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-identity-conflict');
     });
 
-    it('names a failed Group refresh with its own retry and withholds Group writes until it answers', async () => {
+    it('names a failed Group refresh in the page\'s one stale notice and withholds Group writes until it answers', async () => {
         // The Team read succeeded; this Group's own point read did not. The
         // retained Group stays on screen, but presenting last-known
         // capabilities as current is what lets a manager act on them.
@@ -855,7 +868,7 @@ describe('TeamGroupDetailScreen', () => {
 
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-member:account-ada');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-stale');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-stale');
         // While the Group is current the row offers its roster change in its menu;
         // this is the control that makes the withheld assertion below discriminating.
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member-actions:account-ada');
@@ -867,7 +880,7 @@ describe('TeamGroupDetailScreen', () => {
             publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
         });
 
-        await waitForTestId(screen, 'team-group-stale-retry');
+        await waitForTestId(screen, 'team-stale-retry');
         // Retained, not discarded.
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member:account-ada');
         expect(screen.findByTestId('team-group-archive')?.props.disabled).toBe(true);
@@ -878,9 +891,9 @@ describe('TeamGroupDetailScreen', () => {
         harness.answer(serverId, GROUP_GET_PATH, {
             body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }),
         });
-        await screen.pressByTestIdAsync('team-group-stale-retry');
+        await screen.pressByTestIdAsync('team-stale-retry');
         await vi.waitFor(() => {
-            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-stale-retry');
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-stale-retry');
         });
         // The Group answered again, so its own writes come back. The point
         // read has to land first, so this waits for the Group's own answer
@@ -890,6 +903,50 @@ describe('TeamGroupDetailScreen', () => {
             expect(screen.findAllByTestId('team-group-archive')
                 .find((node) => typeof node.props?.onPress === 'function')).toBeDefined();
         }, { timeout: 10_000 });
+    });
+
+    it('says one outage once: the Team, Group and roster reads share one stale notice, and the count matches the roster', async () => {
+        const serverId = await addManagedHome();
+        // The Home's last count is behind the roster it then answered.
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 3 }),
+        });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, {
+            body: {
+                items: [
+                    teamGroupMemberFixture(),
+                    teamGroupMemberFixture({ accountId: 'account-grace', membershipId: 'membership-grace' }),
+                ],
+                nextCursor: null,
+            },
+        });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-member:account-grace');
+        expect(screen.getTextContent()).toContain('teams.groups.memberCount(count=2)');
+
+        for (const path of [TEAM_GET_PATH, GROUP_GET_PATH, GROUP_MEMBERS_LIST_PATH]) {
+            harness.answer(serverId, path, { status: 503, body: { error: 'unavailable' } });
+        }
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/changes');
+        await act(async () => {
+            publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        });
+        await vi.waitFor(() => {
+            expect(harness.requestsFor(GROUP_MEMBERS_LIST_PATH).length).toBeGreaterThan(1);
+            expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-stale');
+        });
+        await vi.waitFor(() => {
+            const { AttentionBanner } = groupBannerModule;
+            const banners = screen.findAllByType(AttentionBanner).map((node) => node.props.testID);
+            expect(banners).toEqual(['team-stale']);
+        });
+        expect(screen.findAllByTestId('team-stale-retry').length).toBeGreaterThan(0);
+        // The rows kept on screen and the header agree.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-group-member:account-grace');
+        expect(screen.getTextContent()).toContain('teams.groups.memberCount(count=2)');
+        expect(screen.getTextContent()).not.toContain('teams.groups.memberCount(count=3)');
     });
 
     it('routes an externally supplied member native contribution through approval', async () => {
@@ -1088,6 +1145,53 @@ describe('TeamGroupDetailScreen', () => {
         // Its header says the kept members come back, not that it has none.
         expect(screen.getTextContent()).toContain('teams.groups.archivedMemberCount');
         expect(screen.getTextContent()).not.toContain('teams.groups.memberCount(count=0)');
+    });
+
+    it('says a refused Restore in the archived notice, and clears it when Restore succeeds', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({
+                capabilities: MANAGED_GROUP_CAPABILITIES,
+                archivedAt: 1_700_000_000_000,
+                memberCount: 0,
+            }),
+        });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, GROUP_RESTORE_PATH, { status: 409, body: { error: 'team_group_restore_conflict' } });
+
+        const screen = await renderGroupDetail(serverId);
+        await waitForTestId(screen, 'team-group-restore');
+        await screen.pressByTestIdAsync('team-group-restore');
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_RESTORE_PATH)).toHaveLength(1));
+        // The refusal is said where the person pressed Restore: in the archived notice itself.
+        const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+        const archivedNotice = () => screen.findAllByType(AttentionBanner)
+            .find((node) => node.props.testID === 'team-group-archived');
+        await vi.waitFor(() => {
+            expect(archivedNotice()?.props.tone).toBe('danger');
+        });
+        const refusal = archivedNotice()?.props.description as string;
+        expect(refusal).not.toBe('teams.groups.archivedReadOnly');
+        expect(screen.getTextContent().split(refusal).length - 1).toBe(1);
+
+        harness.answer(serverId, GROUP_RESTORE_PATH, {
+            body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }),
+        });
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }),
+        });
+        await vi.waitFor(() => {
+            expect(screen.findByTestId('team-group-restore')?.props.disabled).not.toBe(true);
+        });
+        await screen.pressByTestIdAsync('team-group-restore');
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_RESTORE_PATH)).toHaveLength(2));
+        await vi.waitFor(() => {
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            expect(ids).not.toContain('team-group-archived');
+            expect(ids).toContain('team-group-members-empty');
+        });
+        // The earlier refusal does not linger once the Group is restored.
+        expect(screen.getTextContent()).not.toContain(refusal);
     });
 
     it('withholds a second Group restore while its shared UI confirmation is unresolved', async () => {

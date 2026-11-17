@@ -29,7 +29,7 @@ import { askAdministratorsText } from '../collection/teamsCreateGuidanceText';
 import { useEligibleProviderRecoveryViewer } from '../identity/eligibleProviderAvailability';
 import { teamRoleLabel } from '../teamLabels';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
-import { historyConsequence, historyLabel } from '../teamPolicyPresentation';
+import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
 import { TeamLinkDelivery } from '../TeamLinkDelivery';
 
 const ADMISSIBLE_ROLES: readonly TeamInvitationAdmissibleRoleV1[] = Object.freeze([
@@ -40,7 +40,6 @@ const ADMISSIBLE_ROLES: readonly TeamInvitationAdmissibleRoleV1[] = Object.freez
 
 type Delivery = 'link' | 'email';
 const DELIVERIES: readonly Delivery[] = Object.freeze(['link', 'email']);
-const HISTORY_CHOICES: readonly SessionHistoryAccessV1[] = Object.freeze(['from_membership', 'all_existing']);
 
 /** What a person invited with this role receives, said under the role choice. */
 function invitationRoleHelp(role: TeamInvitationAdmissibleRoleV1): string {
@@ -383,11 +382,7 @@ export const TeamInvitationForm = React.memo(function TeamInvitationForm(props: 
     // One sheet, one decision per row (lab `tsInvites-I`): how it is sent, the address when it is
     // mailed, the role and the history it opens. Each choice of two to four short options is the
     // shared segmented row, and the chosen option says what it means beneath its label.
-    const historyOptions = HISTORY_CHOICES.map((option) => ({
-        id: option,
-        label: historyLabel(option),
-        description: historyConsequence(option),
-    }));
+    const historyOptions = sessionHistoryChoiceOptions();
     return (
         <>
             {linkUnavailable && !emailAvailable ? (

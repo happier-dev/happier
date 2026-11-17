@@ -32,6 +32,7 @@ import { t } from '@/text';
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamRoleLabel } from '../teamLabels';
+import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
 import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
 
 const ADMISSIBLE_ROLES: readonly TeamAdmissibleRoleV1[] = Object.freeze(['admin', 'member', 'guest']);
@@ -290,37 +291,18 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
                     testIDPrefix="team-member-add-role"
                     subtitleLines={0}
                 />
+                {historyChoiceAvailable ? (
+                    <SegmentedChoiceItem<SessionHistoryAccessV1>
+                        testID="team-member-add-history"
+                        testIDPrefix="team-member-add-history"
+                        title={t('teams.history.label')}
+                        subtitleLines={0}
+                        options={sessionHistoryChoiceOptions()}
+                        value={historyAccess}
+                        onChange={setHistoryAccess}
+                    />
+                ) : null}
             </ItemGroup>
-
-            {historyChoiceAvailable ? (
-                <ItemGroup
-                    title={t('teams.history.label')}
-                    description={t('teams.history.scopeNote')}
-                    accessibilityRole="radiogroup"
-                    accessibilityLabel={t('teams.history.label')}
-                >
-                    <Item
-                        testID="team-member-add-history:from_membership"
-                        title={t('teams.history.fromMembership')}
-                        selected={historyAccess === 'from_membership'}
-                        accessibilityRole="radio"
-                        webRole="radio"
-                        accessibilityChecked={historyAccess === 'from_membership'}
-                        onPress={() => setHistoryAccess('from_membership')}
-                        showChevron={false}
-                    />
-                    <Item
-                        testID="team-member-add-history:all_existing"
-                        title={t('teams.history.allExisting')}
-                        selected={historyAccess === 'all_existing'}
-                        accessibilityRole="radio"
-                        webRole="radio"
-                        accessibilityChecked={historyAccess === 'all_existing'}
-                        onPress={() => setHistoryAccess('all_existing')}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            ) : null}
 
             <ItemGroup surface="none">
                 <SectionButtonRow footnote={error} footnoteTone="danger" footnoteTestID="team-member-add-error">

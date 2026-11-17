@@ -27,6 +27,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamGroup, useTeamGroupMembers } from '@/hooks/teams/useTeamGroups';
@@ -49,12 +50,12 @@ import {
 import { t } from '@/text';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 
-import { TeamSection } from '../TeamSection';
+import { TeamSection, type TeamPageStaleRead, type TeamSectionRenderHeader } from '../TeamSection';
 import { useEditedMetadataDraft } from '../useEditedMetadataDraft';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
-import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { groupManagementLabel } from '../teamLabels';
+import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
 import {
     teamDirectorySourcePath,
     teamGroupMemberDetailPath,
@@ -64,6 +65,13 @@ import { TeamMemberDefaultsSection } from '../defaults/TeamMemberDefaultsSection
 import { memberDefaultsAccess } from '../defaults/memberDefaults';
 
 const GROUP_DETAIL_CHUNK_SIZE = 12;
+
+/**
+ * The page's one mutation notice, said where the person acted: under the roster for a roster
+ * change, in the archived notice for Restore, beneath Archive for Archive. Each attempt clears it,
+ * so an earlier refusal never outlives a later success. A declined approval has no message.
+ */
+type GroupNotice = Readonly<{ place: 'roster' | 'restore' | 'archive'; message: string | null }>;
 
 type GroupDetailVirtualizedRow = Readonly<{
     key: string;
@@ -268,14 +276,14 @@ const GroupMetadataSection = React.memo(function GroupMetadataSection(props: Rea
 const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     context: TeamSectionContext;
     groupId: string;
-    header?: React.ReactNode;
+    renderHeader: TeamSectionRenderHeader;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const readFailureAction = useTeamReadFailureAction();
     const { context, groupId } = props;
     const [busy, setBusy] = React.useState(false);
-    const [notice, setNotice] = React.useState<string | null>(null);
+    const [notice, setNotice] = React.useState<GroupNotice | null>(null);
+    const rosterNotice = notice?.place === 'roster' ? notice.message : null;
     const [picking, setPicking] = React.useState(false);
     /** The person whose add is in flight, so their row shows it until the Home answers. */
     const [addingAccountId, setAddingAccountId] = React.useState<string | null>(null);
@@ -382,9 +390,12 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         externalLabel: string | null,
     ) => {
         if (result.status === 'contribution_removed') {
-            setNotice(externalLabel
-                ? t('teams.groups.externalOnlyBody', { source: externalLabel })
-                : t('teams.groups.externalOnlyTitle'));
+            setNotice({
+                place: 'roster',
+                message: externalLabel
+                    ? t('teams.groups.externalOnlyBody', { source: externalLabel })
+                    : t('teams.groups.externalOnlyTitle'),
+            });
         }
         void members.reload();
         void detail.reload();
@@ -409,7 +420,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 // mutation when the approval is granted.
                 context.requestApproval(cause.registration);
             } else {
-                setNotice(t('teams.errors.generic'));
+                setNotice({ place: 'roster', message: t('teams.errors.generic') });
             }
             setBusy(false);
             mutationInFlightRef.current = false;
@@ -418,7 +429,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         setBusy(false);
         mutationInFlightRef.current = false;
         if (outcome.kind === 'failed') {
-            setNotice(teamMutationFailureLabel(outcome.failure));
+            setNotice({ place: 'roster', message: teamMutationFailureLabel(outcome.failure) });
             if (outcome.failure.kind === 'outcome_unknown') {
                 void members.reload();
                 void detail.reload();
@@ -463,7 +474,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     settleRosterChange(result, null);
                     continueHistoryPreparation(result);
                 },
-                onApprovalFailed: (code) => setNotice(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
+                onApprovalFailed: (code) => setNotice({ place: 'roster', message: teamMutationFailureLabel({ kind: 'unknown', code, retryable: false }) }),
             }),
             null,
         );
@@ -507,6 +518,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 if (mutationInFlightRef.current) return;
                 mutationInFlightRef.current = true;
                 setBusy(true);
+                setNotice(null);
                 try {
                     const outcome = await restoreTeamGroup({
                         scope: context.scope,
@@ -514,24 +526,27 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         groupId,
                     });
                     if (outcome.kind === 'failed') {
-                        setNotice(teamMutationFailureLabel(outcome.failure));
+                        setNotice({ place: 'restore', message: teamMutationFailureLabel(outcome.failure) });
                         if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
                     }
                 } catch (cause) {
                     if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-                    else setNotice(t('teams.errors.generic'));
+                    else setNotice({ place: 'restore', message: t('teams.errors.generic') });
                 } finally {
                     mutationInFlightRef.current = false;
                     setBusy(false);
                 }
             };
-            // One notice, one cause and its one action: Restore is the archived notice's own button.
+            // One notice, one cause and its one action: Restore is the archived notice's own button,
+            // and a refused Restore is said here, where it was pressed.
+            const restoreFailure = notice?.place === 'restore' ? notice.message : null;
             add('archived', () => (
                 <AttentionBanner
                     testID="team-group-archived"
-                    tone="neutral"
+                    tone={restoreFailure ? 'danger' : 'neutral'}
                     title={t('teams.directory.archivedBadge')}
-                    description={t('teams.groups.archivedReadOnly')}
+                    description={restoreFailure ?? t('teams.groups.archivedReadOnly')}
+                    accessibilityLiveRegion={restoreFailure ? 'assertive' : undefined}
                     action={group.capabilities.restore ? {
                         testID: 'team-group-restore',
                         label: t('teams.groups.restoreAction'),
@@ -542,23 +557,6 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         // own restore in `TeamSettingsScreen`.
                         disabled: busy || !context.mutationsAvailable || context.approvalPending || !groupCurrent,
                         onPress: () => { void restoreGroup(); },
-                    } : null}
-                />
-            ));
-        }
-
-        if (groupStale) {
-            const failure = detail.error;
-            add('group-stale', () => (
-                <AttentionBanner
-                    testID="team-group-stale"
-                    title={t('teams.stale.label')}
-                    description={failure ? teamReadFailureLabel(failure) : undefined}
-                    accessibilityLiveRegion="polite"
-                    action={failure === null || failure.retryable ? {
-                        label: t('teams.unavailable.retry'),
-                        onPress: () => void detail.reload(),
-                        testID: 'team-group-stale-retry',
                     } : null}
                 />
             ));
@@ -624,7 +622,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     surface="none"
                     title={first ? t('teams.groups.membersSection') : undefined}
                     action={first ? addMemberAction : undefined}
-                    description={first ? notice ?? undefined : undefined}
+                    description={first ? rosterNotice ?? undefined : undefined}
                     virtualizedSegment={{ first, last }}
                 >
                     {/* A roster is a browse list: flat, rows parted by the one list-row rule across chunks (LISTS-BUILD). */}
@@ -653,8 +651,10 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                             // owes that distinction too.
                                             onApprovalSucceeded: (result) =>
                                                 settleRosterChange(result, external),
-                                            onApprovalFailed: (code) =>
-                                                setNotice(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
+                                            onApprovalFailed: (code) => setNotice({
+                                                place: 'roster',
+                                                message: teamMutationFailureLabel({ kind: 'unknown', code, retryable: false }),
+                                            }),
                                         }),
                                         external,
                                     );
@@ -730,7 +730,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 <ItemGroup
                     title={t('teams.groups.membersSection')}
                     action={addMemberAction}
-                    description={notice ?? undefined}
+                    description={rosterNotice ?? undefined}
                 >
                     <Item
                         testID="team-group-members-empty"
@@ -743,16 +743,8 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             ));
         }
 
-        const membersError = members.error;
-        if (membersError) {
-            add('members-error', () => (
-                <AttentionBanner
-                    testID="team-group-members-error"
-                    title={teamReadFailureLabel(membersError)}
-                    action={readFailureAction(membersError, { onPress: () => void members.reload(), testIDPrefix: 'team-group-members' }) ?? null}
-                />
-            ));
-        } else if (members.hasMore && members.rows.length > 0) {
+        // A failed roster read is said once, in the page's stale notice (see `pageReads`).
+        if (!members.error && members.hasMore && members.rows.length > 0) {
             add('members-load-more', () => (
                 <ItemGroup>
                     <Item
@@ -768,37 +760,6 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         }
 
         if (picking) {
-            add('history', () => (
-                    // The Group's own history intent, asked once for the add.
-                    <ItemGroup
-                        title={t('teams.history.label')}
-                        description={t('teams.history.scopeNote')}
-                        accessibilityRole="radiogroup"
-                        accessibilityLabel={t('teams.history.label')}
-                    >
-                        <Item
-                            testID="team-group-history:from_membership"
-                            title={t('teams.history.fromMembership')}
-                            selected={groupHistoryAccess === 'from_membership'}
-                            accessibilityRole="radio"
-                            webRole="radio"
-                            accessibilityChecked={groupHistoryAccess === 'from_membership'}
-                            onPress={() => setGroupHistoryAccess('from_membership')}
-                            showChevron={false}
-                        />
-                        <Item
-                            testID="team-group-history:all_existing"
-                            title={t('teams.history.allExistingGroup')}
-                            selected={groupHistoryAccess === 'all_existing'}
-                            accessibilityRole="radio"
-                            webRole="radio"
-                            accessibilityChecked={groupHistoryAccess === 'all_existing'}
-                            onPress={() => setGroupHistoryAccess('all_existing')}
-                            showChevron={false}
-                        />
-                    </ItemGroup>
-            ));
-
             for (let start = 0; start < eligibleCandidates.length; start += GROUP_DETAIL_CHUNK_SIZE) {
                 const chunk = eligibleCandidates.slice(start, start + GROUP_DETAIL_CHUNK_SIZE);
                 const first = start === 0;
@@ -916,6 +877,21 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         </ItemGroup>
                 ));
             }
+
+            // The Group's own history intent for this add, after the person it applies to.
+            add('history', () => (
+                <ItemGroup>
+                    <SegmentedChoiceItem<SessionHistoryAccessV1>
+                        testID="team-group-history"
+                        testIDPrefix="team-group-history"
+                        title={t('teams.history.label')}
+                        subtitleLines={0}
+                        options={sessionHistoryChoiceOptions('group')}
+                        value={groupHistoryAccess}
+                        onChange={setGroupHistoryAccess}
+                    />
+                </ItemGroup>
+            ));
         }
 
         if (group.capabilities.updateMetadata) {
@@ -945,12 +921,16 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         }
 
         if (group.capabilities.archive && !archived) {
+            const archiveFailure = notice?.place === 'archive' ? notice.message : null;
             add('archive', () => (
                 // Archive closes the page the way a Team's does: the destructive button at the far edge
                 // with its consequence beneath it (one placement for both).
                 <ItemGroup surface="none">
                     <SectionButtonRow
-                        footnote={t('teams.groups.archiveBody')}
+                        // A refused Archive is said beneath the button that was pressed.
+                        footnote={archiveFailure ?? t('teams.groups.archiveBody')}
+                        footnoteTone={archiveFailure ? 'danger' : undefined}
+                        footnoteTestID={archiveFailure ? 'team-group-archive-error' : undefined}
                         trailing={(
                             <RoundButton
                                 testID="team-group-archive"
@@ -963,6 +943,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                     if (mutationInFlightRef.current) return;
                                     mutationInFlightRef.current = true;
                                     setBusy(true);
+                                    setNotice(null);
                                     try {
                                         const outcome = await archiveTeamGroup({
                                             scope: context.scope,
@@ -971,12 +952,12 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                         });
                                         if (outcome.kind === 'succeeded') router.back();
                                         else {
-                                            setNotice(teamMutationFailureLabel(outcome.failure));
+                                            setNotice({ place: 'archive', message: teamMutationFailureLabel(outcome.failure) });
                                             if (outcome.failure.kind === 'outcome_unknown') void detail.reload();
                                         }
                                     } catch (cause) {
                                         if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-                                        else setNotice(t('teams.errors.generic'));
+                                        else setNotice({ place: 'archive', message: t('teams.errors.generic') });
                                     } finally {
                                         mutationInFlightRef.current = false;
                                         setBusy(false);
@@ -1008,7 +989,6 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         groupId,
         groupName,
         groupDescription,
-        groupStale,
         managedBy,
         members,
         notice,
@@ -1035,7 +1015,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     { key: 'team', text: context.team.name },
                     { key: 'home', icon: 'house', text: context.homeName },
                 ]} />
-                {props.header}
+                {props.renderHeader()}
                 {detail.status === 'loading' ? (
                     <ItemGroup>
                         <Item testID="team-group-loading" title={t('teams.loading')} loading mode="info" showChevron={false} />
@@ -1054,6 +1034,15 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             </ItemList>
         );
     }
+
+    // The Group's own read and its roster's are this page's reads beside the Team's: when they
+    // are not current, the page's one stale notice says so and retries them.
+    const pageReads: TeamPageStaleRead[] = [];
+    if (groupStale) pageReads.push({ failure: detail.error, retry: () => void detail.reload() });
+    if (members.error) pageReads.push({ failure: members.error, retry: () => void members.reload() });
+    // The count says what the roster shows once the roster is whole; until then, the Home's count.
+    const rosterWhole = !members.hasMore && (members.rows.length > 0 || members.status === 'ready');
+    const memberCount = rosterWhole ? members.rows.length : group.memberCount;
 
     const pageHeader = (
         <>
@@ -1075,12 +1064,12 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                         // on restore, so the fact says that rather than "0 members".
                         text: archived
                             ? t('teams.groups.archivedMemberCount')
-                            : t('teams.groups.memberCount', { count: group.memberCount }),
+                            : t('teams.groups.memberCount', { count: memberCount }),
                     },
                     ...(managedBy ? [{ key: 'managed', text: managedBy }] : []),
                 ]}
             />
-            {props.header}
+            {props.renderHeader(pageReads)}
         </>
     );
 
@@ -1113,7 +1102,7 @@ export const TeamGroupDetailScreen = React.memo(function TeamGroupDetailScreen(p
             presentation="virtualized-list"
             childRendersHeader
         >
-            {(context, header) => <GroupDetail context={context} groupId={props.groupId} header={header} />}
+            {(context, _header, renderHeader) => <GroupDetail context={context} groupId={props.groupId} renderHeader={renderHeader} />}
         </TeamSection>
     );
 });

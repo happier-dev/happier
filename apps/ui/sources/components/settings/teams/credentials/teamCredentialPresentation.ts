@@ -263,12 +263,34 @@ export function resourceAccessibilityLabel(
  */
 export function resourceAdministrationSummaryLines(
     resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1,
+    /** A state the list already says once above its rows (`teamCredentialListSharedState`). */
+    sharedState: string | null = null,
 ): readonly string[] {
     const facts = resourceRowFacts(resource);
     // A usable resource says nothing about its state: only a state that needs someone earns a line.
-    return resourceState(resource) === 'available'
-        ? [facts.identity.join(' · ')]
-        : [facts.identity.join(' · '), ...facts.state];
+    if (resourceState(resource) === 'available') return [facts.identity.join(' · ')];
+    const state = facts.state.join('\n');
+    return state === sharedState ? [facts.identity.join(' · ')] : [facts.identity.join(' · '), ...facts.state];
+}
+
+/**
+ * One cause said once: when every row that needs someone states the same thing (one unreachable
+ * broker behind several credentials), the list says it above its rows and the rows drop it. A
+ * single affected row, or rows with different causes, keep their own line.
+ */
+export function teamCredentialListSharedState(
+    resources: ReadonlyArray<TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1>,
+): string | null {
+    let shared: string | null = null;
+    let count = 0;
+    for (const resource of resources) {
+        if (resourceState(resource) === 'available') continue;
+        const state = resourceRowFacts(resource).state.join('\n');
+        if (shared !== null && state !== shared) return null;
+        shared = state;
+        count += 1;
+    }
+    return count >= 2 ? shared : null;
 }
 
 /**

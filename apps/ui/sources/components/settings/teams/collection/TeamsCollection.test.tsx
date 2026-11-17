@@ -53,6 +53,30 @@ async function addHome(name: string) {
     return home;
 }
 
+describe('Team collection draft row', () => {
+    it('leaves out the New Team draft for someone no Home lets create one', async () => {
+        const refused = await addHome('managed-home');
+        await harness.selectHomes([refused]);
+        harness.answer(refused, LIST_PATH, { body: { items: [teamSummaryFixture()], nextCursor: null } });
+        pathname = '/settings/teams/new';
+        const screen = await renderScreen(<TeamsCollectionRail />);
+        await vi.waitFor(() => expect(harness.requestsFor('/v1/home/governance/eligibility/get').length).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-loading'));
+        // The create page says why creation is refused; the rail does not add a draft that cannot exist.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-collection-draft');
+    });
+
+    it('keeps the New Team draft for someone a Home lets create one', async () => {
+        const home = await addHome('open-home');
+        await harness.selectHomes([home]);
+        harness.answer(home, '/v1/home/governance/eligibility/get', { body: { teamsEnabled: true, createTeam: true, createTeamForChosenAccount: false } });
+        harness.answer(home, LIST_PATH, { body: { items: [teamSummaryFixture()], nextCursor: null } });
+        pathname = '/settings/teams/new';
+        const screen = await renderScreen(<TeamsCollectionRail />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-collection-draft'));
+    });
+});
+
 describe('Team collection loaded-page search', () => {
     it('updates only the changed mounted Team row on a 400-Team page arrival', async () => {
         const home = await addHome('row-cost-home');
