@@ -122,6 +122,7 @@ import type { ResolvedInstallableContribution } from '@/plugins/projection/regis
 import { createDevelopmentPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createCliPayloadFixture } from '../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -3354,10 +3355,38 @@ describe('managed acquisition durable custody', () => {
         expect(native.activations()).toBe(0);
         expect(native.effects()).toBe(0);
     });
-    it('correlates failed native boot recovery and repeated retries with the retained controller/resource without reinstalling or purchasing', async () => {
+    it.skipIf(process.platform === 'win32')('correlates failed native boot recovery and repeated retries with the retained controller/resource while replacing its payload without purchasing or pairing again', async () => {
         const homeId = 'srv_managed_native_boot';
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', enrolledMachineId: 'ordinary-machine',
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        let operationNumber = 0;
+        const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
+            generateOperationId: () => `boot-attempt-${operationNumber++}` });
+        const pendingWork: Promise<JsonValue | null>[] = [];
+        const guestHome = await filesystem.mkdtemp(join(tmpdir(), 'managed-native-boot-'));
+        let payload: Awaited<ReturnType<typeof createCliPayloadFixture>> | undefined;
+        onTestFinished(async () => {
+            // Join admitted work before removing the guest or restoring its boundaries.
+            for (let attempt = 0; attempt < operationNumber; attempt++) await operations.handlers.cancel({ operationId: `boot-attempt-${attempt}` });
+            await Promise.allSettled(pendingWork);
+            await payload?.cleanup();
+            await filesystem.rm(guestHome, { recursive: true, force: true });
+            vi.unstubAllEnvs();
+        });
+        payload = await createCliPayloadFixture();
+        const payloadBinary = join(payload.payloadRoot, 'happier');
+        // Repeated replacement reads the real incumbent's version. Keep the
+        // canonical fixture installer and add only its executable version boundary.
+        await writeFile(join(payload.payloadRoot, 'package.json'), JSON.stringify({ version: '0.3.0' }));
+        await writeFile(payloadBinary, (await readFile(payloadBinary, 'utf8')).replace('#!/bin/sh\n',
+            '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "%s\\n" "0.3.0"; exit 0; fi\n'));
+        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload.payloadRoot);
+        const guestCliFetch: typeof fetch = async url => {
+            expect(String(url)).toBe('https://home.example/v1/features');
+            return Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } });
+        };
+        // Both admission and the installer read the same Home HTTP boundary.
+        vi.stubGlobal('fetch', guestCliFetch);
         const writes: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             writes.push(String(url));
@@ -3366,38 +3395,88 @@ describe('managed acquisition durable custody', () => {
             if (String(url).endsWith('/current')) ManagedControllerCurrentInputV1Schema.parse(body);
             return { status: 200, data: { machine: retained, ...(String(url).endsWith('/context') ? { requestId: 'original-request' } : {}) } };
         });
+        const completedExec = (stdout = '', stderr = '', exitCode = 0): JsonValue => ({
+            termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } },
+            stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: Buffer.from(stderr).toString('base64'),
+            stdoutTruncated: false, stderrTruncated: false,
+        });
         const results: Partial<Record<'bootstrap' | 'exec', JsonValue>> = {
             bootstrap: { kind: 'native', transport: { contributionRef: input.selection.launch.provider, schemaVersion: 1 },
-                guestHome: { homeDir: '/persistent/home', happyHomeDir: '/persistent/home/.happier', daemonStartup: 'native-process' } },
-            // A normal exec success is not confirmation that native boot was configured.
-            exec: { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
-                stdoutBase64: '', stderrBase64: '', stdoutTruncated: false, stderrTruncated: false },
+                guestHome: { homeDir: guestHome, happyHomeDir: join(guestHome, '.happier'), daemonStartup: 'native-process' } },
         };
         const roles: string[] = [];
         const requests: JsonValue[] = [];
-        const native = nativeFixture({ privateNative: true, nativeRoleResults: results, onNativeRole: (role, body) => {
+        const platformRequests: JsonValue[] = [];
+        const installedBinary = join(guestHome, '.happier/cli/current/happier');
+        const execFileAsync = promisify(execFile);
+        let deliveredBytes = 0;
+        let statusReads = 0;
+        let bootConfigured = false;
+        const native = nativeFixture({ privateNative: true, nativeRoleResults: results, onNativeRole: async (role, body, context) => {
             roles.push(role);
-            if (role === 'exec' && body) requests.push(body);
-            if (role !== 'bootstrap' && role !== 'exec') throw new Error('Boot retry must not purchase, deliver, or enroll again');
+            if (role === 'bootstrap') return;
+            if (!isJsonObject(body)) throw new Error('Native transport request missing');
+            expect(body.resource).toEqual(retained.resource!.value);
+            if (role === 'putFile' && typeof body.guestPath === 'string' && typeof body.bytesBase64 === 'string') {
+                const bytes = Buffer.from(body.bytesBase64, 'base64');
+                await filesystem.mkdir(dirname(body.guestPath), { recursive: true });
+                await writeFile(body.guestPath, bytes);
+                deliveredBytes += bytes.byteLength;
+                return;
+            }
+            if (role !== 'exec') throw new Error('Boot retry must not purchase or enroll again');
+            if (body.processConfig) {
+                requests.push(body);
+                // A normal exec success does not confirm persistent native boot.
+                results.exec = bootConfigured ? { kind: 'process-configured' } : completedExec();
+                return;
+            }
+            const argv = body.argv;
+            if (!Array.isArray(argv) || argv.length !== 3 || argv[0] !== 'sh' || argv[1] !== '-c' || typeof argv[2] !== 'string')
+                throw new Error('Native shell command missing');
+            const command = argv[2];
+            if (command.includes('uname -s; uname -m;')) platformRequests.push(body);
+            // Only daemon process IO is substituted. Delivery, extraction and
+            // installVersionedPayload execute on the owned guest filesystem.
+            if (command.includes("'daemon' 'restart'") || command.includes("'daemon' 'status'")) {
+                expect((await stat(installedBinary)).isFile()).toBe(true);
+                expect(command).toContain(safeBashSingleQuote(installedBinary));
+                if (command.includes("'daemon' 'status'")) {
+                    statusReads++;
+                    expect(bootConfigured).toBe(true);
+                    results.exec = completedExec(JSON.stringify({ service: { installed: false },
+                        daemon: { running: true, healthy: true }, auth: { needsAuth: false, machineId: retained.enrolledMachineId } }));
+                } else results.exec = completedExec();
+                return;
+            }
+            const child = execFileAsync('/bin/sh', ['-c', command], {
+                cwd: guestHome, env: { ...process.env, HOME: guestHome }, signal: context.signal,
+            });
+            child.child.stdin?.on('error', () => {});
+            child.child.stdin?.end(typeof body.inputBase64 === 'string' ? Buffer.from(body.inputBase64, 'base64') : '');
+            const result = await child;
+            results.exec = completedExec(result.stdout, result.stderr);
         } });
         const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
             canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' });
         const nativeDriver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId,
-            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, homeTarget });
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, guestCliFetch, homeTarget });
         const retry = { homeId, managedId: retained.id, expectedIntentRevision: retained.intentRevision };
-        let operationNumber = 0;
-        const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
-            generateOperationId: () => `boot-attempt-${operationNumber++}` });
         const recover = async (attempt: number, state: 'failed' | 'succeeded') => {
             let work: Promise<JsonValue | null> | undefined;
+            const deliveredBefore = deliveredBytes;
             const requestId = `retry-request-${attempt}`;
             await expect(operations.observeExecution({ actionId: 'machines.managed.bootstrap.retry', input: retry,
                 actionRequestId: requestId, execute: async context => {
                     work = nativeDriver.execute('machines.managed.bootstrap.retry', retry, { requestId, context, signal: context.signal });
+                    pendingWork.push(work);
                     return { ok: true, result: await work };
                 } })).resolves.toMatchObject({ ok: true, result: { managedId: retained.id, operation: { operationId: `boot-attempt-${attempt}` } } });
             if (state === 'failed') await expect(work).rejects.toMatchObject({ code: 'native_boot_unconfirmed' });
             else await expect(work).resolves.toMatchObject({ managedId: retained.id });
+            // Every explicit Retry replaces the payload, including failed boot attempts.
+            expect(deliveredBytes).toBeGreaterThan(deliveredBefore);
+            expect(await readFile(installedBinary, 'utf8')).toBe(await readFile(payloadBinary, 'utf8'));
             const result = await operations.handlers.getV2({ operationId: `boot-attempt-${attempt}`, waitForTerminal: true });
             expect(result).toMatchObject({ kind: 'found', operation: { state, domainRef: {
                 kind: 'managedMachine', id: retained.id, controller: retained.controller, resource: retained.resource,
@@ -3407,15 +3486,17 @@ describe('managed acquisition durable custody', () => {
         };
         await recover(0, 'failed');
         await recover(1, 'failed');
-        results.exec = { kind: 'process-configured' };
+        bootConfigured = true;
         await recover(2, 'succeeded');
-        expect(roles).toEqual(['bootstrap', 'exec', 'bootstrap', 'exec', 'bootstrap', 'exec']);
+        expect(roles.filter(role => role === 'bootstrap')).toHaveLength(3);
+        expect(platformRequests).toHaveLength(3);
+        expect(statusReads).toBe(1);
         expect(requests).toEqual([expect.objectContaining({ resource: retained.resource!.value,
             processConfig: {
-                environment: { HOME: '/persistent/home', HAPPIER_HOME_DIR: '/persistent/home/.happier' },
-                detachedDaemonStartArgv: ['sh', '-c', expect.stringContaining("'/persistent/home/.happier/cli/current/happier' 'daemon' 'start' '--json'")],
+                environment: { HOME: guestHome, HAPPIER_HOME_DIR: join(guestHome, '.happier') },
+                detachedDaemonStartArgv: ['sh', '-c', expect.stringContaining(`${safeBashSingleQuote(installedBinary)} 'daemon' 'start' '--json'`)],
             },
-            argv: ['sh', '-c', expect.stringContaining("'/persistent/home/.happier/cli/current/happier' 'daemon' 'start-sync'")],
+            argv: ['sh', '-c', expect.stringContaining(`${safeBashSingleQuote(installedBinary)} 'daemon' 'start-sync'`)],
         }), expect.anything(), expect.anything()]);
         expect(requests[1]).toEqual(requests[0]);
         expect(requests[2]).toEqual(requests[0]);
