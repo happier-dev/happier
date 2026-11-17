@@ -24,21 +24,29 @@ describe('Muse sourced observations', () => {
       .toEqual({ status: 'unavailable', reason: 'no_allowance' });
   });
 
-  it('preserves source time, partial windows and over-quota without guessing durations', () => {
+  it('preserves explicit durations and source time while identifying the vendor weekly window', () => {
     expect(parseMuseUsageObservation({ usage: {
       observedAtMs: 1700000000000, tier: 'native-tier',
       weekly: { usedPercent: 135, resetsAtMs: 1700001000000 },
       window: { usedPercent: 40, windowDurationMins: 300 },
     } })).toMatchObject({ status: 'supported', observation: {
       observedAtMs: 1700000000000, limits: [
-        { id: 'weekly', utilizationPct: 135, isExhausted: true, resetsAtMs: 1700001000000 },
+        { id: 'weekly', utilizationPct: 135, isExhausted: true, resetsAtMs: 1700001000000, windowDurationMs: 604800000 },
         { id: 'window', utilizationPct: 40, windowDurationMs: 18000000 },
       ],
     } });
     const partial = parseMuseUsageObservation({ usage: { observedAtMs: 1700000000000, weekly: { usedPercent: 5 } } });
     if (partial.status !== 'supported') throw new Error('Expected partial usage');
     expect(partial.observation.limits).toHaveLength(1);
-    expect(partial.observation.limits[0]).not.toHaveProperty('windowDurationMs');
+    expect(partial.observation.limits[0]).toHaveProperty('windowDurationMs', 604800000);
+    expect(parseMuseUsageObservation({ usage: { observedAtMs: 1700000000000,
+      weekly: { usedPercent: 5, windowDurationMins: 8640 }, window: { usedPercent: 6 },
+    } })).toMatchObject({ status: 'supported', observation: { limits: [
+      { id: 'weekly', windowDurationMs: 518400000 }, { id: 'window', used: 6 },
+    ] } });
+    const rolling = parseMuseUsageObservation({ usage: { observedAtMs: 1700000000000, window: { usedPercent: 6 } } });
+    if (rolling.status !== 'supported') throw new Error('Expected rolling usage');
+    expect(rolling.observation.limits[0]).not.toHaveProperty('windowDurationMs');
   });
 
   it('distinguishes explicit absent allowance, no sample and malformed observations', () => {
@@ -55,7 +63,7 @@ describe('Muse sourced observations', () => {
     }, 1700000000000);
     expect(observation).toMatchObject({ observedAtMs: 1700000000000, fetchedAtMs: 1700000000000,
       meters: [{ used: 135, utilizationPct: 100, resetsAt: Date.parse('2026-11-16T00:00:00Z') }, { used: 40, windowDurationMs: 18000000 }] });
-    expect(observation?.meters[0]).not.toHaveProperty('windowDurationMs');
+    expect(observation?.meters[0]).toHaveProperty('windowDurationMs', 604800000);
     expect(JSON.stringify(observation)).not.toContain('synthetic-key');
     expect(JSON.stringify(observation)).not.toContain('person@example.test');
     expect(parseMuseMintCompletionObservation({ is_subs_active: true, subs_usage: null }, 1700000000000)).toBeUndefined();

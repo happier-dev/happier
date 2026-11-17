@@ -31,11 +31,14 @@ export function parseMuseUsageObservation(value: unknown): MuseUsageObservationR
     if (!window || typeof window.usedPercent !== 'number' || !Number.isFinite(window.usedPercent) || window.usedPercent < 0
       || (window.resetsAtMs != null && !timestamp(window.resetsAtMs))
       || (window.windowDurationMins != null && (typeof window.windowDurationMins !== 'number' || !Number.isFinite(window.windowDurationMins) || window.windowDurationMins <= 0))) return { status: 'unavailable', reason: 'malformed' };
+    // Vendor SubscriptionUsage.weekly (mint subs_usage.weekly) denotes seven days.
+    const windowDurationMs = typeof window.windowDurationMins === 'number'
+      ? window.windowDurationMins * 60000 : id === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : undefined;
     limits.push({ id, label: id === 'weekly' ? 'Weekly' : 'Rolling window',
       used: window.usedPercent, limit: 100, utilizationPct: window.usedPercent,
       remainingPct: Math.max(0, 100 - window.usedPercent), isExhausted: window.usedPercent >= 100,
       ...(timestamp(window.resetsAtMs) ? { resetsAtMs: window.resetsAtMs } : {}),
-      ...(typeof window.windowDurationMins === 'number' ? { windowDurationMs: window.windowDurationMins * 60000 } : {}),
+      ...(windowDurationMs === undefined ? {} : { windowDurationMs }),
     });
   }
   if (limits.length === 0) return { status: 'unavailable', reason: 'server_sent_no_usage' };

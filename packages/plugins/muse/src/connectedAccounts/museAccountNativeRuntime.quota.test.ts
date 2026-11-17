@@ -69,7 +69,7 @@ it.each([true, false])('reads account allowance on demand through OAuth-only MSP
     const before = [...f.values];
     await expect(museConnectedAccountRuntime.quota!(f.context)).resolves.toMatchObject({
       observedAtMs: sample.usage.observedAtMs, planLabel: 'Subscription', limits: [
-        { id: 'weekly', used: 9, remainingPct: 91, resetsAtMs: 1794787200000 },
+        { id: 'weekly', used: 9, remainingPct: 91, resetsAtMs: 1794787200000, windowDurationMs: 604800000 },
         { id: 'window', used: 6, remainingPct: 94, windowDurationMs: 18000000 },
       ],
     });
