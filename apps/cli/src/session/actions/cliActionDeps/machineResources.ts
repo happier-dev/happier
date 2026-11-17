@@ -96,6 +96,10 @@ export function createCliMachineResourceActionDeps(
     return result.items.some(item => item.environmentId === environmentId)
       ? true : { ok: false, errorCode: 'service_unavailable', error: 'service_unavailable' };
   };
+  const readServiceRequesterAccountId = (context: ActionExecutorContext) =>
+    readRetainedVerifiedExternalActionRequester(context.externalActionExecutionAuthorization)?.authorization.binding.accountId
+      ?? context.externalActionExecutionAuthorization?.requesterAccountProjection?.accountId
+      ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null);
   return {
     machineServiceExec: createMachineServiceExecAction({
       ...(params.machineActionDirectTargetTransport ? { directMachineId: params.machineActionDirectTargetTransport.machineId } : {}),
@@ -327,9 +331,7 @@ export function createCliMachineResourceActionDeps(
         if (direct?.machineId === input.machineId) {
           return direct.machineServiceAction
             ? direct.machineServiceAction({ actionId, input, context, ...(signal ? { signal } : {}),
-              requesterAccountId: readRetainedVerifiedExternalActionRequester(context.externalActionExecutionAuthorization)?.authorization.binding.accountId
-                ?? context.externalActionExecutionAuthorization?.requesterAccountProjection?.accountId
-                ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
+              requesterAccountId: readServiceRequesterAccountId(context),
               canReadEnvironments: environmentIds => canReadServiceEnvironments(input.serverId, environmentIds, context, actionId),
               observeEnvironmentAccessChanges: listener => observeEnvironmentAccessChanges({ serverId: input.serverId }, context, listener) })
             : machineServiceAdmissionFailure('service.runtime.port');
@@ -349,6 +351,7 @@ export function createCliMachineResourceActionDeps(
       const resource = context.machineServiceLogsResource;
       const scopeRequester = selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId });
       return select({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
+        requesterAccountId: readServiceRequesterAccountId(context), context,
         ...(scopeRequester.kind !== 'unknown' ? { requester: scopeRequester.requester } : {}),
         ...(context.signal ? { signal: context.signal } : {}), assertCurrent: async () => {
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
@@ -374,6 +377,7 @@ export function createCliMachineResourceActionDeps(
       const resource = context.machineServiceLogsResource;
       const logRequester = selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId });
       return withMachineServiceLogTarget({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
+        requesterAccountId: readServiceRequesterAccountId(context), context,
         ...(logRequester.kind !== 'unknown' ? { requester: logRequester.requester } : {}),
         ...(signal ? { signal } : {}), ...(approvalScope ? { approvalScope } : {}), assertCurrent: async () => {
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });

@@ -10,6 +10,7 @@ import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/run
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import { readColdNativeComposeTargetsForHost } from './nativeComposeDiscovery';
+import { selectVisibleMachineProjectServices, type MachineServiceDisclosureRequest } from './machineServiceDisclosure';
 
 /** Select from the mounted owner, never from retained Inbox evidence or native labels. */
 export type MachineServiceTargetHandle = EnvironmentProjectManagedServiceHandle | MachineManagedServiceHandle;
@@ -33,7 +34,7 @@ export function withMachineServiceTarget<T>(input: MachineServiceTargetInput,
   return withSelectedMachineServiceTarget(input, consume);
 }
 
-export async function withMachineServiceLogTarget<T>(input: MachineServiceTargetInput,
+export async function withMachineServiceLogTarget<T>(input: MachineServiceTargetInput & MachineServiceDisclosureRequest,
   consume: (handle: MachineServiceLogTargetHandle) => Promise<T>): Promise<T | ActionExecuteFailure> {
   try {
     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -52,7 +53,8 @@ export async function withMachineServiceLogTarget<T>(input: MachineServiceTarget
           serverId: handle.requester.serverId, requesterAccountId: handle.requester.accountId,
           machineId: handle.requester.machineId, installationId: handle.requester.installationId,
         }, { ...input.requester, serverId: handle.requester.serverId }))) return refused('terminal_forbidden');
-        if (!handle.isCurrent() || handle.retirementSignal.aborted) return refused('service_unavailable');
+        const visible = await selectVisibleMachineProjectServices({ serverId: input.serverId, machineId: input.machineId }, [handle], input);
+        if (!visible.length) return refused('service_unavailable');
         if (input.approvalScope && (input.approvalScope.kind !== 'machine' || input.approvalScope.machineId !== input.machineId)) return refused('approval_stale');
         if (input.request.expectedGeneration !== undefined && input.request.expectedGeneration !== handle.instanceId) return refused('service_generation_changed');
         return await consume(handle);
