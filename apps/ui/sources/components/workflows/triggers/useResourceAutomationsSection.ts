@@ -68,6 +68,7 @@ export type ResourceAutomationsSectionRead = Readonly<{
 /** Resource section data and mutations, consuming the incumbent read and presentation lifetimes. */
 export function useResourceAutomationsSection(props: LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead & { project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> };
 export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput): ResourceAutomationsSectionRead;
+export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput | LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead;
 export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput | LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead {
     const activeScope = useActiveServerAccountScope();
     const legacySubject = 'serverId' in props.subject ? null : props.subject;

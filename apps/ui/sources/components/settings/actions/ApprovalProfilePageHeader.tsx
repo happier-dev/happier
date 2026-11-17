@@ -17,6 +17,8 @@ import { t } from '@/text';
 import { confirmDeleteApprovalProfile, createApprovalProfileFromStart, renameApprovalProfile, setApprovalProfileMachineDefault,
     type ApprovalProfileWriter } from './approvalProfileWrites';
 import { buildApprovalProfileSettingsRoute } from './approvalProfileSettingsRoute';
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useApprovalProfileMachineNames } from './useApprovalProfileMachineNames';
 
 const stylesheet = StyleSheet.create(() => ({
@@ -37,6 +39,8 @@ export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePage
 }>) {
     const router = useRouter();
     const { profileRow, write } = props;
+    // The profile's Automations read its own Home: the Account this settings page belongs to.
+    const serverId = useActiveServerAccountScope()?.serverId;
     const profile = profileRow?.profile ?? null;
     const title = profile?.name ?? t('workflows.triggers.guided.profile.notFoundTitle');
     const screenOptions = React.useMemo(() => ({ headerTitle: title }), [title]);
@@ -89,6 +93,9 @@ export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePage
                 ) : undefined}
             />
             {profile ? <ApprovalProfileDefaultOn profile={profile} machineApprovalProfiles={props.machineApprovalProfiles} write={write} /> : null}
+            {profile && serverId ? (
+                <SubjectTriggersSection subject={{ kind: 'approvalProfile', serverId, profileId: profile.id }} subjectName={profile.name} />
+            ) : null}
         </>
     );
 });

@@ -339,6 +339,59 @@ describe('Account Workflow Library and settings', () => {
         expect(requests.every(input => typeof input === 'object' && input !== null && 'subject' in input)).toBe(true);
         await hook.unmount();
     });
+    it('renders the selected facts: own rows switch, others and broader rows read-only with their author, a counted not-shared line and Show more', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { WorkflowAttachedTriggerPageV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const row = (automationId: string, relation: 'direct' | 'context', accountId: string, displayName: string) => ({
+            automationId, triggerId: automationId, workflowDefinitionId: 'builtin:review-and-converge', relation,
+            enabled: true, revision: 1, summary: { kind: 'schedule', schedule: trigger(automationId).schedule },
+            setUpBy: { accountId, displayName } });
+        const page = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [
+            row('own', 'direct', 'account-a', 'Owner'), row('mara', 'direct', 'member', 'Mara'), row('broader', 'context', 'account-a', 'Owner'),
+        ], nextCursor: 'more', skippedNotSharedCount: 1 });
+        home.answer(serverId, 'POST /v3/automations/query', { select: () => ({
+            body: AutomationDefinitionListResponseSchema.parse({ automations: [], ...page }) }) });
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <SubjectTriggersSection subject={{ kind: 'machine', machineId: project.machineId }} serverId={serverId} subjectName="Studio" />
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers:own:own')).not.toBeNull());
+        // The viewer's own trigger keeps its switch; another person's and a broader trigger are read here, changed in their workflow.
+        expect(screen.findByTestId('subject-triggers:own:own-switch')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers:mara:mara')).toBeNull();
+        expect(screen.findByTestId('subject-triggers-read-only:mara:mara')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers-also')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers-read-only:broader:broader')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.setUpBy');
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.alsoRunsHere');
+        expect(screen.findByTestId('subject-triggers-not-shared')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers-more')).not.toBeNull();
+        await act(async () => screen.findByTestId('subject-triggers-read-only:mara:mara')!.props.onPress());
+        expect(routerPush).toHaveBeenLastCalledWith(expect.objectContaining({ pathname: '/workflows/[id]',
+            params: expect.objectContaining({ id: 'builtin:review-and-converge' }) }));
+        await screen.unmount();
+    });
+    it('reads a canonical profile subject as itself: its own sentence, no legacy starters, and the selected read', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const requests: unknown[] = [];
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => {
+            requests.push(input);
+            return { body: AutomationDefinitionListResponseSchema.parse({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 }) };
+        } });
+        const subject = { kind: 'approvalProfile' as const, serverId, profileId: 'artifact-careful' };
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <SubjectTriggersSection subject={subject} subjectName="Careful agent" />
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(requests).toContainEqual(expect.objectContaining({ subject })));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-read')).toBeNull());
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.approvalProfileInfo');
+        expect(screen.findByTestId('subject-triggers-add')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('workflows.triggers.guided.starter');
+        await screen.unmount();
+    });
     it('reads a plugin resource without execution placement or opening a saved attachment body', async () => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');

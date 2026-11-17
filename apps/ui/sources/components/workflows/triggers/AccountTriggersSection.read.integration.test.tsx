@@ -74,7 +74,7 @@ describe('Account trigger HTTP read failure and recovery', () => {
             serverUrl: `https://subject-sentence-${crypto.randomUUID()}.test`, accountId: 'subject-sentence',
             request: homeRequest(async (_url, init) => {
                 if (init?.method !== undefined && init.method !== 'GET' && !String(_url).includes('/query')) writes++;
-                return json({ automations: [], nextCursor: null });
+                return json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
             }),
         });
         disposals.push(() => account.dispose());
@@ -141,10 +141,10 @@ describe('Account trigger HTTP read failure and recovery', () => {
             accountId: 'subject-trigger-demand',
             request: homeRequest(async (url, init) => {
                 // Bootstrap's managed-target migration shares this endpoint; only the
-                // Account-inline detail query belongs to the mounted section.
+                // selected-subject query belongs to the mounted section.
                 if (url.pathname === '/v3/automations/query'
-                    && JSON.parse(String(init?.body)).scope === 'account_inline') reads++;
-                return json({ automations: [], nextCursor: null });
+                    && 'subject' in JSON.parse(String(init?.body))) reads++;
+                return json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
             }),
         });
         disposals.push(() => account.dispose());
@@ -229,10 +229,11 @@ describe('Resource Automations section read states', () => {
             serverUrl: `https://subject-trigger-states-${crypto.randomUUID()}.test`,
             accountId: 'subject-trigger-states',
             request: homeRequest(async (url, init) => {
-                if (url.pathname === '/v3/automations/query' && JSON.parse(String(init?.body)).scope === 'account_inline') {
+                if (url.pathname === '/v3/automations/query' && 'subject' in JSON.parse(String(init?.body))) {
                     reads++;
                     await gate.promise;
                     if (fail) return json({ error: 'temporarily_unavailable' }, 503);
+                    return json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
                 }
                 return json({ automations: [], nextCursor: null });
             }),
