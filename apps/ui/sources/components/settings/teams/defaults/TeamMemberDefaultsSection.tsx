@@ -386,7 +386,7 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
       <Item
         testID={`${props.testID}:header`}
         title={props.entry.title}
-        detail={unset}
+        subtitle={unset}
         icon={icon}
         mode="info"
         showChevron={false}
@@ -403,15 +403,12 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
           {...headerProps}
           testID={`${props.testID}:header`}
           title={props.entry.title}
+          // What this Agent starts with, as the line under its name, open or not (lab L11); a conflict takes
+          // that line while the row is closed, since the open rows show their own.
           subtitle={
-            anyConflict && !expanded ? props.state.conflictNote : undefined
+            anyConflict && !expanded ? props.state.conflictNote : setLabels.join(' · ') || unset
           }
           subtitleLines={0}
-          detail={
-            expanded
-              ? undefined
-              : setLabels.join(' · ') || unset
-          }
           icon={icon}
         />
       )}
@@ -788,14 +785,14 @@ const ProjectAgentDefaultRow = React.memo(function ProjectAgentDefaultRow(props:
   const selected = options.find((option) => sameAgentTarget(option.target, props.current));
   const title = t('projects.sessionDefaults.agent');
   const none = t('teams.settings.memberDefaults.none');
-  const icon = <Icon name="sparkle" />;
   const restore = props.state.inheritance?.agentTarget;
   const restoreOption = restore?.value ? options.find((option) => sameAgentTarget(option.target, restore.value)) : undefined;
   const restoreSource = restoreOption && restore ? describeInheritedDefaultSource(restore.source, restore.names) : null;
   const inheritedTitle = props.current === undefined ? restoreOption?.entry.title ?? null : null;
   const subtitle = props.current === undefined ? restoreSource ?? undefined : undefined;
   if (!props.state.editable) {
-    return <Item testID={props.testID} icon={icon} title={title} subtitle={subtitle}
+    // A preference row: no icon (apps/ui AGENTS Configuration surfaces; UI refinements A fix 4).
+    return <Item testID={props.testID} title={title} subtitle={subtitle}
       detail={selected?.entry.title ?? inheritedTitle ?? none} mode="info" showChevron={false} />;
   }
   return (
@@ -815,7 +812,7 @@ const ProjectAgentDefaultRow = React.memo(function ProjectAgentDefaultRow(props:
         subtitle,
         showSelectedSubtitle: false,
         detailFormatter: (item) => item?.id === NONE_ID ? inheritedTitle ?? none : item?.title ?? null,
-        itemProps: { disabled: props.state.disabled, testID: props.testID, icon },
+        itemProps: { disabled: props.state.disabled, testID: props.testID },
       }}
       items={[
         { id: NONE_ID, title: restoreOption ? t('teams.settings.memberDefaults.useDefault', { value: restoreOption.entry.title }) : none,

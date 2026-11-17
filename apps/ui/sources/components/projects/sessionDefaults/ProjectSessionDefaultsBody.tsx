@@ -184,6 +184,8 @@ export const ProjectSessionDefaultsView = React.memo(function ProjectSessionDefa
         <PageHeader
           testID={`${testID}.header`}
           title={t('projects.pages.defaults')}
+          // The page names itself above its scope choice (lab L11), whatever the host chrome shows.
+          alwaysShowTitle
           description={t('projects.sessionDefaults.description', {
             project: projectName,
           })}
