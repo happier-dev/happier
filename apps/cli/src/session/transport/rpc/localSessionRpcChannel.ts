@@ -1,4 +1,5 @@
 import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
@@ -824,7 +825,7 @@ function readHostDescriptor(hostPid: number): LocalSessionHostDescriptorV1 | nul
  * Session) or the connection broke.
  */
 export type SessionHostCommandEnd = Readonly<{ exitCode: number; failureCause?: SessionRuntimeIssueV1['failureCause'] }>;
-export type LocalSessionHostSessionEnd = Readonly<{ exitCode: number | null; closing: boolean; notHosted: boolean; failureCause?: SessionRuntimeIssueV1['failureCause'] }>;
+export type LocalSessionHostSessionEnd = Readonly<{ exitCode: number | null; closing: boolean; notHosted: boolean; failureCause?: SessionRuntimeIssueV1['failureCause']; admissionFailure?: SessionSpawnLaunchErrorV1 }>;
 
 /** A Session added to a session host, as its daemon observes it. */
 export type LocalSessionHostSession = Readonly<{
@@ -853,14 +854,21 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
   let resolveEnded!: (end: LocalSessionHostSessionEnd) => void;
   const admitted = new Promise<boolean>(resolve => { resolveAdmitted = resolve; });
   const ended = new Promise<LocalSessionHostSessionEnd>(resolve => { resolveEnded = resolve; });
-  const refuse = (closing: boolean, notHosted = false) => {
+  const refuse = (closing: boolean, notHosted = false, code?: unknown, httpStatus?: number) => {
+    // Retain boundary facts, never a response body, launch environment, or OS error message.
+    const parsedCode = SessionSpawnLaunchErrorV1Schema.shape.code.safeParse(code);
+    const admissionFailure: SessionSpawnLaunchErrorV1 = {
+      kind: 'launch_error', code: parsedCode.success ? parsedCode.data : 'SPAWN_FAILED',
+      message: 'Session host admission failed',
+      failureCause: { phase: 'client_start', failureReason: 'unknown', ...(httpStatus === undefined ? {} : { httpStatus }) },
+    };
     resolveAdmitted(false);
-    resolveEnded({ exitCode: null, closing, notHosted });
+    resolveEnded({ exitCode: null, closing, notHosted, admissionFailure });
   };
   const descriptor = readHostDescriptor(input.hostPid);
   const text = JSON.stringify(input.body);
   if (Buffer.byteLength(text) > EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2) {
-    refuse(false);
+    refuse(false, false, 'local_session_rpc_body_too_large');
     return { admitted, ended };
   }
   if (!descriptor) {
@@ -877,8 +885,9 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
       void readBody(incoming).then(raw => {
         let errorCode: unknown;
         try { errorCode = (JSON.parse(raw) as { errorCode?: unknown } | null)?.errorCode; } catch { errorCode = undefined; }
-        refuse(errorCode === SESSION_HOST_CLOSING, errorCode === SESSION_NOT_HOSTED);
-      }, () => refuse(false));
+        refuse(errorCode === SESSION_HOST_CLOSING, errorCode === SESSION_NOT_HOSTED, errorCode, incoming.statusCode);
+      }, (error: unknown) => refuse(false, false,
+        error && typeof error === 'object' && 'code' in error ? error.code : undefined, incoming.statusCode));
       return;
     }
     resolveAdmitted(true);
@@ -889,9 +898,9 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
         ...(cause.success ? { failureCause: cause.data } : {}) });
     }).catch(() => resolveEnded({ exitCode: null, closing: false, notHosted: false }));
   });
-  outgoing.once('error', () => {
+  outgoing.once('error', error => {
     // Before admission nothing was started; after it, the host connection broke.
-    refuse(false);
+    refuse(false, false, (error as NodeJS.ErrnoException).code);
   });
   outgoing.end(text);
   return { admitted, ended };

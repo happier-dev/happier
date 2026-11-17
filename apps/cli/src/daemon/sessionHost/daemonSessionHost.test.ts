@@ -291,6 +291,18 @@ async function crashLatestHost(harness: Awaited<ReturnType<typeof createHarness>
 const HOST_COMMAND = '/runtime/bin/happier session-host';
 
 describe('session host launch', () => {
+  it('retains a host admission refusal in the public spawn failure without starting a Session', { timeout: 120_000 }, async () => {
+    const harness = await createHarness(undefined, async () => null);
+    const added = await harness.sessionHost.addSession({ trackingKey: 'refused-admission', argv: ['codex'],
+      env: {}, cwd: testHome });
+    expect(added.status).toBe('failed');
+    if (added.status !== 'failed' || added.result.type !== 'error') throw new Error('Expected admission refusal');
+    expect(projectSessionSpawnFailure({ errorCode: added.result.errorCode,
+      errorMessage: added.result.errorMessage, errorDetail: added.result.errorDetail }))
+      .toMatchObject({ type: 'error', launchError: { code: 'local_session_peer_refused',
+        failureCause: { phase: 'client_start', httpStatus: 403 } } });
+    expect(harness.hostedEnvironments).toEqual([]);
+  });
   it('preserves a hosted runner startup cause through the public spawn failure', { timeout: 120_000 }, async () => {
     const failureCause = { code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING',
       phase: 'client_start' as const, failureReason: 'unknown' as const };

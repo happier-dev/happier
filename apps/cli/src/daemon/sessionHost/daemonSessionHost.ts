@@ -209,10 +209,11 @@ export function createDaemonSessionHost(params: Readonly<{
     if (await session.admitted) {
       return { status: 'added' as const, session: createHostedSessionHandle(host, request.trackingKey, session) };
     }
-    const { closing } = await session.ended;
+    const { closing, admissionFailure } = await session.ended;
     return { status: closing ? 'closing' as const : 'failed' as const, result: {
       type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-      errorMessage: `Session host PID ${host.pid} did not admit the Session`,
+      errorMessage: `Session host PID ${host.pid} did not admit the Session${admissionFailure ? ` (${admissionFailure.code})` : ''}`,
+      ...(admissionFailure ? { errorDetail: admissionFailure } : {}),
     } };
   };
 
