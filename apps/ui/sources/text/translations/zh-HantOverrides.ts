@@ -3989,6 +3989,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         systemTaskStepFinish: '完成設定',
         systemTaskCurrentStepLabel: '目前步驟',
         systemTaskLatestUpdateLabel: '最新進度',
+        systemTaskStepDidNotFinish: ({ step }: { step: string }) => `${step} 未完成`,
         systemTaskBridgeUnavailable: '此版本目前尚未提供系統任務。',
         systemTaskStartFailed: '無法啟動系統任務。',
         appearance: '外觀',
@@ -9632,7 +9633,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             groupFooter: '共用連結會記錄在這台機器的稽核日誌中。',
         },
         worktreePorts: {
-            own: ({ ports }: { ports: string }) => `此工作區有自己的連接埠（${ports}），因此不會與其他簽出衝突。`,
+            ownPorts: `此工作區有自己的連接埠，因此不會與其他簽出衝突。`,
             ownNone: '此工作區會在服務首次啟動時取得自己的連接埠。',
             reassign: '選擇新的連接埠…',
             confirmTitle: '要為此工作區選擇新的連接埠嗎？',

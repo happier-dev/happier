@@ -111,6 +111,28 @@ describe('Projects column setup progress (lab L3)', () => {
     await screen.unmount();
   });
 
+  it('keeps its words inside a column row that draws states as compact dots', async () => {
+    const { HappierStatusCompactContext } = await import('@happier-dev/plugin-ui/presentation');
+    const { t } = await import('@/text');
+    act(() =>
+      actionOperationStore.mergeSnapshots({
+        serverId,
+        snapshotComplete: true,
+        snapshots: [opening()],
+      }),
+    );
+    const screen = await renderScreen(
+      <HappierStatusCompactContext.Provider value>
+        <ProjectsTreeRowAttention row={projectRow()} testID="row" />
+      </HappierStatusCompactContext.Provider>,
+    );
+    const label = t('projects.checkouts.settingUp');
+    await vi.waitFor(() =>
+      expect(screen.tree.findAll((node) => node.props?.children === label).length).toBeGreaterThan(0),
+    );
+    await screen.unmount();
+  });
+
   it('stays quiet once the run settles', async () => {
     act(() =>
       actionOperationStore.mergeSnapshots({

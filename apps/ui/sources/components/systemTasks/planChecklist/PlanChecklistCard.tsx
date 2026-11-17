@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { SectionRowBleedContext } from '@/components/ui/lists/bareRowBleed';
 import type { PlanChecklistCardProps as PublicPlanChecklistCardProps } from '@happier-dev/plugin-ui/components';
 
 import { PlanChecklistRow } from './PlanChecklistRow';
@@ -136,8 +137,9 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
                 props.style,
             ]}
         >
+            {/* The card is its own surface: rows in its header and footer keep its edges, never a bare section's bleed. */}
             {props.header ? (
-                <View>{props.header}</View>
+                <SectionRowBleedContext.Provider value={0}><View>{props.header}</View></SectionRowBleedContext.Provider>
             ) : null}
 
             <View>
@@ -190,9 +192,11 @@ export const PlanChecklistCard = React.memo(function PlanChecklistCard(props: Pl
             </View>
 
             {props.footer ? (
-                <View style={styles.footer}>
-                    {props.footer}
-                </View>
+                <SectionRowBleedContext.Provider value={0}>
+                    <View style={styles.footer}>
+                        {props.footer}
+                    </View>
+                </SectionRowBleedContext.Provider>
             ) : null}
         </View>
     );

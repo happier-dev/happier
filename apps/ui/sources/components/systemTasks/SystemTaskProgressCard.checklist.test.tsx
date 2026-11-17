@@ -233,7 +233,10 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
             snapshot: createSnapshot({ events, status: 'failed', latestMessage: 'Disk is full' }),
         }));
-        expect(screen.findByTestId('system-task-progress-status-failed')?.props.subtitle).toBe('Disk is full');
+        const head = screen.findByTestId('system-task-progress-status-failed');
+        // Says what failed, then why: never a bare "Error".
+        expect(head?.props.title).toBe('settings.systemTaskStepDidNotFinish');
+        expect(head?.props.subtitle).toBe('Disk is full');
         await screen.unmount();
     });
 

@@ -3852,6 +3852,7 @@ export const zhHans: TranslationStructure = {
     systemTaskStepFinish: "完成设置",
     systemTaskCurrentStepLabel: "当前步骤",
     systemTaskLatestUpdateLabel: "最新进展",
+    systemTaskStepDidNotFinish: ({ step }: { step: string }) => `${step} 未完成`,
     systemTaskBridgeUnavailable: "此构建中暂时无法使用系统任务。",
     systemTaskStartFailed: "无法启动系统任务。",
     appearance: "外观",
@@ -11475,7 +11476,7 @@ export const zhHans: TranslationStructure = {
             groupFooter: '共享链接会记录在这台机器的审计日志中。',
     },
     worktreePorts: {
-        own: ({ ports }: { ports: string }) => `此工作区有自己的端口（${ports}），因此不会与其他检出冲突。`,
+        ownPorts: `此工作区有自己的端口，因此不会与其他检出冲突。`,
         ownNone: '此工作区会在服务首次启动时获得自己的端口。',
         reassign: '选择新端口…',
         confirmTitle: '要为此工作区选择新端口吗？',

@@ -265,10 +265,15 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
 
     const hasChecklist = presentedChecklistSteps.items.length > 0;
     const failed = props.snapshot.status === 'failed';
+    // A failed run with steps says what failed, in words ("Install runtime didn't finish"), then why below it.
+    const failedStep = failed ? checklistSteps.find((step) => step.state === 'failed') ?? null : null;
+    const statusTitle = failedStep
+        ? t('settings.systemTaskStepDidNotFinish', { step: renderValue(resolveSystemTaskStepLabel(failedStep.stepId)) })
+        : translateStatus(props.snapshot);
     const statusRow = (
         <Item
             testID={`system-task-progress-status-${props.snapshot.status}`}
-            title={translateStatus(props.snapshot)}
+            title={statusTitle}
             {...(hasChecklist ? { subtitle: renderValue(latestMessage), subtitleTestID: 'system-task-message' } : {})}
             showChevron={false}
             mode="info"

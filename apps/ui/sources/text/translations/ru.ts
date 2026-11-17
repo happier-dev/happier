@@ -3809,6 +3809,7 @@ export const ru: TranslationStructure = {
     systemTaskStepFinish: "Завершить настройку",
     systemTaskCurrentStepLabel: "Текущий шаг",
     systemTaskLatestUpdateLabel: "Последнее обновление",
+    systemTaskStepDidNotFinish: ({ step }: { step: string }) => `Не удалось завершить: ${step}`,
     systemTaskBridgeUnavailable: "Системные задачи пока недоступны в этой сборке.",
     systemTaskStartFailed: "Не удалось запустить системную задачу.",
     appearance: "Внешний вид",
@@ -11692,7 +11693,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
             groupFooter: 'Общие ссылки записываются в журнал аудита этой машины.',
     },
     worktreePorts: {
-        own: ({ ports }: { ports: string }) => `У этого рабочего пространства свои порты (${ports}), поэтому оно не конфликтует с другими копиями.`,
+        ownPorts: `У этого рабочего пространства свои порты, поэтому оно не конфликтует с другими копиями.`,
         ownNone: 'Это рабочее пространство получит свои порты при первом запуске служб.',
         reassign: 'Выбрать новые порты…',
         confirmTitle: 'Выбрать новые порты для этого рабочего пространства?',

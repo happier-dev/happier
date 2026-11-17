@@ -207,10 +207,12 @@ export function NewAppAutoStep(
         </ItemGroup>
       ) : null}
       {view.kind === 'working' && checklist ? (
-        // The checklist is the card under its title; no sheet around it (one card, as the Setup tab's run).
+        // The checklist is the card under its title (one card, as the Setup tab's run); where the work runs is the
+        // section's description, on its inset.
         <ItemGroup
           surface="none"
           title={t('newApp.auto.workingTitle')}
+          {...(view.runsOn ? { description: <Text testID="newApp.auto.runsOn" variant="meta">{view.runsOn}</Text> } : {})}
           testID="newApp.auto.steps"
         >
           <PlanChecklistCard
@@ -230,19 +232,6 @@ export function NewAppAutoStep(
           details={[view.stop.refused]}
           action={{ label: t('common.retry'), onPress: view.stop.onRetry, testID: 'newApp.auto.stopRefused.retry' }}
         />
-      ) : null}
-      {view.kind === 'working' && view.runsOn ? (
-        <Text
-          testID="newApp.auto.runsOn"
-          variant="meta"
-          style={[
-            styles.runsOn,
-            props.insetStyle,
-            { color: theme.colors.text.secondary },
-          ]}
-        >
-          {view.runsOn}
-        </Text>
       ) : null}
       {view.kind === 'noAgent' ? (
         <>
@@ -348,7 +337,6 @@ function CardFacts(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  runsOn: { paddingTop: theme.space.s8 },
   facts: {
     gap: theme.space.s6,
     paddingTop: theme.space.s12,

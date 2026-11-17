@@ -70,6 +70,12 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     showDivider?: boolean;
     /** The Inbox's narrow row (phone, rail popover): no state column; InboxWorkRow owns what that means. */
     narrow?: boolean;
+    /**
+     * The row heads a run card that says the run's state itself (the Setup tab's run, lab L7): the row stays
+     * neutral (a document mark, no status colour or age) and its second line is the host's line about where the
+     * run is, in place of the source title.
+     */
+    runCard?: Readonly<{ line: string | null }>;
 }>) {
     const { theme } = useUnistyles();
     const isRecordingVisible = useSessionRecordingVisibility();
@@ -105,10 +111,11 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         })
         : null;
     const inboxPresentation = props.presentation === 'inbox';
+    const runCard = props.runCard ?? null;
     const subtitleText = inboxPresentation
         ? joinHappierFacts(props.operation.followUpAttention ?? statusLabel, sourceTitle)
-        : sourceTitle;
-    const detailText = joinHappierFacts(...(inboxPresentation
+        : runCard ? runCard.line ?? sourceTitle : sourceTitle;
+    const detailText = runCard ? '' : joinHappierFacts(...(inboxPresentation
         ? [determinateProgress, sourceContext.contextLine]
         : [
             props.operation.followUpAttention,
@@ -176,6 +183,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
             density="compact"
             leftElement={active && observation === 'available'
                 ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+                : runCard ? <Icon name="file-text" size={ICON_SIZE.md} color={theme.colors.text.secondary} />
                 : <Icon
                     name={status.tone === 'success' ? 'check-circle' : status.tone === 'danger' ? 'warning-circle' : 'clock'}
                     size={ICON_SIZE.md}
@@ -223,6 +231,8 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
     /** Supplied by ItemGroup when this row collection sits among sibling rows. */
     showDivider?: boolean;
     narrow?: boolean;
+    /** Rows heading a run card that says the run's state (see ActionOperationRow `runCard`). */
+    runCard?: (operation: ActionOperationProjection) => Readonly<{ line: string | null }>;
 }>) {
     useServerProfilesGeneration();
     const sessionAddresses = React.useMemo(() => props.operations.flatMap((operation) => {
@@ -258,6 +268,7 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
                     onDismissOperation={props.onDismissOperation}
                     showDivider={isLast ? props.showDivider : true}
                     narrow={props.narrow}
+                    {...(props.runCard ? { runCard: props.runCard(operation) } : {})}
                 />
             </ItemGroupRowPositionProvider>
         );

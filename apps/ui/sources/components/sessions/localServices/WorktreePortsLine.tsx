@@ -76,12 +76,10 @@ export const WorktreePortsLine = React.memo(function WorktreePortsLine(
     }
   }, [accountId, onReassigned, pending, workspace]);
   const ready = props.result.kind === 'ready' ? props.result : null;
-  const ports = ready
-    ? [...new Set(ready.assignment.ports)].sort((a, b) => a - b)
-    : [];
+  // The ports themselves are each row's address; the line says what they mean for this checkout.
   const sentence = ready
-    ? ports.length > 0
-      ? t('localServices.worktreePorts.own', { ports: ports.join(', ') })
+    ? ready.assignment.ports.length > 0
+      ? t('localServices.worktreePorts.ownPorts')
       : t('localServices.worktreePorts.ownNone')
     : describeUnavailable(props.result as Unavailable);
   return (
@@ -89,11 +87,8 @@ export const WorktreePortsLine = React.memo(function WorktreePortsLine(
       <Icon
         name="globe"
         size={ICON_SIZE.sm}
-        color={
-          ready
-            ? theme.colors.text.secondary
-            : theme.colors.state.warning.foreground
-        }
+        // Amber is for what needs the person; ports Happier couldn't read are an unknown, said quietly.
+        color={theme.colors.text.secondary}
       />
       {/* The sentence wraps beside its mark; the link follows it on the same line when there is room. */}
       <View style={styles.body}>

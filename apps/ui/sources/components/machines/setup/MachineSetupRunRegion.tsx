@@ -9,12 +9,11 @@ import { ActionOperationSudoQuestion } from '@/components/inbox/actionOperations
 import { MachineSetupStepsChecklist } from '@/components/inbox/actionOperations/MachineSetupStepsChecklist';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import type { MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
-import { resolveItemTextColumnInset } from '@/components/ui/lists/itemDensityMetrics';
-import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensity';
-import { Text } from '@/components/ui/text/Text';
 import { useOptionalAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import {
@@ -32,24 +31,42 @@ type StoppedNoticeProps = Readonly<{
   onRetry: (() => void) | null;
 }>;
 
-function StoppedBanner(props: StoppedNoticeProps & Readonly<{
+function StoppedHead(props: StoppedNoticeProps & Readonly<{
   investigate: Readonly<{ pending: boolean; launch: () => void }> | null;
 }>) {
+  // The run card's head when it stopped (lab L7-failed): plain words, the ways forward trailing, Retry last as the
+  // primary. The failed step below carries the one failure mark; the head and the run's row stay neutral.
   return (
-    <AttentionBanner
+    <Item
       testID="machine-setup-stopped"
-      placement="inline"
-      tone="neutral"
-      iconName="x-circle"
+      mode="info"
+      showChevron={false}
+      accessoryLayout="adaptive"
       title={t('machinePresets.setup.tab.stoppedAt', { step: props.step })}
-      description={props.cause}
-      action={props.onRetry ? { label: t('machinePresets.setup.tab.retryFrom', { step: props.step }), onPress: props.onRetry, display: 'default' } : null}
-      secondaryAction={props.investigate ? {
-        label: t('inbox.work.healthNotice.investigate'),
-        icon: 'sparkle',
-        loading: props.investigate.pending,
-        onPress: props.investigate.launch,
-      } : null}
+      {...(props.cause ? { subtitle: props.cause, subtitleLines: 0 } : {})}
+      showDivider
+      rightElement={props.investigate || props.onRetry ? (
+        <View style={styles.headActions}>
+          {props.investigate ? (
+            <TextLinkButton
+              testID="machine-setup-stopped.investigate"
+              label={t('inbox.work.healthNotice.investigate')}
+              tone="strong"
+              disabled={props.investigate.pending}
+              onPress={props.investigate.launch}
+            />
+          ) : null}
+          {props.onRetry ? (
+            <RoundButton
+              testID="machine-setup-stopped.action"
+              size="small"
+              display="default"
+              title={t('machinePresets.setup.tab.retryFrom', { step: props.step })}
+              onPress={props.onRetry}
+            />
+          ) : null}
+        </View>
+      ) : undefined}
     />
   );
 }
@@ -63,7 +80,7 @@ function StoppedNoticeWithInvestigation(props: StoppedNoticeProps) {
   } : null, [props.operation.state, props.serverId, machineId, operationId]);
   const investigation = useInvestigateFailure(subject);
   const launch = React.useCallback(() => { void investigation.launch('review'); }, [investigation]);
-  return <StoppedBanner {...props} investigate={subject ? { pending: investigation.pending, launch } : null} />;
+  return <StoppedHead {...props} investigate={subject ? { pending: investigation.pending, launch } : null} />;
 }
 
 /**
@@ -73,7 +90,7 @@ function StoppedNoticeWithInvestigation(props: StoppedNoticeProps) {
  */
 function MachineSetupStoppedNotice(props: StoppedNoticeProps) {
   const owner = useOptionalAccountNoticeInvestigation();
-  return owner ? <StoppedNoticeWithInvestigation {...props} /> : <StoppedBanner {...props} investigate={null} />;
+  return owner ? <StoppedNoticeWithInvestigation {...props} /> : <StoppedHead {...props} investigate={null} />;
 }
 
 /**
@@ -94,9 +111,6 @@ export function MachineSetupRunRegion(
   }>,
 ) {
   const { theme } = useUnistyles();
-  // A page row is drawn at the person's density whatever its section asks; the line aligns to what the row draws.
-  const { preferred } = useItemDensityInputs();
-  const rowDensity = preferred === 'inspector' ? 'compact' : preferred;
   const { progressOperation, steps } = props;
   const domainRef = progressOperation.snapshot.domainRef;
   const operations = React.useMemo(
@@ -132,19 +146,6 @@ export function MachineSetupRunRegion(
       testID="machine-setup-operation"
       title={t('machinePresets.setup.tab.applying')}
     >
-      {!sudoPrompt && stoppedTitle ? (
-        <View style={styles.head}>
-          <MachineSetupStoppedNotice
-            serverId={props.serverId}
-            operation={progressOperation.snapshot}
-            step={stoppedTitle}
-            cause={
-              typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined
-            }
-            onRetry={runSettled ? props.onRetry : null}
-          />
-        </View>
-      ) : null}
       <MachineSetupStepsChecklist
         testID="machine-setup-steps"
         title={null}
@@ -153,7 +154,16 @@ export function MachineSetupRunRegion(
         stepOutput
         header={
           <>
-            {/* The password question opens the run card: asked once, above the row it is for. */}
+            {/* What needs the person opens the run card, once: the password question, or where it stopped. */}
+            {!sudoPrompt && stoppedTitle ? (
+              <MachineSetupStoppedNotice
+                serverId={props.serverId}
+                operation={progressOperation.snapshot}
+                step={stoppedTitle}
+                cause={typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined}
+                onRetry={runSettled ? props.onRetry : null}
+              />
+            ) : null}
             {sudoPrompt ? (
               <ActionOperationSudoQuestion
                 key={sudoPrompt.id}
@@ -167,6 +177,7 @@ export function MachineSetupRunRegion(
               <ActionOperationRows
                 operations={operations}
                 showDivider={!positionText}
+                runCard={() => ({ line: positionText ?? props.machineName })}
                 onOpenOperation={(operation) =>
                   openActionOperationDetail({
                     serverId: operation.serverId,
@@ -177,8 +188,6 @@ export function MachineSetupRunRegion(
             ) : null}
             {position && positionText ? (
               <>
-                <Text testID="machine-setup-position" variant="meta"
-                  style={[styles.position, { paddingLeft: resolveItemTextColumnInset(rowDensity) }]}>{positionText}</Text>
                 <MeterBar
                   testID="machine-setup-progress"
                   tone="neutral"
@@ -212,14 +221,12 @@ function readRunPosition(steps: MachineSetupStepChecklist): Readonly<{ current: 
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // The head that needs the person stands apart from the steps it is about.
-  head: {
-    marginBottom: theme.space.s12,
-  },
-  // Under the run's row, on its title's left edge (set where it renders, from the row's density).
-  position: {
-    color: theme.colors.text.secondary,
-    paddingRight: theme.space.s16,
-    paddingBottom: theme.space.s10,
+  // Investigate, then Retry last as the primary (lab L7-failed).
+  headActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s12,
+    // The primary's own hit reach overhangs its edge; keep its drawn edge off the card's.
+    paddingRight: theme.space.s4,
   },
 }));

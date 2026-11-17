@@ -95,6 +95,16 @@ const INVENTORY = applyLocalServiceInventorySnapshot(createLocalServiceInventory
     diagnostics: [],
 });
 
+/** `?ports=own|unavailable`: this checkout runs on its own ports, so its rows are on the ports the line names. */
+const INVENTORY_PORTS = applyLocalServiceInventorySnapshot(createLocalServiceInventoryState(), {
+    v: 1,
+    machineId: MACHINE,
+    generatedAt: 1_000,
+    refreshState: 'idle',
+    entries: [inventoryRow('web', 41873, 'vite'), inventoryRow('storybook', 44219, 'storybook dev')],
+    diagnostics: [],
+});
+
 /** `?scan=denied`: the daemon could not watch the Project's root (permission), so the rows stay under one warning line. */
 const INVENTORY_SCAN_DENIED = applyLocalServiceInventorySnapshot(createLocalServiceInventoryState(), {
     v: 1,
@@ -223,7 +233,7 @@ export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denie
                         <PublishedHeader />
                         <PaneHeaderSlotScope slotKey="services">
                             <DetectedLocalServicesPane
-                                inventoryState={props.scan === 'denied' ? INVENTORY_SCAN_DENIED : INVENTORY}
+                                inventoryState={props.scan === 'denied' ? INVENTORY_SCAN_DENIED : props.ports ? INVENTORY_PORTS : INVENTORY}
                                 launcherState={props.ports ? LAUNCHER_PORTS : LAUNCHER}
                                 scopeNote={scopeNote}
                                 onShowServiceTerminal={async () => null}

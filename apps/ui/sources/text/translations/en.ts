@@ -4468,6 +4468,7 @@ const enSettings = {
   systemTaskStepFinish: 'Finish setup',
   systemTaskCurrentStepLabel: 'Current step',
   systemTaskLatestUpdateLabel: 'Latest update',
+  systemTaskStepDidNotFinish: ({ step }: { step: string }) => `${step} didn’t finish`,
   systemTaskOpenLogs: 'Open logs',
   systemTaskOpenLogsFailed: 'Unable to open the log folder.',
   systemTaskBridgeUnavailable:
@@ -13613,7 +13614,7 @@ const enLocalServices = {
     groupFooter: 'Shared links are recorded in this machine’s audit log.',
   },
   worktreePorts: {
-    own: ({ ports }: { ports: string }) => `This workspace has its own ports (${ports}), so it never collides with other checkouts.`,
+    ownPorts: `This workspace has its own ports, so it never collides with other checkouts.`,
     ownNone: 'This workspace gets its own ports when its services first start.',
     reassign: 'Choose new ports…',
     confirmTitle: 'Choose new ports for this workspace?',

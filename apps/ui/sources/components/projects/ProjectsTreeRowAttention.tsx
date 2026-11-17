@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
+import { HappierStatusCompactContext } from '@happier-dev/plugin-ui/presentation';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
@@ -57,13 +58,18 @@ function ProjectsTreeSourceSetupAttention(props: Readonly<{
  */
 function ProjectsTreeSetupStatus(props: Readonly<{ attention: NonNullable<ProjectsTreeAttention>; testID?: string }>) {
   const needsYou = props.attention === 'needs-you';
+  // In words, not the column's compact dot (lab L3 projectsNeed: "Setting up", "Needs you" are the glance tier).
+  // The compact dot came from commit 95849549f0c (a UI refinements choice for long Service names, not an owner
+  // ruling); a setup state is short and is the row's whole news, so it keeps its words.
   return (
-    <InlineStatus
-      tone={needsYou ? 'attention' : 'secondary'}
-      label={needsYou ? t('inbox.needsYou') : t('projects.checkouts.settingUp')}
-      pulsing={!needsYou}
-      {...(props.testID ? { testID: `${props.testID}-setup` } : {})}
-    />
+    <HappierStatusCompactContext.Provider value={false}>
+      <InlineStatus
+        tone={needsYou ? 'attention' : 'secondary'}
+        label={needsYou ? t('inbox.needsYou') : t('projects.checkouts.settingUp')}
+        pulsing={!needsYou}
+        {...(props.testID ? { testID: `${props.testID}-setup` } : {})}
+      />
+    </HappierStatusCompactContext.Provider>
   );
 }
 

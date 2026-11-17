@@ -4419,6 +4419,7 @@ localTailscale: {
     systemTaskStepFinish: "セットアップを完了",
     systemTaskCurrentStepLabel: "現在の手順",
     systemTaskLatestUpdateLabel: "最新の更新",
+    systemTaskStepDidNotFinish: ({ step }: { step: string }) => `${step} が完了しませんでした`,
     systemTaskBridgeUnavailable: "このビルドではシステムタスクをまだ利用できません。",
     systemTaskStartFailed: "システムタスクを開始できませんでした。",
     appearance: "外観",
@@ -12138,7 +12139,7 @@ localTailscale: {
             groupFooter: '共有リンクはこのマシンの監査ログに記録されます。',
     },
     worktreePorts: {
-        own: ({ ports }: { ports: string }) => `このワークスペースには専用のポート（${ports}）があるため、ほかのチェックアウトと衝突しません。`,
+        ownPorts: `このワークスペースには専用のポートがあるため、ほかのチェックアウトと衝突しません。`,
         ownNone: 'このワークスペースは、サービスを初めて起動したときに専用のポートを受け取ります。',
         reassign: '新しいポートを選ぶ…',
         confirmTitle: 'このワークスペースの新しいポートを選びますか？',
