@@ -136,7 +136,12 @@ function useBoardStore(bodyDemand = 'headers') {
                             invalidate(structural);
                         }
                     }, { artifacts: true });
-                    const unsubscribeReconnect = apiSocket.onReconnected(() => { domain.invalidateBodies(); invalidate(true); });
+                    // Board changes made while the socket was down reach `storage.artifacts` through the changes
+                    // catch-up above; a reconnect re-reads only a read that did not succeed.
+                    const unsubscribeReconnect = apiSocket.onReconnected(() => {
+                        if (domain.getReadState().status === 'ready') return;
+                        domain.invalidateBodies(); invalidate(true);
+                    });
                     return () => { invalidation.stop(); refresh = null; unsubscribeArtifacts(); unsubscribeReconnect(); };
                 }, demand);
                 refresh?.();

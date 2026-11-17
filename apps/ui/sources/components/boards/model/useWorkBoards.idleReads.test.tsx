@@ -159,6 +159,30 @@ describe('Board body reads', () => {
         expect(requests.filter(request => request === 'GET /v1/artifacts/22222222-2222-4222-8222-222222222222/access/grants')).toHaveLength(1);
     });
 
+    it('reads nothing on a socket reconnect while the mounted Board read is current', async () => {
+        const executor = createDefaultActionExecutor();
+        const context = { serverId: runtime.serverId, surface: 'ui', bypassApprovals: true } as const;
+        const id = '44444444-4444-4444-8444-444444444444';
+        expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id, name: 'Reconnect Board' } } }, context)).toMatchObject({ ok: true });
+        const hook = await renderHook(() => useWorkBoard(id), { wrapper: runtime.Wrapper });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent()?.id).toBe(id));
+            await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)); });
+            const socket = homeSockets.at(-1);
+            if (!socket) throw new Error('Expected the Home Account transport');
+            requests.length = 0;
+            // Board changes made while the socket was down reach `storage.artifacts` through the changes catch-up.
+            await act(async () => {
+                socket.connected = false;
+                for (const listener of socket.listeners('disconnect')) listener('transport close');
+                socket.connected = true;
+                for (const listener of socket.listeners('connect')) listener();
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            });
+            expect(requests.filter(request => request.startsWith('GET /v1/artifacts')), requests.join(' | ')).toEqual([]);
+        } finally { await hook.unmount(); }
+    });
+
     it('switches an open Board layout with one validated read and one write, and reads nothing back', async () => {
         const id = '22222222-2222-4222-8222-222222222224';
         const executor = createDefaultActionExecutor();
