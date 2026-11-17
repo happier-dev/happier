@@ -222,7 +222,9 @@ export function useMachinePresetQuery<T extends MachinePresetQueryValue>(input: 
         refresh();
     }, { reconnect: 'refresh' }) : undefined, [presented, serverId, presetId, selectedPreset]);
     const sameScope = resolution.kind === 'bound' && state.queryKey === queryKey;
-    return { sameScope, state: sameScope
+    return { sameScope, state: !homeId
+        ? { queryKey, value: null, loading: false, error: 'server_identity_unavailable' }
+        : sameScope
         ? binding?.isCurrent() ? state : { ...state, loading: !!presetId }
         : { queryKey, value: null, loading: !!presetId && (resolution.kind === 'bound' || resolution.kind === 'resolving'),
             error: resolution.kind === 'bound' || resolution.kind === 'resolving' ? null : resolution.kind }, setState, queryKey, refresh, refreshRevision: revision, withdraw };
@@ -420,13 +422,10 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
     const read = React.useMemo(() => client ? (options: MachinePresetCollectionOptions<MachinePresetHistoryData>) => client.detail(presetId, options) : null,
         [client, presetId]);
     const { state, setState, queryKey, refresh, refreshRevision } = useMachinePresetQuery({ serverId, homeId, presetId, binding, resolution, read, onApprovalPending });
-    const visibleState: MachinePresetQueryState<MachinePresetHistoryData> = !homeId
-        ? { value: null, loading: false, error: 'server_identity_unavailable' }
-        : state;
 
     // Archive, restore and the page's in-place edits are one reviewed write of the visible revision.
     const mutate = React.useCallback(async (request: (preset: OpenedManagedMachinePresetV1, homeId: string) => PresetDetailMutation): Promise<MachinePresetCollectionResult<PresetMutationResultV1>> => {
-        const preset = visibleState.value?.preset;
+        const preset = state.value?.preset;
         if (!binding?.isCurrent() || !client || !homeId || !preset) return { kind: 'failed', code: 'action_account_scope_changed' };
         const { actionId, input } = request(preset, homeId);
         const controller = new AbortController();
@@ -459,15 +458,15 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
             if (result.kind !== 'approval_pending') retirement.dispose();
             return result;
         } catch (error) { retirement.dispose(); throw error; }
-    }, [binding, client, homeId, queryKey, serverId, visibleState.value?.preset]);
+    }, [binding, client, homeId, queryKey, serverId, state.value?.preset]);
     const archiveOrRestore = React.useCallback(() => mutate((preset, home): PresetDetailMutation => ({
         actionId: preset.archivedAt === undefined ? 'machines.presets.archive' : 'machines.presets.restore',
         input: { homeId: home, id: preset.id, expectedRevision: preset.revision } })), [mutate]);
     /** Writes only the changed fields through the same Action the configurator's Save uses. */
     const update = React.useCallback((patch: MachinePresetUpdateDraftInput['patch']) => mutate((preset, home): PresetDetailMutation => ({
         actionId: 'machines.presets.update', input: { homeId: home, id: preset.id, expectedRevision: preset.revision, patch } })), [mutate]);
-    const history = React.useMemo(() => visibleState.value && homeId ? buildManagedPresetHistory({ serverId, homeId, presetId,
-        machines: visibleState.value.machines }) : [], [visibleState.value?.machines, homeId, presetId, serverId]);
-    return { state: visibleState, history, refresh, refreshRevision, archiveOrRestore, update, accountId, scope: binding?.scope ?? null,
+    const history = React.useMemo(() => state.value && homeId ? buildManagedPresetHistory({ serverId, homeId, presetId,
+        machines: state.value.machines }) : [], [state.value?.machines, homeId, presetId, serverId]);
+    return { state, history, refresh, refreshRevision, archiveOrRestore, update, accountId, scope: binding?.scope ?? null,
         mutationResult: mutationResult?.queryKey === queryKey ? mutationResult.value : null };
 }

@@ -34,7 +34,7 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
     settleTransientConfirmations: false,
 }).module);
 // Boundary mocks must be registered first; cold module transformation is not this contract.
-const { useMachinePresets, useMachinePresetDetail } = await import('./useMachinePresets');
+const { useMachinePresets, useMachinePreset, useMachinePresetDetail } = await import('./useMachinePresets');
 const { createMachinePresetCollectionClient } = await import('./machinePresetCollectionClient');
 const { ModalProvider } = await import('@/modal');
 beforeEach(async () => {
@@ -987,6 +987,20 @@ describe('preset collection and history through Actions', () => {
         const rendered = await renderHook(() => useMachinePresets([scopeId]));
         await waitForHomeGovernance(() => expect(rendered.getCurrent().statesByServerId[scopeId]).toMatchObject({ loading: false, error: null, value: [preset] }));
         expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
+        await rendered.unmount();
+    });
+    it('settles selected presets without a Home identity and reads after that producer becomes available', async () => {
+        const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://identity-missing.example',
+            accountId: 'owner', currentAccount: true });
+        const rendered = await renderHook(() => useMachinePreset(serverId, 'preset'));
+        await waitForHomeGovernance(() => expect(rendered.getCurrent().state)
+            .toMatchObject({ value: null, loading: false, error: 'server_identity_unavailable' }));
+        expect(harness.requests.some(request => request.path.includes('/machines/'))).toBe(false);
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(preset) } });
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await act(async () => { await setServerProfileIdentityForUrl('https://identity-missing.example', 'srv_history'); });
+        await waitForHomeGovernance(() => expect(rendered.getCurrent().state)
+            .toMatchObject({ value: preset, loading: false, error: null }));
         await rendered.unmount();
     });
     it('settles a signed-out preset collection as unavailable rather than loading forever', async () => {
