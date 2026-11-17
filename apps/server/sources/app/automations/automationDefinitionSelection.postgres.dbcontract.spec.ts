@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PrismaClient } from '@prisma/client';
 import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { db, initDbPostgres } from "@/storage/db";
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 import { createAutomation, updateAutomation, listAutomationDefinitionsPage } from "./automationCrudService";
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
@@ -75,7 +75,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
         const workflows = [randomUUID(), randomUUID(), randomUUID()];
         const visibleTriggerIds = [randomUUID(), randomUUID()].sort();
         const automationIds = workflows.map(() => randomUUID());
-        const structural = { kind: 'action' as const, actionIdsJson: JSON.stringify(['session.archive']),
+        const structural = { kind: 'action' as const, actionId: 'session.archive', actionIdsJson: JSON.stringify(['session.archive']),
             phase: 'after', subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject), reachesOthers: true };
         const triggerRow = (id: string, automationId: string) => ({ ...structural, id,
             definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
@@ -97,16 +97,21 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                     : [{ ...triggerRow(randomUUID(), id), reachesOthers: index === 1 }] } } });
         }
         const unrelated = await db.automation.findMany({ where: { accountId, workflowDefinitionId: 'builtin:unrelated' }, select: { id: true } });
-        await db.automationTrigger.createMany({ data: unrelated.map(row => ({ ...triggerRow(randomUUID(), row.id),
-            automationId: row.id, subjectKey: automationSubjectKeyV1({ ...subject, machineId: randomUUID() }) })) });
+        await db.automationTrigger.createMany({ data: unrelated.map((row, index) => ({ ...triggerRow(randomUUID(), row.id),
+            automationId: row.id, actionId: null,
+            phase: index % 2 === 0 ? 'before' : 'after',
+            actionIdsJson: JSON.stringify(index % 2 === 0 ? ['session.archive', 'scm.commit.create'] : ['session.title.set', 'scm.commit.create']),
+            subjectKey: automationSubjectKeyV1({ ...subject, machineId: randomUUID() }) })) });
+        await db.automationTrigger.update({ where: { id: visibleTriggerIds[1]! },
+            data: { actionId: null, actionIdsJson: JSON.stringify(['session.title.set', 'session.archive']) } });
         await db.$executeRawUnsafe('ANALYZE "AutomationTrigger"');
+        await db.$executeRawUnsafe('ANALYZE "Automation"');
         // The persistent database is the boundary: use a real client with query logging,
         // forwarding the owner's transaction unchanged so the observed SQL is its actual SQL.
-        const traced = new PrismaClient({ errorFormat: 'minimal',
-            datasources: { db: { url: process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL! } },
-            log: [{ emit: 'event', level: 'query' }] });
+        const traced = await createDbMaintenanceClient('postgres', process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL!,
+            { log: [{ emit: 'event', level: 'query' }] });
         const queries: Array<{ sql: string; bindings: unknown[] }> = [];
-        traced.$on('query', event => {
+        onDbClientQuery(traced, event => {
             queries.push({ sql: event.query, bindings: JSON.parse(event.params) as unknown[] });
         });
         const originalTransaction = db.$transaction;
@@ -140,6 +145,24 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                 subject: { ...subject, serverId: randomUUID() }, contextSubjects: [subject] });
             expect(context.attached?.map(row => row.relation)).toEqual(['context', 'context']);
             expect(context.skippedNotSharedCount).toBe(1);
+            // Action-detail candidates use the complete selector, rather than the
+            // singleton actionId leaf or the Account's trigger inventory.
+            const actionSelected: string[] = [];
+            let actionCursor: string | null = null;
+            do {
+                const page = await listAutomationDefinitionsPage({ accountId: otherAccountId,
+                    actionId: 'session.archive', phase: 'after', limit: 1, cursor: actionCursor });
+                expect(page.automations).toEqual([]);
+                expect(page.skippedNotSharedCount).toBe(1);
+                expect(page.attached).toHaveLength(1);
+                expect(page.attached![0]).toMatchObject({ workflowDefinitionId: workflows[0], relation: 'direct' });
+                expect(JSON.stringify(page)).not.toContain(workflows[1]!);
+                actionSelected.push(page.attached![0]!.triggerId);
+                actionCursor = page.nextCursor;
+            } while (actionCursor);
+            expect(actionSelected).toEqual(visibleTriggerIds);
+            expect(await listAutomationDefinitionsPage({ accountId: otherAccountId,
+                actionId: 'session.title.set', phase: 'before' })).toMatchObject({ attached: [], skippedNotSharedCount: 0 });
             const candidateQueries = queries.filter(query => query.sql.includes('"AutomationTrigger"') && query.sql.includes('"subjectKey"'));
             expect(candidateQueries.length).toBeGreaterThan(0);
             for (const query of candidateQueries) {
@@ -156,7 +179,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                     const scans = queryPlanNodes(plan).filter(node => node['Relation Name'] === 'AutomationTrigger');
                     expect(scans.length).toBeGreaterThan(0);
                     expect(scans.every(node => /Index|Bitmap/.test(String(node['Node Type'])))).toBe(true);
-                    expect(scans.reduce((sum, node) => sum + Number(node['Actual Rows']) * Number(node['Actual Loops']), 0))
+                    expect(scans.reduce((sum, node) => sum + (Number(node['Actual Rows'])
+                        + Number(node['Rows Removed by Filter'] ?? 0) + Number(node['Rows Removed by Index Recheck'] ?? 0))
+                        * Number(node['Actual Loops']), 0))
                         .toBeLessThanOrEqual(visibleTriggerIds.length + 2);
                 }
             }

@@ -1,4 +1,5 @@
 import { AutomationTriggerReferenceV1Schema } from './automationTriggerIdentity.js';
+import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema } from './automationActionIdentityV1.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
@@ -464,6 +465,8 @@ export const AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS = 100;
 export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.strictObject({
   limit: z._default(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)), AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS),
   cursor: zMini.optional(OPAQUE_CURSOR_SCHEMA),
+  actionId: z.optional(AutomationTriggerActionIdV1Schema),
+  phase: z.optional(AutomationActionPhaseV1Schema),
   subject: z.optional(AutomationSubjectV1Schema),
   contextSubjects: z.optional(z.array(AutomationSubjectV1Schema)),
   workflowDefinitionId: zMini.optional(WorkflowDefinitionRefV1StringSchema),
@@ -477,6 +480,12 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   legacySessionLifecycleSelections: z.optional(z.literal(true)),
   healthCheckSources: z.optional(z.strictObject({ sources: z.optional(z.array(AutomationTriggerReferenceV1Schema)) })),
 }).check(z.superRefine((value, context) => {
+  if ((value.actionId === undefined) !== (value.phase === undefined)) {
+    context.addIssue({ code: 'custom', path: ['actionId'], message: 'Action selection requires its phase' });
+  }
+  if (value.actionId !== undefined && Object.keys(value).some(key => !['actionId', 'phase', 'limit', 'cursor', 'details'].includes(key))) {
+    context.addIssue({ code: 'custom', path: ['actionId'], message: 'Action selection cannot be combined with another definition selection' });
+  }
   if (value.legacySessionLifecycleSelections !== undefined && Object.keys(value).some(key => key !== 'limit' && key !== 'cursor' && key !== 'details' && key !== 'legacySessionLifecycleSelections')) {
     context.addIssue({ code: 'custom', path: ['legacySessionLifecycleSelections'], message: 'Session selection repair requires its own inventory' });
   }
@@ -527,7 +536,7 @@ export type AutomationTriggerEventDeclarationsResponse = z.infer<typeof Automati
 /** Explicit private-content demand; ordinary definition queries remain bodyless summaries. */
 export const AutomationDefinitionDetailsRequestSchema = lazyZodSchema(() => z.safeExtend(AutomationDefinitionListRequestSchema, {
   details: z.literal(true),
-}).check(z.refine(value => value.subject === undefined, 'Subject selection returns list-safe attached rows only')));
+}).check(z.refine(value => value.subject === undefined && value.actionId === undefined, 'Selected attachments return list-safe rows only')));
 export type AutomationDefinitionDetailsRequest = z.infer<typeof AutomationDefinitionDetailsRequestSchema>;
 
 export const AutomationLegacySessionLifecycleSelectionV1Schema = lazyZodSchema(() => z.strictObject({

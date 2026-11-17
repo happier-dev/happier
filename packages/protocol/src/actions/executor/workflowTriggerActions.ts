@@ -1037,7 +1037,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     },
     list: async (raw: WorkflowTriggerListRequestV1, caller?: Caller) => {
       const input = WorkflowTriggerListRequestV1Schema.parse(raw);
-      if ('subject' in input) {
+      if ('subject' in input || 'actionId' in input) {
         const page = await deps.automations.list(input);
         return { sets: [], ...WorkflowAttachedTriggerPageV1Schema.parse({
           attached: page.attached, nextCursor: page.nextCursor, skippedNotSharedCount: page.skippedNotSharedCount,

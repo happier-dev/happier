@@ -2298,7 +2298,11 @@ describe('workflow trigger Automation composition', () => {
         triggerId: saved.triggerId, enabled: false, nextRunAt: null }], nextRunAt: null,
     }]]));
   });
-  it('lists selected attached facts through the Action boundary without requesting private definitions', async () => {
+  it.each([
+    { subject: { kind: 'machine' as const, serverId: 'home-one', machineId: 'machine-one' },
+      contextSubjects: [{ kind: 'session' as const, serverId: 'home-one', sessionId: 'session-one' }], limit: 2 },
+    { actionId: 'session.archive', phase: 'after', limit: 2 },
+  ])('lists selected attached facts through the Action boundary without requesting private definitions (%j)', async selection => {
     const { deps, executor } = fixture();
     const attached = [{ automationId: 'inline-set', triggerId: 'inline-trigger', workflowDefinitionId: null,
       relation: 'direct' as const, enabled: false, revision: 3,
@@ -2315,10 +2319,7 @@ describe('workflow trigger Automation composition', () => {
       list: async () => ({ automations: [], ...page }),
       listDetails: async () => { throw new Error('selected_read_must_not_open_private_details'); },
       get: async () => { throw new Error('selected_read_must_not_open_private_definition'); } } });
-    const result = await executor(read).execute('workflow.trigger.list', {
-      subject: { kind: 'machine', serverId: 'home-one', machineId: 'machine-one' },
-      contextSubjects: [{ kind: 'session', serverId: 'home-one', sessionId: 'session-one' }], limit: 2,
-    }, ownCaller);
+    const result = await executor(read).execute('workflow.trigger.list', selection, ownCaller);
     expect(result).toEqual({ ok: true, result: { sets: [], ...page } });
     if (!result.ok) throw new Error('Expected selected attached facts');
     expectDeclaredActionOutput('workflow.trigger.list', result.result);

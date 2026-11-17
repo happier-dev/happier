@@ -3,6 +3,7 @@ import type { AutomationTriggerReferenceV1 } from '@happier-dev/protocol/automat
 import { HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { decodeStoredText, encodeStoredText } from '@/storage/storedContent';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import type { AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import type { WorkflowAttachedTriggerPageV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { listAutomationAttachedTriggers } from './automationAttachedTriggerQuery';
 import { legacyAutomationSessionSelectionWhere, legacyAutomationSessionSelectionSelect,
@@ -4723,6 +4724,8 @@ function decodeAutomationDefinitionListCursor(
  */
 export async function listAutomationDefinitionsPage(params: Readonly<{
     accountId: string;
+    actionId?: string;
+    phase?: AutomationActionTrigger['phase'];
     subject?: AutomationSubjectV1;
     contextSubjects?: readonly AutomationSubjectV1[];
     limit?: number;
@@ -4747,6 +4750,9 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
 }>> {
     if (params.subject !== undefined) {
         return { automations: [], ...await listAutomationAttachedTriggers({ ...params, subject: params.subject }) };
+    }
+    if (params.actionId !== undefined) {
+        return { automations: [], ...await listAutomationAttachedTriggers({ ...params, actionId: params.actionId, phase: params.phase! }) };
     }
     const limit = Math.min(
         Math.max(Math.floor(params.limit ?? AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS), 1),

@@ -1,5 +1,6 @@
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import type { WorkflowRunLastStartedSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { appendBoundedPage, summarizeWorkflowRuns } from '@/app/workflows/workflowRunService';
 import { automationSubjectKeyV1, type AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS } from '@happier-dev/protocol/automations/automationApiV3';
@@ -7,6 +8,8 @@ import { summarizeWorkflowTriggerInputsV1, type WorkflowAttachedTriggerPageV1 } 
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
 import { inTx } from '@/storage/inTx';
+import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { automationTriggerListItemSelect } from './automationPersistenceSelect';
 import { automationActionTriggerConfigurationSelect } from './automationActionTriggerConfiguration';
 import { toAutomationTriggerSummaryProjection } from './automationApiProjection';
@@ -18,23 +21,24 @@ import { canProjectSharedAutomationTriggerSummary } from './automationActionInde
 
 const { definitionEnvelope: _privateEnvelope, ...summaryTriggerSelect } = automationTriggerListItemSelect;
 
-export interface AutomationAttachedTriggerSelection {
+export type AutomationAttachedTriggerSelection = Readonly<{
     accountId: string;
-    subject: AutomationSubjectV1;
-    contextSubjects?: readonly AutomationSubjectV1[];
     limit?: number;
     cursor?: string | null;
-}
+} & ({ subject: AutomationSubjectV1; contextSubjects?: readonly AutomationSubjectV1[] }
+    | { actionId: string; phase: AutomationActionTrigger['phase'] })>;
 
-/** The subject index owns both direct/context discovery and its page-independent denied count. */
+/** Structural selection owns direct/context discovery and its page-independent denied count. */
 export async function listAutomationAttachedTriggers(params: AutomationAttachedTriggerSelection): Promise<WorkflowAttachedTriggerPageV1> {
-    const directKey = automationSubjectKeyV1(params.subject);
-    const subjects = new Map([params.subject, ...(params.contextSubjects ?? [])].map(subject => [automationSubjectKeyV1(subject), subject]));
+    const directKey = 'subject' in params ? automationSubjectKeyV1(params.subject) : null;
+    const subjects = 'subject' in params
+        ? new Map([params.subject, ...(params.contextSubjects ?? [])].map(subject => [automationSubjectKeyV1(subject), subject]))
+        : new Map<string, AutomationSubjectV1>();
     const limit = Math.min(Math.max(Math.floor(params.limit ?? AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS), 1), AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS);
     const { page, actorReferences } = await inTx(async tx => {
         // First stage is structural identity only. No body or audience census is loaded.
         // The aggregate necessarily visits matching references, never unrelated definitions.
-        const readCandidates = (cursor: string | null) => tx.automationTrigger.findMany({
+        const readSubjectCandidates = (cursor: string | null) => tx.automationTrigger.findMany({
             where: {
                 deletedAt: null, consentForAutomationId: null,
                 ...(cursor === null ? {} : { id: { gt: cursor } }),
@@ -48,6 +52,32 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
             orderBy: { id: 'asc' },
             take: AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
         });
+        const readCandidates = async (cursor: string | null): Promise<Awaited<ReturnType<typeof readSubjectCandidates>>> => {
+            if (!('actionId' in params)) return readSubjectCandidates(cursor);
+            const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
+            // Match the complete structural selector. The singleton actionId leaf
+            // cannot answer a multi-Action lookup. PostgreSQL's phase-specific GIN
+            // indexes cover this exact expression and live matching-row predicate.
+            const binds: unknown[] = [];
+            const bind = (value: unknown) => { binds.push(value); return dialect === 'postgres' ? `$${binds.length}` : '?'; };
+            const membership = dialect === 'postgres'
+                ? `t."actionIdsJson"::jsonb @> ${bind(JSON.stringify([params.actionId]))}::jsonb`
+                : dialect === 'mysql'
+                    ? `JSON_CONTAINS(t."actionIdsJson", JSON_QUOTE(${bind(params.actionId)}))`
+                    : `EXISTS (SELECT 1 FROM json_each(t."actionIdsJson") selected_action WHERE selected_action.value = ${bind(params.actionId)})`;
+            const sql = `SELECT t."id", t."subjectKind", t."subjectKey", t."reachesOthers",
+                a."id" AS "automationId", a."accountId", a."workflowDefinitionId", a."scopeSessionId"
+                FROM "AutomationTrigger" t JOIN "Automation" a ON a."id" = t."automationId"
+                WHERE t."kind" = 'action' AND t."deletedAt" IS NULL AND t."consentForAutomationId" IS NULL
+                  AND t."phase" = '${params.phase === 'before' ? 'before' : 'after'}' AND ${membership}
+                  AND a."deletedAt" IS NULL ${cursor === null ? '' : `AND t."id" > ${bind(cursor)}`}
+                ORDER BY t."id" ASC LIMIT ${bind(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)}`;
+            type Candidate = Awaited<ReturnType<typeof readSubjectCandidates>>[number];
+            const rows = await tx.$queryRawUnsafe<Array<Pick<Candidate, 'id' | 'subjectKind' | 'subjectKey' | 'reachesOthers'>
+                & Candidate['automation'] & { automationId: string }>>(dialect === 'mysql' ? sql.replaceAll('"', '`') : sql, ...binds);
+            return rows.map(({ automationId, accountId, workflowDefinitionId, scopeSessionId, ...row }) => ({ ...row,
+                reachesOthers: Boolean(row.reachesOthers), automation: { id: automationId, accountId, workflowDefinitionId, scopeSessionId } }));
+        };
         const page: Awaited<ReturnType<typeof readCandidates>> = [];
         const workflowAccess = new Map<string, WorkflowSummaryArtifactAccess>();
         let skippedNotSharedCount = 0;
@@ -110,7 +140,7 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
                     ? (({ subjectKind: _subjectKind, subjectKey: _subjectKey, ...summary }) => summary)(triggerSummary) : triggerSummary;
                 attached.push({ automationId: row.id, triggerId: trigger.id, workflowDefinitionId: row.workflowDefinitionId,
                     revision: trigger.revision, enabled: row.enabled && trigger.enabled,
-                    relation: fact.subjectKey === directKey ? 'direct' : 'context', summary: safeSummary,
+                    relation: directKey === null || fact.subjectKey === directKey ? 'direct' : 'context', summary: safeSummary,
                     ...(workflowAccess.has(trigger.id) ? { workflowAccess: workflowAccess.get(trigger.id)! } : {}),
                     ...(trigger.kind === 'pluginEvent' ? { sourceStatus: events.get(trigger.id)?.sourceStatus ?? null,
                         sourceCatalogStatus: events.get(trigger.id)?.sourceCatalogStatus ?? null } : {}),

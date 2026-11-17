@@ -7,6 +7,17 @@ import { AutomationTriggerListItemSchema } from '../../automations/automationTri
 import { AutomationDeleteResponseSchema } from '../../automations/automationApiV3.js';
 
 describe('workflow trigger Action boundary', () => {
+  it('selects one Action phase without accepting a mixed inventory or resource selection', () => {
+    const schema = WorkflowActionInputSchemasV1[WorkflowActionIdV1Schema.parse('workflow.trigger.list')];
+    const request = { actionId: 'session.archive', phase: 'after', limit: 1, cursor: 'trigger-one' };
+    expect(schema.parse(request)).toEqual(request);
+    for (const extra of [{ workflow: 'builtin:keep-going' }, { scope: 'account_all' },
+      { subject: { kind: 'machine', serverId: 'home', machineId: 'machine' } }]) {
+      expect(schema.safeParse({ ...request, ...extra }).success).toBe(false);
+    }
+    expect(schema.safeParse({ actionId: request.actionId }).success).toBe(false);
+    expect(schema.safeParse({ ...request, actionId: 'unqualified-action' }).success).toBe(false);
+  });
   it('projects exact enabled schedule occurrences while retaining the workflow-wide minimum', () => {
     const schedule = (id: string, enabled: boolean, nextRunAt: number | null) => AutomationTriggerListItemSchema.parse({
       id, kind: 'schedule', enabled, nextRunAt, revision: 1, createdAt: 1, updatedAt: 1,

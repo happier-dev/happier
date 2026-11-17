@@ -1500,11 +1500,16 @@ are unresolved producer seams, not available capabilities.
 The selected `workflow.trigger.list` input is an unreleased 0.3 direct cut. Its selection
 and identity objects are closed. Matching Protocol, CLI, UI and server readers
 must reload together; older strict development readers reject these new
-selections. Existing unselected list inputs remain valid. Attachment results add
+selections. The Action-detail selection is `{ actionId, phase, limit?, cursor? }`,
+using the same attached-trigger projection, including multi-Action membership,
+disabled rows and shared-reference count privacy. Existing unselected list inputs
+remain valid. Attachment results add
 only list-safe summaries, source/Run facts, Artifact access presentation and safe
-author attribution; denied references disclose only a Trigger count. No new
-persisted format, migration, compatibility adapter or wire epoch is introduced
-by these reads.
+author attribution; denied references disclose only a Trigger count. These reads
+add no persisted format, compatibility adapter or wire epoch. Action selection
+uses the existing structural Action array: PostgreSQL has phase-specific GIN
+indexes added by migration; SQLite and MySQL use native JSON membership without
+an equivalent array-membership index.
 
 The saved-check-only `workflow.subjects.list` Action follows the same matching
 development-reader contract. It adds no persisted format or probe enrollment.

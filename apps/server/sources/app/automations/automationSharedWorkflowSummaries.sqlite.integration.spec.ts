@@ -6,7 +6,7 @@ import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/au
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
-import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1, type AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -30,13 +30,20 @@ describe('Team workflow schedule summaries', () => {
         const visibleWorkflowId = randomUUID();
         const deniedWorkflowId = randomUUID();
         const visibleTriggerId = randomUUID();
-        const structural = { kind: 'action' as const, phase: 'after', actionIdsJson: JSON.stringify(['session.archive']),
-            subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject), reachesOthers: true };
-        const triggerRow = (automationId: string, id: string) => ({ ...structural, id,
-            definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
-                binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: 0, triggerKind: 'action' },
-                definition: { kind: 'action', phase: 'after', actionIds: ['session.archive'], subject } })),
-        });
+        const triggerRow = (automationId: string, id: string, overrides: Partial<AutomationActionTrigger> = {}) => {
+            const { subject: authoredSubject, ...fields } = { kind: 'action', phase: 'after',
+                actionIds: ['session.archive'], subject, ...overrides };
+            const definition = AutomationActionTriggerSchema.parse({ ...fields,
+                ...(authoredSubject === undefined ? {} : { subject: authoredSubject }) });
+            const { actionIds, ...structural } = projectAutomationActionTriggerStructuralV1(definition);
+            return { ...structural, reachesOthers: definition.subject !== undefined, id,
+                actionId: actionIds.length === 1 ? actionIds[0]! : null,
+                actionIdsJson: JSON.stringify(actionIds),
+                definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                    binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: 0, triggerKind: 'action' },
+                    definition })),
+            };
+        };
         for (const id of [visibleWorkflowId, deniedWorkflowId]) {
             await db.artifact.create({ data: { id, accountId: owner.id,
                 header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }))),
@@ -74,6 +81,38 @@ describe('Team workflow schedule summaries', () => {
             expect((await query({ subject: otherHome, contextSubjects: [subject] })).json()).toMatchObject({
                 attached: [{ triggerId: visibleTriggerId, relation: 'context' }], skippedNotSharedCount: 1 });
             expect((await query({ subject, details: true })).statusCode).toBe(400);
+            // The Action-detail read has no synthetic resource. A multi-Action row
+            // remains attached, including while disabled; phase is selective.
+            const shared = await db.automation.findFirstOrThrow({ where: { workflowDefinitionId: visibleWorkflowId } });
+            const multiId = randomUUID();
+            await db.automationTrigger.create({ data: { ...triggerRow(shared.id, multiId, { actionIds: ['session.title.set', 'session.archive'] }),
+                automationId: shared.id, enabled: false, actionId: null } });
+            await db.automationTrigger.create({ data: { ...triggerRow(shared.id, randomUUID(), { phase: 'before', mode: 'notify' }),
+                automationId: shared.id } });
+            const ownAutomationId = randomUUID();
+            const ownTriggerId = randomUUID();
+            await db.automation.create({ data: { id: ownAutomationId, accountId: viewer.id,
+                name: 'Own unscoped check', templateCiphertext: '{}', triggers: { create: {
+                    ...triggerRow(ownAutomationId, ownTriggerId, { subject: undefined }) } } } });
+            const selected: string[] = [];
+            let cursor: string | null = null;
+            do {
+                const response = await query({ actionId: 'session.archive', phase: 'after', limit: 1, ...(cursor ? { cursor } : {}) });
+                expect(response.statusCode, response.body).toBe(200);
+                const page = AutomationDefinitionListResponseSchema.parse(response.json());
+                expect(page.skippedNotSharedCount).toBe(1);
+                expect(page.attached).toHaveLength(1);
+                expect(page.attached![0]!.relation).toBe('direct');
+                expect(response.body).not.toContain(deniedWorkflowId);
+                expect(response.body).not.toContain('opaque private context');
+                selected.push(page.attached![0]!.triggerId);
+                cursor = page.nextCursor;
+            } while (cursor);
+            expect(selected).toEqual([visibleTriggerId, multiId, ownTriggerId].sort());
+            expect((await query({ actionId: 'session.archive', phase: 'after', subject })).statusCode).toBe(400);
+            expect((await query({ actionId: 'session.archive', phase: 'after', details: true })).statusCode).toBe(400);
+            expect((await query({ actionId: 'session.archive' })).statusCode).toBe(400);
+            expect((await query({ phase: 'after' })).statusCode).toBe(400);
         } finally { await app.close(); }
     });
 

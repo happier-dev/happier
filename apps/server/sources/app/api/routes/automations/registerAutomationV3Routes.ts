@@ -184,6 +184,7 @@ export function registerAutomationV3Routes(
                 await readAutomationTriggerEventDeclarations(accountId, query));
             const page = await listAutomationDefinitionsPage({
                 accountId,
+                ...(query.actionId !== undefined ? { actionId: query.actionId, phase: query.phase! } : {}),
                 ...(query.subject !== undefined ? { subject: query.subject } : {}),
                 ...(query.contextSubjects !== undefined ? { contextSubjects: query.contextSubjects } : {}),
                 limit: query.limit,

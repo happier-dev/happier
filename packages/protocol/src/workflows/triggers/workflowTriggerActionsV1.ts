@@ -37,6 +37,7 @@ import { HealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubject
 import { HealthCheckSourceConfigV1Schema } from '../../deployments/healthCheckSourceV1.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
 import { AutomationActionTriggerSchema } from '../../automations/automationActionTriggerV1.js';
+import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema } from '../../automations/automationActionIdentityV1.js';
 
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
 /** Safe author identity shared by attached and Workflow-level trigger summaries. */
@@ -168,6 +169,12 @@ const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDef
 /** A policy-independent capture identity; Environment edits do not rewrite a saved Workflow's target. */
 export const WorkflowDeploymentBackupTargetV1Schema = lazyZodSchema(() => z.omit(DeploymentBackupRunInputV1Schema, { expectedRevision: true }));
 export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    actionId: AutomationTriggerActionIdV1Schema,
+    phase: AutomationActionPhaseV1Schema,
+    limit: z.optional(AutomationDefinitionListRequestSchema.shape.limit),
+    cursor: z.optional(AutomationDefinitionListRequestSchema.shape.cursor),
+  }),
   z.strictObject({
     subject: AutomationSubjectV1Schema,
     contextSubjects: z.optional(z.array(AutomationSubjectV1Schema)),

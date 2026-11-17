@@ -2098,6 +2098,11 @@ export type WorkflowsActionInputById = {
         }[];
     };
     readonly "workflow.trigger.list": {
+        actionId: string;
+        phase: 'after' | 'before';
+        limit?: unknown;
+        cursor?: string | undefined;
+    } | {
         automationId: string;
         review: true;
     } | {
