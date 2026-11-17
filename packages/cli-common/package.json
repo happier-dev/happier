@@ -619,6 +619,12 @@
       "import": "./dist/ssh/keyscanInvocation.js",
       "default": "./dist/ssh/keyscanInvocation.js"
     },
+    "./ssh/shellQuote": {
+      "happier-source": "./src/ssh/shellQuote.ts",
+      "types": "./dist/ssh/shellQuote.d.ts",
+      "import": "./dist/ssh/shellQuote.js",
+      "default": "./dist/ssh/shellQuote.js"
+    },
     "./output": {
       "happier-source": "./src/output/index.ts",
       "types": "./dist/output/index.d.ts",

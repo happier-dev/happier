@@ -30,7 +30,7 @@ import {
     TokenStorage,
     type AuthCredentials,
 } from '@/auth/storage/tokenStorage';
-import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh/shellQuote';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import {
     buildHomeConnectionDescriptorForProfile,
