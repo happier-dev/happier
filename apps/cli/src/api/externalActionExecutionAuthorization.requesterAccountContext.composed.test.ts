@@ -412,7 +412,8 @@ it.each(['cli', 'ui'] as const)('enrolls real failure observers after admitted L
         persisted.set(row.id, next); return next;
       });
     const daemonWork = new AbortController();
-    const native = createRequesterBoundDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: endpoint, machineId: 'machine',
+    // The installed receiver binds deployment deps to the portable Home it observed (execution.ts deploymentHomeId).
+    const native = createRequesterBoundDeploymentActionDeps({ credentials, serverId: homeIdentityId, serverHttpBaseUrl: endpoint, machineId: 'machine',
       resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
     const requesterExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
     // Durable approval roots have no private ports. Reacquire them through the
@@ -468,9 +469,9 @@ it.each(['cli', 'ui'] as const)('enrolls real failure observers after admitted L
           originalActionEnvelope: envelope, externalActionTarget: root.binding.target,
           externalActionExecutionAuthorization: authorization,
           signExternalActionApprovalInput: prepared.signExternalActionApprovalInput };
-        const readers = createDaemonDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: endpoint,
+        const readers = createDaemonDeploymentActionDeps({ credentials, serverId: homeIdentityId, serverHttpBaseUrl: endpoint,
           machineId: 'machine', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
-        const enrollment = createPlatformFailureEnrollmentForHost({ serverId, machineId: 'machine',
+        const enrollment = createPlatformFailureEnrollmentForHost({ serverId: homeIdentityId, machineId: 'machine',
           acquirePluginRuntimeRegistryLease: acquire, readEnvironment: readers.readDeploymentEnvironment });
         const plan = await enrollment.prepare(input, context);
         if (!plan) throw new Error('Expected installed receipt Event enrollment plan');
@@ -503,8 +504,9 @@ it('keeps nested Link observation on its admitted native reader after rebuilding
   const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
   const host = { credentials, serverId: 'home', serverHttpBaseUrl: 'https://link-observer.test', machineId: 'machine',
     resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const) };
-  const native = createDaemonDeploymentActionDeps({ ...host,
-    runtime: createOwnServerDeploymentRuntimeForHost({ ...host,
+  // The installed receiver binds deployment deps to the portable Home; the executor names it from the profile spelling.
+  const native = createDaemonDeploymentActionDeps({ ...host, serverId: homeIdentityId,
+    runtime: createOwnServerDeploymentRuntimeForHost({ ...host, serverId: homeIdentityId,
       acquirePluginRuntimeRegistryLease: async () => { throw new Error('Observation never acquires native execution'); } }) });
   const requesterExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
   const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-link-root', binding: {
@@ -527,8 +529,9 @@ it('keeps nested Link observation on its admitted native reader after rebuilding
     if (!projected) throw new Error('Expected admitted Link HTTP projection');
     const deps = createCliActionDeps({ token: credentials.token, credentials, serverId: host.serverId,
       serverHttpBaseUrl: host.serverHttpBaseUrl, sessionId: '' });
-    const input = { serverId: host.serverId, environmentId: 'environment', targetLinkId: 'link' };
-    const context = { surface: 'ui' as const, authority: 'present_user' as const,
+    // A signed root's input names the portable Home (deploymentHomeAdmission); the profile spelling is refused.
+    const input = { serverId: homeIdentityId, environmentId: 'environment', targetLinkId: 'link' };
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: host.serverId, serverIdentityId: homeIdentityId,
       actionCaller: { kind: 'host' as const }, runtimeAccountId: 'bob', externalActionTarget: root.binding.target,
       externalActionExecutionAuthorization: projected };
     Object.defineProperty(root, 'requesterHttpProjection', { value: projected.requesterHttpProjection, enumerable: false });
