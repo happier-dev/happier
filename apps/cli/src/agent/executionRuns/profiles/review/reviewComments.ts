@@ -1,6 +1,6 @@
-import { ReviewRoundBindingV1Schema, type ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createHash, randomUUID } from 'node:crypto';
 
+import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1, type ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
@@ -17,7 +17,7 @@ export type ReviewRunMaterialization = Readonly<{
   engineId: string;
   status: 'materialized' | 'partial' | 'failed';
   commentIds: readonly string[];
-  comments: readonly Readonly<{ findingId: string; comment: Pick<ReviewCommentV1, 'id' | 'state' | 'serverRevision' | 'projectId' | 'workspace' | 'sessionId' | 'runId'> }>[];
+  comments: readonly Readonly<{ findingId: string; comment: Pick<ReviewCommentV1, 'id' | 'state' | 'serverRevision' | 'reviewId' | 'projectId' | 'workspace' | 'sessionId' | 'runId'> }>[];
   failures: readonly Readonly<{ findingId: string; errorCode: string }>[];
 }>;
 
@@ -87,33 +87,45 @@ export function createReviewRunCommentService(deps: Readonly<{
       });
     },
     async materialize(params: Readonly<{
-      run: ExecutionRunState;
       findings: readonly ReviewFinding[];
       reviewedFingerprint: string | null;
+      review?: ReviewRoundBindingV1;
       workflowRunId?: string;
       workflowScope?: NonNullable<ReviewCommentPrincipalHeaderV1['workflowScope']>;
-    }>): Promise<ReviewRunMaterialization> {
-      const engineId = params.run.backendId;
-      const reviewGroupId = params.run.display?.groupId;
+    }> & (Readonly<{ run: ExecutionRunState; session?: never }> | Readonly<{ run?: never; session: Readonly<{
+      sessionId: string; localInputId: string; workflowRunId: string; stepId: string; invocationId: string;
+      agentId: string; reviewerId: string; cwd?: string; intentInput?: unknown;
+    }> }>)): Promise<ReviewRunMaterialization> {
+      const engineId = params.run ? params.run.backendId : params.session.agentId;
+      const producingRunId = params.run ? params.run.runId : params.session.workflowRunId;
+      const producingCallId = params.run ? params.run.callId : params.session.localInputId;
+      const producingSessionId = params.run ? params.run.sessionId : params.session.sessionId;
+      const workflowRunId = params.run ? params.workflowRunId : params.session.workflowRunId;
+      const intentInput = params.run ? params.run.intentInput : params.session.intentInput;
+      const launchCwd = params.run ? params.run.launch?.cwd : params.session.cwd;
+      const runReview = ReviewRoundBindingV1Schema.safeParse(record(intentInput)?.reviewRound);
+      const review = params.review ?? (runReview.success ? runReview.data : undefined);
       const comments: Array<ReviewRunMaterialization['comments'][number]> = [];
       const failures: Array<{ findingId: string; errorCode: string }> = [];
-      const input = record(params.run.intentInput);
-      const cwd = params.run.launch?.cwd ?? deps.cwd;
+      const input = record(intentInput);
+      const reviewerId = params.session?.reviewerId ?? (typeof input?.reviewReviewerId === 'string' ? input.reviewReviewerId : review ? null : engineId);
+      const cwd = launchCwd ?? deps.cwd;
       const comparison = typeof input?.comparisonId === 'string'
         ? await readCapturedScmComparison({ cwd, comparisonId: input.comparisonId,
-          ...(params.run.sessionId ? { sessionId: params.run.sessionId } : {}) }).then(captured => captured.comparison, () => null)
+          ...(producingSessionId ? { sessionId: producingSessionId } : {}) }).then(captured => captured.comparison, () => null)
         : undefined;
       for (const finding of params.findings) {
         try {
-          if (!params.run.sessionId && !params.workflowRunId) throw Object.assign(new Error('Review scope is unavailable'), { code: 'review_comment_session_unavailable' });
-          const scope = deps.scope.workspace && params.run.launch?.cwd
-            ? { ...deps.scope, workspace: { ...deps.scope.workspace, path: params.run.launch.cwd } }
+          if (!reviewerId) throw Object.assign(new Error('Review reviewer provenance is unavailable'), { code: 'review_comment_invalid_request' });
+          if (!review && !producingSessionId && !workflowRunId) throw Object.assign(new Error('Review scope is unavailable'), { code: 'review_comment_session_unavailable' });
+          const scope = deps.scope.workspace && launchCwd
+            ? { ...deps.scope, workspace: { ...deps.scope.workspace, path: launchCwd } }
             : deps.scope;
-          let anchor = findingAnchor(finding, params.run.runId);
+          let anchor = findingAnchor(finding, producingRunId);
           const resolvedSnapshot = await resolveReviewCommentSnapshot({ cwd, anchor, comparison });
           // Preserve the finding and its original location in the Review payload,
           // without inventing a code location when its evidence cannot be verified.
-          if (!resolvedSnapshot && 'filePath' in anchor) anchor = { kind: 'finding', runId: params.run.runId, findingId: finding.id };
+          if (!resolvedSnapshot && 'filePath' in anchor) anchor = { kind: 'finding', runId: producingRunId, findingId: finding.id };
           else if (resolvedSnapshot?.kind === 'text' && resolvedSnapshot.diffContext
             && (anchor.kind === 'line' || anchor.kind === 'range')) anchor = { ...anchor, side: resolvedSnapshot.diffContext.side };
           const snapshot = resolvedSnapshot ?? { kind: 'none' as const, capturedAt: Date.now() };
@@ -122,52 +134,42 @@ export function createReviewRunCommentService(deps: Readonly<{
             ...(finding.startLine ? { lineRange: { startLine: finding.startLine, endLine: finding.endLine ?? finding.startLine } } : {}),
           };
           const findingIdentity = createReviewFindingIdentityV1({ path: finding.filePath, title: finding.title, fingerprint });
+          const mutationSource = review
+            ? JSON.stringify([review.reviewId, review.roundOrdinal, producingRunId, reviewerId,
+              scope.workspace?.machineId ?? null, producingSessionId ?? null,
+              ...(params.session ? [params.session.stepId, params.session.invocationId, params.session.localInputId] : []), findingIdentity])
+            : `${producingRunId}\0${findingIdentity}`;
           const input: ReviewCommentCreateRequestV1 = {
-            ...scope, ...(params.run.sessionId ? { sessionId: params.run.sessionId } : {}), runId: params.run.runId, engineId, findingId: finding.id,
+            ...scope, ...(producingSessionId ? { sessionId: producingSessionId } : {}), runId: producingRunId, engineId, findingId: finding.id,
             findingIdentity, findingSeverity: finding.severity, reviewedFingerprint: params.reviewedFingerprint,
-            ...(reviewGroupId ? { metadata: { reviewGroupIds: [reviewGroupId] } } : {}),
+            ...(finding.scopeAttribution === undefined ? {} : { scopeAttribution: finding.scopeAttribution }),
+            ...(finding.extensions === undefined ? {} : { extensions: finding.extensions }),
+            ...(review ? { reviewId: review.reviewId, appearance: { roundOrdinal: review.roundOrdinal,
+              runId: producingRunId, reviewerId,
+              ...(scope.workspace ? { machineId: scope.workspace.machineId } : {}),
+              ...(producingSessionId ? { sessionId: producingSessionId } : {}) } } : {}),
             anchor, snapshot, body: [finding.title, finding.summary, finding.whyItMatters, finding.evidence, finding.suggestion].filter(Boolean).join('\n\n'),
-            authorIntent: record(params.run.intentInput)?.reviewCommentAuthorIntent === 'open' ? 'open' : 'propose', fingerprint,
-            linkedRefs: [{ kind: 'executionRun', id: params.run.runId }, ...(params.run.sessionId ? [{ kind: 'session' as const, id: params.run.sessionId }] : [])],
-            clientMutationId: `review-finding:${createHash('sha256').update(`${params.run.runId}\0${findingIdentity}`).digest('hex')}`,
+            authorIntent: record(intentInput)?.reviewCommentAuthorIntent === 'open' ? 'open' : 'propose', fingerprint,
+            linkedRefs: [...(params.run ? [{ kind: 'executionRun' as const, id: producingRunId }] : []), ...(producingSessionId ? [{ kind: 'session' as const, id: producingSessionId }] : [])],
+            clientMutationId: `review-finding:${createHash('sha256').update(mutationSource).digest('hex')}`,
           };
-          let comment = resultComment(await deps.execute('reviews.comments.create', input, {
+          const comment = resultComment(await deps.execute('reviews.comments.create', input, {
             principal: {
               ...(params.workflowScope ? { workflowScope: params.workflowScope } : {}),
-              actor: params.workflowRunId
-                ? { kind: 'workflow', runId: params.workflowRunId }
-                : { kind: 'agent', agentId: engineId, sessionId: params.run.sessionId! },
+              actor: workflowRunId
+                ? { kind: 'workflow', runId: workflowRunId }
+                : { kind: 'agent', agentId: engineId, sessionId: producingSessionId! },
               currentIntent: {
                 v: 1, kind: 'review_findings_materialization', actionId: 'reviews.comments.create',
-                ...scope, ...(params.run.sessionId ? { sessionId: params.run.sessionId } : {}),
-                ...(params.workflowRunId ? { workflowRunId: params.workflowRunId } : {}),
-                runId: params.run.runId, callId: params.run.callId, agentId: engineId,
+                ...scope, ...(producingSessionId ? { sessionId: producingSessionId } : {}),
+                ...(workflowRunId ? { workflowRunId: workflowRunId } : {}),
+                runId: producingRunId, callId: producingCallId, agentId: engineId,
                 effectBodySha256Base64Url: createHash('sha256').update(stringifyReviewCommentPrincipalCanonicalJsonV1(input)).digest('base64url'),
               },
             },
           }));
-          const reRaised = comment.state === 'dismissed';
-          if (reRaised || (reviewGroupId && !comment.metadata?.reviewGroupIds?.includes(reviewGroupId))) {
-            const principal = { actor: params.workflowRunId ? { kind: 'workflow' as const, runId: params.workflowRunId } : { kind: 'agent' as const, agentId: engineId, sessionId: params.run.sessionId! },
-              ...(params.workflowScope ? { workflowScope: params.workflowScope } : {}) };
-            try {
-              comment = resultComment(await deps.execute('reviews.comments.transition', {
-                ...scope, commentId: comment.id, expectedState: comment.state, expectedServerRevision: comment.serverRevision,
-                toState: reRaised ? 'open' : comment.state,
-                ...(reRaised ? { reason: 'Re-raised by a later review.' } : {}),
-                ...(reviewGroupId ? { reviewGroupId } : {}),
-                clientMutationId: `review-materialized:${params.run.runId}:${comment.id}`,
-              }, { principal }));
-            } catch (error) {
-              if (errorCode(error) !== 'review_comment_conflict') throw error;
-              // Another engine in this fanout may have attached the same panel first.
-              const current = resultComment(await deps.execute('reviews.comments.get', { commentId: comment.id }, { principal }));
-              if ((reRaised && current.state === 'dismissed') || !reviewGroupId || !current.metadata?.reviewGroupIds?.includes(reviewGroupId)) throw error;
-              comment = current;
-            }
-          }
-          const { id, state, serverRevision, projectId, workspace, sessionId, runId } = comment;
-          comments.push({ findingId: finding.id, comment: { id, state, serverRevision, ...(projectId ? { projectId } : {}), ...(workspace ? { workspace } : {}), ...(sessionId ? { sessionId } : {}), ...(runId ? { runId } : {}) } });
+          const { id, state, serverRevision, reviewId, projectId, workspace, sessionId, runId } = comment;
+          comments.push({ findingId: finding.id, comment: { id, state, serverRevision, ...(reviewId ? { reviewId } : {}), ...(projectId ? { projectId } : {}), ...(workspace ? { workspace } : {}), ...(sessionId ? { sessionId } : {}), ...(runId ? { runId } : {}) } });
         } catch (error) {
           failures.push({ findingId: finding.id, errorCode: errorCode(error) });
         }
