@@ -32,6 +32,42 @@ function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknow
 }
 
 describe('resolveApprovalExecutor', () => {
+  it.each(['cli', 'mcp'] as const)('replays an original %s Home Session read without promoting its contextual Machine to daemon custody', surface => {
+    const actionId = 'session.status.get';
+    const input = { sessionId: 'session', live: false };
+    const context = { surface, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
+      serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account',
+      actionRequestId: 'request', defaultSessionMachineId: 'unenrolled-cli-machine' };
+    const origin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: 'session', context });
+    const request = ApprovalRequestV2Schema.parse({ ...requestFor(actionId, input, surface), executionOriginV1: origin });
+    expect(request.executionOriginV1.machineId).toBeUndefined();
+    expect(request.executionOriginV1.target).toBeUndefined();
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'session' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(request))))
+      .toEqual({ kind: 'app', placement: 'session' });
+
+    const target = { kind: 'machine' as const, machineId: 'captured-machine' };
+    const exactOrigin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: 'session',
+      context: { ...context, defaultSessionMachineId: target.machineId, externalActionTarget: target } });
+    const exact = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: exactOrigin });
+    const signedOrigin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: 'session',
+      context: { ...context, defaultSessionMachineId: target.machineId, externalActionTarget: target, signExternalActionApprovalInput: () => 'a'.repeat(86),
+        externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding: {
+          accountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 },
+          serverIdentityId: 'stable-home', machineId: target.machineId, custodianAccountId: 'host',
+          installationId: 'installation', actionId, requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43), target,
+        } } } });
+    const signed = ApprovalRequestV2Schema.parse({ ...request, requestedSurface: signedOrigin?.surface,
+      executionOriginV1: signedOrigin });
+    const session = ApprovalRequestV2Schema.parse({ ...exact, requestedSurface: 'agent', executionOriginV1: { ...exact.executionOriginV1,
+      surface: 'agent', caller: { kind: 'session', sessionId: 'requester-session', starterDepth: 0, turnDepth: 0 } } });
+    for (const retained of [exact, signed, session]) {
+      expect(resolveApprovalExecutor(retained)).toEqual({ kind: 'daemon', machineId: target.machineId, sessionId: 'session' });
+      expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(retained))))
+        .toEqual({ kind: 'daemon', machineId: target.machineId, sessionId: 'session' });
+    }
+  });
+
   it.each([
     { caller: { kind: 'host' }, placement: 'account' },
     { caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 }, placement: 'client' },

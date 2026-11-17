@@ -20,6 +20,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '../externalActionE
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { MachineServiceLogsReadInputV1Schema } from '../../local/services/nativeLogsV1.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
+import { isDaemonIndependentSessionRead } from '../originalExecution.js';
 
 /** A signed reviewer may use the same Account reads as the local deciding person. */
 export function isPresentUserApprovalDecisionForOrigin(input: Readonly<{
@@ -278,7 +279,11 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   const originalAccountStop = isLocalServiceStopActionIdV1(params.actionId)
     && !externalAuthorization && !externalCredential && caller.kind === 'host'
     && (surface === 'cli' || surface === 'mcp' || surface === 'ui');
-  const machineId = originalAccountStop ? '' : settingsTarget?.kind === 'daemon'
+  // The CLI's local identity supplies context, not a daemon invocation for a Home read.
+  const originalHomeSessionRead = isDaemonIndependentSessionRead(getActionSpec(params.actionId))
+    && !externalAuthorization && !externalCredential && !externalTarget && caller.kind === 'host'
+    && (surface === 'cli' || surface === 'mcp');
+  const machineId = originalAccountStop || originalHomeSessionRead ? '' : settingsTarget?.kind === 'daemon'
     ? settingsTarget.machineId
     : settingsTarget?.kind === 'account' && !externalAuthorization && caller.kind === 'host'
       && externalTarget?.kind !== 'machine'

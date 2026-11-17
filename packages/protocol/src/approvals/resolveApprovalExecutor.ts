@@ -11,6 +11,7 @@ import { isDeploymentEnvironmentUpdateNativeAdmissionV1, projectDeploymentNative
 import { isPresentUserHostInvocation } from '../actions/invocationAuthority.js';
 import type { ActionExecutionPlacement } from '../actions/metadata.js';
 import { isLocalServiceStopActionIdV1 } from '../actions/actionIds.js';
+import { isDaemonIndependentSessionRead } from '../actions/originalExecution.js';
 
 export type ApprovalExecutor =
   | Readonly<{ kind: 'app'; placement: ActionExecutionPlacement }>
@@ -115,6 +116,13 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   const machineId = origin.machineId?.trim()
     || (origin.target?.kind === 'machine' ? origin.target.machineId.trim() : '');
   if (!machineId) {
+    // A standalone Home read retains Session authority, but has no daemon
+    // invocation to resume. The deciding app performs its ordinary admitted read.
+    if (isDaemonIndependentSessionRead(spec) && origin.caller.kind === 'host'
+      && (origin.surface === 'cli' || origin.surface === 'mcp')
+      && !origin.externalActionExecutionAuthorization && !origin.principalId && !origin.credentialId) {
+      return { kind: 'app', placement };
+    }
     // A direct UI Ask has no originating daemon. Resume its built-in app
     // adapter; the reviewed operands still select the Machine/Session effect.
     // Signed, automated and retained invocations keep their existing custody.
