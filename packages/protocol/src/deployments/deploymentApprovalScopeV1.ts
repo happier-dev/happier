@@ -5,6 +5,7 @@ import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV
 import { readRecord } from '../inputs/inputRecords.js';
 import { isDatabaseActionIdV1 } from '../actions/actionIdsDatabaseV1.js';
 import { DatabaseTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
+import type { DatabaseAgentLevelV1 } from './deploymentEnvironmentDeployerV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentActionFailureV1Schema } from './deploymentActionsV1.js';
@@ -120,6 +121,33 @@ export function createDeploymentApprovalScopeResolverV1(
       || actionId === 'deployments.environments.create')
       && environment.projectSourceId !== target.projectSourceId) return failure('deployment_access_denied');
     return readDeploymentEnvironmentApprovalScopeV1(environment);
+  };
+}
+
+type DatabaseTargetV1 = z.infer<typeof DatabaseTargetV1Schema>;
+export type DatabaseMachineLocalTargetV1 = Extract<DatabaseTargetV1, Readonly<{ kind: 'worktree' | 'manual' }>>;
+
+function readMachineLocalDatabaseTarget(actionId: string, input: unknown): DatabaseMachineLocalTargetV1 | null {
+  if (!isDatabaseActionIdV1(actionId)) return null;
+  const target = DatabaseTargetV1Schema.safeParse(readRecord(input).target);
+  return target.success && (target.data.kind === 'worktree' || target.data.kind === 'manual') ? target.data : null;
+}
+
+/**
+ * The executing Machine's approval scope (F10, D13). A Machine-local database keeps its agent level in that
+ * Machine's database plugin, so the daemon reads it there and hands it to the applier as the same Action-time
+ * target input an Environment supplies; every other Action keeps its Environment owner. A refused read
+ * supplies no level, and the access decider then refuses the operation itself.
+ */
+export function withMachineLocalDatabaseAgentLevelV1(
+  resolveEnvironment: NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']>,
+  readLevel: (target: DatabaseMachineLocalTargetV1, context: ActionExecutorContext) => Promise<DatabaseAgentLevelV1 | undefined>,
+): NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']> {
+  return async args => {
+    const target = readMachineLocalDatabaseTarget(args.actionId, args.input);
+    if (!target) return await resolveEnvironment(args);
+    const level = await readLevel(target, args.context);
+    return level ? { scope: null, targetApproval: { databaseAgentLevel: level } } : { scope: null };
   };
 }
 

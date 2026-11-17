@@ -32,9 +32,9 @@ function accessFacts(requester: Request['requester'], agentAccess: DatabaseAgent
     // Whoever runs the worktree may write it (P3); the agent level is this Machine's stored choice.
     return { person: { mayWrite: true, editingOff: false }, agentAccess, requester };
 }
-/** P3 A1: a worktree database starts at Read & write (asks first) once Machine-local levels reach the
- * approval applier, and at Read until then (DatabaseAgentAccessV1 is none/read). Its owner changes it. */
-const DEFAULT_WORKTREE_AGENT_ACCESS: DatabaseAgentAccessV1 = 'read';
+/** P3 A1: a worktree database starts at Read & write (asks first); the executing daemon hands this level to
+ * the approval applier (F10), so agent writes ask even over the person's Allow. Its owner changes it. */
+const DEFAULT_WORKTREE_AGENT_ACCESS: DatabaseAgentAccessV1 = 'readWriteAsk';
 const levelKey = (target: DatabaseWorktreeTargetV1) => `worktree-access/v1/${encodeURIComponent(createCanonicalJsonSigningInput(target))}`;
 function levelStore(request: Request): LevelStore {
     if (!request.storage) throw new PluginError({ code: 'plugin_service_unavailable' });

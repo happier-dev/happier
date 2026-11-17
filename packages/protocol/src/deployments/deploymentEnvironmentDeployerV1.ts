@@ -16,9 +16,9 @@ export type DeploymentEnvironmentDataEditorModeV1 = z.infer<typeof DeploymentEnv
  * stores it; `@happier-dev/database-protocol` re-exports it for every other database consumer. */
 export const DatabaseAgentLevelV1Schema = lazyZodSchema(() => z.enum(['none', 'read', 'readWriteAsk', 'readWriteNoApproval']));
 export type DatabaseAgentLevelV1 = z.infer<typeof DatabaseAgentLevelV1Schema>;
-/** Machine-local (manual/worktree) database levels: none and read until their level reaches the approval
- * applier the way an Environment's does (P3 U3 residual). */
-export const DatabaseAgentAccessV1Schema = lazyZodSchema(() => z.enum(['none', 'read'] satisfies readonly DatabaseAgentLevelV1[]));
+/** Machine-local (manual/worktree) database levels. The executing daemon hands the stored level to the approval
+ * applier through `withMachineLocalDatabaseAgentLevelV1`, as an Environment's is, so all four D13 levels apply. */
+export const DatabaseAgentAccessV1Schema = DatabaseAgentLevelV1Schema;
 export type DatabaseAgentAccessV1 = z.infer<typeof DatabaseAgentAccessV1Schema>;
 
 /** One stable identity per principal, shared by uniqueness, deltas and the admission matcher. */

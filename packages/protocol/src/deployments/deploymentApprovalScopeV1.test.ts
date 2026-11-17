@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentApprovalScopeResolverV1, readDeploymentEnvironmentApprovalScopeV1, resolveInitialDeploymentApprovalV1 } from './deploymentApprovalScopeV1.js';
+import { createDeploymentApprovalScopeResolverV1, readDeploymentEnvironmentApprovalScopeV1, resolveInitialDeploymentApprovalV1,
+  withMachineLocalDatabaseAgentLevelV1 } from './deploymentApprovalScopeV1.js';
 import { DeploymentEnvironmentHeaderV1Schema } from './deploymentActionsV1.js';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '../actions/actionSettings.js';
 import { resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
@@ -14,7 +15,7 @@ function environment(id: string, preview = false) {
     ...(preview ? { previewTemplateEnvironmentId: 'template', previewRepositoryId: 'source',
       previewPullRequestId: id, previewTargetLinkId: 'template-runtime' } : {}),
     contentArtifactId: `${id}-content`, contentHeaderVersion: 1, contentBodyVersion: 1,
-    capabilities: { role: 'manager', read: true, deploy: true, manage: true,
+    capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true,
       manageBindings: true, manageTargets: true, delete: true },
     createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
   });
@@ -144,5 +145,45 @@ describe('database Action approval scope (P3 U3)', () => {
       environment: { ...environment('staging'), projectSourceId: 'other' }, targetLinks: [] }));
     expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: deploymentTarget },
       context: {}, phase: 'prepare' })).toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
+  });
+});
+
+describe('Machine-local database agent level at the approval scope (F10, D13)', () => {
+  const editsApply = 'happier.database/actions/edits/apply';
+  const workspace = { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' };
+  const worktreeTarget = { kind: 'worktree', accountId: 'owner', installationId: 'installation', projectKey: 'project', workspace,
+    source: { kind: 'service', serviceId: 'db', variable: 'DATABASE_URL' } };
+  const deploymentTarget = { kind: 'deployment_service', environment: { serverId: 'home', environmentId: 'staging',
+    projectSourceId: 'source' }, deploymentId: 'deployment', targetLinkId: 'staging-runtime', serviceId: 'db', database: 'app' };
+  const agent = { surface: 'agent' as const, authority: 'account_automation' as const };
+  const allow = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'action.invoke': ['agent'] } });
+
+  it('carries the stored worktree level to the applier without an Environment read, so asks-first is a floor', async () => {
+    const levels: unknown[] = [];
+    let hostReads = 0;
+    // The level read crosses into the Machine's database plugin; the composition stays real.
+    const resolve = withMachineLocalDatabaseAgentLevelV1(async () => { hostReads++; throw new Error('No Environment read expected'); },
+      async target => { levels.push(target); return 'readWriteAsk'; });
+    const admitted = await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: worktreeTarget }, context: agent, phase: 'prepare' });
+    expect(admitted).toEqual({ scope: null, targetApproval: { databaseAgentLevel: 'readWriteAsk' } });
+    expect(levels).toEqual([worktreeTarget]);
+    expect(hostReads).toBe(0);
+    if ('ok' in admitted) throw new Error('expected an admission');
+    // Known-good control: the person's Allow alone removes the Ask for this agent.
+    expect(resolveActionApprovalRouting({ actionId: 'action.invoke', spec: getActionSpec('action.invoke'), settings: allow, context: agent }))
+      .toMatchObject({ required: false });
+    expect(resolveActionApprovalRouting({ actionId: 'action.invoke', spec: getActionSpec('action.invoke'), settings: allow, context: agent,
+      targetApproval: admitted.targetApproval })).toMatchObject({ required: true });
+  });
+
+  it('supplies no level when the Machine refuses the read, and leaves deployment targets to the Environment owner', async () => {
+    let hostReads = 0;
+    const resolve = withMachineLocalDatabaseAgentLevelV1(async () => { hostReads++; return { scope: null }; }, async () => undefined);
+    expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: worktreeTarget }, context: agent, phase: 'prepare' }))
+      .toEqual({ scope: null });
+    expect(hostReads).toBe(0);
+    await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: deploymentTarget }, context: agent, phase: 'prepare' });
+    await resolve({ actionId: 'deployments.deploy', input: { serverId: 'home', environmentId: 'staging' }, context: agent, phase: 'prepare' });
+    expect(hostReads).toBe(2);
   });
 });

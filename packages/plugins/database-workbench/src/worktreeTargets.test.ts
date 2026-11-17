@@ -117,7 +117,7 @@ it('resolves the discovered service original into a native operation and withdra
     }
 });
 
-it('stores the worktree database agent level on this Machine: Read by default, set by its owner', async () => {
+it('stores the worktree database agent level on this Machine: Read & write (asks first) by default, set by its owner', async () => {
     // The daemon KV is the persistent boundary; a Map keeps its get/set contract.
     const values = new Map<string, unknown>();
     const kv: StorageScopeService = {
@@ -143,7 +143,9 @@ it('stores the worktree database agent level on this Machine: Read by default, s
             const read = (who: typeof identity) => kit.invokeAction(databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1), { target }, who);
             const set = (agentAccess: string, who: typeof identity = identity) =>
                 kit.invokeAction(databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1), { target, agentAccess }, who);
-            expect(await read(agent)).toEqual({ setBy: 'machine', agentAccess: 'read', access: { canRead: true, canWrite: false, reason: 'database_agent_access_read_only' } });
+            expect(await read(agent)).toEqual({ setBy: 'machine', agentAccess: 'readWriteAsk', access: { canRead: true, canWrite: true } });
+            expect(await set('readWriteNoApproval')).toEqual({ ok: true, agentAccess: 'readWriteNoApproval' });
+            expect(await read(agent)).toMatchObject({ agentAccess: 'readWriteNoApproval' });
             expect(await set('none')).toEqual({ ok: true, agentAccess: 'none' });
             expect(await read(identity)).toMatchObject({ setBy: 'machine', agentAccess: 'none' });
             await expect(kit.invokeAction(databaseActionLocalIdV1(DATABASE_DESCRIBE_ACTION_ID_V1), { operation: 'describe', target }, agent))
