@@ -75,6 +75,9 @@ import { createCliProjectAdmission } from './cliActionDeps/projectAdmission';
 import { createCliMachineActionDeps } from './cliActionDeps/machine';
 import { createCliSettingsActionDeps } from './cliActionDeps/settings';
 import { createCliMessageActionDeps } from '@/session/services/cliMessageActionDeps';
+import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
+import { UserMessageSchema } from '@/api/types';
+import { buildApprovalDecisionResult } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { createCliArtifactsActionDeps } from './cliActionDeps/artifacts';
 import { createCliBotTemplateActionDeps } from './cliActionDeps/botTemplates';
 import { createCliMachineInventoryActionDeps } from './cliActionDeps/machineInventory';
@@ -196,7 +199,7 @@ import type { resolveSessionCreationAgentTarget } from '@/session/creation/resol
 
 
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { readSessionOwnerLocality } from '@/session/transport/encryption/sessionEncryptionContext';
+import { openSessionMessageContent, readSessionOwnerLocality } from '@/session/transport/encryption/sessionEncryptionContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
@@ -1688,6 +1691,34 @@ export function createCliActionDeps(params: CliActionDepsParams,
     sessionContinuationInspect,
     sessionAgentTransition,
     ...messageActionDeps,
+    approvalRequestOutcomePublication: async ({ artifactId, request, context }) => {
+      const origin = request.executionOriginV1;
+      if (!params.credentials || origin.caller.kind !== 'session') return null;
+      const transport = await resolveTransportForSession(origin.caller.sessionId, context.signal);
+      if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code };
+      const retained = await findTranscriptEncryptedMessageByLocalIdV2({
+        token: params.credentials.token, serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+        sessionId: transport.sessionId, localId: `approval-result:${artifactId}`,
+        ...(context.signal ? { signal: context.signal } : {}),
+      });
+      if (retained.type === 'not_found') return null;
+      if (retained.type !== 'found') throw retained.error;
+      // The canonical retained input already reached the origin Session. Its
+      // materialized authority envelope is not the original admission request:
+      // re-authoring it can change its retry identity after the runtime stops.
+      const stored = UserMessageSchema.safeParse(openSessionMessageContent({
+        content: retained.message.content,
+        ...(transport.mode === 'plain' ? { mode: 'plain', ctx: null } as const
+          : { mode: 'e2ee', ctx: transport.ctx } as const),
+      }));
+      const observed = buildApprovalDecisionResult(request);
+      if (!observed.ok) return observed;
+      const message = JSON.stringify({ artifactId, actionId: request.actionId, ...readRecord(observed.result) });
+      if (!stored.success || stored.data.content.type !== 'text' || stored.data.content.text !== message) {
+        return { ok: false, errorCode: 'session_input_idempotency_conflict', error: 'session_input_idempotency_conflict' };
+      }
+      return observed;
+    },
     sessionExchangePrepare,
     sessionExchangeControl,
     sessionTurnCancel,

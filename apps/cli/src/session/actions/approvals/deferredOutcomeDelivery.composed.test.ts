@@ -5,7 +5,7 @@ import { AccountSettingsSchema, ApprovalRequestV2Schema, FeaturesResponseSchema 
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildTrustedHostSessionInputAdmissionV1, readSessionInputRequestV1, settleSessionInputRequestV1, withSessionInputAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -24,12 +24,15 @@ import { createCliActionExecutorFromCredentials } from '../createCliActionExecut
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { encryptWithDataKey } from '@/api/encryption';
+import { encryptSessionPayload, openSessionMessageContent, sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 // #117 retained a requester cause on each deferred agent approval. That makes
 // its host-produced result protected input even for a plain Account.
-it.each([
+it.each(([
   { actionId: 'deployments.environments.create', actionArgs: { requestKey: 'create', contentArtifactId: 'definition',
     contentHeaderVersion: 1, contentBodyVersion: 1, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.templates.instantiate', actionArgs: { mode: 'apply', machineId: 'machine',
@@ -38,10 +41,11 @@ it.each([
     expectedRevision: 2, requestKey: 'domain', content: { hostname: 'app.invalid', target: { service: 'web', containerPort: 80 } } }, failed: true, restrictedCredential: false },
   { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, standaloneCredential: 'terminal' },
   { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, standaloneCredential: 'account' },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, encryptionMode: 'e2ee' },
   { actionId: 'deployments.teardown', actionArgs: { environmentId: 'environment', requestKey: 'teardown', removeEnvironment: true }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.environments.create', actionArgs: { requestKey: 'restricted-create', contentArtifactId: 'definition',
     contentHeaderVersion: 1, contentBodyVersion: 1 }, failed: false, restrictedCredential: true },
-] as const)('settles $actionId delivery with its own credential custody ($restrictedCredential)', async scenario => {
+] as const).map(scenario => ({ encryptionMode: 'plain' as const, ...scenario })))('settles $actionId delivery with its own credential custody ($encryptionMode, $restrictedCredential)', async scenario => {
   await withConfiguredDaemonTestHome({ prefix: 'approval-result-delivery-', env: {
     HAPPIER_SERVER_URL: 'https://approval-home.test', HAPPIER_WEBAPP_URL: 'https://approval-home.test',
     HAPPIER_TOKEN: undefined, HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined,
@@ -50,10 +54,16 @@ it.each([
   const { actionId, actionArgs, failed } = scenario;
   const authenticationKind = 'standaloneCredential' in scenario ? scenario.standaloneCredential : 'account' as const;
   const canRelay = !scenario.restrictedCredential;
+  const mode = scenario.encryptionMode;
   const accountId = 'owner', serverId = configuration.activeServerId, machineId = 'machine', sessionId = 'cmv3approvaldeliveryaaaa';
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
     provenance: { v: 1, kind: authenticationKind, authority: authenticationKind === 'terminal' ? 'account_automation' : 'present_user' } })).toString('base64url')}.signature`;
-  const credentials = { token, encryption: null, credentialProvenance: canRelay ? 'stored_session' as const : 'api_token' as const };
+  const secret = new Uint8Array(32).fill(23);
+  const credentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret }, credentialProvenance: canRelay ? 'stored_session' as const : 'api_token' as const };
+  const sessionCrypto = mode === 'plain' ? { mode, ctx: null } as const
+    : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } } as const;
+  let sessionActive = true;
+  let retainedContent: ReturnType<typeof SessionMessageContentSchema.parse> | undefined;
   const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
   const currentness = await createRequesterCurrentnessSocketHarness();
   onTestFinished(() => currentness.close());
@@ -64,8 +74,8 @@ it.each([
       storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
-    if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
-    if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode }) };
+    if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 1 } };
     if (url.endsWith('/v1/account/settings') || url.endsWith('/v2/account/settings')) return { status: 200,
       data: { version: 1, content: { t: 'plain', v: AccountSettingsSchema.parse({}) } } };
     if (url.endsWith(`/v1/machines/${machineId}`)) return { status: 200, data: { machine: {
@@ -75,12 +85,22 @@ it.each([
         resourceMode: 'plain', accessState: 'ready' },
     } } };
     if (url.endsWith('/v1/artifacts/approval')) return { status: 200, data: artifact };
+    if (url.endsWith(`/messages/by-local-id/${encodeURIComponent('approval-result:approval')}`)) {
+      if (!retainedContent) throw Object.assign(new axios.AxiosError('Message not found'), {
+        response: { status: 404, data: { error: 'Message not found' } },
+      });
+      return { status: 200, data: { message: { id: 'delivered-outcome', seq: 1, localId: 'approval-result:approval',
+        content: retainedContent, createdAt: 2, updatedAt: 2 } } };
+    }
     if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
-      id: sessionId, active: true, encryptionMode: 'plain', machineId, metadata: JSON.stringify({ machineId }) }) } };
+      id: sessionId, active: sessionActive, encryptionMode: mode, machineId,
+      metadata: sessionCrypto.mode === 'plain' ? JSON.stringify({ machineId })
+        : encryptSessionPayload({ ctx: sessionCrypto.ctx, payload: { machineId } }) }) } };
     throw new Error(`Unexpected HTTP path: ${new URL(url).pathname}`);
   });
   const delivered = new Set<string>();
   const admittedInputs: unknown[] = [];
+  let machineAdmissionRequests = 0;
   const transportFailures: unknown[] = [];
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
     try {
@@ -138,27 +158,36 @@ it.each([
       sessionId, machineId, caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
       actionId, requestId: 'original', actionRequestAttributionV1: {
         requestRef: 'original-person-input', requester: { serverId, accountId }, persona: { serverId, sessionId }, origin: null } } });
-  const artifact = { id: 'approval', ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
-    dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(stored)),
-    body: encodePlainArtifactStoredContent({ body: JSON.stringify(stored) }),
+  const resource = await createResourceDataKey({ credentials, mode });
+  const sealArtifact = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+    : encodeBase64(encryptWithDataKey(value, resource.dataKey));
+  const artifact = { id: 'approval', ownerAccountId: accountId, access: 'owner', encryptionMode: mode, publicAudience: 'none',
+    dataEncryptionKey: resource.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    header: sealArtifact(buildApprovalRequestArtifactHeaderV1(stored)),
+    body: sealArtifact({ body: JSON.stringify(stored) }),
     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2 };
-  const deps = createCliActionDeps({ credentials, token, mode: 'plain', ctx: null, sessionId: '', serverId,
+  const deps = createCliActionDeps({ credentials, token, ...sessionCrypto, sessionId: '', serverId,
     serverIdentityId: serverId, serverHttpBaseUrl: 'https://approval-home.test' });
   const verifyExecutionAuthorization: VerifyExternalActionExecutionAuthorization = input =>
     verifyExternalActionExecutionAuthorizationCurrent({ ...input, privateKey: installation.secretKey,
       installationId: 'installation', serverHttpBaseUrl: 'https://approval-home.test' });
-  const receiver = createActionExecutor(createCliActionDeps({ credentials, token, mode: 'plain', ctx: null,
+  const receiver = createActionExecutor(createCliActionDeps({ credentials, token, ...sessionCrypto,
     sessionId: '', serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'https://approval-home.test',
     externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: installation.secretKey,
     machineAdmissionTransport: async request => {
+      machineAdmissionRequests++;
       const content = SessionMessageContentSchema.parse(request.content);
-      if (content.t !== 'plain') throw new Error('Expected plain outcome');
-      const authored = UserMessageSchema.parse(content.v);
+      const authored = UserMessageSchema.parse(openSessionMessageContent({ ...sessionCrypto, content }));
       expect(request).toMatchObject({ sessionId, localId: 'approval-result:approval', requestedAction: { v: 1, kind: 'enqueue' } });
       if (authored.content.type !== 'text') throw new Error('Expected outcome text');
       expect(JSON.parse(authored.content.text)).toMatchObject({ actionId, status: failed ? 'failed' : 'executed' });
       admittedInputs.push(authored);
+      const originalRequest = readSessionInputRequestV1(authored.meta);
+      if (!originalRequest) throw new Error('Expected protected outcome input');
+      const authority = settleSessionInputRequestV1({ request: originalRequest,
+        currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' } });
+      retainedContent = sealSessionStoredContent({ ...sessionCrypto, payload: { ...authored,
+        meta: { ...withSessionInputAuthorityV1(authored.meta, authority), happierProvenanceV1: authored.meta?.happierProvenanceV1 } } });
       delivered.add(request.localId);
       return { status: 'accepted', localId: request.localId };
     },
@@ -182,13 +211,14 @@ it.each([
     ? createCliActionExecutorFromCredentials({ credentials, serverId, serverIdentityId: serverId,
       serverApiUrl: 'https://approval-home.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: AccountSettingsSchema.parse({}) }) })
-    : createActionExecutor(deps);
+    : mode === 'e2ee' ? receiver : createActionExecutor(deps);
   if (canRelay) {
     // The hosting origin has its authenticated Machine transport. Settle its
     // already-recorded outcome before the standalone deciding CLI rejoins it.
     expect(await receiver.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
     })).toMatchObject({ ok: true, result: { status } });
+    sessionActive = false;
   }
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = await executor.execute('approval.request.decide', {
@@ -200,6 +230,7 @@ it.each([
       : { ok: false, errorCode: 'session_input_target_unavailable' });
   }
   expect([...delivered]).toEqual(canRelay ? ['approval-result:approval'] : []);
+  expect(machineAdmissionRequests).toBe(canRelay ? 1 : 0);
   if ('standaloneCredential' in scenario) {
     // Each standalone rejoin reaches the same origin publisher, regardless of
     // principal, instead of minting another attributed input at the CLI.
@@ -213,7 +244,24 @@ it.each([
     expect(admittedInputs[0]).toMatchObject({ meta: {
       happierProvenanceV1: originalInput.provenance, happierInputRequestV1: originalInput.request,
     } });
-    expect(admittedInputs).toEqual([admittedInputs[0], admittedInputs[0], admittedInputs[0]]);
+    expect(admittedInputs).toEqual([admittedInputs[0]]);
+  }
+  if (mode === 'e2ee') {
+    const originalInput = UserMessageSchema.parse(admittedInputs[0]);
+    // A matching localId is insufficient when the retained result differs.
+    retainedContent = sealSessionStoredContent({ ...sessionCrypto, payload: {
+      ...originalInput, content: { type: 'text', text: 'different outcome' },
+    } });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+      surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
+    })).toMatchObject({ ok: false, errorCode: 'session_input_idempotency_conflict' });
+    // Never reinterpret a plain envelope as the E2EE Session's retained input.
+    retainedContent = { t: 'plain', v: originalInput };
+    expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+      surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
+    })).toMatchObject({ ok: false });
+    expect(admittedInputs).toEqual([originalInput]);
+    expect(machineAdmissionRequests).toBe(1);
   }
   });
 });
