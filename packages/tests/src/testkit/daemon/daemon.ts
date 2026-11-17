@@ -311,7 +311,6 @@ function looksLikeDaemonCommand(command: string): boolean {
     normalized.includes('dist/index.js') ||
     normalized.includes('happier') && normalized.includes('daemon start-sync') && normalized.includes('dist/index');
   const hasCliSourceSnapshotEntrypoint =
-    normalized.includes('tsx') &&
     normalized.includes('src/index.ts') &&
     (
       normalized.includes('apps/cli') ||

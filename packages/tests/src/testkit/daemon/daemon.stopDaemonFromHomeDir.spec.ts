@@ -79,7 +79,7 @@ describe('stopDaemonFromHomeDir', () => {
     }
   });
 
-  it('hard-kills a source-snapshot daemon when ps reports a tsx entrypoint command', async () => {
+  it.each(['tsx', 'node'] as const)('hard-kills a source-snapshot daemon when ps reports a %s entrypoint command', async (runner) => {
     if (process.platform === 'win32') {
       return;
     }
@@ -97,11 +97,12 @@ describe('stopDaemonFromHomeDir', () => {
         "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);",
         'utf8',
       );
-      await writeFile(sourceEntrypointPath, '// snapshot entrypoint placeholder\n', 'utf8');
+      await writeFile(sourceEntrypointPath,
+        "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);\n", 'utf8');
 
       const daemon = spawnTestProcess(process.execPath, [
         '--preserve-symlinks',
-        fakeTsxCliPath,
+        ...(runner === 'tsx' ? [fakeTsxCliPath] : []),
         sourceEntrypointPath,
         'daemon',
         'start-sync',
