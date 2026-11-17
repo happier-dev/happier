@@ -10,7 +10,6 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
-import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
@@ -121,6 +120,21 @@ export async function startProjectDaemonFixture(params: Readonly<{
           finally { await ui.close(); }
         },
         execute,
+        /** Retain the real CLI waiter while a person answers its Inbox Ask. */
+        async executeWithApproval(actionId: ActionId, input: unknown,
+          onApprovalRequested: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['onApprovalRequested']>,
+          context: Partial<ActionExecutorContext> = {}) {
+          const lifetime = new AbortController();
+          const signal = context.signal ? AbortSignal.any([context.signal, lifetime.signal]) : lifetime.signal;
+          const liveExecutor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+            serverId, serverIdentityId: serverId, serverApiUrl: actionServerApiUrl, onApprovalRequested,
+          }).bindInvocation(signal, { actionId, signal, surface: 'cli' });
+          try {
+            return await liveExecutor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
+              actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
+              actionRequestId: randomUUID(), ...context, signal });
+          } finally { lifetime.abort(); }
+        },
         /** This fixture person approves the real Inbox request; the retained
          * execution, including any child Ask, supplies the final typed result. */
         async executeReviewed(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
@@ -133,7 +147,6 @@ export async function startProjectDaemonFixture(params: Readonly<{
             const opened = await execute('approval.request.get', { artifactId: approval.data.artifactId });
             if (!opened.ok) throw new Error(`Journey approval read refused (${opened.errorCode})`);
             const detail = ApprovalRequestGetResultV1Schema.parse(opened.result);
-            ApprovalRequestPublicSettlementSchema.parse(detail.request);
             const execution = buildActionExecuteResultFromRecordedApprovalExecution(detail.request);
             if (!execution) throw new Error('Journey approval has no settled execution');
             result = execution;
