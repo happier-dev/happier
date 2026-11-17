@@ -385,6 +385,9 @@ async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'lig
         localSettings: { uiFontScale: number }; applyLocalSettings(input: { uiFontScale?: number; themePreference?: 'light' | 'dark' }): void;
     } } };
     const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+    // Expo's native HTTP adapter needs the device runtime. Node fetch preserves
+    // the real Home transport while substituting only that OS boundary.
+    if (platform === 'ios') vi.doMock('expo/fetch', () => ({ fetch: globalThis.fetch.bind(globalThis) }));
     Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
     // Unistyles is the native system boundary. Keep its registered values as
     // real update callbacks produce them, rather than the default inert mock.
@@ -407,6 +410,7 @@ async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'lig
         updates.mockRestore();
         reads.mockRestore();
         systemBackground.mockRestore();
+        if (platform === 'ios') vi.doUnmock('expo/fetch');
         if (descriptor) Object.defineProperty(Platform, 'OS', descriptor);
         throw error;
     }
@@ -423,6 +427,7 @@ async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'lig
                 updates.mockRestore();
                 reads.mockRestore();
                 systemBackground.mockRestore();
+                if (platform === 'ios') vi.doUnmock('expo/fetch');
                 if (descriptor) Object.defineProperty(Platform, 'OS', descriptor);
             }
         },
