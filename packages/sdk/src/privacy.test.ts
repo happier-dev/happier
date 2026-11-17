@@ -936,15 +936,17 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
   });
 
   it('preserves the target refusal phase without retrying a protected Action', async () => {
+    const failureCause = { phase: 'controller.context', errorClass: 'ManagedMachineControllerError',
+      errorCode: 'controller_unavailable', httpStatus: 503 };
     const server = await serve({ invoke: (invocation, response) => server.send(response, {
       error: 'invalid_request', code: 'target_not_local',
-      requestId: invocation.binding.requestId, phase: 'target_installation',
+      requestId: invocation.binding.requestId, phase: 'target_installation', failureCause,
     }, 409) });
     const client = connect({ endpoint: server.endpoint, token });
     try {
       await expect(client.machine('machine-1').sessions.get('session-1').send('private-input-sentinel'))
         .rejects.toMatchObject({ code: 'target_not_local', status: 409,
-          details: { phase: 'target_installation' } });
+          details: { phase: 'target_installation' }, failureCause });
       expect(server.captured.filter((call) => call.path === '/v1/actions/session.message.send')).toHaveLength(1);
     } finally { await client.close(); await server.close(); }
   });
@@ -954,11 +956,13 @@ describe('SDK protected invocation lifecycle through real HTTP', () => {
       error: 'invalid_request',
       code: 'target_unavailable',
       requestId: 'different-request',
+      failureCause: { phase: 'controller.context', errorClass: 'ManagedMachineControllerError',
+        errorCode: 'controller_unavailable', httpStatus: 503 },
     }, 409) });
     const client = connect({ endpoint: server.endpoint, token });
     try {
       await expect(client.machine('machine-1').sessions.get('session-1').send('input-sentinel'))
-        .rejects.toMatchObject({ code: undefined, status: 409, details: undefined });
+        .rejects.toMatchObject({ code: undefined, status: 409, details: undefined, failureCause: undefined });
       expect(server.captured.map((call) => call.path)).toEqual([
         '/v1/machines',
         '/v1/auth/api-tokens/encryption-access',

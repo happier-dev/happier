@@ -262,6 +262,8 @@ successful response whose result does not satisfy that Action's declared output
 schema is the same kind of failure: the SDK rejects with `code`
 `invalid_action_output` rather than presenting an unchecked value as the typed
 result.
+When Home supplies a validated Action `failureCause`, the transport error
+retains it so callers can report the original phase and typed cause.
 
 When policy defers an Action for user approval, raw and generated Action methods
 resolve with the canonical admitted result

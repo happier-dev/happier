@@ -1197,6 +1197,11 @@ establish equal profile readers.
 
 The current daemon pre-open failure carrier optionally retains the existing
 sanitized Action `failureCause` through direct HTTP and Home relay responses.
+The SDK preserves this already-validated optional diagnostic on
+`HappierTransportError.failureCause`, so CLI failure projection retains the
+original phase and typed cause. Protected responses still require the closed
+Protocol error shape and matching request correlation; arbitrary response
+content is not promoted into the diagnostic. Older producers may omit it.
 Profile parsing reports `internal_error` with phase `requester.profile`; an
 actual validated HTTP 426 retains its `client-upgrade-required` cause. Older
 producers may omit this diagnostic. Older strict development relay readers need

@@ -1,6 +1,6 @@
 import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { z } from 'zod/mini';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES_V2, ExternalActionHttpErrorSchema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema, parseExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -191,7 +191,7 @@ function projectTransportError(
   body: unknown,
   mode: 'ordinary' | 'credential_bootstrap' | 'protected_action',
   expectedRequestId?: string,
-): Readonly<{ code?: string; details?: unknown }> {
+): Readonly<{ code?: string; details?: unknown; failureCause?: ActionFailureCauseV1 }> {
   if (mode === 'credential_bootstrap') {
     const apiTokenError = AccountApiTokensServerErrorV1Schema.safeParse(body);
     return apiTokenError.success ? { code: apiTokenError.data.error } : {};
@@ -206,6 +206,9 @@ function projectTransportError(
       : externalActionError.data.error;
     return {
       code,
+      ...('failureCause' in externalActionError.data && externalActionError.data.failureCause !== undefined
+        ? { failureCause: externalActionError.data.failureCause }
+        : {}),
       ...('phase' in externalActionError.data && externalActionError.data.phase !== undefined
         ? { details: { phase: externalActionError.data.phase } }
         : 'diagnostic' in externalActionError.data
@@ -611,6 +614,7 @@ function createClient(
         `The Happier API returned HTTP ${response.statusCode}${code ? ` (${code})` : ''}.`, {
         code,
         status: response.statusCode,
+        failureCause: transportError.failureCause,
         ...(credential.encryption
           ? transportError.details === undefined ? {} : { details: transportError.details }
           : { details: body }),

@@ -334,6 +334,8 @@ describe('Happier SDK client', () => {
       attentionNextCursor: null, attentionHasNext: false };
     let accountBootstrapReads = 0;
     let refused = false;
+    const failureCause = { phase: 'controller.context', errorClass: 'ManagedMachineControllerError',
+      errorCode: 'controller_unavailable', httpStatus: 503 };
     // HTTP is the only replaced boundary; credential, mode selection and Action preparation remain real.
     const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${bearer}`);
@@ -352,7 +354,7 @@ describe('Happier SDK client', () => {
       expect(request.v).toBe(1);
       expect(request).not.toHaveProperty('apiTokenContentAccess');
       expect(request.target).toEqual({ kind: 'machine', machineId: 'alice-machine' });
-      if (refused) return response({ error: 'invalid_request', code: 'target_unavailable' }, 409);
+      if (refused) return response({ error: 'invalid_request', code: 'target_unavailable', failureCause }, 409);
       return responseForRequest(init, { v: 1, actionId: 'session.list', execution: { ok: true, result } });
     });
     vi.stubGlobal('fetch', fetch);
@@ -361,7 +363,7 @@ describe('Happier SDK client', () => {
       await expect(client.machine('alice-machine').actions.session.list({})).resolves.toEqual(result);
       refused = true;
       await expect(client.machine('alice-machine').actions.session.list({})).rejects.toMatchObject({
-        name: 'HappierTransportError', code: 'target_unavailable', status: 409,
+        name: 'HappierTransportError', code: 'target_unavailable', status: 409, failureCause,
         message: 'The Happier API returned HTTP 409 (target_unavailable).',
       });
       expect(accountBootstrapReads).toBe(0);
