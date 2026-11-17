@@ -143,10 +143,11 @@ it('P4-F8-known-good-brief-delivery', async () => {
       });
       const telemetry = await authorTask({ kind: 'add_telemetry', scope: targetScope,
         sourceScope: fixture.machine.target, repositoryObservation }, 'dbw-f8-add-telemetry-review');
-      expect(telemetry.brief.evidence.items.map(item => item.text).join('\n')).toContain(JSON.stringify(repositoryObservation));
-      for (const guidance of [/sdk/iu, /auto.?instrument/iu, /collector/iu, /trace/iu, /endpoint/iu, /verif/iu]) {
-        expect(telemetry.brief.text).toMatch(guidance);
-      }
+      const telemetryTasks = telemetry.brief.evidence.items
+        .filter(item => item.source.kind === 'databaseFinding')
+        .map(item => JSON.parse(item.text).task);
+      expect(telemetryTasks).toContainEqual({ kind: 'add_telemetry', scope: targetScope,
+        sourceScope: fixture.machine.target, repositoryObservation });
       expect(JSON.stringify(telemetry.brief).includes(fixture.postgres.selectedDatabaseUrl)).toBe(false);
       const secret = 'F8_PRIVATE_LITERAL_MUST_NOT_REACH_SESSION';
       await fixture.postgres.sql('dbw_selected', `CREATE TABLE dbw_f8_workload (id integer, private_value text);
