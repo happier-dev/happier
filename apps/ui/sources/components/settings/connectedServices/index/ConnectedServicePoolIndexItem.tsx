@@ -5,6 +5,8 @@ import type { ConnectedServiceQuotaLimitSelectionV1 } from '@happier-dev/protoco
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import { Icon } from '@/components/ui/icons/Icon';
+import { Item } from '@/components/ui/lists/Item';
+import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
@@ -59,26 +61,29 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
     const { usage } = props;
     const card = props.presentation === 'card';
     const meterSize: UsageMeterSize = card ? 'card' : 'default';
+    // A stack of meters is taller than one control: it keeps the row's padding and the row grows around it.
+    const rowPadding = usePageRowMetrics().paddingVerticalPx;
+    const using = props.activeTitle ? (
+        <View style={styles.using}>
+            <View style={[styles.usingRing, { borderColor: theme.colors.text.tertiary }]} />
+            <ConnectedAccountIdentityText
+                value={props.activeSinceMs !== null
+                    ? t('connectedServicesPool.usingSince', { name: props.activeTitle, time: formatAsOfTime(props.activeSinceMs, props.now) })
+                    : t('connectedServicesCollection.poolUsing', { account: props.activeTitle })}
+                style={styles.usingText}
+                numberOfLines={1}
+            />
+        </View>
+    ) : null;
     const identity = (
         <View style={styles.identityText}>
             <Text style={styles.title} numberOfLines={1}>{props.title}</Text>
             <Text style={styles.subtitle} numberOfLines={2}>{props.subtitle}</Text>
-            {props.activeTitle ? (
-                <View style={styles.using}>
-                    <View style={[styles.usingRing, { borderColor: theme.colors.text.tertiary }]} />
-                    <ConnectedAccountIdentityText
-                        value={props.activeSinceMs !== null
-                            ? t('connectedServicesPool.usingSince', { name: props.activeTitle, time: formatAsOfTime(props.activeSinceMs, props.now) })
-                            : t('connectedServicesCollection.poolUsing', { account: props.activeTitle })}
-                        style={styles.usingText}
-                        numberOfLines={1}
-                    />
-                </View>
-            ) : null}
+            {using}
             {props.freshness ? <PoolUsageFreshness freshness={props.freshness} serviceTitle={props.serviceTitle ?? props.title} /> : null}
         </View>
     );
-    const chips = usage ? (
+    const chips = card && usage ? (
         <View style={styles.members}>
             {props.members.map((member) => {
                 const pct = usage.memberByAccountId[member.accountId]?.lowestRemainingPct ?? null;
@@ -90,7 +95,7 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
                     <Text
                         key={member.accountId}
                         testID={`${props.testID}:member:${member.accountId}`}
-                        style={[styles.member, active ? styles.memberActive : null, card ? styles.memberChip : null]}
+                        style={[styles.member, styles.memberChip, active ? styles.memberActive : null]}
                         numberOfLines={1}
                     >
                         <ConnectedAccountIdentityText value={member.title} style={styles.member} />
@@ -111,7 +116,8 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
                     resetsAt={window.resetsAt}
                     tone={resolveQuotaTone(window.remainingPct)}
                     estimated={window.estimated}
-                    resetPrefix="next"
+                    // "next in 10d 22h" outgrows a list row's reset column; the row reads like the account rows above it.
+                    resetPrefix={card ? 'next' : undefined}
                     size={meterSize}
                     now={props.now}
                 />
@@ -122,7 +128,7 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
     ) : null;
     const lead = (
         <View style={styles.lead}>
-            <Icon name="stack" size={card ? 18 : 15} color={theme.colors.text.secondary} />
+            <Icon name="stack" size={18} color={theme.colors.text.secondary} />
         </View>
     );
     if (card) {
@@ -146,34 +152,32 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
             </OpenableSurface>
         );
     }
+    // A list row is one sheet row like the accounts above it (lab `cr` crHome A): the stack mark, the pool and
+    // its rule, who it uses now beneath, and one trailing thing, its limits. The default star and the members'
+    // percentages live on the card and the pool page (R138: no per-row actions).
     return (
-        <OpenableSurface
+        <Item
             testID={props.testID}
-            accessibilityLabel={props.title}
+            title={props.title}
+            subtitle={props.subtitle}
+            icon={<Icon name="stack" size={18} color={theme.colors.text.secondary} />}
+            rightElement={meters ? (
+                <View pointerEvents="none" style={props.compact ? null : [styles.use, { marginVertical: rowPadding }]}>{meters}</View>
+            ) : undefined}
+            rightElementPassive
+            keepChevronWithRightElement
+            showChevron
+            accessoryLayout="adaptive"
+            bottomElement={using || props.freshness ? (
+                <View style={styles.rowFacts}>
+                    {using}
+                    {props.freshness ? <PoolUsageFreshness freshness={props.freshness} serviceTitle={props.serviceTitle ?? props.title} /> : null}
+                </View>
+            ) : undefined}
+            bottomElementInset="text"
+            showDivider={props.showDivider !== false}
             onPress={props.onOpen}
-            style={[
-                styles.row,
-                props.compact ? styles.rowCompact : null,
-                props.showDivider !== false ? styles.divider : null,
-            ]}
-            hoveredStyle={styles.hovered}
-        >
-            <View pointerEvents="box-none" style={styles.rowIdentity}>
-                <View pointerEvents="none" style={styles.rowIdentityText}>
-                    {lead}
-                    {identity}
-                </View>
-                {props.compact ? props.star : null}
-            </View>
-            {/* An empty pool has no usage column: its identity takes the row instead of wrapping beside a blank. */}
-            {meters || (chips && props.members.length > 0) ? (
-                <View pointerEvents="none" style={props.compact ? null : styles.use}>
-                    {meters}
-                    {chips}
-                </View>
-            ) : null}
-            {props.compact ? null : props.star}
-        </OpenableSurface>
+        />
     );
 });
 
@@ -211,41 +215,8 @@ export const ConnectedServicePoolIndexItem = React.memo(function ConnectedServic
 });
 
 const styles = StyleSheet.create((theme) => ({
-    row: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 18,
-        paddingVertical: theme.space.s12,
-        paddingRight: theme.space.s10,
-        paddingLeft: 34,
-    },
-    rowCompact: {
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        gap: theme.space.s12,
-        paddingLeft: 14,
-        paddingRight: theme.space.s8,
-    },
-    divider: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.subtle,
-    },
-    hovered: {
-        backgroundColor: theme.colors.surface.pressedOverlay,
-    },
-    rowIdentity: {
-        flex: 1,
-        minWidth: 0,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s8,
-    },
-    rowIdentityText: {
-        flex: 1,
-        minWidth: 0,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s8,
+    rowFacts: {
+        gap: theme.space.s2,
     },
     lead: {
         paddingTop: theme.space.s2,

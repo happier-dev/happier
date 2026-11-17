@@ -40,3 +40,32 @@ it('shows selected pool limits with their oldest reading time through the real q
         await boundary.dispose();
     }
 });
+
+it('keeps one trailing thing on a list row and leaves the default star to the card and the pool page (R138)', async () => {
+    const { ConnectedServicePoolIndexItemView } = await import('./ConnectedServicePoolIndexItem');
+    const { Text } = await import('react-native');
+    const onOpen = vi.fn();
+    const entry = {
+        testID: 'pool', title: 'Codex pool', subtitle: 'ChatGPT · 2 accounts', activeTitle: 'Leeroy', activeSinceMs: null,
+        activeAccountId: 'leeroy', members: [{ accountId: 'leeroy', title: 'Leeroy', enabled: true, credentialStatus: 'connected' }],
+        star: <Text testID="pool:star">★</Text>, onOpen,
+        usage: { windows: [{ key: 'weekly', label: 'Weekly', remainingPct: 67, resetsAt: null, estimated: false }],
+            memberByAccountId: { leeroy: { lowestRemainingPct: 67 } }, room: { reporting: 1, unreported: 0 } },
+        compact: false, now: Date.now(),
+    } as unknown as React.ComponentProps<typeof ConnectedServicePoolIndexItemView>;
+    const row = await renderScreen(<ConnectedServicePoolIndexItemView {...entry} presentation="row" />);
+    try {
+        expect(row.findByTestId('pool:star')).toBeFalsy();
+        expect(row.getTextContent()).toContain('Using Leeroy');
+        await row.pressByTestIdAsync('pool');
+        expect(onOpen).toHaveBeenCalledTimes(1);
+    } finally {
+        await row.unmount();
+    }
+    const card = await renderScreen(<ConnectedServicePoolIndexItemView {...entry} presentation="card" />);
+    try {
+        expect(card.findByTestId('pool:star')).toBeTruthy();
+    } finally {
+        await card.unmount();
+    }
+});
