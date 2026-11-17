@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { mergePendingSettingsIntoRawBaseline } from './accountSettingsRawDeltaMerge';
 
@@ -126,7 +127,7 @@ describe('account settings raw delta merge mixed-version preservation', () => {
         });
 
         expect(merged.outgoingRaw).toEqual({
-            schemaVersion: 6,
+            schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
             analyticsOptOut: true,
             providerSettingsV1,
             connectedAccountPurposeBindingsV1,
@@ -155,7 +156,7 @@ describe('account settings raw delta merge mixed-version preservation', () => {
 
         expect(merged.pendingRaw).toEqual({});
         expect(merged.outgoingRaw).toEqual({
-            schemaVersion: 7,
+            schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
             secretBindingsByProfileId: {
                 'opaque-profile': opaqueCarrier,
                 'current-profile': { OPENAI_API_KEY: 'secret-current' },
@@ -201,7 +202,7 @@ describe('account settings raw delta merge mixed-version preservation', () => {
             favoriteModelSelectionsV1,
         });
         expect(merged.outgoingRaw).toEqual({
-            schemaVersion: 7,
+            schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
             favoriteModelSelectionsV1,
             lastEngineSelectionsByScopeV1,
         });

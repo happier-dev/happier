@@ -338,10 +338,14 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
         const providerSettings = voicePersistence && snapshot?.scopeKey === resolveAccountSettingsScopeKey(credentials)
           && snapshot.providerConnectionsCatalog?.status === 'ready' ? readProviderSettingsForCli(snapshot).settings : null;
         const persisted = voicePersistence && Object.hasOwn(delta, 'voice')
-          ? voicePersistence.normalizeVoiceSettingsServerDelta(voicePersistence.normalizeVoiceSettingsLocalDelta(delta, settings), raw, providerSettings) : delta;
-        return AccountSettingMutationV1Schema.parse({ operations: Object.entries(persisted).map(([key, value]) =>
-          resetExpected !== undefined && storage.key === key && !storage.path?.length
-            ? { op: 'reset', key } : { op: 'set', key, value }) });
+          ? voicePersistence.projectVoiceSettingsServerDelta(voicePersistence.normalizeVoiceSettingsLocalDelta(delta, settings), raw, providerSettings)
+          : { delta, removedPersistedKeys: [] };
+        return AccountSettingMutationV1Schema.parse({ operations: [
+          ...Object.entries(persisted.delta).map(([key, value]) =>
+            resetExpected !== undefined && storage.key === key && !storage.path?.length
+              ? { op: 'reset', key } : { op: 'set', key, value }),
+          ...persisted.removedPersistedKeys.map(key => ({ op: 'reset', key })),
+        ] });
       };
       try {
         if (requested.reversal || resetExpected !== undefined) {

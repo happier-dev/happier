@@ -19,6 +19,8 @@ import { getResolvedBackendCatalogEntries } from '../../../../ui/sources/agents/
 import { voiceAgentCatalogSelectionValueV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createCliVoiceSettingsBindingContext } from './settingsCatalogServices';
 
 const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } } });
@@ -30,6 +32,7 @@ describe('CLI declared Account settings', () => {
   let concurrentContent: AccountSettingsStoredContentEnvelope | null;
 
   beforeEach(() => {
+    installAxiosRequestMethodAdapter();
     resetInMemoryAccountSettingsContextForTests();
     content = { t: 'plain', v: { favoriteMachines: ['neighbor'] } };
     version = 1;
@@ -38,6 +41,7 @@ describe('CLI declared Account settings', () => {
     // HTTP is the system boundary. Admission, declarations, validation, encryption-mode
     // checks, sparse mutation and the existing CAS retry owner remain real.
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (url.endsWith(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)) return { status: 200, data: { v: 1, rows: [] } };
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
         mode: 'plain', version: 1, settingsVersion: version,
@@ -527,9 +531,9 @@ describe('CLI declared Account settings', () => {
       ['voiceConversations.provider', JSON.stringify({ providerId: 'local_conversation', optionId: 'local' })],
       ['voiceConversations.agentSource', 'session'],
       ['voiceConversations.permissionIntent', 'read-only'],
-      ['voiceConversations.chatModelId', 'claude-haiku-4-5'],
+      ['voiceConversations.chatModelId', 'claude-haiku-4-5', { source: 'custom', model: 'claude-haiku-4-5' }],
     ] as const;
-    for (const [anchor, value] of choices) {
+    for (const [anchor, value, readValue = value] of choices) {
       const before = await executor().execute('settings.get', { anchor, includeVersion: true }, user);
       expect(before.ok).toBe(true);
       if (!before.ok) throw new Error(JSON.stringify(before));
@@ -538,7 +542,7 @@ describe('CLI declared Account settings', () => {
         anchor, value, expectedSettingsVersion: snapshot.settingsVersion,
       }, user)).toMatchObject({ ok: true, result: { anchor, value, settingsVersion: expect.any(Number) } });
       expect(await executor().execute('settings.get', { anchor, includeVersion: true }, user))
-        .toMatchObject({ ok: true, result: { anchor, value } });
+        .toMatchObject({ ok: true, result: { anchor, value: readValue } });
     }
     expect(content).toMatchObject({ t: 'plain', v: { favoriteMachines: ['neighbor'] } });
   });
@@ -555,8 +559,8 @@ describe('CLI declared Account settings', () => {
     expect(content).toMatchObject({ t: 'plain', v: {
       favoriteMachines: ['neighbor'],
       voiceSettingsV1: { assistantLanguage: 'fr', privacy: { shareSessionSummary: false } },
-      voice: { assistantLanguage: 'fr', privacy: { shareSessionSummary: false }, happierVoiceSettingsV1: true },
     } });
+    if (content.t === 'plain') expect(content.v).not.toHaveProperty('voice');
     expect(await executor().execute('settings.set', { anchor: 'voicePrivacy.diagnosticsEnabled', value: true }, user))
       .toMatchObject({ ok: false, errorCode: 'setting_read_only' });
   });
@@ -858,7 +862,7 @@ describe('CLI declared Account settings', () => {
 
   it('reads an admitted native contribution through the production CLI registry producer', async () => {
     const admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-      runtimeOptions: { pluginIds: [] } });
+      runtimeOptions: { pluginIds: ['happier.voice.elevenlabs'] } });
     try {
       const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
       const descriptor = createCliVoiceSettingsBindingContext().registry.get(providerId)?.providerSettings;

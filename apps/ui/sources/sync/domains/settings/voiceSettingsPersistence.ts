@@ -8,7 +8,7 @@ export const voiceSettingsPersistenceOwner = createVoiceSettingsPersistenceOwner
     voiceOwner: voiceSettingsOwner,
 });
 
-export const { parseVoiceSettingsPersistenceV1, VoiceSettingsPersistenceV1Schema, voiceSettingsPersistenceV1Defaults, isCurrentWriterPredecessorVoiceProjection, parseCurrentWriterPredecessorVoiceProjection, projectVoiceDiagnosticsIntoRuntimeSettings, normalizeVoiceDiagnosticsLocalDelta, normalizeVoiceDiagnosticsServerDelta, normalizeVoiceSettingsLocalDelta, normalizeVoiceSettingsServerDelta } = voiceSettingsPersistenceOwner;
+export const { parseVoiceSettingsPersistenceV1, VoiceSettingsPersistenceV1Schema, voiceSettingsPersistenceV1Defaults, isCurrentWriterPredecessorVoiceProjection, parseCurrentWriterPredecessorVoiceProjection, projectVoiceDiagnosticsIntoRuntimeSettings, normalizeVoiceDiagnosticsLocalDelta, normalizeVoiceDiagnosticsServerDelta, normalizeVoiceSettingsLocalDelta, normalizeVoiceSettingsServerDelta, projectVoiceSettingsServerDelta } = voiceSettingsPersistenceOwner;
 
 export function projectVoiceSettingsIntoRuntimeSettings(params: {
     parsed: AccountSettings & LocalAccountSettings;

@@ -1025,7 +1025,9 @@ const RETAINED_ACCOUNT_SETTINGS_ENTITY_SOURCES = {
     executionRunsGuidanceEntries: BoundedLegacyArraySchema,
 } as const;
 
-const PRIVATE_CATALOG_SETTINGS_SOURCE_KEYS = new Set([
+const RESOURCE_OWNED_SETTINGS_SOURCE_KEYS = new Set([
+    // AuthoringMemory owns current values; raw Account sources stay import-only.
+    'recentMachinePaths', 'lastUsedProfile', 'lastEngineSelectionsByScopeV1',
     'remoteHostsV1', 'notificationChannelsV1', 'connectedServicesProfileLabelByKey',
     'connectedServicesCollapsedItemKeysV1', 'connectedServicesDefaultAuthPoolAdoptionDismissedByKey', 'dismissedCLIWarnings',
 ]);
@@ -1062,7 +1064,7 @@ function projectSessionListPreferenceIngress(raw: Record<string, unknown>): Reco
 export function isAccountSettingsReadOnlySourceKeyV1(key: string): boolean {
     return Object.hasOwn(RETAINED_ACCOUNT_SETTINGS_ENTITY_SOURCES, key)
         || RETIRED_SESSION_LIST_SETTING_KEYS.has(key)
-        || PRIVATE_CATALOG_SETTINGS_SOURCE_KEYS.has(key)
+        || RESOURCE_OWNED_SETTINGS_SOURCE_KEYS.has(key)
         || key === 'themeProfiles'
         || key === 'inferenceOpenAIKey';
 }

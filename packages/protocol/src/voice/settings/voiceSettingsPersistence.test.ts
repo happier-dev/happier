@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { accountSettingsParse } from '../../account/settings/accountSettings.js';
+import { applyAccountSettingMutationV1 } from '../../account/settings/accountSettingMutationV1.js';
 import { VoiceCredentialBindingV1Schema } from '../realtime/providerSettings.js';
 import { createVoiceSettingsOwner } from './voiceSettings.js';
 import { createVoiceSettingsPersistenceOwner } from './voiceSettingsPersistence.js';
@@ -59,5 +60,44 @@ describe('Voice settings persistence', () => {
     expect(reread.voice.assistantLanguage).toBe('fr');
     const normalized = owner.normalizeVoiceSettingsServerDelta(reread, saved);
     expect(normalized).toMatchObject({ voiceSettingsV1: { credentialBindings: bindings } });
+  });
+
+  it.each([false, true])('removes an obsolete predecessor carrier when a mutation consumer persists a canonical privacy edit (canonical-only: %s)', canonicalOnly => {
+    const owner = createVoiceSettingsPersistenceOwner({ voiceOwner: createVoiceSettingsOwner({ bundledContributions: [] }) });
+    const raw = { favoriteMachines: ['neighbor'], voice: { assistantLanguage: 'fr', privacy: { shareSessionSummary: true } } };
+    const runtime = owner.projectVoiceSettingsIntoRuntimeSettings({ parsed: accountSettingsParse(raw), raw });
+    const local = owner.normalizeVoiceSettingsLocalDelta({
+      voice: { ...runtime.voice, privacy: { ...runtime.voice.privacy, shareSessionSummary: false } },
+    }, runtime);
+    const { voice: _runtimeVoice, ...canonicalDelta } = local;
+    const projection = owner.projectVoiceSettingsServerDelta(canonicalOnly ? canonicalDelta : local, raw);
+    expect(projection.removedPersistedKeys).toEqual(['voice']);
+    const applied = applyAccountSettingMutationV1(raw, { operations: [
+      ...Object.entries(projection.delta).map(([key, value]) => ({ op: 'set', key, value })),
+      ...projection.removedPersistedKeys.map(key => ({ op: 'reset', key })),
+    ] });
+    if (applied.status === 'invalid') throw new Error(applied.reason);
+    expect(applied.raw).not.toHaveProperty('voice');
+    expect(applied.raw.favoriteMachines).toEqual(['neighbor']);
+    const reread = owner.projectVoiceSettingsIntoRuntimeSettings({ parsed: accountSettingsParse(applied.raw), raw: applied.raw });
+    expect(reread.voice.privacy.shareSessionSummary).toBe(false);
+    expect(reread.voice.assistantLanguage).toBe('fr');
+  });
+
+  it.each([false, true])('does not remove the retained transcript reset source during a preference edit (canonical-only: %s)', canonicalOnly => {
+    const owner = createVoiceSettingsPersistenceOwner({ voiceOwner: createVoiceSettingsOwner({ bundledContributions: [] }) });
+    const raw = { voice: { providerId: 'local_conversation', adapters: { local_conversation: {
+      agent: { transcript: { persistenceMode: 'persistent', epoch: 4 } },
+    } } } };
+    const runtime = owner.projectVoiceSettingsIntoRuntimeSettings({ parsed: accountSettingsParse(raw), raw });
+    const local = owner.normalizeVoiceSettingsLocalDelta({ voice: { ...runtime.voice, assistantLanguage: 'fr' } }, runtime);
+    const { voice: _runtimeVoice, ...canonicalDelta } = local;
+    const proposed = canonicalOnly ? canonicalDelta : local;
+    const projection = owner.projectVoiceSettingsServerDelta(proposed, raw);
+    expect(projection.removedPersistedKeys).toEqual([]);
+    expect(projection.delta).toMatchObject({ voice: { adapters: { local_conversation: {
+      agent: { transcript: { persistenceMode: 'persistent', epoch: 4 } },
+    } } } });
+    expect(owner.normalizeVoiceSettingsServerDelta(proposed, raw)).toEqual(projection.delta);
   });
 });

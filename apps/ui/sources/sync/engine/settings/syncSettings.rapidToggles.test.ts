@@ -14,6 +14,7 @@ installHomeGovernanceBoundaries(harness);
 // Prepare the real settings/store graph outside the behavior-test deadline.
 const { syncSettings, applySettingsLocalDelta } = await import('./syncSettings');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
+const { normalizeVoiceSettingsLocalDelta, normalizeVoiceSettingsServerDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
 const settingsOwner = await import('@/sync/domains/settings/settings');
 const settingsNormalizationOwner = await import('@/sync/domains/settings/accountSettingsNormalization');
 const { storage } = await import('@/sync/domains/state/storage');
@@ -32,6 +33,70 @@ afterEach(async () => { await harness.reset(); });
 beforeEach(() => { installHomeGovernanceBoundaries(harness); });
 
 describe('rapid Account settings intents', () => {
+    it.each(['current edit', 'recovered queue'] as const)('persists a pending canonical Voice edit over its retired legacy carrier (%s)', async source => {
+        const serverId = await harness.addHome({ name: 'Legacy Voice', serverUrl: 'https://legacy-voice.example', accountId: 'owner', currentAccount: true });
+        const scope = { serverId, accountId: 'owner' };
+        let raw: Record<string, unknown> = {
+            favoriteMachines: ['machine-a'],
+            voice: { assistantLanguage: 'fr', privacy: { shareSessionSummary: true } },
+        };
+        let version = 1;
+        let pending: Partial<Settings> = {};
+        storage.setState({ settingsScope: scope, settingsVersion: version, settings: settingsParse(raw) });
+        savePendingAccountSettings(scope, {});
+        const written: Record<string, unknown>[] = [];
+        harness.answer(serverId, '/v2/account/settings', { select: () => ({ body: {
+            content: { t: 'plain', v: raw }, version,
+        } }) });
+        harness.answer(serverId, 'POST /v2/account/settings', { select: input => {
+            const request = AccountSettingsV2UpdateRequestSchema.parse(input);
+            expect(request.expectedVersion).toBe(version);
+            if (request.content?.t !== 'plain') throw new Error('Expected plain Account settings');
+            raw = request.content.v;
+            written.push(raw);
+            return { body: { success: true, version: ++version } };
+        } });
+
+        const currentVoice = storage.getState().settings.voice;
+        const delta = { voice: { ...currentVoice, privacy: { ...currentVoice.privacy, shareSessionSummary: false } } };
+        if (source === 'recovered queue') {
+            // Reproduce the pre-correction writer's exact persisted sparse queue,
+            // then recover it independently of the hydrated runtime settings.
+            const current = storage.getState().settings;
+            const queued = normalizeVoiceSettingsServerDelta(normalizeVoiceSettingsLocalDelta(delta, current), current);
+            expect(queued).not.toHaveProperty('voice');
+            expect(settingsParse(queued).voice.privacy.shareSessionSummary).toBe(false);
+            savePendingAccountSettings(scope, queued);
+            pending = loadPendingAccountSettings(scope);
+        } else {
+            applySettingsLocalDelta({
+                expectedSettingsScope: scope,
+                delta,
+                settingsSecretsKey: null,
+                getPendingSettings: () => pending,
+                setPendingSettings: next => { pending = next; savePendingAccountSettings(scope, next); },
+                schedulePendingSettingsFlush: () => {},
+            });
+        }
+        await syncSettings({
+            credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) },
+            encryption: null,
+            settingsScope: scope,
+            pendingSettings: pending,
+            getPendingSettings: () => pending,
+            clearPendingSettings: next => { pending = next; savePendingAccountSettings(scope, next); },
+        });
+
+        expect(written).toHaveLength(1);
+        expect(raw).not.toHaveProperty('voice');
+        expect(raw.favoriteMachines).toEqual(['machine-a']);
+        const reread = settingsParse(raw);
+        expect(reread.voice.privacy.shareSessionSummary).toBe(false);
+        expect(reread.voice.assistantLanguage).toBe('fr');
+        expect(pending).toEqual({});
+        expect(loadPendingAccountSettings(scope)).toEqual({});
+    });
+
     it('does not echo an unchanged stale preference during refresh or an unrelated write', async () => {
         const serverId = await harness.addHome({ name: 'Stale client', serverUrl: 'https://stale-client.example', accountId: 'owner', currentAccount: true });
         const scope = { serverId, accountId: 'owner' };

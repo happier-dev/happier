@@ -72,6 +72,12 @@ type VoiceSettingsAccountProjection = Readonly<{
     voiceSettingsV1: VoiceSettingsPersistenceV1;
 }>;
 
+/** A normalized write and the persisted roots this owner explicitly retired. */
+export type VoiceSettingsServerDeltaProjection<T extends object> = Readonly<{
+    delta: T | (T & VoiceDiagnosticsAccountProjection & VoiceSettingsAccountProjection);
+    removedPersistedKeys: readonly 'voice'[];
+}>;
+
 /**
  * The runtime view materialized from the bounded persisted Voice roots.
  *
@@ -1330,6 +1336,12 @@ function readCanonicalVoiceForDelta(
     current?: Readonly<Record<string, unknown>>,
 ): VoiceSettingsPersistenceV1 | null {
     if (!hasOwn(delta, 'voice') && !hasOwn(delta, VOICE_SETTINGS_ACCOUNT_SETTING_KEY)) return null;
+    // A sparse canonical root is a complete current-writer choice, not a
+    // predecessor whole-object write. Keep its preferences authoritative while
+    // the server projection still examines current for retained source material.
+    if (hasOwn(delta, VOICE_SETTINGS_ACCOUNT_SETTING_KEY) && !hasOwn(delta, 'voice')) {
+        return parseVoiceSettingsPersistenceV1(delta[VOICE_SETTINGS_ACCOUNT_SETTING_KEY]);
+    }
     const projection = current ? { ...current, ...delta } : delta;
     return readCanonicalVoiceFromProjection({
         parsed: projection,
@@ -1411,17 +1423,17 @@ function normalizeVoiceSettingsLocalDelta<T extends object>(
     });
 }
 
-function normalizeVoiceSettingsServerDelta<T extends object>(
+function projectVoiceSettingsServerDelta<T extends object>(
     delta: T,
     current?: Readonly<object>,
     providerSettings: ProviderSettingsV1 | null = null,
-): T | (T & VoiceDiagnosticsAccountProjection & VoiceSettingsAccountProjection) {
+): VoiceSettingsServerDeltaProjection<T> {
     const diagnosticsNormalized = normalizeVoiceDiagnosticsServerDelta(delta);
     const deltaRecord = diagnosticsNormalized as Record<string, unknown>;
     const currentRecord = current as Readonly<Record<string, unknown>> | undefined;
     const canonical = readCanonicalVoiceForDelta(deltaRecord, currentRecord);
     if (!canonical || (!hasOwn(deltaRecord, 'voice') && !hasOwn(deltaRecord, VOICE_SETTINGS_ACCOUNT_SETTING_KEY))) {
-        return diagnosticsNormalized;
+        return { delta: diagnosticsNormalized, removedPersistedKeys: [] };
     }
     const account = currentRecord
         ? { ...currentRecord, ...deltaRecord }
@@ -1435,7 +1447,7 @@ function normalizeVoiceSettingsServerDelta<T extends object>(
             || (readSavedSecretTransferSourceV1(deltaRecord).legacyVoiceCredentials?.length ?? 0) > 0)) {
         // Reading an unchanged legacy source may annotate the runtime view, but
         // cannot publish a new Voice owner or advance its source CAS before import.
-        return diagnosticsNormalized;
+        return { delta: diagnosticsNormalized, removedPersistedKeys: [] };
     }
     // A raw GET source has not passed the runtime compatibility projection.
     // Use that same pending classifier here; never erase its exact retained
@@ -1494,16 +1506,30 @@ function normalizeVoiceSettingsServerDelta<T extends object>(
             createPredecessorVoiceProjection(canonical, withoutCarrier, undefined, providerSettings, preserveUnchangedChat));
     if (!carriesPredecessorData) {
         const { voice: _runtimeVoice, ...withoutVoice } = diagnosticsNormalized as Record<string, unknown>;
-        return Object.assign(withoutVoice, { [VOICE_SETTINGS_ACCOUNT_SETTING_KEY]: canonical }) as T
-            & VoiceDiagnosticsAccountProjection & VoiceSettingsAccountProjection;
+        return {
+            delta: Object.assign(withoutVoice, { [VOICE_SETTINGS_ACCOUNT_SETTING_KEY]: canonical }) as T
+                & VoiceDiagnosticsAccountProjection & VoiceSettingsAccountProjection,
+            removedPersistedKeys: ['voice'],
+        };
     }
-    return Object.assign({}, diagnosticsNormalized, {
-        [VOICE_SETTINGS_ACCOUNT_SETTING_KEY]: canonical,
-        voice: predecessorProjection,
-    });
+    return {
+        delta: Object.assign({}, diagnosticsNormalized, {
+            [VOICE_SETTINGS_ACCOUNT_SETTING_KEY]: canonical,
+            voice: predecessorProjection,
+        }),
+        removedPersistedKeys: [],
+    };
 }
 
-return Object.freeze({ parseVoiceSettingsPersistenceV1, VoiceSettingsPersistenceV1Schema, voiceSettingsPersistenceV1Defaults, isCurrentWriterPredecessorVoiceProjection, parseCurrentWriterPredecessorVoiceProjection, projectVoiceDiagnosticsIntoRuntimeSettings, projectVoiceSettingsIntoRuntimeSettings, normalizeVoiceDiagnosticsLocalDelta, normalizeVoiceDiagnosticsServerDelta, normalizeVoiceSettingsLocalDelta, normalizeVoiceSettingsServerDelta });
+function normalizeVoiceSettingsServerDelta<T extends object>(
+    delta: T,
+    current?: Readonly<object>,
+    providerSettings: ProviderSettingsV1 | null = null,
+): T | (T & VoiceDiagnosticsAccountProjection & VoiceSettingsAccountProjection) {
+    return projectVoiceSettingsServerDelta(delta, current, providerSettings).delta;
+}
+
+return Object.freeze({ parseVoiceSettingsPersistenceV1, VoiceSettingsPersistenceV1Schema, voiceSettingsPersistenceV1Defaults, isCurrentWriterPredecessorVoiceProjection, parseCurrentWriterPredecessorVoiceProjection, projectVoiceDiagnosticsIntoRuntimeSettings, projectVoiceSettingsIntoRuntimeSettings, normalizeVoiceDiagnosticsLocalDelta, normalizeVoiceDiagnosticsServerDelta, normalizeVoiceSettingsLocalDelta, normalizeVoiceSettingsServerDelta, projectVoiceSettingsServerDelta });
 }
 
 export type VoiceSettingsPersistenceOwner = ReturnType<typeof createVoiceSettingsPersistenceOwner>;

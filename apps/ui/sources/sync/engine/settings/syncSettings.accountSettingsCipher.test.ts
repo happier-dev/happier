@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { Settings } from '@/sync/domains/settings/settings';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -46,9 +48,10 @@ installHomeGovernanceBoundaries(homes);
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { getPersistenceStorage, clearPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
-const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+const { loadAccountSettings, loadPendingAccountSettings, savePendingAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
 const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
-const { syncSettings } = await import('./syncSettings');
+const { syncSettings, applySettingsLocalDelta } = await import('./syncSettings');
+const { normalizeVoiceSettingsLocalDelta, normalizeVoiceSettingsServerDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
 
 const TEST_MACHINE_KEY = new Uint8Array(32).fill(11);
 const TEST_PUBLIC_KEY = tweetnacl.box.keyPair.fromSecretKey(TEST_MACHINE_KEY).publicKey;
@@ -685,6 +688,80 @@ describe('syncSettings account settings ciphertext', () => {
         });
     });
 
+    it.each(['current edit', 'recovered queue'] as const)('persists an encrypted pending canonical Voice edit over its retired legacy carrier (%s)', async source => {
+        const encryptionStub = await createEncryption();
+        const scope = await activateIdentityScope();
+        let raw: Record<string, unknown> = {
+            favoriteMachines: ['machine-a'],
+            voice: { assistantLanguage: 'fr', privacy: { shareSessionSummary: true } },
+        };
+        let version = 1;
+        let pending: Partial<Settings> = {};
+        storage.setState({ settingsScope: scope, settingsVersion: version, settings: settingsParse(raw) });
+        savePendingAccountSettings(scope, {});
+        const written: Record<string, unknown>[] = [];
+        mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path !== '/v2/account/settings') throw new Error(`Unexpected request ${path}`);
+            if (init?.method === 'POST') {
+                const request = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
+                expect(request.expectedVersion).toBe(version);
+                if (request.content?.t !== 'encrypted') throw new Error('Expected encrypted Account settings');
+                const opened = openAccountScopedBlobCiphertext({
+                    kind: 'account_settings',
+                    material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+                    ciphertext: request.content.c,
+                });
+                expect(opened?.format).toBe('account_scoped_v1');
+                if (!opened || !opened.value || typeof opened.value !== 'object' || Array.isArray(opened.value)) {
+                    throw new Error('Expected an Account settings object');
+                }
+                raw = Object.fromEntries(Object.entries(opened.value));
+                written.push(raw);
+                return Response.json({ success: true, version: ++version });
+            }
+            const ciphertext = sealAccountScopedBlobCiphertext({
+                kind: 'account_settings',
+                material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+                payload: raw,
+                randomBytes: mocks.getRandomBytes,
+            });
+            return Response.json({ content: { t: 'encrypted', c: ciphertext }, version });
+        });
+
+        const current = storage.getState().settings;
+        const delta = { voice: { ...current.voice, privacy: { ...current.voice.privacy, shareSessionSummary: false } } };
+        if (source === 'recovered queue') {
+            // Persist and recover the exact canonical-only queue produced before this fix.
+            const queued = normalizeVoiceSettingsServerDelta(normalizeVoiceSettingsLocalDelta(delta, current), current);
+            expect(queued).not.toHaveProperty('voice');
+            expect(settingsParse(queued).voice.privacy.shareSessionSummary).toBe(false);
+            savePendingAccountSettings(scope, queued);
+            pending = loadPendingAccountSettings(scope);
+        } else {
+            applySettingsLocalDelta({
+                expectedSettingsScope: scope, delta,
+                settingsSecretsKey: deriveSettingsSecretsKeyV1(TEST_MACHINE_KEY),
+                getPendingSettings: () => pending,
+                setPendingSettings: next => { pending = next; savePendingAccountSettings(scope, next); },
+                schedulePendingSettingsFlush: () => {},
+            });
+        }
+        await syncSettings({
+            credentials, encryption: encryptionStub, settingsScope: scope, pendingSettings: pending,
+            getPendingSettings: () => pending,
+            clearPendingSettings: next => { pending = next; savePendingAccountSettings(scope, next); },
+        });
+
+        expect(written).toHaveLength(1);
+        expect(raw).not.toHaveProperty('voice');
+        expect(raw.favoriteMachines).toEqual(['machine-a']);
+        const reread = settingsParse(raw);
+        expect(reread.voice.privacy.shareSessionSummary).toBe(false);
+        expect(reread.voice.assistantLanguage).toBe('fr');
+        expect(pending).toEqual({});
+        expect(loadPendingAccountSettings(scope)).toEqual({});
+    });
+
     it('preserves canonical Voice settings and diagnostics across a crash-recovered sparse delta and CAS retry', async () => {
         const encryptionStub = await createEncryption();
         const initialDiagnostics = {
@@ -985,6 +1062,9 @@ describe('syncSettings account settings ciphertext', () => {
 
     it('imports legacy session organization settings and strips them on a deliberate settings write', async () => {
         await activateIdentityScope();
+        // The identity alias changed; bind this Home's real credential to the identified scope.
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        expect(await TokenStorage.setCredentialsForServerUrl('http://localhost:52753', { serverId: 'srv_identity' }, credentials)).toBe(true);
         const encryptionStub = await createEncryption();
         const fetchedCiphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',

@@ -7,6 +7,7 @@ import { applySettings, settingsParse, type Settings } from '@/sync/domains/sett
 import {
     normalizeVoiceSettingsLocalDelta,
     normalizeVoiceSettingsServerDelta,
+    projectVoiceSettingsServerDelta,
 } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { summarizeSettings, summarizeSettingsDelta, dbgSettings, isSettingsSyncDebugEnabled } from '@/sync/domains/settings/debugSettings';
 import {
@@ -864,9 +865,13 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                 ? await migrateReleasedThemeProfiles({ ...themeProfileTransfer, profiles: baseline.raw?.themeProfiles, signal: params.signal }) : null;
             const mutationBaseline = migratedThemes ? { ...preparedBaseline } : preparedBaseline;
             if (migratedThemes && mutationBaseline) delete mutationBaseline.themeProfiles;
+            const pendingProjection = projectVoiceSettingsServerDelta(
+                pendingServerSettings, mutationBaseline ?? {}, readAdmittedVoiceProviderSettings(settingsScope),
+            );
             const merged = mergePendingSettingsIntoRawBaseline({
                 rawBaseline: mutationBaseline,
-                pendingSettings: pendingServerSettings,
+                pendingSettings: pendingProjection.delta as Partial<Settings>,
+                removedPersistedKeys: pendingProjection.removedPersistedKeys,
                 normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode, current: baseline.raw ?? {} }),
             });
             const normalizedUnmutatedBaseline = normalizeSettingsForServerStorageResult({

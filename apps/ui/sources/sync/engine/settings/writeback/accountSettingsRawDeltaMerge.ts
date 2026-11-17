@@ -34,6 +34,7 @@ function toSafePendingRecord(pendingSettings: Partial<Settings>): Record<string,
 export function mergePendingSettingsIntoRawBaseline(params: {
     rawBaseline: Record<string, unknown> | null;
     pendingSettings: Partial<Settings>;
+    removedPersistedKeys?: readonly string[];
     normalizeForPersistedStorage: NormalizeForPersistedStorage;
 }): {
     comparisonRaw: Record<string, unknown>;
@@ -48,7 +49,9 @@ export function mergePendingSettingsIntoRawBaseline(params: {
     // defaults that would overwrite canonical sibling roots.
     const pendingRaw = toSafePendingRecord(params.pendingSettings);
     // Retire historical seeds before overlaying the person's current choice.
-    const merged = { ...migrateAccountSettingsFeaturePreferences(safeBaseline), ...pendingRaw };
+    const merged = { ...migrateAccountSettingsFeaturePreferences(safeBaseline) };
+    for (const key of params.removedPersistedKeys ?? []) delete merged[key];
+    Object.assign(merged, pendingRaw);
     const comparison = params.normalizeForPersistedStorage(safeBaseline);
     const outgoing = params.normalizeForPersistedStorage(merged);
     return {
