@@ -334,10 +334,12 @@ An engine that cannot represent the selected scope must report it as
 unsupported rather than review the current checkout instead.
 
 Finding attribution comes from captured evidence. Positive before-side
-evidence can establish a pre-existing issue; positive added after-side evidence
-can place it in the selected changes. Missing, partial or conflicting evidence
-leaves attribution unknown. A finding appearing in an earlier review does not
-by itself prove that it predates the selected changes.
+evidence can mark a finding's location as pre-existing relative to the selected
+scope; positive added after-side evidence can place it in the selected changes.
+These labels describe the evidence, not when the underlying bug was introduced.
+Missing, partial or conflicting evidence leaves attribution unknown. A finding
+appearing in an earlier review does not by itself prove that it predates the
+selected changes.
 
 ## Related
 
