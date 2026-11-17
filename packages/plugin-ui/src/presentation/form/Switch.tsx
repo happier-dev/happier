@@ -255,7 +255,8 @@ export function HappierSwitch(props: HappierSwitchProps) {
           height: metrics.trackHeight,
           alignItems: 'center',
           justifyContent: 'center',
-          alignSelf: 'flex-start',
+          // Placement belongs to the parent: a row's centre line, or the start of a column (the fixed
+          // size never stretches). A self-pinned top edge sat the switch above its row's text.
           ...HAPPIER_FOCUS_RING_DELEGATED_STYLE,
           // The thumb's squash is the press feedback; the control never dims on press.
           opacity: disabled ? HAPPIER_SWITCH_METRICS.disabledOpacity : 1,
