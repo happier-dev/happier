@@ -20,6 +20,7 @@ import { artifactHtmlBundleFromBodyV1, ARTIFACT_HTML_BUNDLE_MIME_V1 } from '@hap
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { encodeBase64 } from '@/encryption/base64';
 import { useDocumentShareController } from './useDocumentShareController';
+import { useApprovalProfileDefault } from '@/hooks/approvals/useApprovalProfileDefault';
 import { useProjectDashboardDocument } from '@/components/widgets/area/useProjectDashboardDocument';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -444,6 +445,71 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('DocumentShareSheet', () => {
+    it('keeps default saves independent of sharing refusal and preserves None versus inheritance', async () => {
+        const group = { kind: 'group' as const, teamId: 'payments', groupId: 'release' };
+        host.document = { header: { kind: 'approval-profile.v1', name: 'Release' },
+            body: JSON.stringify({ kind: 'approval-profile.v1', profile: { name: 'Release' } }) };
+        host.grantStatus = 403;
+        host.grantError = 'artifact_access_forbidden';
+        await activateWidgetHome();
+        const saved: (string | null | undefined)[] = [];
+        const hook = await renderHook(() => useApprovalProfileDefault({
+            scope: { serverId: host.serverId, accountId: 'owner' }, value: 'previous-profile', audience: [group],
+            save: async value => { saved.push(value); },
+        }));
+        await act(async () => { hook.getCurrent().choose('profile-1'); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().review.issue).toBeDefined());
+        let result: Awaited<ReturnType<ReturnType<typeof hook.getCurrent>['submit']>> | undefined;
+        await act(async () => { result = await hook.getCurrent().submit('share'); });
+        expect(result).toMatchObject({ ok: false, phase: 'sharing', shared: [] });
+        expect(saved).toEqual([]);
+        await act(async () => { result = await hook.getCurrent().submit('save_only'); });
+        expect(result).toEqual({ ok: true, shared: [] });
+        expect(saved).toEqual(['profile-1']);
+        await act(async () => { hook.getCurrent().choose(null); });
+        await act(async () => { await hook.getCurrent().submit('cancel'); });
+        expect(saved).toEqual(['profile-1']);
+        await act(async () => { hook.getCurrent().choose(null); });
+        await act(async () => { await hook.getCurrent().submit('save_only'); });
+        await act(async () => { hook.getCurrent().choose(undefined); });
+        await act(async () => { await hook.getCurrent().submit('save_only'); });
+        expect(saved).toEqual(['profile-1', null, undefined]);
+        expect(host.requests.filter(request => request.method === 'PUT')).toEqual([]);
+        await hook.unmount();
+    });
+
+    it('shares a picked default profile with the reviewed Group before saving, and can instead save without sharing', async () => {
+        const group = { kind: 'group' as const, teamId: 'payments', groupId: 'release' };
+        host.document = { header: { kind: 'approval-profile.v1', name: 'Release' },
+            body: JSON.stringify({ kind: 'approval-profile.v1', profile: { name: 'Release' } }) };
+        host.reviewedMissingAudience = [group];
+        await activateWidgetHome();
+        const saved: (string | null | undefined)[] = [];
+        const hook = await renderHook(() => useApprovalProfileDefault({
+            scope: { serverId: host.serverId, accountId: 'owner' }, value: undefined, audience: [group],
+            save: async value => {
+                expect(host.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
+                saved.push(value);
+            },
+        }));
+        await settle();
+        expect(host.requests).toEqual([]);
+        await act(async () => { hook.getCurrent().choose('profile-1'); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().review.missingAudience).toEqual([group]));
+        expect(saved).toEqual([]);
+        let result: Awaited<ReturnType<ReturnType<typeof hook.getCurrent>['submit']>> | undefined;
+        await act(async () => { result = await hook.getCurrent().submit('share'); });
+        expect(result).toEqual({ ok: true, shared: [group] });
+        expect(saved).toEqual(['profile-1']);
+        expect(host.requests.filter(request => request.method === 'PUT')[0]?.body).toMatchObject({ principal: group, accessLevel: 'view' });
+        await act(async () => { hook.getCurrent().choose('another-profile'); });
+        await settle();
+        await act(async () => { result = await hook.getCurrent().submit('save_only'); });
+        expect(result).toEqual({ ok: true, shared: [] });
+        expect(saved).toEqual(['profile-1', 'another-profile']);
+        await hook.unmount();
+    });
+
     it('returns an admitted grant acknowledgement after selection changes without publishing it into the new review', async () => {
         const reader = { kind: 'account' as const, accountId: 'new-reader' };
         const gate = createDeferred<void>();
