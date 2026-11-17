@@ -215,6 +215,7 @@ patchedDependencies:
   '@expo/metro-config@55.0.13': a45d276fd0d18cdbbb7b0d55ace04ccfc6cb79114514bed409950914337366de
   '@legendapp/list@3.3.3': 2a1b7a3cccd6e46e8e44289bbfd9361b41928c7ff94c643bed3cf4cdb7669391
   '@pierre/diffs@1.5.2': 80a5a670f2167aa6c7c8e8545ea2e1709f12b7d02eac31f62b1829ac1847b4e2
+  '@prisma/client@7.10.1': 3a0a9cc3102350e166008c5c3f5650142da7e31f4c42e787c3dfbb9673918157
   '@react-native/gradle-plugin@0.83.5': c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784
   '@react-navigation/core@7.21.5': 71a4729e813c532f803d10de2ce44b97574c6bc1b94e85ce03aebb877c1ab70c
   '@react-navigation/elements@2.9.17': 1cd97c4827a1579bcffdf4714a5f7167735482938524b4c9d5f918414a896d40
@@ -1045,7 +1046,7 @@ importers:
         version: 7.10.1
       '@prisma/client':
         specifier: 7.10.1
-        version: 7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3)
+        version: 7.10.1(patch_hash=3a0a9cc3102350e166008c5c3f5650142da7e31f4c42e787c3dfbb9673918157)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3)
       '@prisma/driver-adapter-utils':
         specifier: 7.10.1
         version: 7.10.1
@@ -1135,7 +1136,7 @@ importers:
         version: 7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
       prisma-json-types-generator:
         specifier: 6.0.1
-        version: 6.0.1(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3))(pg@8.23.1)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))
+        version: 6.0.1(@prisma/client@7.10.1(patch_hash=3a0a9cc3102350e166008c5c3f5650142da7e31f4c42e787c3dfbb9673918157)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3))(pg@8.23.1)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))
       prisma-migrate-cli:
         specifier: npm:prisma@6.19.2
         version: prisma@6.19.2(typescript@5.9.3)
@@ -21647,7 +21648,7 @@ snapshots:
 
   '@prisma/client-runtime-utils@7.10.1': {}
 
-  '@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3)':
+  '@prisma/client@7.10.1(patch_hash=3a0a9cc3102350e166008c5c3f5650142da7e31f4c42e787c3dfbb9673918157)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3)':
     dependencies:
       '@prisma/client-runtime-utils': 7.10.1
     optionalDependencies:
@@ -29913,9 +29914,9 @@ snapshots:
       ansi-styles: 5.2.0
       react-is: 18.3.1
 
-  prisma-json-types-generator@6.0.1(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3))(pg@8.23.1)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)):
+  prisma-json-types-generator@6.0.1(@prisma/client@7.10.1(patch_hash=3a0a9cc3102350e166008c5c3f5650142da7e31f4c42e787c3dfbb9673918157)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3))(pg@8.23.1)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)):
     dependencies:
-      '@prisma/client': 7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3)
+      '@prisma/client': 7.10.1(patch_hash=3a0a9cc3102350e166008c5c3f5650142da7e31f4c42e787c3dfbb9673918157)(prisma@7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3))(typescript@5.9.3)
       '@prisma/generator-helper': 7.10.1
       oxc-parser: 0.156.0
       prisma: 7.10.1(@types/node@22.20.5)(@types/react-dom@19.1.11(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
