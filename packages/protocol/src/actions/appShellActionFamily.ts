@@ -9,8 +9,7 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
-import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
-import { SessionModelSelectionSchema } from '../providers/selection/v2.js';
+import { SessionModelRefSchema, SessionModelSelectionSchema } from '../providers/selection/v2.js';
 import { PersistedBackendTargetRefV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/providerModelCatalogV1.js';
 import { DiscussionMessageRefV1Schema } from '../discussions/references.js';
@@ -130,7 +129,7 @@ export function projectInboxReadItemV1(item: z.infer<typeof InboxCanonicalItemSc
 }
 export const NewSessionDraftModelIntentSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('mode'), modelId: z.string().check(z.trim(), z.minLength(1)) }),
-  z.strictObject({ kind: z.literal('selection'), ref: z.nullable(ProviderBoundModelRefSchema) }),
+  z.strictObject({ kind: z.literal('selection'), ref: z.nullable(SessionModelRefSchema) }),
   z.strictObject({ kind: z.literal('team'), selection: z.nullable(TeamCredentialProviderModelSelectionV1Schema) }),
 ]));
 export type NewSessionDraftModelIntent = z.infer<typeof NewSessionDraftModelIntentSchema>;

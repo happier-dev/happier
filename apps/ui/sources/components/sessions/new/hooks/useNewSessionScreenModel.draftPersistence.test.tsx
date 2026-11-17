@@ -1827,6 +1827,26 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
     });
 
+    it.each(['native', 'account_provider_connection'] as const)('retains the %s V2 carrier through the wizard model Action', async (source) => {
+        const { SessionModelSelectionV2Schema } = await import('@happier-dev/protocol/providers/selection/v2');
+        const backendTarget = { kind: 'backend' as const, backendId: 'codex' as const };
+        Object.assign(settingsState, { useEnhancedSessionWizard: true });
+        persistedDraft.agentType = 'codex';
+        persistedDraft.backendTarget = backendTarget;
+        const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 100, ref: {
+            source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'shared-model',
+            ...(source === 'account_provider_connection' ? { providerConnectionId: ProviderConnectionIdSchema.parse('pc_work') } : {}),
+        } });
+        const hook = await renderNewSessionScreenModel(() => {});
+        const model = hook.getCurrent();
+        if (model.variant !== 'wizard') throw new Error('Expected enhanced wizard');
+        await act(async () => { model.wizardProps.agent.setModelSelection?.(selection); });
+        await settleNewSessionScreenModel({ cycles: 2, turns: 2 });
+        const updatedModel = hook.getCurrent();
+        if (updatedModel.variant !== 'wizard') throw new Error('Expected enhanced wizard');
+        expect(updatedModel.wizardProps.agent.modelSelection).toMatchObject({ v: 2, ref: selection.ref });
+    });
+
     it('remembers the exact Provider-bound model selection chosen in the enhanced wizard', async () => {
         const backendTarget = { kind: 'backend' as const, backendId: 'codex' as const };
         const scopeKey = buildRememberedEngineSelectionScopeKey({ serverId: 'server-a', backendTarget });

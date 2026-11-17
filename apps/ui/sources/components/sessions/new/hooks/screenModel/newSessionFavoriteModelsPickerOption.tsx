@@ -52,7 +52,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     compatibleBackendTargetKeys: ReadonlySet<string>;
     selectedBackendTargetKey: string;
     selectedModelId: string;
-    selectedModelSelection?: SessionModelSelectionV1 | null;
+    selectedModelSelection?: NewSessionFavoriteModelsDetailProps['selectedModelSelection'];
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;

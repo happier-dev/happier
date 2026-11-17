@@ -9482,6 +9482,15 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+The unreleased 0.3 `session.draft.model.set` Action's existing closed `selection`
+intent accepts retained V1 refs and source-qualified V2 refs. Its nested source
+refs remain closed and preserve their identity and credential-routing fields.
+Matching development Protocol, SDK DTO and UI readers update together; previous
+strict development readers reject V2 refs. The inspected `../0.2` frontier at
+`4466ab42739c11a871f54b522a804b8a59e6d8bf` has no corresponding draft model Action.
+This closes the existing 0.3 source-selection migration without a new Action kind,
+released wire epoch, persisted format or mixed-development adapter.
+
 Unreleased 0.3 Automation Database subjects accept the managed deployment arm
 `{kind: 'managed_deployment', environmentId, targetLinkId, databaseName}` under
 the existing server-qualified subject. Existing Environment, worktree and manual

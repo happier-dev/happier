@@ -58,6 +58,18 @@ beforeEach(async () => {
 });
 
 describe('useProviderModelProjection', () => {
+    it('loads the Provider catalog without reinterpreting a selected Team resource as a native model', async () => {
+        describeProviderModels.mockResolvedValue(projection());
+        const currentSelection = { kind: 'team_credential_provider_model' as const, teamId: 'team-a', resourceId: 'resource-a',
+            expectedResourceRevision: 7, deliveryMode: 'brokered' as const, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'same' };
+        const hook = await renderHook(() => useProviderModelProjection({ enabled: true, machineId: 'machine-a', serverId,
+            agentTargetKey: currentSelection.agentTargetKey, currentSelection }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().status).toBe('success'));
+            expect(projectionRequests.at(-1)?.payload).not.toHaveProperty('currentSelection');
+        } finally { await hook.unmount(); }
+    });
+
     describe.each(['projection', 'connection-list'] as const)('%s query retention', kind => {
         type QueryProps = { connectionId: string; active?: boolean };
         type QueryData = ReturnType<typeof useProviderModelProjection>['data'] | ReturnType<typeof useProviderConnectionModels>['models'];

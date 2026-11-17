@@ -194,6 +194,23 @@ describe('NewSessionModelSelectionContent', () => {
         expect(typeof requirePickerProps().onRequestClose).toBe('function');
     });
 
+    it('adapts a source-aware Team selection for the wizard picker', async () => {
+        const { SessionModelSelectionV2Schema } = await import('@happier-dev/protocol/providers/selection/v2');
+        const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 123, ref: {
+            source: 'team_resource', teamId: 'team-1', resourceId: 'resource-1',
+            expectedResourceRevision: 2, deliveryMode: 'brokered',
+            agentTargetKey: CODEX_BACKEND_ENTRY.backendTargetKey, modelId: 'team-only-model',
+        } });
+        const screen = await renderScreen(<NewSessionModelSelectionContent
+            presentation="expanded" providerProjectionAuthoritative modelOptions={[]}
+            selectedModelId="team-only-model" selectedModelSelection={selection}
+            selectedIndicatorColor="#fff" selectedBackendEntry={CODEX_BACKEND_ENTRY} onSelectModel={() => {}}
+        />);
+        const { source: _source, ...ref } = selection.ref;
+        expect(requirePickerProps().selected).toEqual({ kind: 'team_credential_provider_model', ...ref });
+        await screen.unmount();
+    });
+
     it('keeps the exact Provider connection distinguishable in the closed compact summary', async () => {
         captured.pickerProps = null;
         const work = sameModelProviderGroup({

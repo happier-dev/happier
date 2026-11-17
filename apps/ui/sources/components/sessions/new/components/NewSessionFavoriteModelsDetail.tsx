@@ -27,6 +27,7 @@ import {
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import { serializeModelVisibilityRefV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
     SessionConfigOptionControl,
@@ -54,6 +55,7 @@ import { t } from '@/text';
 import {
     isTeamCredentialProviderModelPickerValue,
     sessionModelSelectionKey,
+    sessionModelPickerValueFromRef,
 } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -102,7 +104,7 @@ export type NewSessionFavoriteModelsDetailProps = Readonly<{
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedBackendTargetKey: string;
     selectedModelId: string;
-    selectedModelSelection?: SessionModelSelectionV1 | null;
+    selectedModelSelection?: SessionModelSelection | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -125,8 +127,8 @@ export type NewSessionFavoriteModelsDetailProps = Readonly<{
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
 }>;
 
-function buildFavoriteOptionValue(modelSelection: SessionModelSelectionV1): string {
-    return sessionModelSelectionKey(modelSelection.ref);
+function buildFavoriteOptionValue(modelSelection: SessionModelSelection): string {
+    return sessionModelSelectionKey(sessionModelPickerValueFromRef(modelSelection.ref));
 }
 
 function areStringArraysEqual(a: readonly string[], b: readonly string[]): boolean {
@@ -212,7 +214,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     favoriteModelSelections: readonly FavoriteModelSelectionV1[];
     selectedBackendTargetKey: string;
     selectedModelId: string;
-    selectedModelSelection?: SessionModelSelectionV1 | null;
+    selectedModelSelection?: SessionModelSelection | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;

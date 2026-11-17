@@ -48,7 +48,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     selectedPath: string | null;
     selectedBackendTargetKey: string;
     selectedModelId: string;
-    selectedModelSelection?: SessionModelSelectionV1 | null;
+    selectedModelSelection?: NewSessionEngineOptionDetailProps['selectedModelSelection'];
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];

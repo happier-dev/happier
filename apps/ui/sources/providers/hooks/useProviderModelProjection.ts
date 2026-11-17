@@ -8,7 +8,7 @@ import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
 import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
+import { sessionModelSelectionKey, isTeamCredentialProviderModelPickerValue, type SessionModelPickerOptionValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { modelProjectionScopeKey } from './modelProjectionScopeKey';
 import { useProviderModelQueryRetention } from './useProviderModelQueryRetention';
 import { beginProviderModelProjectionRead, getProviderModelProjectionSnapshot, subscribeProviderModelProjectionSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
@@ -35,7 +35,7 @@ export function useProviderModelProjection(input: Readonly<{
     serverId: string | null;
     agentTargetKey: string | null;
     mode?: 'picker' | 'management';
-    currentSelection?: ProviderBoundModelRef;
+    currentSelection?: Exclude<SessionModelPickerOptionValue, null>;
     /** Browsing a source is local picker state; it never changes the selected model. */
     sourceConnectionId?: string;
     connectedServices?: ConnectedServiceBindingsV2;
@@ -46,6 +46,11 @@ export function useProviderModelProjection(input: Readonly<{
     teamCredentialCatalogSources?: readonly (readonly TeamCredentialResourceCatalogEntryV1[] | null | undefined)[];
 }>) {
     const scopeEnabled = Boolean(input.enabled && input.agentTargetKey);
+    // Provider projection accepts Account/native refs. A Team source is already
+    // represented by its resource catalog; it must never become a native tuple.
+    const currentSelection = input.currentSelection;
+    const providerSelection = currentSelection && !isTeamCredentialProviderModelPickerValue(currentSelection)
+        ? currentSelection : undefined;
     const { describeProviderModels, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(scopeEnabled ? input.serverId : []);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [state, setState] = React.useState<ProjectionState>({
@@ -132,7 +137,7 @@ export function useProviderModelProjection(input: Readonly<{
                 serverId: input.serverId,
                 agentTargetKey: input.agentTargetKey,
                 ...(input.mode ? { mode: input.mode } : {}),
-                ...(input.currentSelection ? { currentSelection: input.currentSelection } : {}),
+                ...(providerSelection ? { currentSelection: providerSelection } : {}),
                 ...(input.sourceConnectionId ? { sourceConnectionId: input.sourceConnectionId } : {}),
                 ...(input.connectedServices ? { connectedServices: input.connectedServices } : {}),
                 ...(input.favoriteSelections ? { favoriteSelections: [...input.favoriteSelections] } : {}),
@@ -164,8 +169,8 @@ export function useProviderModelProjection(input: Readonly<{
             }
             const providerError = providerErrorFromRpcFailure(caught, {
                 ...(input.machineId ? { machineId: input.machineId } : {}),
-                ...(input.currentSelection?.providerConnectionId
-                    ? { connectionId: input.currentSelection.providerConnectionId }
+                ...(providerSelection?.providerConnectionId
+                    ? { connectionId: providerSelection.providerConnectionId }
                     : {}),
             });
             setState({

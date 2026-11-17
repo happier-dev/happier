@@ -2,13 +2,30 @@ import { describe, expect, it } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
-import { AppShellActionOutputSchemas, readNoticeInboxAccountIdV1 } from './appShellActionFamily.js';
+import { AppShellActionOutputSchemas, NewSessionDraftModelIntentSchema, readNoticeInboxAccountIdV1 } from './appShellActionFamily.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { ActionIdSchema } from './actionIds.js';
 
 describe('app shell Actions', () => {
+  it('retains source-qualified model refs in the existing draft model Action intent', async () => {
+    const { SessionModelSelectionV2Schema } = await import('../providers/selection/v2.js');
+    const { ProviderConnectionIdSchema } = await import('../providers/ids.js');
+    const agentTargetKey = 'agent:happier.agent.codex/codex';
+    const refs = [
+      { source: 'native', agentTargetKey, modelId: 'native-model' },
+      { source: 'account_provider_connection', agentTargetKey, modelId: 'account-model',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc-account') },
+    ];
+    for (const ref of refs) {
+      const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref });
+      const intent = { kind: 'selection', ref: selection.ref };
+      expect(NewSessionDraftModelIntentSchema.parse(intent)).toEqual(intent);
+    }
+    const retained = { kind: 'selection', ref: { agentTargetKey, modelId: 'native-model', providerConnectionId: null } };
+    expect(NewSessionDraftModelIntentSchema.parse(retained)).toEqual(retained);
+  });
   it('admits an exact New Session Agent edit with closed selection inputs', () => {
     const spec = getActionSpec(ActionIdSchema.parse('session.draft.agent.set'));
     const input = { ref: { kind: 'newSession', instanceId: 'mounted-draft' }, agent: { kind: 'picker',

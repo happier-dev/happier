@@ -56,9 +56,7 @@ import type {
     AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
 import type {
     ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
-import type {
-    SessionModelSelectionV1,
-} from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
@@ -174,9 +172,9 @@ export interface NewSessionWizardAgentProps {
     acpConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     setAcpConfigOptionOverride?: (configId: string, value: string) => void;
     modelMode: ModelMode | undefined;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     setModelMode: (mode: ModelMode) => void;
-    setModelSelection?: (selection: SessionModelSelectionV1 | null) => void;
+    setModelSelection?: (selection: SessionModelSelection | null) => void;
     providerModelGroups?: readonly SessionModelProjectionGroup[];
     declarationContext?: React.ComponentProps<typeof NewSessionModelSelectionContent>['declarationContext'];
     teamCredentialResources?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialResources'];

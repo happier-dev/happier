@@ -54,7 +54,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     selectedBackendTargetKey: string;
     setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
     modelMode: ModelMode;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0]['modelSelection'];
     canRetainModelSelection?: Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0]['canRetainModelSelection'];
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     acpSessionModeId: string | null;

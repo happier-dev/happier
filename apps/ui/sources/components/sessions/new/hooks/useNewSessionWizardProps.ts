@@ -10,7 +10,6 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import type { CLIAvailability } from '@/agents/machineAgents/machineAgentCliAvailability';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -106,7 +105,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     acpConfigOptionOverrides?: NewSessionWizardAgentProps['acpConfigOptionOverrides'];
     setAcpConfigOptionOverride?: NewSessionWizardAgentProps['setAcpConfigOptionOverride'];
     modelMode: ModelMode | undefined;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: NewSessionWizardAgentProps['modelSelection'];
     setModelMode: (mode: ModelMode) => void;
     setModelSelection?: NewSessionWizardAgentProps['setModelSelection'];
     teamCredentialResources?: NewSessionWizardAgentProps['teamCredentialResources'];

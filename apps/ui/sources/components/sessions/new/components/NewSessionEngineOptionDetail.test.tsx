@@ -268,6 +268,23 @@ async function withPlatformOS(os: 'web' | 'ios', run: () => Promise<void>) {
 }
 
 describe('NewSessionEngineOptionDetail', () => {
+    it('retains a source-aware Team selection in the existing model picker', async () => {
+        const { SessionModelSelectionV2Schema } = await import('@happier-dev/protocol/providers/selection/v2');
+        const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 123, ref: {
+            source: 'team_resource', teamId: 'team-1', resourceId: 'resource-1',
+            expectedResourceRevision: 2, deliveryMode: 'vendor-native',
+            nativeDelivery: { managedId: 'managed', controllerInstallationId: 'controller', guestInstallationId: 'guest',
+                bindingKey: 'binding', placeholderRef: 'reference', sourceRevision: 'source:1', providerTicket: 'a'.repeat(43) },
+            agentTargetKey: formatBackendTargetKeyV2(backendTarget), modelId: 'team-only-model',
+        } });
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget} selectedMachineId="machine-1" capabilityServerId="server-1"
+            selectedModelId="team-only-model" selectedModelSelection={selection}
+        />);
+        const { source: _source, ...ref } = selection.ref;
+        expect(lastOptionPickerOverlayProps?.selectedValue).toEqual({ kind: 'team_credential_provider_model', ...ref });
+    });
+
     const backendTarget: BackendTargetRefV2 = {
         kind: 'backend',
         backendId: 'custom-preset',
@@ -969,7 +986,7 @@ describe('NewSessionEngineOptionDetail', () => {
         });
     });
 
-    it('canonicalizes a unique provider-qualified native alias and retains its model controls', async () => {
+    it.each([false, true])('canonicalizes a native alias and retains its model controls (V2 carrier: %s)', async (sourceAware) => {
         modelOptionsState.value = [{
             value: 'openai-codex/gpt-5.6-luna',
             label: 'GPT-5.6 Luna',
@@ -1004,6 +1021,10 @@ describe('NewSessionEngineOptionDetail', () => {
             capabilityServerId="server-1"
             cwd="/repo"
             selectedModelId="gpt-5.6-luna"
+            selectedModelSelection={sourceAware ? { v: 2, updatedAt: 1, ref: {
+                source: 'native', agentTargetKey: formatBackendTargetKeyV2({ kind: 'backend', backendId: 'pi' }),
+                modelId: 'gpt-5.6-luna',
+            } } : null}
             selectedSessionModeId="default"
             selectedConfigOverrides={{}}
             onSelectionChange={(selection) => {
@@ -1011,6 +1032,10 @@ describe('NewSessionEngineOptionDetail', () => {
             }}
         />);
 
+        if (sourceAware) {
+            expect(latestSelection).toMatchObject({ modelSelection: { v: 2,
+                ref: { source: 'native', modelId: 'openai-codex/gpt-5.6-luna' } } });
+        }
         expect(lastOptionPickerOverlayProps?.selectedValue).toMatchObject({
             providerConnectionId: null,
             modelId: 'openai-codex/gpt-5.6-luna',
@@ -1031,8 +1056,9 @@ describe('NewSessionEngineOptionDetail', () => {
         expect(latestSelection).toMatchObject({
             modelId: 'openai-codex/gpt-5.6-luna',
             modelSelection: {
+                v: sourceAware ? 2 : 1,
                 ref: {
-                    providerConnectionId: null,
+                    ...(sourceAware ? { source: 'native' } : { providerConnectionId: null }),
                     modelId: 'openai-codex/gpt-5.6-luna',
                 },
             },

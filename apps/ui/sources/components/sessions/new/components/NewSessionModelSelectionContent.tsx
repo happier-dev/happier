@@ -3,7 +3,7 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { View, type View as RNView } from 'react-native';
 import type { ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderPendingApproval } from '@/providers/actions/useProviderActionClient';
 import type {
     DaemonProviderCurrentSelectionRecoveryV1,
@@ -28,7 +28,10 @@ import {
 } from '@/components/sessions/modelPicker/SessionModelPicker';
 import {
     sessionModelSelectionKey,
+    sessionModelPickerValueFromRef,
+    isTeamCredentialProviderModelPickerValue,
     type SessionModelPickerValue,
+    type SessionModelPickerOptionValue,
 } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { Item } from '@/components/ui/lists/Item';
 import { resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList/resolvePopoverSelectionListHeightBehavior';
@@ -62,7 +65,7 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     modelOptionsProbe?: React.ComponentProps<typeof SessionModelPicker>['probe'];
     modelOptions: readonly NewSessionModelOption[];
     selectedModelId: ModelMode | undefined;
-    selectedModelSelection?: SessionModelSelectionV1 | null;
+    selectedModelSelection?: SessionModelSelection | null;
     selectedIndicatorColor: string;
     selectedBackendEntry?: ResolvedBackendCatalogEntry | null;
     popoverBoundaryRef?: React.RefObject<any> | null;
@@ -90,9 +93,12 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     onFavoriteModelSelectionsChange?: (favorites: FavoriteModelSelectionV1[]) => void;
 }>;
 
-function selectedModelRef(props: NewSessionModelSelectionContentProps): SessionModelPickerValue {
+function selectedModelRef(props: NewSessionModelSelectionContentProps): SessionModelPickerOptionValue {
     if (props.selectedModelSelection) {
-        return resolveCanonicalNativeModelSelectionRef(props.modelOptions, props.selectedModelSelection.ref);
+        const ref = sessionModelPickerValueFromRef(props.selectedModelSelection.ref);
+        return isTeamCredentialProviderModelPickerValue(ref)
+            ? ref
+            : resolveCanonicalNativeModelSelectionRef(props.modelOptions, ref);
     }
     const modelId = String(props.selectedModelId ?? '').trim();
     if (!modelId || modelId === 'default') return null;
@@ -110,6 +116,8 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
     const anchorRef = React.useRef<RNView>(null);
     const providerGroups = props.providerGroups ?? [];
     const selected = selectedModelRef(props);
+    const selectedTeamCredentialModel = props.selectedTeamCredentialModel
+        ?? (isTeamCredentialProviderModelPickerValue(selected) ? selected : null);
     const agentTargetKey = props.selectedBackendEntry?.backendTargetKey
         ?? props.selectedModelSelection?.ref.agentTargetKey
         ?? providerGroups[0]?.rows[0]?.ref.agentTargetKey
@@ -156,17 +164,17 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             || selected.modelId;
     }, [favoriteEntries, props.modelOptions, selected]);
     const selectedPresentation = React.useMemo(() => (
-        props.selectedTeamCredentialModel
+        selectedTeamCredentialModel
             ? (() => {
                 const resource = props.teamCredentialResources?.find((entry) => (
-                    entry.id === props.selectedTeamCredentialModel?.resourceId
-                    && entry.teamId === props.selectedTeamCredentialModel.teamId
+                    entry.id === selectedTeamCredentialModel?.resourceId
+                    && entry.teamId === selectedTeamCredentialModel.teamId
                 ));
                 const model = resource?.providerModels.find((entry) => (
-                    entry.selection.modelId === props.selectedTeamCredentialModel?.modelId
+                    entry.selection.modelId === selectedTeamCredentialModel?.modelId
                 ));
                 const teamName = resource ? props.teamNameById?.[resource.teamId] : null;
-                const modelName = model?.descriptor.name || props.selectedTeamCredentialModel.modelId;
+                const modelName = model?.descriptor.name || selectedTeamCredentialModel.modelId;
                 return {
                     subtitle: modelName,
                     detail: [teamName, resource ? props.teamCredentialDisplayNames?.[resource.id] : null].filter(Boolean).join(' · ') || undefined,
@@ -181,7 +189,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             providerGroups,
             hiddenNativeModelKeys: props.hiddenNativeModelKeys ?? EMPTY_HIDDEN_NATIVE_MODEL_KEYS,
             providerProjectionAuthoritative: props.providerProjectionAuthoritative,
-            selected,
+            selected: isTeamCredentialProviderModelPickerValue(selected) ? null : selected,
             currentSelectionRecovery: props.currentSelectionRecovery,
             fallbackLabel: selectedFallbackLabel,
             fieldLabel: modelFieldLabel,
@@ -197,7 +205,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         selected,
         selectedFallbackLabel,
         modelFieldLabel,
-        props.selectedTeamCredentialModel,
+        selectedTeamCredentialModel,
         props.teamCredentialResources,
         props.teamCredentialDisplayNames,
         props.teamNameById,
@@ -265,7 +273,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             teamNameById={props.teamNameById}
             homeNameByTeamId={props.homeNameByTeamId}
             teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}
-            selectedTeamCredentialModel={props.selectedTeamCredentialModel}
+            selectedTeamCredentialModel={selectedTeamCredentialModel}
             providerProjectionAuthoritative={props.providerProjectionAuthoritative}
             projectionError={props.providerProjectionError}
             projectionFailures={props.providerProjectionFailures}

@@ -1111,6 +1111,11 @@ distinct through native launch and Session metadata; Team selections retain thei
 resource, Team, revision and delivery choice. Creation does not project V2 into an
 older carrier. The composed launcher validation for this source change is pending.
 
+
+The existing `session.draft.model.set` Action accepts both retained V1 refs and
+source-qualified V2 refs in its `selection` intent. The draft keeps V2 native and
+Account refs in their current carrier; Team refs use the existing Team selection
+coordinator without dropping revision, delivery mode or native-delivery facts.
 The retained V1 Account/native reference identifies a model by the exact tuple:
 
 ```text

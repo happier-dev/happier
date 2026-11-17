@@ -4,7 +4,8 @@ import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/a
 import { renderHook } from '@/dev/testkit';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { useNewSessionAgentPickerEngineSelectionState as useActualNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
@@ -82,7 +83,7 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
             v: 1, updatedAt: 123,
             ref: { agentTargetKey: codexEntry.backendTargetKey, providerConnectionId: null, modelId: 'team-only-model' },
         });
-        const remembered: Array<SessionModelSelectionV1 | null> = [];
+        const remembered: Array<SessionModelSelection | null> = [];
         type Props = Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0];
         const baseProps: Props = {
             selectedBackendEntry: codexEntry, selectedBackendTargetKey: codexEntry.backendTargetKey,

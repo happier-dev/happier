@@ -762,13 +762,9 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
                     log.log(`[new-session-draft] dropped a stored model selection for ${canonical.data.ref.agentTargetKey}; the draft targets ${targetKey}`);
                     return null;
                 }
-                return {
-                    ...canonical.data,
-                    ref: {
-                        ...canonical.data.ref,
-                        agentTargetKey: targetKey,
-                    },
-                };
+                const selection = { ...canonical.data };
+                selection.ref = { ...selection.ref, agentTargetKey: targetKey };
+                return selection;
             }
             if (rawCanonicalSelection !== undefined) {
                 throw new Error('Invalid persisted new-session model selection');

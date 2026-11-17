@@ -2097,12 +2097,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }, [accessDraftState, acpConfigOptions, modelOptions, coordinateTeamCredentialSelection, currentEngineSelectionRef,
         setModelSelection, setSelectedTeamCredentialModel, setSessionConfigOptionOverrides, teamCredentialSelectionContextRef]);
 
-    const applyCreationModel = React.useCallback<React.ComponentProps<typeof SessionModelPicker>['onSelect']>((ref) => {
-        // Host-restricted choices update this draft, not the Account's remembered engine selection.
-        setSelectedTeamCredentialModel(null);
-        setModelSelection(ref ? { v: 1, updatedAt: Date.now(), ref } : null);
-    }, [setModelSelection, setSelectedTeamCredentialModel]);
-
     const allProfilesRequirementNames = React.useMemo(() => {
         const names = new Set<string>();
         for (const p of selectableProfiles) {
@@ -2258,10 +2252,28 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 setSelectedTeamCredentialModel(null);
             } else if (intent.kind === 'mode') {
                 setModelModeAndRemember(intent.modelId);
-            } else if (creationProfile) {
-                applyCreationModel(intent.ref);
             } else {
-                setModelSelectionAndRemember(intent.ref ? { v: 1, updatedAt: Date.now(), ref: intent.ref } : null);
+                const pickerValue = sessionModelPickerValueFromRef(intent.ref);
+                if (isTeamCredentialProviderModelPickerValue(pickerValue)) {
+                    return await selectTeamCredentialModel(pickerValue);
+                }
+                // Narrow each source to retain the canonical union's correlated v/ref types.
+                const selection: SessionModelSelection | null = intent.ref
+                    ? 'source' in intent.ref
+                        ? intent.ref.source === 'native'
+                            ? { v: 2, updatedAt: Date.now(), ref: intent.ref }
+                            : intent.ref.source === 'account_provider_connection'
+                                ? { v: 2, updatedAt: Date.now(), ref: intent.ref }
+                                : { v: 2, updatedAt: Date.now(), ref: intent.ref }
+                        : { v: 1, updatedAt: Date.now(), ref: intent.ref }
+                    : null;
+                if (creationProfile) {
+                    // Host-restricted choices update this draft, not the Account's remembered engine selection.
+                    setSelectedTeamCredentialModel(null);
+                    setModelSelection(selection);
+                } else {
+                    setModelSelectionAndRemember(selection);
+                }
             }
             return true;
         },

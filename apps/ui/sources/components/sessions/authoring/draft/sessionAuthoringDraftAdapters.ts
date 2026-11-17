@@ -1121,10 +1121,9 @@ export function applySessionServerStartSpawnDraftEdits(params: Readonly<{
     const { sessionConfigOptionOverrides, ...edits } = params.edits;
     const next = { ...draft, ...edits };
     if (params.edits.agentTarget && next.modelSelection) {
-        next.modelSelection = {
-            ...next.modelSelection,
-            ref: { ...next.modelSelection.ref, agentTargetKey: buildBackendTargetKeyV2(params.edits.agentTarget) },
-        };
+        const modelSelection = { ...next.modelSelection };
+        modelSelection.ref = { ...modelSelection.ref, agentTargetKey: buildBackendTargetKeyV2(params.edits.agentTarget) };
+        next.modelSelection = modelSelection;
     }
     const updatedAtMs = Math.max(0, Math.floor(params.configurationUpdatedAtMs));
     if ('sessionConfigOptionOverrides' in params.edits) {

@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
@@ -39,7 +40,7 @@ import {
     type SessionModelPickerExperimentalConfirmationController,
 } from '@/components/sessions/modelPicker/SessionModelPicker';
 import { hiddenModelVisibilityKeys, resolveSessionModelSourceDescriptor } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
-import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
+import { sessionModelSelectionKey, sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { OPTION_PICKER_HEADER_ACTION_METRICS } from '@/components/sessions/pickers/OptionPickerOverlay';
@@ -63,7 +64,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      */
     modelSummary?: string;
     selectedModelId?: string | null;
-    selectedModelSelection?: SessionModelSelectionV1 | null;
+    selectedModelSelection?: SessionModelSelection | null;
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
@@ -94,7 +95,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onSelectionChange?: (selection: Readonly<{
         modelId: string;
-        modelSelection: SessionModelSelectionV1 | null;
+        modelSelection: SessionModelSelection | null;
         sessionModeId: string;
         configOverrides: Readonly<Record<string, string>>;
         /**
@@ -161,7 +162,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     }), [props.backendTarget, props.runtimeCarrierAgentId]);
     const { usesNativeCatalog, modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,
-        providerConnectionId: props.selectedModelSelection?.ref.providerConnectionId ?? null,
+        providerConnectionId: props.selectedModelSelection ? readSessionModelSelectionProviderConnectionId(props.selectedModelSelection) : null,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
@@ -180,13 +181,13 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     });
 
     const [selectedModelId, setSelectedModelId] = React.useState(() => normalizeSelectedOptionId(props.selectedModelId));
-    const [selectedModelSelection, setSelectedModelSelection] = React.useState<SessionModelSelectionV1 | null>(
+    const [selectedModelSelection, setSelectedModelSelection] = React.useState<SessionModelSelection | null>(
         () => props.selectedModelSelection ?? null,
     );
     const [selectedSessionModeId, setSelectedSessionModeId] = React.useState(() => props.selectedSessionModeId ?? '');
     const selectionRef = React.useRef<Readonly<{
         modelId: string;
-        modelSelection: SessionModelSelectionV1 | null;
+        modelSelection: SessionModelSelection | null;
         sessionModeId: string;
         configOverrides: Readonly<Record<string, string>>;
     }>>({
@@ -228,7 +229,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
 
     const publishSelection = React.useCallback((nextSelection: Readonly<{
         modelId: string;
-        modelSelection: SessionModelSelectionV1 | null;
+        modelSelection: SessionModelSelection | null;
         sessionModeId: string;
         configOverrides: Readonly<Record<string, string>>;
     }>) => {
@@ -242,8 +243,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             // `default` names the Agent's own automatic model only when no
             // Provider connection is bound; a Provider may serve a model
             // literally named `default`, and that choice keeps its label.
-            modelLabel: isNativeAutomaticModelSelectionInputV1({
-                providerConnectionId: nextSelection.modelSelection?.ref.providerConnectionId ?? null,
+            modelLabel: !isTeamCredentialProviderModelPickerValue(sessionModelPickerValueFromRef(nextSelection.modelSelection?.ref)) && isNativeAutomaticModelSelectionInputV1({
+                providerConnectionId: nextSelection.modelSelection ? readSessionModelSelectionProviderConnectionId(nextSelection.modelSelection) : null,
                 modelId: nextSelection.modelId,
             })
                 ? null
@@ -269,7 +270,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     const canEnterCustomModel = preflightModels?.unavailable === true
         ? false
         : preflightModels?.supportsFreeform === true || providerSupportsFreeform;
-    const sourceModelSelected = Boolean(selectedModelSelection?.ref.providerConnectionId || props.teamModels?.selectedTeamCredentialModel);
+    const selectedPickerValue = React.useMemo(() => sessionModelPickerValueFromRef(selectedModelSelection?.ref), [selectedModelSelection]);
+    const sourceModelSelected = Boolean((isTeamCredentialProviderModelPickerValue(selectedPickerValue) ? true : selectedPickerValue?.providerConnectionId) || props.teamModels?.selectedTeamCredentialModel);
     const canonicalSelectedModelId = React.useMemo(() => (
         sourceModelSelected
             ? selectedModelId
@@ -360,9 +362,9 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     }), [catalogAgentId, operationalBackendTarget, props.backendTarget]);
     const agentTargetKey = favoriteBackendIdentity.backendTargetKey;
     const canonicalSelectedRef = React.useMemo(() => {
-        if (selectedModelSelection) {
-            if (sourceModelSelected) return selectedModelSelection.ref;
-            return resolveCanonicalNativeModelSelectionRef(modelOptions, selectedModelSelection.ref);
+        if (selectedPickerValue) {
+            if (sourceModelSelected || isTeamCredentialProviderModelPickerValue(selectedPickerValue)) return selectedPickerValue;
+            return resolveCanonicalNativeModelSelectionRef(modelOptions, selectedPickerValue);
         }
         if (canonicalSelectedModelId === 'default') return null;
         return {
@@ -370,17 +372,22 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             providerConnectionId: null,
             modelId: canonicalSelectedModelId,
         };
-    }, [agentTargetKey, canonicalSelectedModelId, modelOptions, selectedModelSelection, sourceModelSelected]);
+    }, [agentTargetKey, canonicalSelectedModelId, modelOptions, selectedPickerValue, sourceModelSelected]);
 
     React.useEffect(() => {
         if (canonicalSelectedModelId === selectedModelId) return;
-        if (sourceModelSelected) return;
+        if (sourceModelSelected || isTeamCredentialProviderModelPickerValue(canonicalSelectedRef)) return;
+        const currentSelection = selectionRef.current.modelSelection;
+        const modelSelection: SessionModelSelection | null = canonicalSelectedRef
+            ? currentSelection?.v === 2 && currentSelection.ref.source === 'native'
+                ? { ...currentSelection, updatedAt: Date.now(),
+                    ref: { ...currentSelection.ref, modelId: canonicalSelectedRef.modelId } }
+                : { v: 1, updatedAt: Date.now(), ref: canonicalSelectedRef }
+            : null;
         publishSelection({
             ...selectionRef.current,
             modelId: canonicalSelectedModelId,
-            modelSelection: canonicalSelectedRef
-                ? { v: 1, updatedAt: Date.now(), ref: canonicalSelectedRef }
-                : null,
+            modelSelection,
             configOverrides: sanitizeConfigOverridesForModel(
                 canonicalSelectedModelId,
                 selectionRef.current.configOverrides,
@@ -405,7 +412,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         agentTargetKey,
         favoriteSelections: (props.favoriteModelSelections ?? []).map(favorite => favorite.selection.ref)
             .filter(ref => ref.agentTargetKey === agentTargetKey),
-        ...(selectedModelSelection ? { currentSelection: selectedModelSelection.ref } : {}),
+        ...(selectedPickerValue ? { currentSelection: selectedPickerValue } : {}),
     });
     const providerProjection = props.providerProjection ?? localProviderProjection;
 
