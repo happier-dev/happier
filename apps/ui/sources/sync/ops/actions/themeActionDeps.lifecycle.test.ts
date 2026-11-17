@@ -195,7 +195,7 @@ describe('theme Actions through real library and try-on owners', () => {
         if (!('file' in exported)) throw new Error('Export failed');
         expect(exported.file.text).toContain('futurePresentation');
         const applied = await execute({ actionId: THEME_ACTION_IDS.apply, input: { ref: imported.entry.reference, mode: 'dark' }, context: actionContext });
-        if (!('undoHandle' in applied)) throw new Error('Apply failed');
+        if (!('undoHandle' in applied) || typeof applied.undoHandle !== 'string') throw new Error('Apply failed');
         expect(await execute({ actionId: THEME_ACTION_IDS.undo, input: { undoHandle: applied.undoHandle }, context: actionContext }))
             .toMatchObject({ restored: { dark: null } });
         expect(f.rows.size).toBe(1);
@@ -222,7 +222,7 @@ describe('theme Actions through real library and try-on owners', () => {
             .rejects.toMatchObject({ code: 'theme_preview_stale' });
         const kept = await execute({ actionId: THEME_ACTION_IDS.keep, input: { previewRef: second.previewRef }, context: actionContext });
         expect(kept).toHaveProperty('undoHandle');
-        if (!('undoHandle' in kept)) throw new Error('Keep failed');
+        if (!('undoHandle' in kept) || typeof kept.undoHandle !== 'string') throw new Error('Keep failed');
         expect(f.writes()).toBe(1);
         expect(f.rows.size).toBe(1);
         await execute({ actionId: THEME_ACTION_IDS.undo, input: { undoHandle: kept.undoHandle }, context: actionContext });

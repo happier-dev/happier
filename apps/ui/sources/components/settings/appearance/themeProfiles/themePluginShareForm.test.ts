@@ -39,7 +39,7 @@ describe('theme plugin share form', () => {
     it('retains the created project and retries only packing after a child transport failure', async () => {
         const state = createThemeActionHarness();
         const ref = (await state.library.save({ document: themeActionDocument('one') })).entry!.reference;
-        const effects: string[] = [];
+        const effects: unknown[] = [];
         let packAttempts = 0;
         const share = createShareThemePlugin(state.library);
         const form = createThemePluginShareForm({ refs: [ref], serverId: 'home', labels: { ...labels, retry: 'Retry' },
@@ -76,7 +76,7 @@ describe('theme plugin share form', () => {
         const state = createThemeActionHarness();
         const refs = await Promise.all(['one', 'two'].map(async id =>
             (await state.library.save({ document: themeActionDocument(id) })).entry!.reference));
-        const effects: { action: string; input: unknown }[] = [];
+        const effects: unknown[] = [];
         const share = createShareThemePlugin(state.library);
         const form = createThemePluginShareForm({ refs, serverId: 'home', labels,
             execute: async (actionId, input) => {

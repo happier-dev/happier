@@ -12,7 +12,8 @@ export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand & Readonly
 const HIDDEN_DEMAND: StoreDemand = Object.freeze({ presented: false });
 const PRESENTED_DEMAND: StoreDemand = Object.freeze({ presented: true });
 export type ManagedInventoryFamilies = Readonly<{
-    [Kind in keyof typeof storeKinds]: ReturnType<(typeof storeKinds)[Kind]['useInstalled']>;
+    [Kind in keyof typeof storeKinds as (typeof storeKinds)[Kind]['useInstalled'] extends undefined ? never : Kind]:
+        ReturnType<Extract<(typeof storeKinds)[Kind]['useInstalled'], (...args: never[]) => unknown>>;
 }>;
 export type ManagedInventoryView = Readonly<{
     families: ManagedInventoryFamilies;
