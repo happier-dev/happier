@@ -1,4 +1,5 @@
 import { readDeploymentDatabaseSizesV1 } from '../projection/deploymentDatabaseSize.js';
+import type { DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentCollectionV1, createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReadControllerV1 } from './createDeploymentReadControllerV1.js';
@@ -76,14 +77,25 @@ describe('deployment demand read controller', () => {
         const link = detail.targetLinks[0]!.targetLink;
         let bytes = 4096;
         let now = 1000;
-        const native = vi.fn(async () => ({ ok: true, columns: [{ name: 'size_bytes' }], rows: [[bytes]], complete: true }));
+        const native = vi.fn(async () => ({ ok: true, operation: 'statement.run', results: [{
+            columns: [{ name: 'size_bytes', nativeType: 'text', semanticType: 'text' }],
+            rows: [{ cells: [{ type: 'text', value: String(bytes) }] }], completeness: { complete: true },
+        }] }));
         const environment = { ...base.environment, runtimeTargetLinkId: link.id };
-        const content: typeof detail.content = { ...detail.content, template: { ...detail.content.template!, services: ['postgres'],
+        const target: DatabaseDescriptorV1 = { target: { kind: 'deployment_service', environment: { serverId: environment.serverId,
+            projectSourceId: environment.projectSourceId, environmentId: environment.id }, targetLinkId: link.id,
+            deploymentId: link.activeDeploymentId!, serviceId: 'postgres', database: 'receipt-database' },
+            engine: 'postgresql', label: 'Postgres', origin: { label: 'Active deployment' }, capabilities: [],
+            placement: { serverId: environment.serverId, accountId: scope.accountId,
+                machineId: link.members[0]!.machineId, installationId: link.members[0]!.installationId } };
+        const content: typeof detail.content = { ...detail.content, template: {
+            templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['postgres'],
             data: [{ service: 'postgres', engine: 'postgres' }] } };
         const listDataServicePage: NonNullable<DeploymentReadTransportV1['listDataServicePage']> = async (_scope, _query, options) => ({
             ok: true, value: { nextCursor: null, items: [{ environment, title: 'Database', content,
                 databaseSizes: await readDeploymentDatabaseSizesV1({ environment, content,
-                    readTargetLinks: async () => [link], run: native, now: () => now,
+                    readTargets: async () => ({ targets: [target], completeness: { complete: true } }), run: native, now: () => now,
                     previous: options.previousItems?.[0]?.databaseSizes }) }] } });
         const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport, listDataServicePage } });
         const lease = controller.acquireDataServicePage({}, hidden);

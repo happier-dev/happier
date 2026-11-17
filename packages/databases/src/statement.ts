@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
+import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { scanSqlStatements, type DatabaseLexicalToken, type NormalizedDatabaseStatement } from './lexer.js';
 export * from './lexer.js';
 
 /** Fingerprints contain only the masked shape, never original SQL or values. */
 export function fingerprintDatabaseStatement(shape: string): NormalizedDatabaseStatement {
-    return { shape, fingerprint: createHash('sha256').update(shape).digest('hex') };
+    return { shape, fingerprint: computeSha256HexDigest(shape) };
 }
 
 export function normalizeDatabaseTokens(sql: string, tokens: readonly DatabaseLexicalToken[]): NormalizedDatabaseStatement {

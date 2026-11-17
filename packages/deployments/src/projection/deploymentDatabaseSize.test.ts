@@ -1,66 +1,96 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
-import type { DeploymentDataQueryInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import type { DatabaseDescriptorV1, DatabaseReadStatementInputV1, DatabaseTargetsListResultV1 } from '@happier-dev/database-protocol';
 import { readDeploymentDatabaseSizesV1 } from './deploymentDatabaseSize.js';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 const detail = (): DeploymentEnvironmentDetailV1 => {
     const value = createDeploymentEnvironmentDetailV1();
-    return { ...value, content: { ...value.content, template: { ...value.content.template!,
-        services: ['postgres', 'redis'], data: [{ service: 'postgres', engine: 'postgres' }, { service: 'redis', engine: 'redis' }] } } };
+    return { ...value, environment: { ...value.environment, runtimeTargetLinkId: value.targetLinks[0]!.targetLink.id },
+        content: { ...value.content, template: {
+            templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['postgres', 'redis'],
+            data: [{ service: 'postgres', engine: 'postgres' }, { service: 'redis', engine: 'redis' }] } } };
 };
+function descriptor(value: DeploymentEnvironmentDetailV1, serviceId = 'postgres', deploymentId = 'deploy-a'): DatabaseDescriptorV1 {
+    return { target: { kind: 'deployment_service', environment: { serverId: value.environment.serverId,
+        projectSourceId: value.environment.projectSourceId, environmentId: value.environment.id },
+        targetLinkId: value.environment.runtimeTargetLinkId!, deploymentId, serviceId, database: 'receipt-database' },
+        engine: serviceId === 'mysql' ? 'mysql' : 'postgresql', label: serviceId, origin: { label: 'Active deployment' },
+        placement: { serverId: value.environment.serverId, accountId: 'account', machineId: 'member', installationId: 'installation' }, capabilities: [] };
+}
+const listed = (...targets: DatabaseDescriptorV1[]): DatabaseTargetsListResultV1 => ({ targets, completeness: { complete: true } });
+const statementResult = (value: string | null, mysql = false) => ({ ok: true, operation: 'statement.run', results: [{
+    columns: (mysql ? ['size_bytes', 'table_bytes', 'index_bytes'] : ['size_bytes'])
+        .map(name => ({ name, nativeType: 'text', semanticType: 'text' })),
+    rows: [{ cells: (mysql ? [value, value, '0'] : [value]).map(value => value === null ? { type: 'null' } : { type: 'text', value }) }],
+    completeness: { complete: true },
+}] });
+
 describe('database engine size read', () => {
-    it('does no placement or engine work for unsupported services and issues one MySQL catalog query when supported', async () => {
+    it('does no target or engine work for unsupported services and decodes the canonical MySQL size projection including zero', async () => {
         const value = detail();
-        const link = value.targetLinks[0]!.targetLink;
-        const readTargetLinks = vi.fn(async () => [{ ...link, targetKind: 'ownServer' as const }]);
-        const run = vi.fn(async (_input: DeploymentDataQueryInputV1) => ({ ok: true,
-            columns: [{ name: 'size_bytes' }], rows: [[0]], complete: true }));
+        const readTargets = vi.fn(async () => listed(descriptor(value, 'mysql')));
+        const run = vi.fn(async (_input: DatabaseReadStatementInputV1) => statementResult('0', true));
         const content: DeploymentEnvironmentDetailV1['content'] = { ...value.content, template: { ...value.content.template!,
             services: ['cache'], data: [{ service: 'cache', engine: 'redis' }] } };
-        expect(await readDeploymentDatabaseSizesV1({ environment: value.environment, content, readTargetLinks, run }))
+        expect(await readDeploymentDatabaseSizesV1({ environment: value.environment, content, readTargets, run }))
             .toMatchObject([{ size: { status: 'unavailable', reason: 'unsupported_engine' } }]);
-        expect(readTargetLinks).not.toHaveBeenCalled();
+        expect(readTargets).not.toHaveBeenCalled();
         expect(run).not.toHaveBeenCalled();
         const mysql = await readDeploymentDatabaseSizesV1({ environment: value.environment,
-            content: { ...content, template: { ...value.content.template!, data: [{ service: 'mysql', engine: 'mysql' }] } }, readTargetLinks, run });
-        expect(mysql[0]?.size).toMatchObject({ status: 'available', bytes: 0 });
-        expect(readTargetLinks).toHaveBeenCalledTimes(1);
+            content: { ...content, template: { ...value.content.template!, data: [{ service: 'mysql', engine: 'mysql' }] } }, readTargets, run });
+        expect(mysql[0]?.size).toMatchObject({ status: 'available', bytes: 0, measurement: 'table_bytes_estimate' });
+        expect(readTargets).toHaveBeenCalledTimes(1);
         expect(run).toHaveBeenCalledTimes(1);
-        expect(run.mock.calls[0]?.[0]?.sql).toContain('information_schema.tables');
+        expect(run.mock.calls[0]?.[0]).toMatchObject({ operation: 'statement.run', mode: 'read', statement: { parameters: [] } });
+        expect(run.mock.calls[0]?.[0].statement.sql).toContain('information_schema.tables');
     });
-    it('reads supported databases once, keeps unsupported engines explicit and computes growth only between matching samples', async () => {
+    it('uses the active host descriptor and its placement, excludes neighbouring targets and compares only the same deployment', async () => {
         const value = detail();
-        const link = value.targetLinks[0]!.targetLink;
-        const environment = { ...value.environment, runtimeTargetLinkId: link.id };
-        const targetLinks = [{ ...link, targetKind: 'ownServer' as const, activeDeploymentId: 'deploy-a',
-            members: [{ machineId: 'machine', installationId: 'installation' }] }];
-        const run = vi.fn(async (_input: DeploymentDataQueryInputV1) => ({ ok: true, columns: [{ name: 'size_bytes' }], rows: [['4096']], complete: true }));
-        const first = await readDeploymentDatabaseSizesV1({ environment, content: value.content, readTargetLinks: async () => targetLinks, run, now: () => 1000 });
-        expect(first).toMatchObject([{ service: 'postgres', size: { status: 'available', bytes: 4096 },
+        const selected = descriptor(value);
+        const other = descriptor(value);
+        if (other.target.kind !== 'deployment_service') throw new Error('Expected native descriptor');
+        const neighbours: DatabaseDescriptorV1[] = [
+            { ...other, target: { ...other.target, targetLinkId: 'other-link', database: 'wrong-link-database' } },
+            { ...other, target: { ...other.target, environment: { ...other.target.environment, environmentId: 'other-environment' } } },
+            { ...other, target: { ...other.target, serviceId: 'other-service' } },
+        ];
+        const readTargets = async () => listed(...neighbours, selected);
+        const run = vi.fn(async (_input: DatabaseReadStatementInputV1, _placement: DatabaseDescriptorV1['placement']) => statementResult('4096'));
+        const first = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content, readTargets, run, now: () => 1000 });
+        expect(first).toMatchObject([{ service: 'postgres', deploymentId: 'deploy-a', size: { status: 'available', bytes: 4096 },
             growth: { status: 'unavailable', reason: 'previous_sample_required' } },
             { service: 'redis', size: { status: 'unavailable', reason: 'unsupported_engine' } }]);
-        run.mockResolvedValueOnce({ ok: true, columns: [{ name: 'size_bytes' }], rows: [['3072']], complete: true });
-        const second = await readDeploymentDatabaseSizesV1({ environment, content: value.content, readTargetLinks: async () => targetLinks, run, now: () => 2000, previous: first });
+        expect(run.mock.calls[0]).toEqual([expect.objectContaining({ target: selected.target }), selected.placement]);
+        run.mockResolvedValueOnce(statementResult('3072'));
+        const second = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content, readTargets, run, now: () => 2000, previous: first });
         expect(second[0]?.growth).toEqual({ status: 'available', bytes: -1024, fromMs: 1000, toMs: 2000 });
-        expect(run).toHaveBeenCalledTimes(2);
-        expect(run.mock.calls[0]?.[0]).toMatchObject({ sql: 'SELECT pg_database_size(current_database()) AS size_bytes', params: {}, service: 'postgres' });
-        const replaced = await readDeploymentDatabaseSizesV1({ environment, content: value.content,
-            readTargetLinks: async () => [{ ...targetLinks[0]!, activeDeploymentId: 'deploy-b' }], run, now: () => 3000, previous: second });
-        expect(replaced[0]?.growth.status).toBe('unavailable');
+        const replaced = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content,
+            readTargets: async () => listed(descriptor(value, 'postgres', 'deploy-b')), run, now: () => 3000, previous: second });
+        expect(replaced[0]?.growth).toEqual({ status: 'unavailable', reason: 'previous_sample_required' });
     });
-    it('preserves query refusal and rejects incomplete or invalid sizes without fabricating zero', async () => {
+    it('preserves semantic refusals and rejects incomplete, missing and unsafe sizes without fabricating zero', async () => {
         const value = detail();
-        const link = value.targetLinks[0]!.targetLink;
-        const environment = { ...value.environment, runtimeTargetLinkId: link.id };
-        const targetLinks = [{ ...link, targetKind: 'ownServer' as const, activeDeploymentId: 'deploy', members: [{ machineId: 'machine', installationId: 'installation' }] }];
+        const incomplete = statementResult('12');
+        const frame = incomplete.results[0]!;
         for (const [result, reason] of [
-            [{ ok: false, error: 'deployment_unavailable', diagnostic: { code: 'read_role_setup_required' } }, 'read_role_setup_required'],
-            [{ ok: true, columns: [{ name: 'size_bytes' }], rows: [['12']], complete: false }, 'incomplete_size_result'],
-            [{ ok: true, columns: [{ name: 'size_bytes' }], rows: [[null]], complete: true }, 'invalid_size_result'],
+            [{ ok: false, status: 'unavailable', code: 'read_role_setup_required', reason: 'Configure the reader' }, 'read_role_setup_required'],
+            [{ ...incomplete, results: [{ ...frame, completeness: { complete: false, reason: 'response_envelope' } }] }, 'incomplete_size_result'],
+            [{ ...incomplete, completeness: { complete: false, reason: 'response_envelope' } }, 'incomplete_size_result'],
+            [statementResult(null), 'invalid_size_result'],
+            [statementResult('9007199254740992'), 'invalid_size_result'],
+            [{ ...incomplete, results: [{ ...frame, rows: [] }] }, 'invalid_size_result'],
+            [{ ...incomplete, results: [frame, frame] }, 'invalid_size_result'],
         ] as const) {
-            const rows = await readDeploymentDatabaseSizesV1({ environment, content: value.content, readTargetLinks: async () => targetLinks, run: async () => result });
+            const rows = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content,
+                readTargets: async () => listed(descriptor(value)), run: async () => result });
             expect(rows[0]?.size).toEqual({ status: 'unavailable', reason });
         }
+        const run = vi.fn();
+        const missing = await readDeploymentDatabaseSizesV1({ environment: value.environment, content: value.content,
+            readTargets: async () => listed(), run });
+        expect(missing[0]?.size).toEqual({ status: 'unavailable', reason: 'active_deployment_required' });
+        expect(run).not.toHaveBeenCalled();
     });
 });

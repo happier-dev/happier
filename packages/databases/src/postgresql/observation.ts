@@ -1,5 +1,5 @@
-import { createHmac, randomBytes } from 'node:crypto';
 import { isBaseCredentialDiagnosticKey, isUnsafeTelemetryDataKey } from '@happier-dev/plugin-sdk';
+import { computeHttpHmacSha256 } from '@happier-dev/plugin-sdk/http';
 import { maskDatabaseConnectionUrl, parseDatabaseConnectionUrl } from '../connection.js';
 import { PostgresqlInputError, type PostgresqlLexicalToken } from './input.js';
 import { normalizePostgresqlStatement } from './statement.js';
@@ -42,7 +42,7 @@ function mask(value: PostgresqlObservationValue, redact: boolean): PostgresqlObs
 /** Capture and analysis share the dialect's scanner and masking policy. The keyed
  * equality token permits comparison without persisting a guessable hash of a password. */
 export function createPostgresqlObservationNormalizer() {
- const equalityKey = randomBytes(32);
+ const equalityKey = globalThis.crypto.getRandomValues(new Uint8Array(32));
  return (sql: string, parameters: Readonly<Record<string, PostgresqlObservationValue>> = {}): PostgresqlObservation => {
   const tokens: PostgresqlLexicalToken[] = [];
   let normalized: ReturnType<typeof normalizePostgresqlStatement>;
@@ -65,7 +65,8 @@ export function createPostgresqlObservationNormalizer() {
   const statementKind = command === 'select' ? 'select' : command && ['begin','start','commit','end','rollback','abort','savepoint','release'].includes(command) ? 'control' : command ? 'other' : 'unknown';
   const literalValues = tokens.filter(token => token.kind === 'literal').map(token => sql.slice(token.start,token.end));
   const equality = { parameters: { ...parameters }, literals: literalValues } satisfies PostgresqlObservationValue;
-  const parameterIdentity = Object.keys(parameters).length || literalValues.length ? createHmac('sha256', equalityKey).update(canonical(equality)).digest('hex') : undefined;
+  const parameterIdentity = Object.keys(parameters).length || literalValues.length
+   ? Array.from(computeHttpHmacSha256(equalityKey, canonical(equality)), byte => byte.toString(16).padStart(2, '0')).join('') : undefined;
   // Comments are not copied into detail; they may contain tokens or credentials.
   const maskedSql = tokens.map(token => token.kind === 'literal' ? "'[redacted]'" : sql.slice(token.start, token.end)).join(' ');
   return { ...normalized, statementKind, maskedSql, maskedParameters: mask({ ...parameters }, hasSensitiveField), ...(parameterIdentity ? { parameterIdentity } : {}) };

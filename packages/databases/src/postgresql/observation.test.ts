@@ -1,6 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { createHash, createHmac } from 'node:crypto';
+import { describe, it, expect, vi } from 'vitest';
 import { createPostgresqlObservationNormalizer, postgresqlCaptureUrl } from './observation.js';
 describe('canonical PostgreSQL observation boundary', () => {
+ it('preserves the HMAC-SHA256 equality encoding without an unkeyed secret digest', () => {
+  const key = new Uint8Array(32).fill(0x5a);
+  // Randomness is the external boundary; masking and HMAC remain real.
+  vi.stubGlobal('crypto', { getRandomValues(value: Uint8Array) { value.set(key); return value; } });
+  try {
+   const result = createPostgresqlObservationNormalizer()('SELECT $1', { '1': 'private-value' });
+   expect(result.fingerprint).toBe(createHash('sha256').update(result.shape!).digest('hex'));
+   expect(result.parameterIdentity).toBe(createHmac('sha256', key)
+    .update('{"literals":[],"parameters":{"1":"private-value"}}').digest('hex'));
+  } finally { vi.unstubAllGlobals(); }
+ });
  it.each([
   'password', String.raw`U&"\0070assword"`, String.raw`U&"!0070assword" UESCAPE '!'`,
  ].flatMap(identifier => ['text', 'binary'].map(format => ({ identifier, format }))))('redacts $format parameters for equivalent sensitive identifier $identifier', ({ identifier, format }) => {
@@ -26,6 +38,10 @@ describe('canonical PostgreSQL observation boundary', () => {
   expect(first.statementKind).toBe('select');
   expect(first.parameterIdentity).toBeTruthy();
   expect(first.parameterIdentity).toBe(same.parameterIdentity);
+  expect(first.parameterIdentity).toMatch(/^[a-f0-9]{64}$/);
+  expect(createPostgresqlObservationNormalizer()('WITH x AS (SELECT $1) SELECT * FROM users WHERE password=$2', {
+   '1': { ordinal: 1, format: 'text', value: 'alice' }, '2': { ordinal: 2, format: 'text', value: 'private-password' },
+  }).parameterIdentity).not.toBe(first.parameterIdentity);
   expect(first.maskedParameters).toMatchObject({ '2': { ordinal: 2, format: 'text', value: '[redacted]' } });
   expect(JSON.stringify(first)).not.toContain('private-password');
   expect(normalize("ALTER ROLE alice PASSWORD $tag$secret-value$tag$").maskedSql).not.toContain('secret-value');

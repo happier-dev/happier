@@ -3,6 +3,7 @@ import type { DatabaseStatsSqlPlanV1 } from '../stats.js';
 import { statsSqlPlan, statsText, statsCounter, statsNumber, statsBoolean, statsOptional, statsShape, statsRelation, statsSize, statsJsonArray, statsJsonObject } from '../stats.js';
 import { normalizePostgresqlStatement } from './statement.js';
 import { quotePostgresqlIdentifier } from './identifiers.js';
+import { compileDatabaseSizeV1 } from '../size.js';
 
 function diagnosticShape(sql: string | undefined): string | undefined {
     const safe = statsShape(sql, normalizePostgresqlStatement);
@@ -26,17 +27,7 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
     const metadata = `pg_catalog.pg_postmaster_start_time()::text AS engine_started_at,
         (SELECT stats_reset::text FROM pg_catalog.pg_stat_database WHERE datname = current_database()) AS stats_reset`;
     if (operation.group === 'indexAdvice') return { status: 'unavailable', reason: 'extension_metadata_required' };
-    if (operation.group === 'size') {
-        if (!operation.selection.relation) return statsSqlPlan('postgresql', operation, {
-            sql: 'SELECT pg_catalog.pg_database_size(current_database())::text AS size_bytes', parameters }, rows => statsSize(rows[0] ?? {}, 'database_bytes'));
-        const relation = operation.selection.relation;
-        const schema = bind(relation.schema); const name = bind(relation.name);
-        return statsSqlPlan('postgresql', operation, { sql: `SELECT pg_catalog.pg_total_relation_size(c.oid)::text AS size_bytes,
-            pg_catalog.pg_relation_size(c.oid)::text AS relation_bytes, pg_catalog.pg_table_size(c.oid)::text AS table_bytes,
-            pg_catalog.pg_indexes_size(c.oid)::text AS index_bytes FROM pg_catalog.pg_class c
-            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ${schema} AND c.relname = ${name}`, parameters },
-        rows => statsSize(rows[0] ?? {}, 'database_bytes'));
-    }
+    if (operation.group === 'size') return compileDatabaseSizeV1('postgresql', operation);
     if (operation.group === 'statements') {
         const extension = capabilities.pgStatStatements;
         if (extension === null) return { status: 'unavailable', reason: 'extension_missing' };

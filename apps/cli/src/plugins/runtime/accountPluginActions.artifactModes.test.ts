@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import { resolve } from 'node:path';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
@@ -8,7 +9,21 @@ import type { StoredCredentials } from '@/persistence';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
+import { buildAuthoredAccountActionRelease, registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
+import { manifest as supabaseManifest } from '../../../../../packages/plugins/deployment-supabase/src/index';
+import { manifest as neonManifest } from '../../../../../packages/plugins/deployment-neon/src/index';
+
+it.each([
+    ['deployment-supabase', supabaseManifest], ['deployment-neon', neonManifest],
+] as const)('builds the authored %s Account runtime with its database contribution on the portable host', async (name, manifest) => {
+    const projectRoot = resolve(import.meta.dirname, '../../../../../packages/plugins', name);
+    const release = await buildAuthoredAccountActionRelease({ manifest, artifactId: 'account-runtime',
+        accountArtifactId: 'a7e5d73f-88a7-44bc-98ed-23edbffb6214', manifestExport: 'manifest',
+        activateExport: 'activateAccount', archiveDigestCharacter: 'a', source: {
+            manifest, projectRoot, entryPath: resolve(projectRoot, 'src/index.ts'),
+        } });
+    expect(release.generated.entries.some(entry => entry.executable?.exports.includes('activateAccount'))).toBe(true);
+});
 
 it.each(['plain', 'e2ee'] as const)('publishes a readable authored release through the %s Account writer', async encryptionMode => {
     const accountId = 'authored-artifact-owner';

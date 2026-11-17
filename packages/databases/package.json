@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./size": {
+      "happier-source": "./src/size.ts",
+      "types": "./dist/size.d.ts",
+      "default": "./dist/size.js"
+    },
     "./connection/postgresql": {
       "happier-source": "./src/connection/postgresql.ts",
       "types": "./dist/connection/postgresql.d.ts",
@@ -70,6 +75,7 @@
   "dependencies": {
     "pg": "8.23.1",
     "mysql2": "3.24.6",
+    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/database-protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   }
