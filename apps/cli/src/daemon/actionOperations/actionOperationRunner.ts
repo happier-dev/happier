@@ -438,13 +438,15 @@ export function createActionOperationRunner(deps: Readonly<{
               return executionResult;
             }
           }
-          if (action.actionId === 'session.spawn_new' && executionResult.ok) {
-            const settlement = SessionSpawnNewActionResultV1Schema.safeParse(executionResult.result);
+          if (action.actionId === 'session.spawn_new') {
+            const settlement = SessionSpawnNewActionResultV1Schema.safeParse(
+              executionResult.ok ? executionResult.result : executionResult.details,
+            );
             if (settlement.success && settlement.data.type === 'error') {
               sessionBirth.settleFailure(operationId, settlement.data);
               return executionResult;
             }
-            if (settlement.success && settlement.data.type === 'pending') {
+            if (executionResult.ok && settlement.success && settlement.data.type === 'pending') {
               deps.store.updateObservation(operationId, { kind: 'outcome_uncertain', code: 'outcome_uncertain' });
               return executionResult;
             }

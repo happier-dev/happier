@@ -10,7 +10,7 @@ import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Rea
 import { MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from './testFixtures/predecessorActionOperationV1';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { completeSpawnActionResult, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 
@@ -1352,6 +1352,23 @@ describe('action operation canonical execution observer', () => {
       expect(projectActionOperationSnapshotForV1Reader(snapshot)).not.toHaveProperty('result');
     }
     expect(PredecessorSnapshotSchema.safeParse(projectActionOperationSnapshotForV1Reader(snapshot)).success).toBe(true);
+  });
+
+  it('retains the launch refusal from the actual spawn Action projection for operation recovery', async () => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('session.spawn_new');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'refused-creation',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    const refusal = { type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code: 'agent_cli_not_runnable', message: 'The selected Agent cannot run on this Machine.' } } as const;
+    let effects = 0;
+    const request = { actionId: spec.id, scope, requestId: 'refused-creation', input: {},
+      execute: async () => { effects++; return completeSpawnActionResult(refusal); } };
+    await expect(runner.observe(request)).resolves.toMatchObject({ ok: false, errorCode: 'spawn_failed' });
+    expect(store.get(scope, 'refused-creation')).toMatchObject({ state: 'failed', result: refusal });
+    await expect(runner.observe(request)).resolves.toEqual({ ok: true, result: refusal });
+    expect(effects).toBe(1);
+    expect(projectActionOperationSnapshotForV1Reader(store.get(scope, 'refused-creation')!)).not.toHaveProperty('result');
   });
 
   it('joins an in-flight exact replay and rejects the same request identity with different input', async () => {
