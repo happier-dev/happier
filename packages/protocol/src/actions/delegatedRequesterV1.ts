@@ -5,9 +5,9 @@
  * caller admitted as an agent is always the caller the owner's agent level binds.
  */
 export function isDelegatedActionRequesterV1(input: Readonly<{
-  surface?: string;
+  surface?: string | null;
   actionCaller?: Readonly<{ kind: string }> | null;
-  authority?: string;
+  authority?: string | null;
   /** The plugin host's admitted agent-caller fact, already folded from surface and caller. */
   agentCaller?: boolean;
 }>): boolean {
