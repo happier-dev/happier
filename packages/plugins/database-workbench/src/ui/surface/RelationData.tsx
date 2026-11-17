@@ -35,9 +35,10 @@ import {
 } from '../hooks.js';
 import type { WorkbenchChange, WorkbenchLocation } from '../models.js';
 import { CellText, presentCell } from './cells.js';
-import { useGridAnatomy } from './grid.js';
+import { isIdentifierColumn, useGridAnatomy } from './grid.js';
 import { RowFilters } from './RowFilters.js';
 import { RowsExport } from './RowsExport.js';
+import { countLabel } from './sizes.js';
 
 type PageColumn = ReturnType<typeof useRelationPage>['columns'][number];
 type PageRow = ReturnType<typeof useRelationPage>['rows'][number];
@@ -83,7 +84,7 @@ function StagedCell(
             variant="code"
           />
         ) : (
-          <CellText cell={cell} translate={props.translate} />
+          <CellText cell={cell} translate={props.translate} identifier={isIdentifierColumn(props.column)} />
         )}
       </Row>
     );
@@ -97,7 +98,7 @@ function StagedCell(
         numberOfLines={1}
       />
     );
-  return <CellText cell={cell} translate={props.translate} />;
+  return <CellText cell={cell} translate={props.translate} identifier={isIdentifierColumn(props.column)} />;
 }
 
 /** The row pane: every column, so nothing the table drops is out of reach; editable cells stage locally. */
@@ -302,7 +303,7 @@ function RowField(
   }>,
 ) {
   const state = useWorkbenchCellState(props.rowKey, props.column.name);
-  const shown = presentCell(props.cell, props.translate);
+  const shown = presentCell(props.cell, props.translate, { identifier: isIdentifierColumn(props.column) });
   // Text-like values edit in place; other kinds, cut values and binary stay read-only here.
   const textual =
     props.editable &&
@@ -317,8 +318,9 @@ function RowField(
     : props.column.name;
   const reference = props.foreignKey && props.cell?.type !== 'null' ? props.foreignKey : undefined;
   const referenceAction = reference ? (
+    // A quiet jump beside the value, not a second call to action in the row (lab dbBrowse/longValue).
     <Button
-      variant="secondary"
+      variant="plain"
       size="small"
       title={props.translate('plugins.database.row.openReference', 'Open in {table}', { table: reference.table })}
       onPress={() => props.tools.openReference(props.rowKey, reference.name)}
@@ -487,7 +489,7 @@ export function RelationData(
               ? translate(
                   'plugins.database.rows.range',
                   '~{total} rows · showing {from}–{to}',
-                  { total, from: String(first), to: String(shownTo) },
+                  { total: countLabel(total), from: String(first), to: String(shownTo) },
                 )
               : translate(
                   'plugins.database.rows.rangeOpen',

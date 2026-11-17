@@ -7,11 +7,105 @@ import {
   Item,
   ItemGroup,
   LoadingState,
+  Row,
   Stack,
   Text,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
+import {
+  Collection,
+  useHappierCollection,
+  type CollectionAnatomy,
+} from '@happier-dev/plugin-ui/components';
 import { useStructure, useWorkbenchLocation } from '../hooks.js';
+
+type StructureColumn = ReturnType<typeof useStructure>['columns'][number];
+const EMPTY_SET: ReadonlySet<string> = new Set();
+
+/**
+ * Columns are records people compare down a column (lab dbBrowse/structure): a table of name, type, whether a value
+ * is required and its default, the key and reference said beside the type.
+ */
+function ColumnsTable(
+  props: Readonly<{
+    columns: readonly StructureColumn[];
+    primaryKey: ReadonlySet<string>;
+    references: ReadonlyMap<string, string>;
+  }>,
+) {
+  const translate = usePluginTranslation();
+  const model = useHappierCollection({
+    items: props.columns,
+    keyOf: (column) => column.name,
+    openKey: null,
+    onOpenChange: () => {},
+  });
+  const anatomy = React.useMemo<CollectionAnatomy<StructureColumn>>(() => {
+    const text = (value: string, tone?: 'secondary') => (
+      <Text variant="body" {...(tone ? { tone } : {})} value={value} numberOfLines={1} />
+    );
+    return {
+      glyph: () => null,
+      loadingGlyph: false,
+      title: (column) => column.name,
+      titleIdentifier: true,
+      fields: [
+        {
+          key: 'type',
+          title: translate('plugins.database.structure.type', 'Type'),
+          minWidth: 200,
+          priority: 4,
+          render: (column) => {
+            const key = props.primaryKey.has(column.name)
+              ? translate('plugins.database.structure.primaryKey', 'Primary key')
+              : props.references.get(column.name);
+            return text(key ? `${column.type} · ${key}` : column.type, 'secondary');
+          },
+        },
+        {
+          key: 'null',
+          title: translate('plugins.database.structure.nullTitle', 'Null'),
+          minWidth: 88,
+          priority: 2,
+          render: (column) =>
+            column.nullable
+              ? text(translate('plugins.database.structure.nullable', 'nullable'), 'secondary')
+              : text(translate('plugins.database.structure.required', 'required')),
+        },
+        {
+          key: 'default',
+          title: translate('plugins.database.structure.defaultTitle', 'Default'),
+          minWidth: 160,
+          priority: 1,
+          render: (column) => text(column.default ?? '—', 'secondary'),
+        },
+      ],
+      accessibilityLabel: (column) => column.name,
+      columnTitles: { title: translate('plugins.database.structure.name', 'Name') },
+    };
+  }, [props.primaryKey, props.references, translate]);
+  return (
+    <Collection
+      accessibilityLabel={translate('plugins.database.structure.columns', 'Columns')}
+      title={translate('plugins.database.structure.columns', 'Columns')}
+      header={(slots) => (
+        <Row gap="small" align="center">
+          {slots.title}
+          <Text tone="secondary" variant="heading" value={String(props.columns.length)} />
+        </Row>
+      )}
+      model={model}
+      anatomy={anatomy}
+      presentation="table"
+      detail="none"
+      collapsedGroups={EMPTY_SET}
+      scroll="page"
+      minListWidth={420}
+      minDetailWidth={320}
+      preferredListRatio={1}
+    />
+  );
+}
 
 /** Columns, keys, references and indexes: read once per relation and held for the session. */
 export function RelationStructure(
@@ -49,6 +143,14 @@ export function RelationStructure(
       />
     );
   const keyed = new Set(structure.primaryKey);
+  const references = new Map(
+    structure.foreignKeys.flatMap((key) =>
+      key.columns.map((column, index) => [
+        column,
+        `→ ${key.target.name}.${key.targetColumns[index] ?? ''}`,
+      ] as const),
+    ),
+  );
   return (
     <Stack gap="large">
       {structure.viewDefinition ? (
@@ -69,39 +171,10 @@ export function RelationStructure(
           />
         </Stack>
       ) : null}
-      <ItemGroup
-        title={translate('plugins.database.structure.columns', 'Columns')}
-      >
-        {structure.columns.map((column) => (
-          <Item
-            key={column.name}
-            title={column.name}
-            subtitle={[
-              column.type,
-              column.nullable
-                ? null
-                : translate('plugins.database.structure.notNull', 'not null'),
-              column.default
-                ? translate(
-                    'plugins.database.structure.default',
-                    'default {value}',
-                    { value: column.default },
-                  )
-                : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-            {...(keyed.has(column.name)
-              ? {
-                  detail: translate(
-                    'plugins.database.structure.primaryKey',
-                    'Primary key',
-                  ),
-                }
-              : {})}
-          />
-        ))}
-      </ItemGroup>
+      {structure.viewDefinition ? null : (
+        // A view's Definition is its query alone (lab p7AddNow/viewDef); its columns head its Data.
+        <ColumnsTable columns={structure.columns} primaryKey={keyed} references={references} />
+      )}
       {structure.foreignKeys.length > 0 ? (
         <ItemGroup
           title={translate(

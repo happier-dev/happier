@@ -25,6 +25,8 @@ function byteCount(base64: string): number {
 export function presentCell(
   cell: DatabaseCellV1 | undefined,
   translate: PluginTranslate,
+  /** A key or a reference names a row: its digits are an identity, never a grouped quantity (48212, not 48,212). */
+  options?: Readonly<{ identifier?: boolean }>,
 ): CellPresentation {
   if (!cell) return { text: '', tone: 'muted', code: false, incomplete: false };
   switch (cell.type) {
@@ -49,7 +51,7 @@ export function presentCell(
     case 'integer': {
       // Grouping only where the value is a safe integer; larger values keep the engine's digits.
       const safe = Number(cell.value);
-      const text = Number.isSafeInteger(safe)
+      const text = Number.isSafeInteger(safe) && options?.identifier !== true
         ? integerFormat.format(safe)
         : cell.value;
       return { text, tone: 'neutral', code: false, incomplete: false };
@@ -117,9 +119,10 @@ export function CellText(
     cell: DatabaseCellV1 | undefined;
     translate: PluginTranslate;
     numberOfLines?: number;
+    identifier?: boolean;
   }>,
 ) {
-  const shown = presentCell(props.cell, props.translate);
+  const shown = presentCell(props.cell, props.translate, { identifier: props.identifier === true });
   const value = shown.incomplete ? `${shown.text}…` : shown.text;
   return (
     <Text

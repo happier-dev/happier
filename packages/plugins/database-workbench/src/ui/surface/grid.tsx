@@ -5,7 +5,13 @@ import type { CollectionAnatomy, CollectionField } from '@happier-dev/plugin-ui/
 import type { projectColumn } from '../projections.js';
 import { presentCell } from './cells.js';
 
-export type GridColumn = Pick<ReturnType<typeof projectColumn>, 'name' | 'typeLabel' | 'kind'>;
+export type GridColumn = Pick<ReturnType<typeof projectColumn>, 'name' | 'typeLabel' | 'kind'>
+    & Partial<Pick<ReturnType<typeof projectColumn>, 'primaryKey' | 'foreignKey'>>;
+
+/** A key or reference column names rows rather than counting anything. */
+export function isIdentifierColumn(column: GridColumn | undefined): boolean {
+    return column?.primaryKey === true || column?.foreignKey !== undefined;
+}
 export type GridRow = Readonly<{ rowKey: string; cells: readonly DatabaseCellV1[] }>;
 
 /** Readable widths per kind of value at normal text size; the table scales them with the reader's text. */
@@ -34,10 +40,10 @@ export function useGridAnatomy<Row extends GridRow, Column extends GridColumn = 
         }));
         return {
             glyph: () => null,
-            title: row => presentCell(row.cells[0], translate).text,
+            title: row => presentCell(row.cells[0], translate, { identifier: isIdentifierColumn(lead) }).text,
             titleIdentifier: true,
             fields,
-            accessibilityLabel: row => presentCell(row.cells[0], translate).text,
+            accessibilityLabel: row => presentCell(row.cells[0], translate, { identifier: isIdentifierColumn(lead) }).text,
             columnTitles: { title: lead ? gridColumnTitle(lead) : '' },
         } satisfies CollectionAnatomy<Row>;
     }, [columns, translate, renderCell, sortable]);

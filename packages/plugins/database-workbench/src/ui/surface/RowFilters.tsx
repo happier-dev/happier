@@ -246,6 +246,8 @@ function FilterAdder(
       trigger={label}
       triggerAccessibilityLabel={label}
       triggerIcon="filter"
+      // A bordered control keeps the word beside the glyph; a text trigger with a glyph draws the glyph alone.
+      triggerAppearance="control"
       triggerSize="small"
     >
       <Stack gap="small">
@@ -277,6 +279,7 @@ function FilterAdder(
         {needsValue ? (
           <TextField
             label={translate('plugins.database.filter.value', 'Value')}
+            placeholder={translate('plugins.database.filter.value', 'Value')}
             value={text}
             onChange={setText}
             autoCorrect={false}

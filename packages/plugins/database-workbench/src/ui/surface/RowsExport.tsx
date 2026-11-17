@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
+  Action,
   Button,
-  CodeBlock,
   Row,
   Popover,
   Select,
@@ -15,6 +15,7 @@ import {
 } from '@happier-dev/plugin-ui/components';
 import { useWorkbenchInstance, type useRelationPage } from '../hooks.js';
 import { exportSelectedRows } from '../../selectedExport.js';
+import { countLabel } from './sizes.js';
 
 type Page = ReturnType<typeof useRelationPage>;
 
@@ -67,10 +68,10 @@ export function RowsExport(
     : exported?.completeness.complete
       ? translate('plugins.database.export.complete', '{count} rows · the whole result', { count })
       : total
-        ? translate('plugins.database.export.partialOf', '{count} loaded rows · not the whole table: ~{total} rows match', { count, total })
+        ? translate('plugins.database.export.partialOf', '{count} loaded rows · not the whole table: ~{total} rows match', { count, total: countLabel(total) })
         : translate('plugins.database.export.partial', '{count} loaded rows · not the whole table', { count });
   return (
-    <Popover open={open} onOpenChange={setOpen} trigger={label} triggerAccessibilityLabel={label} triggerSize="small">
+    <Popover open={open} onOpenChange={setOpen} trigger={label} triggerAccessibilityLabel={label} triggerAppearance="control" triggerSize="small">
       <Stack gap="small">
         <Select
           label={translate('plugins.database.export.format', 'Format')}
@@ -110,7 +111,15 @@ export function RowsExport(
             value={translate('plugins.database.export.saveFailed', 'The file wasn’t saved. Try again, or copy it instead.')}
           />
         ) : null}
-        <Row justify="flex-end">
+        {/* The file is the outcome, so Save file leads; Copy puts the same text on the clipboard (lab p7AddNow/export). */}
+        <Row gap="small" justify="flex-end" align="center">
+          {exported ? (
+            <Action.Copy
+              value={exported.content}
+              variant="plain"
+              title={translate('plugins.database.export.copy', 'Copy')}
+            />
+          ) : null}
           <Button
             size="small"
             busy={saving === 'saving'}
@@ -118,13 +127,6 @@ export function RowsExport(
             onPress={save}
           />
         </Row>
-        {exported ? (
-          <CodeBlock
-            code={exported.content}
-            language={format === 'json' ? 'json' : undefined}
-            copyLabel={translate('plugins.database.export.copy', 'Copy')}
-          />
-        ) : null}
       </Stack>
     </Popover>
   );

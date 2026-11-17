@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ErrorState, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { ErrorState, Row, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import {
   Collection,
   useHappierCollection,
@@ -188,15 +188,22 @@ function SchemaDirectory(
         'Tables',
       )}
       title={translate('plugins.database.directory.title', 'Tables')}
-      header={
-        <Text
-          tone="secondary"
-          value={translate(
-            'plugins.database.directory.description',
-            'Biggest first. Row counts are the database’s own estimates, so they can be a little behind.',
-          )}
-        />
-      }
+      // The section leads with its name and count, then what the order means (lab p7AddNow/directory).
+      header={(slots) => (
+        <Stack gap="xsmall">
+          <Row gap="small" align="center">
+            {slots.title}
+            {rows.length > 0 ? <Text tone="secondary" variant="heading" value={String(rows.length)} /> : null}
+          </Row>
+          <Text
+            tone="secondary"
+            value={translate(
+              'plugins.database.directory.description',
+              'Biggest first. Row counts are the database’s own estimates, so they can be a little behind.',
+            )}
+          />
+        </Stack>
+      )}
       model={model}
       footer={<CataloguePagination kind="tables" nextPage={page.nextPage} previousPage={page.previousPage} />}
       anatomy={anatomy}

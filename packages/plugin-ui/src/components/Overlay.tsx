@@ -421,9 +421,12 @@ function PopoverPresentation({
           children: triggerContent ?? trigger,
         }) : triggerDisclosure && !iconOnly ? (
           <View style={disclosureTriggerStyle}>
-            <HappierText accessible={false} variant={triggerTextVariant} tone={triggerTextTone} numberOfLines={1}>
-              {trigger}
-            </HappierText>
+            {/* Composed content (an identity block) keeps the disclosure caret beside it, as plain words do. */}
+            {triggerContent ?? (
+              <HappierText accessible={false} variant={triggerTextVariant} tone={triggerTextTone} numberOfLines={1}>
+                {trigger}
+              </HappierText>
+            )}
             <HappierFieldBoxChevron open={open} color={theme.colors.secondaryText} />
           </View>
         ) : triggerContent !== undefined ? triggerContent : (

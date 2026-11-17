@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import {
   WorkbenchProvider,
+  useDatabaseSchemaRelations,
   useWorkbenchInstance,
   useWorkbenchLocation,
 } from '../hooks.js';
@@ -32,6 +33,8 @@ import {
   WORKBENCH_DISPLAY_PAGE_ROWS,
 } from './mount.js';
 import { decodeWorkbenchSubPath } from './subPath.js';
+import { databaseEngineName } from './engines.js';
+import { approxRowsLabel, bytesLabel } from './sizes.js';
 
 function RelationHeader(props: Readonly<{ targetKey: string }>) {
   const translate = usePluginTranslation();
@@ -39,22 +42,37 @@ function RelationHeader(props: Readonly<{ targetKey: string }>) {
   const location = useWorkbenchLocation();
   const relation = location.relation!;
   const previous = location.fkTrail.at(-1);
+  // The relation's own facts from the schema page the rail already reads: its estimate and its size (lab grid).
+  const summary = useDatabaseSchemaRelations(props.targetKey, relation.schema).relations.find(
+    (candidate) => candidate.name === relation.name,
+  ) as (ReturnType<typeof useDatabaseSchemaRelations>['relations'][number] & { size?: { bytes: string } }) | undefined;
+  const rows = approxRowsLabel(summary?.approxRows);
+  const size = bytesLabel(summary?.size?.bytes);
+  // A view's structure is its query, so its second mode reads Definition (lab p7AddNow/viewDef).
+  const isView = summary?.kind === 'view' || summary?.kind === 'matview';
   const modes = React.useMemo(
     () => [
       { value: 'data', label: translate('plugins.database.mode.data', 'Data') },
       {
         value: 'structure',
-        label: translate('plugins.database.mode.structure', 'Structure'),
+        label: isView
+          ? translate('plugins.database.mode.definition', 'Definition')
+          : translate('plugins.database.mode.structure', 'Structure'),
       },
     ],
-    [translate],
+    [isView, translate],
   );
   const sort = location.sort[0];
   return (
     <Stack gap="small">
       <PageHeader
         title={relation.name}
-        meta={[{ key: 'schema', text: relation.schema }]}
+        meta={[
+          { key: 'schema', text: relation.schema },
+          ...(isView ? [{ key: 'kind', text: translate('plugins.database.rail.view', 'view') }] : []),
+          ...(rows ? [{ key: 'rows', text: translate('plugins.database.directory.rowsLine', '{rows} rows', { rows }) }] : []),
+          ...(size ? [{ key: 'size', text: size }] : []),
+        ]}
         {...(previous
           ? {
               // D27 #3: a reference jump keeps the way back to the row it came from.
@@ -115,7 +133,7 @@ function OverviewPane(props: Readonly<{ targetKey: string }>) {
       <PageHeader
         title={descriptor.label}
         meta={[
-          { key: 'engine', text: descriptor.engine },
+          { key: 'engine', text: databaseEngineName(descriptor.engine) },
           { key: 'origin', text: descriptor.origin.label },
         ]}
       />

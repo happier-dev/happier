@@ -10,6 +10,7 @@ import {
   ErrorState,
   Item,
   ItemGroup,
+  PageHeader,
   Popover,
   Row,
   Select,
@@ -233,8 +234,44 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string }>) {
     [canWrite, translate],
   );
   const engineIsMysql = descriptor.engine === 'mysql';
+  // The run bar sits between what is sent and what comes back: statement, its parameters, then Run (lab p7AddNow/params).
+  // The editor and the result share the pane's height: the editor needs a bounded box to draw in at all.
   return (
-    <Stack gap="medium">
+    <Stack gap="medium" grow>
+      <PageHeader
+        title={translate('plugins.database.console.title', 'Console')}
+        meta={[{ key: 'database', text: descriptor.label }]}
+        actions={
+          <HistoryMenu
+            history={sql.history}
+            onPick={sql.setText}
+            onClear={sql.clearHistory}
+          />
+        }
+      />
+      {sql.mode === 'write' && engineIsMysql ? (
+        // D22: MySQL commits schema statements as it goes, so a failed batch can leave earlier changes in place.
+        <Text
+          tone="attention"
+          variant="meta"
+          value={translate(
+            'plugins.database.console.mysqlNote',
+            'MySQL applies schema changes immediately. If a later statement fails, earlier ones stay.',
+          )}
+        />
+      ) : null}
+      <Stack grow>
+        <CodeEditor
+          {...sql.editorProps}
+          presentation="framed"
+          showLineNumbers
+        />
+      </Stack>
+      <ConsoleParameters
+        inputs={sql.parameterInputs[0] ?? NO_PARAMETERS}
+        engine={descriptor.engine}
+        onChange={(inputs) => sql.setParameterInputs([inputs])}
+      />
       <Row gap="small" align="center">
         <Select
           label={translate('plugins.database.console.mode', 'Mode')}
@@ -244,18 +281,6 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string }>) {
           onChange={(value) =>
             sql.setMode(value === 'write' ? 'write' : 'read')
           }
-        />
-        <Stack grow />
-        <HistoryMenu
-          history={sql.history}
-          onPick={sql.setText}
-          onClear={sql.clearHistory}
-        />
-        <Action.Control
-          {...explain}
-          title={translate('plugins.database.console.explain', 'Explain')}
-          variant="secondary"
-          disabled={sql.running}
         />
         {sql.running ? (
           <Button
@@ -270,38 +295,25 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string }>) {
             variant="primary"
           />
         )}
+        <Action.Control
+          {...explain}
+          title={translate('plugins.database.console.explain', 'Explain')}
+          variant="secondary"
+          disabled={sql.running}
+        />
       </Row>
-      {sql.mode === 'write' && engineIsMysql ? (
-        // D22: MySQL commits schema statements as it goes, so a failed batch can leave earlier changes in place.
-        <Text
-          tone="attention"
-          variant="meta"
-          value={translate(
-            'plugins.database.console.mysqlNote',
-            'MySQL applies schema changes immediately. If a later statement fails, earlier ones stay.',
-          )}
-        />
-      ) : null}
-      <CodeEditor
-        {...sql.editorProps}
-        presentation="framed"
-        showLineNumbers
-      />
-      <ConsoleParameters
-        inputs={sql.parameterInputs[0] ?? NO_PARAMETERS}
-        engine={descriptor.engine}
-        onChange={(inputs) => sql.setParameterInputs([inputs])}
-      />
-      {sql.error ? (
-        <ErrorState
-          layout="line"
-          kind="error"
-          title={sql.error.message}
-          {...(sql.error.code ? { details: sql.error.code } : {})}
-        />
-      ) : (
-        <ConsoleResult result={sql.result} translate={translate} />
-      )}
+      <Stack grow>
+        {sql.error ? (
+          <ErrorState
+            layout="line"
+            kind="error"
+            title={sql.error.message}
+            {...(sql.error.code ? { details: sql.error.code } : {})}
+          />
+        ) : (
+          <ConsoleResult result={sql.result} translate={translate} />
+        )}
+      </Stack>
     </Stack>
   );
 }

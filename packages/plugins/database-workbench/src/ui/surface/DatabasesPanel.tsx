@@ -22,6 +22,7 @@ import {
   type WorkbenchLaunchInput,
 } from './mount.js';
 import { WORKBENCH_PAGE_VIEW_ID } from './views.js';
+import { databaseEngineName } from './engines.js';
 
 const PANEL_LOCATION = Object.freeze({
   targetKey: '',
@@ -53,7 +54,7 @@ function targetSubtitle(
           'connected by {name}',
           { name: target.origin.connectedBy },
         );
-  return [target.engineLabel, origin, target.endpointLabel]
+  return [databaseEngineName(target.engineLabel), origin, target.endpointLabel]
     .filter(Boolean)
     .join(' · ');
 }

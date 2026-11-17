@@ -34,6 +34,7 @@ import {
   type WorkbenchLaunchInput,
 } from './mount.js';
 import { decodeWorkbenchSubPath, encodeWorkbenchSubPath } from './subPath.js';
+import { databaseEngineName } from './engines.js';
 
 const LOCAL_ONLY = Object.freeze({ pageLocation: false });
 const CONNECT_ID = 'connect';
@@ -121,6 +122,7 @@ function DatabasePicker(
       triggerContent={
         <DatabaseIdentity
           descriptor={instance.target(props.current.targetKey)}
+          accessAsText
         />
       }
       groups={[{ id: 'databases', accessibilityLabel: label, items }]}
@@ -135,7 +137,7 @@ function DatabasePicker(
 }
 function databaseFactsOf(target: WorkbenchTarget): string {
   return [
-    target.engineLabel,
+    databaseEngineName(target.engineLabel),
     'variable' in target.origin
       ? target.origin.serviceName
       : target.origin.connectedBy,

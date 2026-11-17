@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/database-protocol';
 import {
   ErrorState,
+  Icon,
   Item,
   ItemGroup,
   LoadingState,
@@ -24,6 +25,7 @@ import {
 } from '../hooks.js';
 import { sameRelation } from '../location.js';
 import { approxRowsLabel } from './sizes.js';
+import { databaseEngineName } from './engines.js';
 import { CataloguePagination } from './CataloguePagination.js';
 
 
@@ -55,7 +57,6 @@ export function AccessWord(
       triggerAppearance="text"
       triggerSize="small"
       triggerDisclosure
-      {...(access.canWrite ? {} : { triggerIcon: 'locked' as const })}
     >
       <Stack gap="small">
         <Text
@@ -86,15 +87,21 @@ export function AccessWord(
 
 /** One fact line under the name: engine and where it came from, the same facts the Dev servers row shows. */
 export function databaseFacts(descriptor: DatabaseDescriptorV1): string {
-  return [descriptor.engine, descriptor.origin.label]
+  return [databaseEngineName(descriptor.engine), descriptor.origin.label]
     .filter(Boolean)
     .join(' · ');
 }
 
 /** The database identity the page leads with; the Session rail uses the same header as its picker trigger. */
 export function DatabaseIdentity(
-  props: Readonly<{ descriptor: DatabaseDescriptorV1 }>,
+  props: Readonly<{
+    descriptor: DatabaseDescriptorV1;
+    /** Inside another control (the rail tab's picker) the access word is said, not pressed. */
+    accessAsText?: boolean;
+  }>,
 ) {
+  const translate = usePluginTranslation();
+  const access = props.descriptor.access;
   return (
     <Stack gap="xsmall">
       <Text
@@ -108,7 +115,21 @@ export function DatabaseIdentity(
         value={databaseFacts(props.descriptor)}
         numberOfLines={1}
       />
-      <AccessWord descriptor={props.descriptor} />
+      {props.accessAsText ? (
+        access ? (
+          <Text
+            variant="meta"
+            tone="secondary"
+            value={
+              access.canWrite
+                ? translate('plugins.database.access.canEdit', 'Can edit')
+                : translate('plugins.database.access.readOnly', 'Read only')
+            }
+          />
+        ) : null
+      ) : (
+        <AccessWord descriptor={props.descriptor} />
+      )}
     </Stack>
   );
 }
@@ -130,6 +151,8 @@ function SchemaGroup(
     <>
       <Item
         title={props.schema}
+        density="compact"
+        accessibilityExpanded={props.expanded}
         onPress={() => props.onToggle(props.schema)}
         accessibilityHint={
           props.expanded
@@ -203,13 +226,15 @@ function SchemaRelations(
                   'materialized view',
                 );
         const rows = approxRowsLabel(relation.approxRows);
+        // One line per relation (a compact index): the estimate when there is one, else what kind of relation it is.
+        const detail = rows ?? kind;
         return (
           <Item
             key={relation.name}
             title={relation.name}
+            density="compact"
             selected={sameRelation(props.selected, value)}
-            {...(kind ? { subtitle: kind } : {})}
-            {...(rows ? { detail: rows } : {})}
+            {...(detail ? { detail } : {})}
             onPress={() =>
               props.onOpen({
                 relation: value,
@@ -280,18 +305,24 @@ export function WorkbenchRailList(
         {props.showOverview ? (
           <Item
             title={translate('plugins.database.rail.overview', 'Overview')}
+            icon={<Icon name="file" />}
+            density="compact"
             selected={mode === 'overview'}
             onPress={() => props.onOpen({ mode: 'overview' })}
           />
         ) : null}
         <Item
           title={translate('plugins.database.rail.console', 'Console')}
+          icon={<Icon name="terminal" />}
+          density="compact"
           selected={mode === 'console'}
           onPress={() => props.onOpen({ mode: 'console' })}
         />
         {props.showOverview ? (
           <Item
             title={translate('plugins.database.rail.insights', 'Insights')}
+            icon={<Icon name="chart" />}
+            density="compact"
             selected={mode === 'insights'}
             onPress={() => props.onOpen({ mode: 'insights' })}
           />

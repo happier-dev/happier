@@ -260,7 +260,8 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: '48,212' })); });
+      // A key names its row: its digits stay ungrouped.
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: '48212' })); });
       await settle(20);
       expect(await fixture.getByRole('textbox', { name: 'number' })).toBeTruthy();
       await fixture.press(await fixture.getByRole('button', { name: 'Open in customers' }));
@@ -370,7 +371,7 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(executeAction.mock.calls.some(([call]) => call.action === DATABASE_ROWS_READ_ACTION_ID_V1)).toBe(true);
       // The row leads with its key, grouped for reading; narrower columns stay in the row pane.
-      expect(await fixture.getByText('48,212')).toBeTruthy();
+      expect(await fixture.getByText('48212')).toBeTruthy();
       // One structure read serves the page; nothing re-reads it per row or per cell.
       expect(
         executeAction.mock.calls.filter(
@@ -436,7 +437,7 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      expect(await fixture.getByText('48,212')).toBeTruthy();
+      expect(await fixture.getByText('48212')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 });
