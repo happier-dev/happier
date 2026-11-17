@@ -17,6 +17,7 @@ import { CapabilityEndpointAddressControls, SavedHeartbeatControls } from './Hea
 import { HEALTH_KINDS_ACTION_ID } from '../healthCatalog.js';
 import { SavedHealthCheckControls } from './SavedHealthCheckControls.js';
 import { SavedHealthAlertControls } from './SavedHealthAlertControls.js';
+import { ContributedConfigFields, contributedConfigDraft, contributedConfigValue } from './contributedConfigFields.js';
 import { isMonitorCheck, isMonitorKind, monitorDefinitions, monitorKinds, type MonitorKind } from '../monitorDefinitions.js';
 
 export { activateHealthSetupClientActionsV1 as activate } from './actions/healthSetup.js';
@@ -49,7 +50,8 @@ type Draft = Readonly<{
     hostname: string; recordType: (typeof RECORD_TYPES)[number]; expectedAnswer: string; graceMs: number;
     periodMs: number; consecutiveFailuresBeforeAlerting: number;
     contributedKind?: HealthCheckKindCatalogV1[number]; contributedValidator?: PluginJsonSchemaValidator;
-    contributedConfig?: string;
+    /** What the person entered in the installed kind's typed fields. */
+    contributedDraft?: unknown;
     monitorId?: string; endpointGroup?: string; endpointName?: string;
     domainCondition?: DomainCondition;
 }>;
@@ -67,9 +69,7 @@ function readLaunch(input: unknown): Readonly<{ draft: HealthCheckSetupDraftV1; 
 }
 
 function configFor(draft: Draft): unknown {
-    if (draft.contributedKind) {
-        try { return JSON.parse(draft.contributedConfig ?? ''); } catch { return null; }
-    }
+    if (draft.contributedKind) return contributedConfigValue(draft.contributedKind.configSchema, draft.contributedDraft);
     if (draft.kind === 'uptime-kuma') return { monitorId: (draft.monitorId ?? '').trim() };
     if (draft.kind === 'gatus') return { endpointGroup: draft.endpointGroup ?? '', endpointName: draft.endpointName ?? '' };
     const optional = (key: string, value: string) => (value.trim() ? { [key]: value.trim() } : {});
@@ -207,7 +207,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const nativeDomain = props.sourceOptions.domain !== undefined && !draft.contributedKind && !isMonitorKind(draft.kind);
     const set = (patch: Partial<Draft>) => { setDraft(current => ({ ...current, ...patch })); setRefusedSave(false); };
     const selectContributed = (kind: HealthCheckKindCatalogV1[number]) => set({ contributedKind: kind,
-        contributedValidator: compilePluginJsonSchema(kind.configSchema), contributedConfig: '{}' });
+        contributedValidator: compilePluginJsonSchema(kind.configSchema), contributedDraft: contributedConfigDraft(kind.configSchema) });
     const issues = fieldIssues(draft, t);
     const candidate = buildHealthCheckSetupInput(props.subject, existing, draft, { ...props.sourceOptions,
         ...(alerts === undefined ? {} : { alerts }),
@@ -250,11 +250,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             'Check this Domain’s saved route and certificate. Choose how often to check and when to alert, then enable the checks.') }),
         columns('cadence', 2, ...cadence),
     ] : draft.contributedKind ? [
-        text(t(`${K}.configuration`, 'Configuration'), draft.contributedConfig ?? '{}', value => set({ contributedConfig: value }), {
-            monospace: true, testID: 'health-setup-contributed-config',
-            description: t(`${K}.configuration.description`, 'Enter the JSON configuration declared by this check.'),
-            ...(!contributedValid ? { issue: t(`${K}.configuration.invalid`, 'The configuration does not match this check’s schema.') } : {}) }),
-        h(Text, { key: 'schema', tone: 'secondary', value: JSON.stringify(draft.contributedKind.configSchema) }),
+        h(ContributedConfigFields, { key: `${draft.contributedKind.pluginId}/${draft.contributedKind.id}`,
+            schema: draft.contributedKind.configSchema, draft: draft.contributedDraft, onChange: next => set({ contributedDraft: next }) }),
         columns('cadence', 2, ...cadence),
     ] : monitorKind ? [
         h(Text, { key: 'monitor-about', tone: 'secondary', value: t(`${K}.monitor.about`,

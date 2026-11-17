@@ -348,14 +348,54 @@ it('adds a declared contributed kind with its closed configuration through the s
   await act(async () => { await page.press(await page.getByRole('button', { name: 'More checks' })); });
   await expect(page.getByText('External service')).resolves.toBeDefined();
   expect((await addButton(page)).state?.disabled).toBe(true);
-  await type('Configuration', '{"monitorId":"shop","endpoint":"https://other.example"}');
-  expect((await addButton(page)).state?.disabled).toBe(true);
-  await type('Configuration', '{"monitorId":"shop"}');
+  // The kind's declared field, not a JSON box: an empty required field keeps the check unavailable.
+  await type('Monitor id', 'shop');
   await act(async () => { await page.press(await addButton(page)); });
   expect(calls).toHaveLength(1);
   expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({ subject,
     checks: [expect.objectContaining({ kind: { pluginId: 'com.example.health', localId: 'external-health' },
       config: { monitorId: 'shop' }, binding: { kind: 'healthCheck' } })] }) })]);
+});
+
+// J5: an installed kind with variants, a list of records and a nested threshold (the telemetry Key flow's
+// declared shape) is authored through typed fields that round-trip into its saved configuration.
+it('authors a Key flow through typed fields drawn from its declared schema', async () => {
+  const text = { type: 'string', minLength: 1 };
+  const keyFlowSchema = { type: 'object', additionalProperties: false, required: ['environmentId', 'serviceName', 'measure', 'windowMs', 'threshold'],
+    properties: {
+      environmentId: text, serviceName: text, serviceVersion: text,
+      measure: { anyOf: [
+        { type: 'object', additionalProperties: false, required: ['kind', 'routes', 'statistic'], properties: {
+          kind: { type: 'string', const: 'route' },
+          routes: { type: 'array', minItems: 1, items: { type: 'object', additionalProperties: false, required: ['method', 'route'],
+            properties: { method: text, route: text } } },
+          statistic: { type: 'string', enum: ['p95', 'p50', 'errorRate'] } } },
+        { type: 'object', additionalProperties: false, required: ['kind', 'metricName'], properties: {
+          kind: { type: 'string', const: 'runtime' }, metricName: text } },
+      ] },
+      windowMs: { type: 'integer', exclusiveMinimum: 0 },
+      threshold: { type: 'object', additionalProperties: false, required: ['operator', 'value'], properties: {
+        operator: { anyOf: [{ const: 'above' }, { const: 'below' }] }, value: { type: 'number' } } },
+    } };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject } }, {
+    executeAction: async () => [{ pluginId: 'happier.telemetry', id: 'key-flow', title: 'Key flow', action: 'health/key-flow',
+      configSchema: keyFlowSchema }],
+  });
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'More checks' })); });
+  expect(document.querySelector('input[aria-label="Configuration"]')).toBeNull();
+  await type('Environment id', 'env-prod');
+  await type('Service name', 'billing-api');
+  await type('Method', 'POST');
+  await type('Route', '/checkout');
+  await type('Window ms', '600000');
+  expect((await addButton(page)).state?.disabled).toBe(true);
+  await type('Value', '800');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    checks: [expect.objectContaining({ checkId: 'key-flow', kind: { pluginId: 'happier.telemetry', localId: 'key-flow' },
+      config: { environmentId: 'env-prod', serviceName: 'billing-api',
+        measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' },
+        windowMs: 600_000, threshold: { operator: 'above', value: 800 } } })] }) })]);
 });
 
 it('enables the default Domain checks only after accepting cadence and preserves sibling checks', async () => {
