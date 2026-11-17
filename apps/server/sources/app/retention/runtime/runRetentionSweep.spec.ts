@@ -55,6 +55,7 @@ function createPolicy(): RetentionPolicy {
             automationRuns: { mode: 'keep_forever' },
             automationRunEvents: { mode: 'keep_forever' },
             homeAdministrationEvents: { mode: 'keep_forever' },
+            reviews: { mode: 'keep_forever' },
         },
     };
 }

@@ -2,6 +2,7 @@ import { REVIEW_ARTIFACT_KIND_V1, type ReviewMetadataWriteV1 } from '@happier-de
 import { writeReviewRoundState } from '@/app/reviews/reviewRecordService';
 import { resolveReviewCreationPolicyInTx } from '@/app/reviews/reviewCreationPolicy';
 import { isTransactionStorageError } from '@/storage/transactionErrors';
+import type { Prisma } from '@prisma/client';
 import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import { artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
@@ -1614,6 +1615,8 @@ export async function deleteArtifact(params: {
     actorUserId: string;
     artifactId: string;
     expectedRevision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
+    /** The calling lifecycle owner's condition, enforced atomically when the Artifact retires. */
+    artifactWhereGuard?: Prisma.ArtifactWhereInput;
 }): Promise<DeleteArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const artifactId = typeof params.artifactId === "string" ? params.artifactId : "";
@@ -1685,6 +1688,7 @@ export async function deleteArtifact(params: {
                 const retired = await tx.artifact.updateMany({ where: {
                     id: artifactId, accountId: actorUserId, deletedAt: null, ...artifactOrdinaryWhere,
                     headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
+                    ...(params.artifactWhereGuard ? { AND: [params.artifactWhereGuard] } : {}),
                 }, data: { deletedAt } });
                 if (retired.count !== 1) throw new ArtifactDeleteVersionConflictError();
                 await publishWorkflowActionIndexChangedInTx(tx, { workflowId: artifactId,

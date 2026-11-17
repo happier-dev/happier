@@ -79,6 +79,7 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     },
     automationRunEvents: { id: 'automationRunEvents', policyConfig: ageConfig('AUTOMATION_RUN_EVENTS') },
     homeAdministrationEvents: { id: 'homeAdministrationEvents', policyConfig: ageConfig('HOME_ADMINISTRATION_EVENTS') },
+    reviews: { id: 'reviews', policyConfig: ageConfig('REVIEWS') },
 } satisfies Record<RetentionDomainId, RetentionDomainDefinition>);
 
 export function readRetentionDomainDefinitions(): readonly RetentionDomainDefinition[] {

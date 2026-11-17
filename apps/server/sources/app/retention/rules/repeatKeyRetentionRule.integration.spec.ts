@@ -38,6 +38,7 @@ function createPolicy(input: Readonly<{
             automationRuns: keepForever,
             automationRunEvents: keepForever,
             homeAdministrationEvents: keepForever,
+            reviews: keepForever,
         },
     };
 }

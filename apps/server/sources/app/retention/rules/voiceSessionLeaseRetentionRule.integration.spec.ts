@@ -30,6 +30,7 @@ function createPolicy(): RetentionPolicy {
             automationRuns: keepForever,
             automationRunEvents: keepForever,
             homeAdministrationEvents: keepForever,
+            reviews: keepForever,
         },
     };
 }

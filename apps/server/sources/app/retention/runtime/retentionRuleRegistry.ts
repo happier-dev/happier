@@ -22,6 +22,7 @@ import { createProviderAccountUsageHistoryRetentionRule } from '@/app/retention/
 import { createUserFeedItemRetentionRule } from '@/app/retention/rules/userFeedItemRetentionRule';
 import { createVoiceSessionLeaseRetentionRule } from '@/app/retention/rules/voiceSessionLeaseRetentionRule';
 import { createIntrinsicExpiryRetentionRules } from '@/app/retention/rules/intrinsicExpiryRetentionRules';
+import { createReviewRetentionRule } from '@/app/retention/rules/reviewRetentionRule';
 
 export type RetentionRuleResult = Readonly<{
     id: string;
@@ -117,6 +118,7 @@ const RETENTION_RULE_FACTORIES = Object.freeze({
     automationRuns: createAutomationRunRetentionRule,
     automationRunEvents: createAutomationRunEventRetentionRule,
     homeAdministrationEvents: createHomeAdministrationEventRetentionRule,
+    reviews: createReviewRetentionRule,
 } satisfies Record<RetentionDomainId, () => RetentionRule>);
 
 /**

@@ -34,6 +34,7 @@ function disabledKeepForeverPolicy(): RetentionPolicy {
             automationRuns: keepForever,
             automationRunEvents: keepForever,
             homeAdministrationEvents: keepForever,
+            reviews: keepForever,
         },
     };
 }

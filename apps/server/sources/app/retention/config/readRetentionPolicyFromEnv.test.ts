@@ -2,8 +2,30 @@ import { describe, expect, it } from 'vitest';
 
 import { readRetentionPolicyFromEnv } from './readRetentionPolicyFromEnv';
 import { RETENTION_DOMAIN_SERVER_CONFIG } from './retentionServerConfig';
+import { retentionPolicyToPublicPolicy } from './retentionPolicyToPublicPolicy';
+import { retentionPolicyToCapabilities } from './retentionPolicyToCapabilities';
 
 describe('retention/readRetentionPolicyFromEnv', () => {
+    it('keeps Reviews by default and exposes the chosen duration through the generic public policy', () => {
+        expect(readRetentionPolicyFromEnv({}).domains).toHaveProperty('reviews', { mode: 'keep_forever' });
+        const policy = readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__ENABLED: 'true',
+            HAPPIER_SERVER_RETENTION__REVIEWS__MODE: 'delete_older_than',
+            HAPPIER_SERVER_RETENTION__REVIEWS__DAYS: '42',
+        });
+        expect(retentionPolicyToPublicPolicy(policy).domains).toContainEqual({
+            id: 'reviews', policy: { mode: 'delete_older_than', days: 42 },
+        });
+        expect(retentionPolicyToPublicPolicy({ ...policy, enabled: false }).domains).toContainEqual({
+            id: 'reviews', policy: { mode: 'keep_forever' },
+        });
+        expect(retentionPolicyToCapabilities(policy)).not.toHaveProperty('reviews');
+        expect(RETENTION_DOMAIN_SERVER_CONFIG.find((entry) => entry.key === 'HAPPIER_SERVER_RETENTION__REVIEWS__MODE'))
+            .toMatchObject({ default: 'keep_forever', editable: 'home', apply: 'live', group: 'reviews' });
+        expect(RETENTION_DOMAIN_SERVER_CONFIG.find((entry) => entry.key === 'HAPPIER_SERVER_RETENTION__REVIEWS__DAYS'))
+            .not.toHaveProperty('default');
+    });
+
     it('defaults provider history to 90 days and accepts the operator override', () => {
         // Owner ruling 2026-11-12: covered detail expires; sealed daily summaries remain.
         expect(readRetentionPolicyFromEnv({}).domains).toMatchObject({
@@ -124,6 +146,10 @@ describe('retention/readRetentionPolicyFromEnv', () => {
         expect(() => readRetentionPolicyFromEnv({
             HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__MODE: 'delete_older_than',
         })).toThrow(/SESSION_SIDECHAIN_MESSAGES__DAYS/i);
+
+        expect(() => readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__REVIEWS__MODE: 'delete_older_than',
+        })).toThrow(/REVIEWS__DAYS/i);
     });
 
     it('rejects non-integer numeric values for positive integer settings', () => {

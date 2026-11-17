@@ -110,6 +110,7 @@ const RETENTION_DOMAIN_COPY = {
     repeatKeys: { group: 'system', what: 'repeat-request keys' },
     globalLocks: { group: 'system', what: 'expired global locks' },
     homeAdministrationEvents: { group: 'user', what: "this Home's administration events" },
+    reviews: { group: 'user', what: 'finished Reviews' },
 } as const satisfies Record<RetentionDomainId, Readonly<{ group: 'user' | 'system'; what: string }>>;
 
 /** Two entries per retention domain: its mode and its age (or inactivity) threshold in days. */

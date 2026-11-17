@@ -25,6 +25,7 @@ describe('retention/createRetentionRuleRegistry', () => {
             'automationRuns',
             'automationRunEvents',
             'homeAdministrationEvents',
+            'reviews',
             'pluginWebhookClaimRecovery',
             'pluginWebhookDeliveryAging',
             'pluginWebhookCredentialRetirement',
