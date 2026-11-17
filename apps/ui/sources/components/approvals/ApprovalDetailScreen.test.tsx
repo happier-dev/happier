@@ -1597,6 +1597,23 @@ describe('ApprovalDetailScreen', () => {
     expect(failure?.props.subtitle).toBeUndefined();
   });
 
+  it('names an unknown outcome once: the status says it, the failure row says what to do', async () => {
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    const open = { ...JSON.parse(artifact.body), automaticChecks: undefined };
+    const request = ApprovalRequestV2Schema.parse({ ...open, status: 'outcome_unknown', updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 2, ok: false, effectAttempted: true,
+        errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' } });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+    const failure = approvalItem(screen, 'approvals.execution-failure');
+
+    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBeTruthy();
+    expect(failure?.props.title).toBe('errors.scmOutcomeUnknown');
+    expect(failure?.props.subtitle).toBeUndefined();
+  });
+
   it('preserves and presents the typed Workflow refusal from a settled Setup approval', async () => {
     await prepareApprovalFixture();
     const request = ApprovalRequestV2Schema.parse({

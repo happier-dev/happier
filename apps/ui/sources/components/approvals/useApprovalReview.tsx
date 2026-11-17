@@ -506,6 +506,12 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // A confidential entry that did not happen is said here, from its durable record, in the entry's own words.
   const recordedFill = parsed.kind === 'built_in' ? readConfidentialFillSettlement(parsed.request) : null;
   const fillNotEntered = recordedFill !== null && recordedFill.status !== 'filled';
+  const statusNamesOutcome = displayStatus === 'outcome_unknown';
+  // The shared outcome owns the summary: executor prose already sits in Technical details, so it never
+  // leads here; "no reason" is said only when nothing was recorded.
+  const failureSummary = executionFailure === null ? undefined : failureOutcome
+    ? failureOutcome.reason ?? (failureOutcome.message === null ? t('approvals.failureNoReason') : undefined)
+    : fillNotEntered ? undefined : executionFailure.reason;
   // One Technical details disclosure per page: the failure's code joins the arguments' own lines when
   // the Details card is shown, and otherwise sits with the failure.
   const failureCodeInDetails = Boolean(executionFailure?.code && shownActionFields && shownActionFields.rows.length > 0
@@ -568,12 +574,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       {executionFailure ? (
         <Item
           testID="approvals.execution-failure"
-          title={failureHeadline}
-          // The shared outcome owns the summary: executor prose already sits in Technical details, so it never
-          // leads here; "no reason" is said only when nothing was recorded.
-          subtitle={failureOutcome
-            ? failureOutcome.reason ?? (failureOutcome.message === null ? t('approvals.failureNoReason') : undefined)
-            : fillNotEntered ? undefined : executionFailure.reason}
+          // The Status row already names an unknown outcome, so this row leads with what to do instead of repeating it.
+          title={statusNamesOutcome && failureSummary ? failureSummary : failureHeadline}
+          subtitle={statusNamesOutcome ? undefined : failureSummary}
           subtitleLines={0}
           mode="info"
           showChevron={false}
