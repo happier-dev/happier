@@ -8,6 +8,7 @@ import {
   buildProjectOpenInput,
   suggestProjectOpenDestination,
 } from '@/components/projects/activation/projectOpenChoices';
+import { presentProjectSourceIssue } from '@/components/projects/sources/projectSourceIssue';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -326,11 +327,12 @@ function TeamSetupPlanPage(
     presetValue,
   ]);
 
-  const loading =
-    resources.sharedResources.status !== 'ready' &&
-    resources.sources.state.rows.length === 0 &&
-    !resources.preset;
-  if (!loading && !hasPreset && repositories.length === 0) {
+  const sourcesState = resources.sources.state;
+  const sourcesLoading = sourcesState.status === 'initial' || sourcesState.status === 'loading';
+  const sourcesFailed = sourcesState.status === 'offline' || sourcesState.status === 'refused';
+  const sourceIssue = sourcesFailed ? presentProjectSourceIssue(sourcesState.issue, context.homeName) : null;
+  if (resources.sharedResources.status === 'ready' && sourcesState.status === 'ready' && sourcesState.coverage.complete
+    && !hasPreset && repositories.length === 0) {
     return (
       <>
       <TeamSetupHeader context={context} lead={false} />
@@ -385,6 +387,18 @@ function TeamSetupPlanPage(
     <TeamSetupHeader context={context} lead />
     {props.conditions}
     <PageAsideColumns compact={compact} compactAside="first" aside={aside}>
+      {sourcesLoading && repositories.length === 0 ? (
+        <SurfaceStateCard testID="team-setup-sources-loading" kind="loading" size="line" title={t('projects.sources.loading')} />
+      ) : sourcesFailed ? (
+        <SurfaceStateCard
+          testID="team-setup-sources-failed"
+          kind="error"
+          size="line"
+          title={sourceIssue?.title ?? t('common.unavailable')}
+          reason={sourceIssue?.description}
+          action={{ label: t('common.retry'), onPress: () => { void resources.sources.controller.load(); } }}
+        />
+      ) : null}
       {run.kind === 'stopped' ? (
         <SurfaceStateCard
           testID="team-setup-stopped"

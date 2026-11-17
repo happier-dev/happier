@@ -105,3 +105,40 @@ it.each([
         expect(screen.findByTestId('joined-action')).not.toBeNull();
     } finally { await screen.unmount(); await scopeHook.unmount(); }
 });
+
+it.each(['source_backend_unavailable', 'source_unavailable'] as const)(
+    'keeps Team setup unknown until Sources settle and offers recovery for %s', async (failure) => {
+        onTestFinished(await installRealActionExecutorModuleLoader());
+        const serverId = await homes.addHome({ name: 'Setup Home', serverUrl: 'https://setup-state.example.test',
+            serverIdentityId: 'srv_setup_state', accountId: 'member', currentAccount: true, teamsEnabled: true });
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        storage.getState().activateProfileScope({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'member' });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const team = teamSummaryFixture({ id: 'setup-state-team', policy: teamPolicyFixture({ managedDefaults: null }) });
+        homes.answer(serverId, '/v1/teams/get', { body: team });
+        const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: team.id });
+        homes.answer(serverId, summary.path, { body: { teamId: team.id, kinds: [] } });
+        let release!: () => void;
+        const respondAfter = new Promise<void>(resolve => { release = resolve; });
+        homes.answer(serverId, '/v1/projects/sources', { respondAfter, body: { ok: false, error: failure } });
+        const { TeamSetupScreen } = await import('./TeamSetupScreen');
+        const screen = await renderScreen(<TeamSetupScreen serverId={serverId} teamId={team.id} />);
+        try {
+            await waitForHomeGovernance(() => expect(homes.requests.some(request => request.path.split('?')[0] === '/v1/projects/sources'), screen.getTextContent()).toBe(true));
+            await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-header')).not.toBeNull());
+            expect(screen.findByTestId('team-setup-empty')).toBeNull();
+            expect(screen.findByTestId('team-setup-sources-loading')).not.toBeNull();
+            release();
+            await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-sources-failed'), screen.getTextContent()).not.toBeNull());
+            expect(screen.findByTestId('team-setup-empty')).toBeNull();
+            homes.answer(serverId, '/v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+            await screen.pressByTestIdAsync('team-setup-sources-failed-action');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-empty'), screen.getTextContent()).not.toBeNull());
+            expect(screen.findByTestId('team-setup-sources-loading')).toBeNull();
+            expect(screen.findByTestId('team-setup-sources-failed')).toBeNull();
+        } finally { release(); await screen.unmount(); }
+    },
+);
