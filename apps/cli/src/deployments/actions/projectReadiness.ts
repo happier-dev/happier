@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   PROJECT_READINESS_FACT_OWNERS_V1,
@@ -9,8 +10,6 @@ import {
 import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentBackupV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { deploymentBackupTargetOperands, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
-// Keep after the protocol imports: placed first, it broke this module graph's schema initialization (A/B, 11-17).
-import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 
 export type ProjectReadinessEnvironmentV1 =
   Readonly<{ kind: 'available'; durableData: 'present' | 'absent' | 'unknown'; backup?: DeploymentEnvironmentBackupV1;
