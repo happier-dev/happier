@@ -147,8 +147,8 @@ function storedArtifact(artifactId: string) {
     return { id: artifactId, header: encodePlainArtifactStoredContent(host.document.header),
         body: encodePlainArtifactStoredContent({ body }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
         headerVersion: host.documentVersion, bodyVersion: host.documentVersion, seq: 1, createdAt: 1, updatedAt: 1,
-        ownerAccountId: host.ownerAccountId, access: host.access, encryptionMode: 'plain',
-        publicAudience: host.publicShare ? 'retained' : 'none' };
+        ownerAccountId: host.ownerAccountId, access: host.access, encryptionMode: 'plain' as const,
+        publicAudience: host.publicShare ? 'retained' as const : 'none' as const };
 }
 async function serveHome(): Promise<void> {
     const teamPage = TeamsPageV1Schema.parse({

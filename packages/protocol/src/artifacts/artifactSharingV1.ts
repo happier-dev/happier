@@ -34,6 +34,7 @@ export type ArtifactSharingResourceV1 = Readonly<{
   header: Readonly<Record<string, unknown>>;
   body?: ArtifactBodyV1 | null;
   ownerAccountId?: string;
+  ownerDisplayName?: string | null;
   access?: ArtifactCallerAccessV1;
   publicAudience?: ArtifactPublicAudienceV1;
   headerVersion?: number;
