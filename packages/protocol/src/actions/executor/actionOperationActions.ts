@@ -1,5 +1,9 @@
 import { RPC_METHODS } from '../../rpc/methods.js';
-import { createRpcCallError } from '../../rpc/errors.js';
+import { createRpcCallError, readRpcErrorCode } from '../../rpc/errors.js';
+import { parseCapabilitiesInvokeResponse } from '../../capabilities/invokeResponse.js';
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { readActionOperationTaskQuestionV1 } from '../operations/taskQuestionV1.js';
+import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 } from '../operations/actionIdsV1.js';
 import { TERMINAL_STREAM_MAX_READ_BYTES, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema,
   type TerminalStreamReadResponse } from '../../terminal/stream.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, ActionOperationListV1ResponseSchema,
@@ -9,7 +13,7 @@ import { ActionOperationActionInputSchemasV1, type ActionOperationActionIdV1,
   type ActionOperationActionInputV1 } from '../specs/actionOperations.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { selectOperationOutput } from './selectedOutput.js';
-import type { ActionExecuteFailure } from './types.js';
+import type { ActionExecuteFailure, ActionExecutorContext } from './types.js';
 
 export type QualifiedActionOperationV1 = Readonly<{
   serverId: string; machineId: string; operationId: string;
@@ -25,6 +29,7 @@ const failure = (errorCode: string): ActionOperationFailure => ({ ok: false, err
 export async function executeActionOperationActionV1(args: Readonly<{
   actionId: ActionOperationActionIdV1;
   input: ActionOperationActionInputV1;
+  context?: Pick<ActionExecutorContext, 'expectedAccountId' | 'surface'>;
   signal?: AbortSignal;
   transport: ActionOperationMachineTransportV1;
   openOutput?: (target: QualifiedActionOperationV1 & Readonly<{ operation: ActionOperationSnapshotV1 }>) => Promise<void>;
@@ -54,6 +59,34 @@ export async function executeActionOperationActionV1(args: Readonly<{
   const call = (method: string, request: unknown) => invoke({
     serverId, machineId, method, payload: request, ...(args.signal ? { signal: args.signal } : {}),
   });
+  if (args.actionId === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1) {
+    const answerInput = ActionOperationActionInputSchemasV1[ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1].parse(input);
+    if (!args.context?.expectedAccountId) return failure('action_operation_unavailable');
+    try {
+      const found = ActionOperationGetV1ResponseSchema.safeParse(await call(ACTION_OPERATION_RPC_METHODS_V2.get, {
+        operationId: answerInput.operationId,
+      }));
+      if (!found.success || found.data.kind !== 'found') return failure('action_operation_unavailable');
+      const operation = found.data.operation;
+      const question = readActionOperationTaskQuestionV1(operation);
+      const domain = operation.domainRef;
+      if (operation.operationId !== answerInput.operationId || operation.scope.machineId !== machineId
+        || operation.scope.accountId !== args.context.expectedAccountId
+        || (domain?.kind === 'machineSetup' || domain?.kind === 'machineReboot') && domain.serverId !== serverId
+        || question?.id !== answerInput.taskId || !sameStrictJsonValue(question.prompt, answerInput.prompt)) {
+        return failure('action_operation_unavailable');
+      }
+      const response = parseCapabilitiesInvokeResponse(await call(RPC_METHODS.CAPABILITIES_INVOKE, {
+        id: 'tool.systemTasks', method: 'respond', params: {
+          taskId: question.id, expectedPromptKind: question.prompt.kind, answer: answerInput.answer,
+        },
+      }));
+      if (!response) return failure('action_operation_unavailable');
+      return response.ok ? { kind: 'answered' } : failure(response.error.code ?? 'action_operation_unavailable');
+    } catch (error) {
+      return failure(args.signal?.aborted ? 'cancelled' : readRpcErrorCode(error) ?? 'action_operation_unavailable');
+    }
+  }
   if (args.actionId === 'action.operations.list') {
     const raw = await call(ACTION_OPERATION_RPC_METHODS_V2.list, payload);
     return readActionFailureEnvelope(raw, { treatReturnedErrorEnvelopeAsFailure: true }) ?? ActionOperationListV1ResponseSchema.parse(raw);

@@ -45,7 +45,7 @@ await loadSyncSingletonForTests();
 const { ActionOperationDetailModal } =
   await import('./ActionOperationDetailModal');
 
-// A dummy value typed only inside this fixture; it never reaches an Action, store or log.
+// A fixture-only password; the live-only Action must omit it from retained observations.
 const DUMMY = 'fixture-only-value';
 
 function heldSetup(
@@ -126,7 +126,8 @@ describe('ActionOperationDetailModal sudo answer', () => {
 
     // Submitting: the value leaves the field at once; the field and Send hold while the machine answers.
     const reply = createDeferred<unknown>();
-    rpc.machine.mockReturnValueOnce(reply.promise);
+    rpc.machine.mockImplementation(async ({ method }) => method === 'actionOperation.get.v2'
+      ? { kind: 'found', operation: snapshot } : await reply.promise);
     screen.changeTextByTestId('action-operation-sudo-password', DUMMY);
     await flushHookEffects();
     expect(
@@ -135,9 +136,9 @@ describe('ActionOperationDetailModal sudo answer', () => {
     await screen.pressByTestIdAsync('action-operation-sudo-send');
     await waitForHomeGovernance(async () => {
       await flushHookEffects();
-      expect(rpc.machine).toHaveBeenCalledTimes(1);
+      expect(rpc.machine.mock.calls.filter(([request]) => request.method === 'capabilities.invoke')).toHaveLength(1);
     });
-    expect(rpc.machine.mock.calls[0]?.[0].payload.params).toMatchObject({
+    expect(rpc.machine.mock.calls.find(([request]) => request.method === 'capabilities.invoke')?.[0].payload.params).toMatchObject({
       taskId: 'setup-task',
       answer: { password: DUMMY },
     });
@@ -164,7 +165,8 @@ describe('ActionOperationDetailModal sudo answer', () => {
     expect(screen.getTextContent()).not.toContain(DUMMY);
 
     // Sent: a successful reply replaces the field until the operation moves on.
-    rpc.machine.mockResolvedValueOnce({ ok: true, result: { ok: true } });
+    rpc.machine.mockImplementation(async ({ method }) => method === 'actionOperation.get.v2'
+      ? { kind: 'found', operation: snapshot } : { ok: true, result: { ok: true } });
     screen.changeTextByTestId('action-operation-sudo-password', DUMMY);
     await flushHookEffects();
     await screen.pressByTestIdAsync('action-operation-sudo-send');
@@ -231,7 +233,7 @@ describe('ActionOperationDetailModal sudo answer', () => {
     });
     await flushHookEffects();
     expect(screen.findByTestId('action-operation-sudo')).toBeNull();
-    expect(rpc.machine).toHaveBeenCalledTimes(2);
+    expect(rpc.machine.mock.calls.filter(([request]) => request.method === 'capabilities.invoke')).toHaveLength(2);
     await screen.unmount();
   });
 });

@@ -744,6 +744,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     for (const [method, actionId] of [[RPC_METHODS.DAEMON_AGENTS_INSTALL_START, 'machines.agents.install'],
       [RPC_METHODS.DAEMON_AGENTS_INSTALL_START, 'machines.agents.uninstall'],
       [RPC_METHODS.CAPABILITIES_INVOKE, 'machines.capabilities.install'],
+      [RPC_METHODS.CAPABILITIES_INVOKE, 'action.operations.task.respond'],
       [RPC_METHODS.BASH, 'machines.command.run']] as const) {
       const binding = { ...original, actionId };
       expect(resolve(method, binding), actionId).toBe(actionId);

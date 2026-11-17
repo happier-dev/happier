@@ -18,7 +18,7 @@ export const MachineAdminAccessV1Schema = lazyZodSchema(() => z.discriminatedUni
 ]));
 export type MachineAdminAccessV1 = z.infer<typeof MachineAdminAccessV1Schema>;
 
-/** Nonsecret current attendance question; the response never enters an Action operand. */
+/** Nonsecret attendance question; its answer remains in live-only Action custody. */
 export const MachineSudoPasswordPromptV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('sudo.password'), adminUsername: MachineAdministratorUsernameV1Schema,
 }));

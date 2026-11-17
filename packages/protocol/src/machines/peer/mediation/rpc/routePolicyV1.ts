@@ -3,6 +3,7 @@ import { readSessionActionChildCreationRpcEffectV1 } from '../../../../sessions/
 import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
+import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 } from '../../../../actions/operations/actionIdsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
 import { MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1, resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
@@ -1189,7 +1190,8 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
   }
   if (method === RPC_METHODS.BASH || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
     || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL
-    || method === RPC_METHODS.CAPABILITIES_INVOKE && binding?.actionId === 'machines.capabilities.install') {
+    || method === RPC_METHODS.CAPABILITIES_INVOKE && (binding?.actionId === 'machines.capabilities.install'
+      || binding?.actionId === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1)) {
     // These shared transports spend the original Action, never a method-wide
     // substitute. Home still verifies its signed arguments and exact principal.
     const matchingAction = method === RPC_METHODS.BASH ? binding?.actionId === 'machines.command.run'
@@ -1197,7 +1199,7 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
         ? binding?.actionId === 'machines.agents.install' || binding?.actionId === 'machines.agents.uninstall'
         : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? binding?.actionId === 'machines.agents.install.status'
         : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL ? binding?.actionId === 'machines.agents.install.cancel'
-        : binding?.actionId === 'machines.capabilities.install';
+        : binding?.actionId === 'machines.capabilities.install' || binding?.actionId === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1;
     return matchingAction && binding && binding.target.kind === 'machine'
       && binding.target.machineId === binding.machineId
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)

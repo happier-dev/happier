@@ -2657,6 +2657,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         }
         return await executeActionOperationActionV1({
           actionId, input, ...(signal ? { signal } : {}),
+          context: { surface: context.surface, expectedAccountId: accountContext?.accountId },
           transport: async request => await actionMachineRpc({
             ...request,
             ...(actionId === 'action.operations.get' && 'waitForTerminal' in input && input.waitForTerminal

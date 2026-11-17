@@ -41,7 +41,8 @@ it.each([true, false])('asks the real trust sheet and sends the explicit Prepare
             prompt: { kind: 'ssh.trustHost', message: 'Trust this guest?', host: '192.168.64.7', keyType: 'ssh-ed25519',
                 fingerprint: 'SHA256:guest', existingFingerprint: null } } };
     actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
-    boundary.machine.mockResolvedValue({ ok: true, result: { ok: true } });
+    boundary.machine.mockImplementation(async ({ method }) => method === 'actionOperation.get.v2'
+        ? { kind: 'found', operation: snapshot } : { ok: true, result: { ok: true } });
     const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId="prepare-operation" onClose={vi.fn()} />);
     expect(boundary.machine).not.toHaveBeenCalled();
     expect(screen.findByTestId('action-operation-ssh-review')).not.toBeNull();
@@ -51,9 +52,9 @@ it.each([true, false])('asks the real trust sheet and sends the explicit Prepare
     boundary.sheets[0]!.props?.onResolve?.(trusted);
     await waitForHomeGovernance(async () => {
         await flushHookEffects();
-        expect(boundary.machine).toHaveBeenCalledTimes(1);
+        expect(boundary.machine.mock.calls.filter(([request]) => request.method === 'capabilities.invoke')).toHaveLength(1);
     });
-    expect(boundary.machine.mock.calls[0]?.[0].payload).toMatchObject({ id: 'tool.systemTasks', method: 'respond', params: {
+    expect(boundary.machine.mock.calls.find(([request]) => request.method === 'capabilities.invoke')?.[0].payload).toMatchObject({ id: 'tool.systemTasks', method: 'respond', params: {
         taskId: 'trust-task', expectedPromptKind: 'ssh.trustHost', answer: { trusted },
     } });
 });

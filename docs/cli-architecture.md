@@ -3854,8 +3854,17 @@ consumes Home-admitted person authority and exact original admission; Account
 automation is not person attendance. The password travels only through the
 existing private capabilities response to local sudo. Legacy operation pushes
 remain projected: the existing qualified V2 read supplies the current descriptor
-to the semantic response hook. The secure rendered answer consumer remains an
-integration handoff, not a completed UI claim.
+to the semantic response hook. In current 0.3 development source, that hook sends
+`action.operations.task.respond` through the captured Account's ordinary Action
+executor. Its live-only approval custody keeps the answer in the current
+invocation; approval review and retained observations contain only the qualified
+operation, task id and displayed prompt. The shared operation question owner
+also supplies finite SSH trust questions. Before sending to the incumbent private
+`tool.systemTasks/respond` transport, the executor reads the current qualified
+operation and matches its Account, Machine, task and exact prompt. A settled or
+replaced question is unavailable; a transport refusal exposes its typed code and
+allows the person to retry. This source contract does not establish loaded-runtime
+qualification.
 
 Before native effects, Apply rechecks the captured desired field; unrelated
 outer metadata writes remain compatible with the existing field CAS. Equal
@@ -4095,7 +4104,7 @@ observable. There is no reboot ledger, persisted token, timer, replay or new
 server-visible operation fact.
 
 An administrator password question is the existing parent-operation
-`sudo.password` continuation, not another Action or reboot argument. Its task
+`sudo.password` continuation, answered through the live-only operation task Action. Its task
 reference and nonsecret administrator username are operation presentation data;
 the password is transient through the existing admitted system-task response
 path, never saved in operation metadata, argv, environment or logs.

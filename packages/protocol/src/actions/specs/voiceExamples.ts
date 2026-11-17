@@ -151,6 +151,7 @@ export const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, strin
   "action.operations.list": "{\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
   "action.operations.get": "{\"operationId\":\"example\",\"serverId\":\"home\",\"machineId\":\"machine-1\"}",
   "action.operations.cancel": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\"}",
+  "action.operations.task.respond": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\",\"taskId\":\"task-1\",\"prompt\":{\"kind\":\"ssh.trustHost\",\"message\":\"Review host key\",\"host\":\"example.com\",\"keyType\":null,\"fingerprint\":\"example\",\"existingFingerprint\":null},\"answer\":{\"trusted\":true}}",
   "projects.execution.output.read": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\",\"byteOffset\":0}",
   "projects.execution.output.open": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\"}",
   "projects.execution.output.copy": "{\"serverId\":\"home\",\"machineId\":\"machine-1\",\"operationId\":\"example\",\"byteOffset\":0}",

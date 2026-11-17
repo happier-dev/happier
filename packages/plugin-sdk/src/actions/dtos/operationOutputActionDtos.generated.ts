@@ -42,6 +42,41 @@ export type OperationOutputActionInputById = {
         machineId: string;
         operationId: string;
     };
+    readonly "action.operations.task.respond": {
+        taskId: string;
+        prompt: {
+            kind: 'auth.approveRemoteProvisioning';
+            message: string;
+        } | {
+            kind: 'daemon.replaceRemoteBackgroundServices';
+            message: string;
+        } | {
+            kind: 'ssh.replaceHostKey' | 'ssh.trustHost';
+            message: string;
+            host: string;
+            keyType: null | string;
+            fingerprint: string;
+            existingFingerprint: null | string;
+        };
+        answer: {
+            trusted: boolean;
+        };
+        serverId: string;
+        machineId: string;
+        operationId: string;
+    } | {
+        taskId: string;
+        prompt: {
+            kind: 'sudo.password';
+            adminUsername: string;
+        };
+        answer: {
+            password: string;
+        };
+        serverId: string;
+        machineId: string;
+        operationId: string;
+    };
     readonly "projects.execution.output.read": {
         serverId: string;
         machineId: string;
@@ -4294,6 +4329,9 @@ export type OperationOutputActionResultById = {
         kind: 'requested';
     } | {
         kind: 'unsupported';
+    };
+    readonly "action.operations.task.respond": {
+        kind: 'answered';
     };
     readonly "projects.execution.output.read": {
         ok: true;

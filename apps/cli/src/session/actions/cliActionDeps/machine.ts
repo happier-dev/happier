@@ -84,6 +84,8 @@ export function createCliMachineActionDeps(
     },
     actionOperationAction: async ({ actionId, input, context, signal }) => executeActionOperationActionV1({
       actionId, input, ...(signal ? { signal } : {}),
+      context: { surface: context.surface,
+        expectedAccountId: params.credentials ? readAccountIdFromToken(params.credentials.token) ?? undefined : context.expectedAccountId },
       transport: async ({ serverId, machineId, method, payload, signal: requestSignal }) => {
         if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
           return { ok: false, errorCode: 'operation_transport_unavailable', error: 'An authenticated machine transport is required.' };

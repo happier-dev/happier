@@ -5,7 +5,10 @@ import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { TerminalStreamReadRequestSchema, TerminalStreamReadOkResponseSchema } from '../../terminal/stream.js';
 import { ActionOperationListV2RequestSchema, ActionOperationListV1ResponseSchema,
   ActionOperationGetV2RequestSchema, ActionOperationGetV1ResponseSchema,
-  ActionOperationCancelV1ResponseSchema } from '../operations/v1.js';
+  ActionOperationCancelV1ResponseSchema, ManagedMachineBootstrapApprovalPromptV1Schema } from '../operations/v1.js';
+import { MachineSudoPasswordPromptV1Schema } from '../../machines/adminAccessV1.js';
+import { ActionOperationIdentifierV1Schema } from '../operations/identifierV1.js';
+import { redactObservationInputPaths } from './observationRedaction.js';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '../operations/methodsV1.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../actionSpecs.js';
 import { actionInputServerId } from './definition.js';
@@ -16,7 +19,7 @@ import { ManagedResourceTargetV1Schema } from '../../machines/managed/actionsV1.
 import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 export { ActionOperationAddressV1Schema } from '../operations/addressV1.js';
 
-import { ACTION_OPERATION_ACTION_IDS_V1, ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
+import { ACTION_OPERATION_ACTION_IDS_V1, ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1, ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
 export { ACTION_OPERATION_ACTION_IDS_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
 export const ActionOperationActionIdV1Schema = lazyZodSchema(() => z.enum(ACTION_OPERATION_ACTION_IDS_V1));
 
@@ -47,6 +50,16 @@ export const ActionOperationGetActionInputV1Schema = lazyZodSchema(() =>
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ActionOperationGetV2RequestSchema, {
     ...managedObservation(), environmentId: z.optional(DeploymentIdentifierV1Schema),
   })));
+
+export const ActionOperationTaskRespondInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...ActionOperationAddressV1Schema.shape, taskId: ActionOperationIdentifierV1Schema,
+    prompt: MachineSudoPasswordPromptV1Schema, answer: z.strictObject({ password: z.string().check(z.minLength(1)) }) }),
+  z.strictObject({ ...ActionOperationAddressV1Schema.shape, taskId: ActionOperationIdentifierV1Schema,
+    prompt: ManagedMachineBootstrapApprovalPromptV1Schema.check(z.refine(prompt =>
+      prompt.kind === 'ssh.trustHost' || prompt.kind === 'ssh.replaceHostKey')),
+    answer: z.strictObject({ trusted: z.boolean() }) }),
+]));
+export const ActionOperationTaskRespondResultV1Schema = lazyZodSchema(() => z.strictObject({ kind: z.literal('answered') }));
 
 // The terminal owner defines every cursor, credit and byte boundary. Only its
 // terminal address is replaced by a qualified operation address at this seam.
@@ -104,6 +117,7 @@ export const ActionOperationActionInputSchemasV1 = {
   'action.operations.list': ActionOperationListActionInputV1Schema,
   'action.operations.get': ActionOperationGetActionInputV1Schema,
   'action.operations.cancel': ActionOperationAddressV1Schema,
+  'action.operations.task.respond': ActionOperationTaskRespondInputV1Schema,
   'projects.execution.output.read': ProjectExecutionOutputReadInputV1Schema,
   'projects.execution.output.open': ActionOperationAddressV1Schema,
   'projects.execution.output.copy': ProjectExecutionOutputCopyInputV1Schema,
@@ -112,6 +126,7 @@ export const ActionOperationActionOutputSchemasV1 = {
   'action.operations.list': lazyZodSchema(() => z.lazy(() => ActionOperationListV1ResponseSchema)),
   'action.operations.get': lazyZodSchema(() => z.lazy(() => ActionOperationGetV1ResponseSchema)),
   'action.operations.cancel': lazyZodSchema(() => z.lazy(() => ActionOperationCancelV1ResponseSchema)),
+  'action.operations.task.respond': ActionOperationTaskRespondResultV1Schema,
   'projects.execution.output.read': TerminalStreamReadOkResponseSchema,
   'projects.execution.output.open': ProjectExecutionOutputOpenResultV1Schema,
   'projects.execution.output.copy': ProjectExecutionOutputCopyResultV1Schema,
@@ -120,12 +135,14 @@ export type ActionOperationActionInputV1 = z.infer<typeof ActionOperationActionI
 const titles: Record<ActionOperationActionIdV1, string> = {
   'action.operations.list': 'List operations', 'action.operations.get': 'Read operation',
   'action.operations.cancel': 'Stop operation', 'projects.execution.output.read': 'Read command output',
+  'action.operations.task.respond': 'Answer operation question',
   'projects.execution.output.open': 'Open command output', 'projects.execution.output.copy': 'Copy command output',
 };
 const summaries: Record<ActionOperationActionIdV1, string> = {
   'action.operations.list': 'See what is running or recently finished on a machine, such as project scripts and commands.',
   'action.operations.get': 'See how one running or finished operation is going.',
   'action.operations.cancel': 'Stop an operation that is still running.',
+  'action.operations.task.respond': 'Answer the current private question from a running operation.',
   'projects.execution.output.read': 'Read what a project script or command has printed so far.',
   'projects.execution.output.open': 'Show a command\'s output on this device.',
   'projects.execution.output.copy': 'Copy a command\'s output, so you can paste it elsewhere.',
@@ -158,6 +175,15 @@ const inputFields = {
     { path: 'includeSetupReview', title: 'Include setup review', widget: 'boolean' },
     { path: 'refreshSetupReview', title: 'Refresh setup review', widget: 'boolean' }],
   'action.operations.cancel': operationFields,
+  'action.operations.task.respond': [...operationFields,
+    { path: 'taskId', title: 'Task id', widget: 'text', required: true },
+    { path: 'prompt', title: 'Current question', widget: 'json', required: true },
+    { path: 'answer.password', title: 'Administrator password', widget: 'secret',
+      visibleWhen: { op: 'eq', path: 'prompt.kind', value: 'sudo.password' },
+      requiredWhen: { op: 'eq', path: 'prompt.kind', value: 'sudo.password' } },
+    { path: 'answer.trusted', title: 'Trust host key', widget: 'boolean',
+      visibleWhen: { op: 'not', predicate: { op: 'eq', path: 'prompt.kind', value: 'sudo.password' } },
+      requiredWhen: { op: 'not', predicate: { op: 'eq', path: 'prompt.kind', value: 'sudo.password' } } }],
   'projects.execution.output.read': outputFields,
   'projects.execution.output.open': operationFields,
   'projects.execution.output.copy': [...outputFields,
@@ -167,8 +193,8 @@ function createActionOperationActionSpecs() {
   return ACTION_OPERATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
   invocationServerIdForInput: actionInputServerId(ActionOperationActionInputSchemasV1[id], input => input.serverId),
   id, approval: { result: 'required' }, approvalPolicy: { uiConfirmation: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 ? 'policy' : 'direct' }, title: titles[id], description: summaries[id],
-  safety: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 ? 'danger' : 'safe',
-  sideEffectClass: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 ? 'write' : 'read',
+  safety: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 || id === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 ? 'danger' : 'safe',
+  sideEffectClass: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 || id === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 ? 'write' : 'read',
   executionPlacement: id === 'projects.execution.output.open' ? 'client' : 'machine', placements: [],
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
   bindings: { mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_'),
@@ -176,6 +202,9 @@ function createActionOperationActionSpecs() {
   cli: { commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   inputHints: { title: titles[id], fields: inputFields[id] },
   inputSchema: ActionOperationActionInputSchemasV1[id], outputSchema: ActionOperationActionOutputSchemasV1[id],
+  ...(id === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 ? {
+    approvalInputCustody: 'live_only' as const, projectObservationInput: redactObservationInputPaths('answer'),
+  } : {}),
   ...(id === ACTION_OPERATION_LIST_ACTION_ID_V1 ? { surfaceBindings: { plugin: {
     inputSchema: ActionOperationListPluginInputV1Schema, bindInput: bindOperationListPluginInput,
   } } } : {}),

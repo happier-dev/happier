@@ -1,11 +1,9 @@
 import * as React from 'react';
-import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import { executeDefaultActionInCapturedAccount } from '@/sync/ops/actions/defaultActionExecutor';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { readActionOperationTaskQuestion } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { actionOperationAddressKey, type QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
+import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 
 type Submission = Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: string }>;
 
@@ -16,21 +14,7 @@ export async function submitActionOperationTaskAnswer(
     signal?: AbortSignal,
 ): Promise<Submission> {
     const question = readActionOperationTaskQuestion(operation.snapshot);
-    const current = () => {
-        const retained = actionOperationStore.getSnapshot().operationsByKey.get(actionOperationAddressKey({
-            serverId: operation.serverId, operationId: operation.snapshot.operationId,
-        }))?.snapshot;
-        const domain = retained?.domainRef;
-        const prompt = retained ? readActionOperationTaskQuestion(retained) : null;
-        return question && retained && retained.actionId === operation.snapshot.actionId
-            && retained.scope.accountId === operation.snapshot.scope.accountId
-            && retained.scope.machineId === operation.snapshot.scope.machineId
-            && (domain?.kind === 'systemTask' || (domain?.kind === 'machineSetup' || domain?.kind === 'machineReboot')
-                && areServerProfileIdentifiersEquivalent(domain.serverId, operation.serverId))
-            && prompt?.id === question.id && prompt.taskKind === question.taskKind
-            && sameStrictJsonValue(prompt.prompt, question.prompt);
-    };
-    if (!current()) return { ok: false, errorCode: 'action_operation_unavailable' };
+    if (!question) return { ok: false, errorCode: 'action_operation_unavailable' };
     const controller = new AbortController();
     const cancel = () => controller.abort();
     signal?.addEventListener('abort', cancel, { once: true });
@@ -41,17 +25,12 @@ export async function submitActionOperationTaskAnswer(
         account = await captureLazyActionAccountContext(operation.serverId, controller.signal);
         retirement = account.accountLifetime.onRetire(cancel);
         account.assertCurrent();
-        if (account.accountId !== operation.snapshot.scope.accountId || !current()) {
-            return { ok: false, errorCode: 'action_operation_unavailable' };
-        }
-        const response = await machineCapabilitiesInvoke(operation.snapshot.scope.machineId, {
-            id: 'tool.systemTasks', method: 'respond', params: {
-                taskId: question!.id, expectedPromptKind: question!.prompt.kind, answer,
-            },
-        }, { serverId: operation.serverId, accountId: account.accountId, signal: controller.signal });
+        const response = await executeDefaultActionInCapturedAccount(account, ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1, {
+            serverId: operation.serverId, machineId: operation.snapshot.scope.machineId,
+            operationId: operation.snapshot.operationId, taskId: question.id, prompt: question.prompt, answer,
+        }, { surface: 'ui', expectedAccountId: operation.snapshot.scope.accountId, signal: controller.signal });
         account.assertCurrent();
-        if (!response.supported) return { ok: false, errorCode: response.errorCode ?? 'action_operation_unavailable' };
-        return response.response.ok ? { ok: true } : { ok: false, errorCode: response.response.error.code ?? 'action_operation_unavailable' };
+        return response.ok ? { ok: true } : { ok: false, errorCode: response.errorCode ?? 'action_operation_unavailable' };
     } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
         return { ok: false, errorCode: controller.signal.aborted ? 'cancelled' : code ?? 'action_operation_unavailable' };
