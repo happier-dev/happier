@@ -10,6 +10,15 @@
  *   presentation → React/RN + environment only
  *   adapters     → presentation + plugin-sdk/ui
  */
+// The host's theme adapter is reached through this barrel's import cycle.
+// Evaluate its public drawing before the modules that reach the adapter.
+export {
+  ThemePalettePreview,
+  type ThemePalettePreviewProps,
+  type ThemePreviewPalette,
+  type ThemePreviewPaint,
+  type ThemeMiniatureForm,
+} from './form/ThemePalettePreview.js';
 export { HappierDecorativeSvg } from './content/DecorativeSvg.js';
 export { ChartDatum, ChartMark, ChartInteractionProvider, type HappierChartDatum, type HappierChartDatumRenderer, type HappierChartDatumInteraction, type HappierChartDatumTrigger } from './data/ChartDatum.js';
 export type {

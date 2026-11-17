@@ -1766,3 +1766,10 @@ export { CollectionSpaceIcon, type CollectionSpaceIconProps } from './Collection
 
 export { UsageMeterRow, UsageMeterStack, USAGE_METER_METRICS, type UsageMeterRowProps, type UsageMeterStackProps, type UsageMeterSize, type UsageMeterTone } from './UsageMeterRow.js';
 export { OfferedChoices, OfferedChoiceFeedbackInput, type OfferedChoice, type OfferedChoicesProps, type OfferedChoiceFeedbackInputProps } from './OfferedChoices.js';
+export {
+  ThemePalettePreview,
+  type ThemePalettePreviewProps,
+  type ThemePreviewPalette,
+  type ThemePreviewPaint,
+  type ThemeMiniatureForm,
+} from './ThemePalettePreview.js';

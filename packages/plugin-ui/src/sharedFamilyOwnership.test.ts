@@ -75,6 +75,8 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Step',
   // configuration-surfaces r1 U9 (03b amendment r0.14): visual tiles, one presentation owner.
   'SelectionTiles',
+  // Themes G11: the same static palette drawing in host and plugin pickers.
+  'ThemePalettePreview',
   // configuration-surfaces r1 U9 (03b amendment r0.14): the page header, one presentation owner.
   'PageHeader',
   // RU2 §9.5 (UI-6): the phone-aware dialog title band, one presentation owner.
@@ -1763,6 +1765,25 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     coreConsumers: ['components/ui/forms/SelectionTiles.tsx'],
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'V2 has no choice-tile node; a visual preview is an executable React element a declarative document cannot carry.' },
+  },
+  {
+    publicName: 'ThemePalettePreview',
+    propTypeName: 'ThemePalettePreviewProps',
+    family: 'Theme preview',
+    disposition: 'required',
+    proofTier: 'simple',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/form/ThemePalettePreview.tsx',
+    sharedSymbol: 'ThemePalettePreview',
+    pluginOwner: { module: 'components/ThemePalettePreview.ts', symbol: 'ThemePalettePreview' },
+    coreConsumers: ['components/settings/appearance/ThemeModePreview.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/themeSelectionTilesSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Theme palettes are supplied to executable React pickers, not a V2 node.' },
   },
   {
     publicName: 'Tree',
@@ -4132,6 +4153,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'WidgetPresentationProvider',
       'Step',
       'SelectionTiles',
+      'ThemePalettePreview',
       'Tree',
       'WidgetFrame',
       'SurfaceState',

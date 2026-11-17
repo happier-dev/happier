@@ -337,6 +337,11 @@ option with `span="row"` occupies the full grid row. Visual tiles can provide
 `revealed` flag follows hover or selection; accessory controls remain outside the
 choice so opening a menu does not select its tile.
 
+For a theme picker, `ThemePalettePreview` renders the host's static miniature from
+an explicit palette. Use `form="window"`, `"phone"` or `"mark"` for its placement;
+the drawing has no theme subscriptions or CSS compiler. An opened theme can pass
+its already-prepared `surfaceStyles` for supported layout changes.
+
 ### Project detail navigation (0.3 development source)
 
 Project `appPage` surfaces use the ordinary `defineUiSurface` context and public
