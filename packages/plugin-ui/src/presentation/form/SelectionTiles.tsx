@@ -490,17 +490,23 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
                 {option.preview ?? null}
               </View>
             </View>
-            {!showLabels ? null : option.badge ? (
-              <View style={styles.visualLabelRow}>
-                {label}
-                <View style={styles.badge}>
-                  {props.renderText({ role: 'badge', text: option.badge, selected, compact: false, numberOfLines: 1 })}
-                </View>
+            {/* The caption is one block under the preview: its name and the sublabel stand line on line, each in its
+                own line box, so a two-line caption always takes its height and never runs into the next line of tiles. */}
+            {!showLabels ? null : (
+              <View style={styles.visualCaption}>
+                {option.badge ? (
+                  <View style={styles.visualLabelRow}>
+                    {label}
+                    <View style={styles.badge}>
+                      {props.renderText({ role: 'badge', text: option.badge, selected, compact: false, numberOfLines: 1 })}
+                    </View>
+                  </View>
+                ) : label}
+                {option.subtitle
+                  ? props.renderText({ role: 'visualSublabel', text: option.subtitle, selected, compact: false, numberOfLines: 2 })
+                  : null}
               </View>
-            ) : label}
-            {showLabels && option.subtitle
-              ? props.renderText({ role: 'visualSublabel', text: option.subtitle, selected, compact: false, numberOfLines: 2 })
-              : null}
+            )}
           </Pressable>
         );
         if (!accessory) return tile;
@@ -935,8 +941,6 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
   // When some tiles describe themselves, a tile without a description keeps that line empty, so every tile reads
   // the same shape and choosing one never changes the group's layout.
   const anySubtitle = props.options.some((option) => typeof option.subtitle === 'string' && option.subtitle.trim().length > 0);
-  // A status line is reserved on every card while any card has one, so a row of cards keeps one height.
-  const anyStatus = props.options.some((option) => typeof option.status === 'string' && option.status.length > 0);
 
   return (
     <View
@@ -1029,15 +1033,6 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                     {option.mark ?? (glyph ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor }) : null)}
                   </View> : null}
                   <View style={[styles.textContainer, compact && !subtitleLine ? styles.textContainerCentered : null]}>
-                    {/* A status stands on its own line at the card's top end (lab themes A1 "Showing now"), so it
-                        never takes width from the name; cards without one keep the line empty. */}
-                    {anyStatus ? (
-                      <View style={[styles.statusLine, { minHeight: resolveHappierTypeScale(
-                        resolveHappierSelectionTileText('badge', { compact }).role, Platform.OS,
-                      ).lineHeight }]} aria-hidden>
-                        {option.status ? props.renderText({ role: 'badge', text: option.status, selected, compact, numberOfLines: 1 }) : null}
-                      </View>
-                    ) : null}
                     {/* The name wraps in full (a long service name is never cut) and its badge follows it,
                         dropping to its own line only when the name leaves no room. */}
                     <View style={styles.titleLine}>
@@ -1058,6 +1053,11 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                           resolveHappierSelectionTileText('cardSubtitle', { compact }).role, Platform.OS,
                         ).lineHeight }} />
                       ) : null}
+                    {/* A status is one more quiet line of the text block (lab themes A1 "Showing now"), so the
+                        name, its description and the status centre together beside the preview. */}
+                    {below || !option.status ? null : (
+                      <View aria-hidden>{props.renderText({ role: 'badge', text: option.status, selected, compact, numberOfLines: 1 })}</View>
+                    )}
                   </View>
                 </View>
                 <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
@@ -1069,14 +1069,17 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                     : selected && props.selectionMark !== 'outline' ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null}
                 </View>
               </View>
-              {below && hasSubtitle ? (
+              {below && (hasSubtitle || option.status) ? (
                 <View testID={tileTestID ? `${tileTestID}:description` : undefined} style={styles.bodyBelow}>
-                  {props.renderText({ role: 'cardSubtitle', text: option.subtitle!, selected, compact, numberOfLines: props.subtitleLines ?? 4 })}
+                  {hasSubtitle ? props.renderText({ role: 'cardSubtitle', text: option.subtitle!, selected, compact, numberOfLines: props.subtitleLines ?? 4 }) : null}
+                  {option.status ? <View aria-hidden>{props.renderText({ role: 'badge', text: option.status, selected, compact, numberOfLines: 1 })}</View> : null}
                 </View>
               ) : null}
             </SelectionTilePressable>
             {footer != null && footer !== false ? (
-              <View style={[styles.footer, compact ? styles.footerCompact : null, below ? (compact ? styles.footerBelowCompact : styles.footerBelow) : null]}>
+              <View style={[styles.footer, compact ? styles.footerCompact : null, below ? (compact ? styles.footerBelowCompact : styles.footerBelow) : null,
+                // Beside a preview the text column starts after it: the footer action takes the name's edge.
+                !below && hasPreview ? styles.footerBesidePreview : null]}>
                 {footer}
               </View>
             ) : null}
@@ -1213,6 +1216,9 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       minWidth: 0,
       maxWidth: '100%',
     },
+    visualCaption: {
+      alignItems: 'stretch',
+    },
     visualLabelRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -1325,10 +1331,6 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       justifyContent: 'space-between',
       gap: 12,
     },
-    statusLine: {
-      flexDirection: 'row',
-      justifyContent: 'flex-end',
-    },
     selectionAccessory: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1364,6 +1366,9 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     },
     footerBelow: {
       paddingLeft: 12,
+    },
+    footerBesidePreview: {
+      paddingLeft: 10 + VISUAL_TILE_WIDTH_PX + 12,
     },
     footerBelowCompact: {
       paddingLeft: 10,
