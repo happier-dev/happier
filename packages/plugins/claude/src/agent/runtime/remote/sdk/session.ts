@@ -815,11 +815,8 @@ export type ClaudeAgentSdkNativeOperations = ClaudeRuntimeTurnOperations & Reado
     subscribeEffectiveModel: ClaudeEffectiveModelEvidenceSubscription;
     subscribeUsageObservation: ClaudeUsageObservationSubscription;
     setOnPromptDeliveryOutcome(handler: ClaudeProviderPromptDeliveryOutcomeCallback | null): void;
-    /**
-     * Once the runtime is watched: adopt a held Agent when the host handed one over, or start
-     * Claude for a remote-started new Session ahead of its first prompt (no-op otherwise).
-     */
-    startAgentAtOpen(): void;
+    /** Once the runtime is watched: adopt a held Agent when the host handed one over (no-op otherwise). */
+    startHeldAgentAdoption(): void;
 }>;
 
 function isClaudeAgentSdkSessionContext(
@@ -2607,15 +2604,8 @@ export function createClaudeAgentSdkTurnOperations(
             usageObservationListeners.add(listener);
             return () => usageObservationListeners.delete(listener);
         },
-        startAgentAtOpen() {
-            if (agentStartAtOpen || !sessionContext) return;
-            if (sessionContext.agentRuntime.adoptsHeldAgent !== true) {
-                if (sessionContext.agentRuntime.startsRemote !== true) return;
-                agentStartAtOpen = startAgentBeforeFirstPrompt().catch((error: unknown) => {
-                    params.ctx.logger.warn('[ClaudeAgentSdk] Agent start before the first prompt failed', { error });
-                });
-                return;
-            }
+        startHeldAgentAdoption() {
+            if (agentStartAtOpen || sessionContext?.agentRuntime.adoptsHeldAgent !== true) return;
             agentStartAtOpen = adoptHeldAgent().catch((error: unknown) => {
                 params.ctx.logger.warn('[ClaudeAgentSdk] Held Agent adoption failed', { error });
             });
@@ -3121,5 +3111,11 @@ export function createClaudeAgentSdkTurnOperations(
         },
     };
 
+    // Opened now, not when watched: the host watches only after its own remaining startup.
+    if (sessionContext?.agentRuntime.startsRemote === true && sessionContext.agentRuntime.adoptsHeldAgent !== true) {
+        agentStartAtOpen = startAgentBeforeFirstPrompt().catch((error: unknown) => {
+            params.ctx.logger.warn('[ClaudeAgentSdk] Agent start before the first prompt failed', { error });
+        });
+    }
     return operations;
 }
