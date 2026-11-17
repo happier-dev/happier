@@ -13,10 +13,12 @@ import {
 } from '@/components/sessions/transcript/UserMessageBubble';
 import {
   useSessionMessageInvocation,
+  type InvocationReadState as SessionMessageInvocationReadState,
   type SessionMessageInvocationTarget,
 } from '@/components/sessions/transcript/references/useSessionMessageInvocation';
 import { useTranscriptSessionIdentity } from '@/components/sessions/transcript/references/useTranscriptSessionIdentity';
 import { useSessionReturnedAnswers } from '@/sync/store/hooks';
+import type { ReturnedAnswerEntry } from '@/sync/store/sessionReturnedAnswers';
 import { readSessionMessageInvocation } from '@/components/sessions/transcript/references/readSessionMessageInvocation';
 import { sessionMessageReplyKey } from '@/sync/api/session/sessionMessageReplyApi';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -310,9 +312,7 @@ export type SessionAskRecordProps = Readonly<{
  * results come from the source entry; answers and passes are read live through the invocation hook.
  */
 export function SessionAskRecord(props: SessionAskRecordProps) {
-  const { theme } = useUnistyles();
   const scope = useActiveServerAccountScope(props.serverId);
-  const navigate = useSessionTranscriptSource().navigate;
   // The returns already sit in this transcript: they settle the chips and give each answered line its snippet.
   const requestKeys = React.useMemo(() => {
     if (!scope) return [];
@@ -332,6 +332,24 @@ export function SessionAskRecord(props: SessionAskRecordProps) {
     active: true,
     returnedAnswers,
   });
+  if (record.status !== 'ready') return null;
+  return <SessionAskRecordContent {...props} record={record} returned={returned} />;
+}
+
+/**
+ * The Ask record drawn from its settled read: the frozen targets with their states, and the returns already in
+ * the asker's transcript (each answered line's snippet). `SessionAskRecord` supplies them live.
+ */
+export function SessionAskRecordContent(
+  props: SessionAskRecordProps &
+    Readonly<{
+      record: Extract<SessionMessageInvocationReadState, Readonly<{ status: 'ready' }>>;
+      returned: readonly ReturnedAnswerEntry[];
+    }>,
+) {
+  const { theme } = useUnistyles();
+  const navigate = useSessionTranscriptSource().navigate;
+  const { record, returned } = props;
   const snippets = React.useMemo(
     () =>
       new Map(
@@ -347,7 +365,6 @@ export function SessionAskRecord(props: SessionAskRecordProps) {
       ),
     [returned],
   );
-  if (record.status !== 'ready') return null;
   const { invocation, targets } = record;
   const reply = invocation.reply;
   const selector =

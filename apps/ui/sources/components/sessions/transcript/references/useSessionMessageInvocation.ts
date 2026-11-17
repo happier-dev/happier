@@ -8,7 +8,7 @@ import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions
 import { readSessionMessageReplies, sessionMessageReplyKey } from '@/sync/api/session/sessionMessageReplyApi';
 import { subscribeSessionMessageReplyInvalidation } from '@/sync/runtime/sessionMessageReplyInvalidation';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readSessionMessageInvocation } from './readSessionMessageInvocation';
+import { readSessionMessageInvocation, type SessionMessageInvocationEntry } from './readSessionMessageInvocation';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 
@@ -23,7 +23,7 @@ export type SessionMessageInvocationTarget = Readonly<{
     replyStatus: SessionMessageReplyReadResultV1['status'] | 'not_requested' | 'loading';
 }>;
 
-type InvocationReadState =
+export type InvocationReadState =
     | Readonly<{ status: 'inactive' | 'unavailable' }>
     | Readonly<{ status: 'ready'; invocation: SessionMessageInvocationV1; refreshing: boolean;
         text: string; origin: 'composer' | 'agent_tool'; sourceRowId: string;
@@ -85,34 +85,57 @@ export function useSessionMessageInvocation(input: Readonly<{
     const returns = input.returnedAnswers ?? EMPTY_RETURNS;
     return React.useMemo((): InvocationReadState => {
         if (!input.active) return { status: 'inactive' };
-        if (!invocation || !input.scope) return { status: 'unavailable' };
-        const returned = new Map<string, SessionInputReturnedAnswerV1>();
-        for (const answer of returns) returned.set(sessionMessageReplyKey({ sessionId: answer.requestSessionId, localId: answer.requestLocalId }), answer);
-        const replies = snapshot?.invocation === invocation && snapshot.scopeKey === scopeKey ? snapshot.replies : null;
-        const targets = invocation.targets.map((row): SessionMessageInvocationTarget => {
-            const sameHome = areServerProfileIdentifiersEquivalent(row.target.serverId, input.scope!.serverId);
-            const requestBound = hasAdmittedRequest(row);
-            const key = requestBound && row.localId ? sessionMessageReplyKey({ sessionId: row.target.sessionId, localId: row.localId }) : null;
-            const reply = sameHome && key ? replies?.get(key) : undefined;
-            const answer = sameHome && key ? returned.get(key) : undefined;
-            const outcome = reply?.status === 'available' ? reply.progress.outcome : undefined;
-            const status = outcome ? outcomeStatus(outcome.kind) : answer ? outcomeStatus(answer.outcome)
-                : row.immediate.outcome ? outcomeStatus(row.immediate.outcome)
-                : row.immediate.status === 'held' && !(reply?.status === 'available' && reply.progress.acceptedTurnId) ? 'held' : row.immediate.status === 'outcomeUnknown' ? 'unknown'
-                : row.immediate.status === 'rejected' || row.immediate.status === 'failed' ? 'failed'
-                : row.immediate.status === 'cancelled' ? 'cancelled' : 'queued';
-            const resultRef: CoordinationMessageRefV1 | null = outcome
-                ? 'result' in outcome
-                    ? { kind: 'session', session: { serverId: row.target.serverId, sessionId: outcome.result.sessionId }, messageId: outcome.result.messageId }
-                    : 'publicationRef' in outcome ? outcome.publicationRef : null
-                : answer?.sourceMessageRef ?? row.immediate.resultRef ?? null;
-            return { target: row.target, localId: row.localId ?? null, requestBound, status,
-                ...(row.immediate.code && !outcome && !answer && !row.immediate.outcome ? { code: row.immediate.code } : {}), resultRef,
-                replyStatus: row.immediate.status === 'outcomeUnknown' ? 'unavailable'
-                    : invocation.reply === 'none' || row.immediate.outcome || row.immediate.status === 'rejected' ? 'not_requested'
-                    : reply?.status ?? (sameHome && row.localId ? 'loading' : 'unavailable') };
+        return projectSessionMessageInvocationRead({
+            entry, homeServerId: input.scope?.serverId ?? null, sourceRowId: input.message.id,
+            replies: snapshot?.invocation === invocation && snapshot.scopeKey === scopeKey ? snapshot.replies : null,
+            returnedAnswers: returns, refreshing: reading && requests.length > 0, refresh,
         });
-        return { status: 'ready', invocation, targets, refreshing: reading && requests.length > 0, refresh,
-            text: entry?.text ?? '', origin: entry?.origin ?? 'composer', sourceRowId: input.message.id };
     }, [input.active, invocation, input.scope?.serverId, scopeKey, snapshot, returns, reading, requests, entry, input.message.id]);
+}
+
+/**
+ * One invocation's targets from its frozen source entry, the Home's reply reads and the returns already in the
+ * transcript. Pure: the hook supplies live reads; a specimen supplies settled ones.
+ */
+export function projectSessionMessageInvocationRead(input: Readonly<{
+    entry: SessionMessageInvocationEntry | null;
+    /** The asker's Home; null means no account scope, so the record is unavailable. */
+    homeServerId: string | null;
+    sourceRowId: string;
+    replies: ReadonlyMap<string, SessionMessageReplyReadResultV1> | null;
+    returnedAnswers: readonly SessionInputReturnedAnswerV1[];
+    refreshing: boolean;
+    refresh: () => void;
+}>): Exclude<InvocationReadState, Readonly<{ status: 'inactive' }>> {
+    const invocation = input.entry?.invocation ?? null;
+    const homeServerId = input.homeServerId;
+    if (!invocation || !homeServerId) return { status: 'unavailable' };
+    const returned = new Map<string, SessionInputReturnedAnswerV1>();
+    for (const answer of input.returnedAnswers) returned.set(sessionMessageReplyKey({ sessionId: answer.requestSessionId, localId: answer.requestLocalId }), answer);
+    const replies = input.replies;
+    const targets = invocation.targets.map((row): SessionMessageInvocationTarget => {
+        const sameHome = areServerProfileIdentifiersEquivalent(row.target.serverId, homeServerId);
+        const requestBound = hasAdmittedRequest(row);
+        const key = requestBound && row.localId ? sessionMessageReplyKey({ sessionId: row.target.sessionId, localId: row.localId }) : null;
+        const reply = sameHome && key ? replies?.get(key) : undefined;
+        const answer = sameHome && key ? returned.get(key) : undefined;
+        const outcome = reply?.status === 'available' ? reply.progress.outcome : undefined;
+        const status = outcome ? outcomeStatus(outcome.kind) : answer ? outcomeStatus(answer.outcome)
+            : row.immediate.outcome ? outcomeStatus(row.immediate.outcome)
+            : row.immediate.status === 'held' && !(reply?.status === 'available' && reply.progress.acceptedTurnId) ? 'held' : row.immediate.status === 'outcomeUnknown' ? 'unknown'
+            : row.immediate.status === 'rejected' || row.immediate.status === 'failed' ? 'failed'
+            : row.immediate.status === 'cancelled' ? 'cancelled' : 'queued';
+        const resultRef: CoordinationMessageRefV1 | null = outcome
+            ? 'result' in outcome
+                ? { kind: 'session', session: { serverId: row.target.serverId, sessionId: outcome.result.sessionId }, messageId: outcome.result.messageId }
+                : 'publicationRef' in outcome ? outcome.publicationRef : null
+            : answer?.sourceMessageRef ?? row.immediate.resultRef ?? null;
+        return { target: row.target, localId: row.localId ?? null, requestBound, status,
+            ...(row.immediate.code && !outcome && !answer && !row.immediate.outcome ? { code: row.immediate.code } : {}), resultRef,
+            replyStatus: row.immediate.status === 'outcomeUnknown' ? 'unavailable'
+                : invocation.reply === 'none' || row.immediate.outcome || row.immediate.status === 'rejected' ? 'not_requested'
+                : reply?.status ?? (sameHome && row.localId ? 'loading' : 'unavailable') };
+    });
+    return { status: 'ready', invocation, targets, refreshing: input.refreshing, refresh: input.refresh,
+        text: input.entry?.text ?? '', origin: input.entry?.origin ?? 'composer', sourceRowId: input.sourceRowId };
 }
