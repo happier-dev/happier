@@ -12,13 +12,19 @@ import { toggleUsageScopeSelection } from './usageWidgetPageContext';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { readUsageCoverageGaps, useUsageProjectAnchorOf, useUsageProjectNames, usageMachinePlace, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
 import { useUsageWidgetBatchInventorySelection } from './widgets/usageWidgetBatch';
+import { readUsageAppCallsEnvironmentIds, usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
+import type { UsageAppEnvironment } from '@/sync/api/account/usageAppCallsAccounting';
 
 export const USAGE_SCOPE_FILTER_ALL = '\u0000all';
 // UI option only; persisted scope keeps every original Project key in the group.
 const UNNAMED_PROJECT_OPTION = '\u0000unnamed-projects';
-type ScopeField = 'sources' | 'agents' | 'machines' | 'projects';
+type ScopeField = 'sources' | 'agents' | 'machines' | 'projects' | 'environments';
 const FIELD_TITLE = { sources: 'usage.board.page.filterSources', agents: 'usage.board.page.filterAgents',
-    machines: 'usage.board.page.filterMachines', projects: 'usage.board.page.filterProjects' } as const;
+    machines: 'usage.board.page.filterMachines', projects: 'usage.board.page.filterProjects',
+    environments: 'usage.board.page.filterEnvironments' } as const;
+/** The Sources chooser's exclusive "Show" choice (D33): Agents or Your apps, never both. */
+export const USAGE_SOURCES_SHOW_AGENTS = '\u0000show:agents';
+export const USAGE_SOURCES_SHOW_APPS = '\u0000show:apps';
 
 /** A choice's name starts a line: source names are composed for mid-sentence use ("usage · Claude"). */
 function sentenceCase(text: string): string {
@@ -29,13 +35,18 @@ export type UsageWidgetPageFilter = Readonly<{
     field: ScopeField;
     title: string;
     selected: readonly string[];
-    /** `agentId`: the Agent a source belongs to. `partial`: this source has a coverage gap; its detail is said once, on "All". */
-    options: readonly Readonly<{ id: string; label: string; subtitle?: string; agentId?: string; partial?: boolean }>[];
+    /** `agentId`: the Agent a source belongs to. `partial`: this source has a coverage gap; its detail is said once, on "All".
+     * `section: 'show'`: one of the exclusive Agents / Your apps choices that head the Sources chooser. */
+    options: readonly Readonly<{ id: string; label: string; subtitle?: string; agentId?: string; partial?: boolean; section?: 'show' }>[];
+    /** Sources only, when the viewer has apps: which side the page shows. */
+    shown?: 'agents' | 'apps';
+    /** The chip's value when the All / names / count rule cannot say it ("Your apps · billing-api"). */
+    valueLabel?: string;
     select(id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): boolean | Promise<boolean>;
 }>;
 
 function sameFilter(left: UsageWidgetPageFilter, right: UsageWidgetPageFilter): boolean {
-    return left.field === right.field && left.title === right.title
+    return left.field === right.field && left.title === right.title && left.shown === right.shown && left.valueLabel === right.valueLabel
         && sameStrictJsonValue(left.selected, right.selected) && sameStrictJsonValue(left.options, right.options);
 }
 
@@ -69,6 +80,70 @@ function createProjectSelection(selectedKeys: readonly (readonly [string, string
     };
 }
 
+function showOptions(): UsageWidgetPageFilter['options'] {
+    return [{ id: USAGE_SOURCES_SHOW_AGENTS, label: t('usage.board.page.sourcesAgents'), subtitle: t('usage.board.page.sourcesAgentsDetail'), section: 'show' },
+        { id: USAGE_SOURCES_SHOW_APPS, label: t('usage.board.page.sourcesApps'), subtitle: t('usage.board.page.sourcesAppsDetail'), section: 'show' }];
+}
+
+/** Choosing Your apps shows every app Environment and leaves the Agents' scopes, which do not apply to apps. */
+function showApps(environments: readonly UsageAppEnvironment[], setScope: UsageWidgetPageContextState['setScope'],
+    callerContext?: ActionExecutorContext) {
+    return setScope({ sources: environments.map(environment => usageAppCallsSourceId(environment.environmentId)),
+        agents: [], machines: [], projects: [] }, callerContext);
+}
+
+/** Agents' Sources gain the Show choice; every other option keeps its own selection. */
+export function withShowChoice(filter: UsageWidgetPageFilter, environments: readonly UsageAppEnvironment[],
+    setScope: UsageWidgetPageContextState['setScope']): UsageWidgetPageFilter {
+    return { ...filter, shown: 'agents', options: [...showOptions(), ...filter.options], select: (id, callerContext, invocation) =>
+        id === USAGE_SOURCES_SHOW_APPS ? showApps(environments, setScope, callerContext)
+            : id === USAGE_SOURCES_SHOW_AGENTS ? true : filter.select(id, callerContext, invocation) };
+}
+
+/**
+ * Your apps (P7 J4): Sources names the apps (Project sources) and Environments the Environments of the chosen apps.
+ * Both write the one `sources` scope: an empty choice means all, and the page never drops back to Agents by narrowing.
+ */
+export function createUsageAppFilters(environments: readonly UsageAppEnvironment[], selectedIds: readonly string[],
+    setScope: UsageWidgetPageContextState['setScope']): readonly UsageWidgetPageFilter[] {
+    const apps = [...new Map(environments.map(environment => [environment.projectSourceId,
+        environment.projectName ?? environment.name])).entries()];
+    const appIds = apps.map(([id]) => id);
+    const selectedApps = [...new Set(environments.filter(environment => selectedIds.includes(environment.environmentId))
+        .map(environment => environment.projectSourceId))];
+    const shownApps = selectedApps.length === appIds.length ? [] : selectedApps;
+    const inApps = (ids: readonly string[]) => environments.filter(environment => ids.length === 0 || ids.includes(environment.projectSourceId));
+    const listedEnvironments = inApps(shownApps);
+    const listedIds = listedEnvironments.map(environment => environment.environmentId);
+    const selectedEnvironments = selectedIds.filter(id => listedIds.includes(id));
+    const shownEnvironments = selectedEnvironments.length === listedIds.length ? [] : selectedEnvironments;
+    const write = (ids: readonly string[], callerContext?: ActionExecutorContext) =>
+        setScope({ sources: ids.map(usageAppCallsSourceId) }, callerContext);
+    const appLabel = (id: string) => apps.find(([key]) => key === id)?.[1] ?? id;
+    const sources: UsageWidgetPageFilter = { field: 'sources', title: t(FIELD_TITLE.sources), shown: 'apps', selected: shownApps,
+        valueLabel: t('usage.board.page.sourcesAppsValue', { name: shownApps.length === 0 && apps.length > 1
+            ? t('usage.board.page.filterAll') : shownApps.length === 1 || apps.length === 1 ? appLabel(shownApps[0] ?? appIds[0]!)
+            : t('usage.board.page.filterCount', { count: shownApps.length }) }),
+        options: [...showOptions(), ...apps.map(([id, label]) => ({ id, label,
+            subtitle: environments.filter(environment => environment.projectSourceId === id).map(environment => environment.name).join(', ') }))],
+        select: (id, callerContext) => {
+            if (id === USAGE_SOURCES_SHOW_AGENTS) return setScope({ sources: [] }, callerContext);
+            if (id === USAGE_SOURCES_SHOW_APPS) return true;
+            if (!appIds.includes(id)) return false;
+            return write(inApps(toggleUsageScopeSelection(shownApps, id, appIds)).map(environment => environment.environmentId), callerContext);
+        } };
+    const environmentsFilter: UsageWidgetPageFilter = { field: 'environments', title: t(FIELD_TITLE.environments), selected: shownEnvironments,
+        options: [{ id: USAGE_SCOPE_FILTER_ALL, label: t('usage.board.page.filterAllOf', { what: t(FIELD_TITLE.environments).toLocaleLowerCase() }) },
+            ...listedEnvironments.map(environment => ({ id: environment.environmentId, label: environment.name,
+                ...(environment.projectName ? { subtitle: environment.projectName } : {}) }))],
+        select: (id, callerContext) => {
+            if (id !== USAGE_SCOPE_FILTER_ALL && !listedIds.includes(id)) return false;
+            const next = id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(shownEnvironments, id, listedIds);
+            return write(next.length === 0 ? listedIds : next, callerContext);
+        } };
+    return [sources, environmentsFilter];
+}
+
 const CAPTURE_KIND_KEY = {
     measured: 'usage.board.page.sourceKindMeasured',
     from_logs: 'usage.board.page.sourceKindFromLogs',
@@ -89,7 +164,7 @@ function sourceOptionDetail(slices: readonly UsageQueryResultSlice[], source: st
 
 /** One choice/toggle owner consumed by both the toolbar and mounted current-context commands. */
 export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fallbackSlices: readonly UsageQueryResultSlice[], sessionScoped: boolean,
-    serverId: string) {
+    serverId: string, appEnvironments: readonly UsageAppEnvironment[] | null = null) {
     // Usage stamped by a checkout before it joined a Project is offered under that Project (owner 11-08).
     const projectAnchorOf = useUsageProjectAnchorOf(serverId);
     const { scope, setScope } = page;
@@ -123,8 +198,11 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
     const retained = React.useRef<Readonly<{ setScope: typeof setScope; filters: readonly UsageWidgetPageFilter[] }> | null>(null);
     const selectFilters = React.useCallback((inventory: UsageQueryResultSlice | null): readonly UsageWidgetPageFilter[] => {
         const slices = inventory ? [inventory] : fallbackSlices;
-        return sessionScoped ? [] :
-        (['sources', 'agents', 'machines', 'projects'] as const).map(field => {
+        if (sessionScoped) return [];
+        const apps = appEnvironments?.length ? appEnvironments : null;
+        const appIds = readUsageAppCallsEnvironmentIds(scope.sources);
+        if (apps && appIds) return createUsageAppFilters(apps, appIds, setScope);
+        return (['sources', 'agents', 'machines', 'projects'] as const).map((field): UsageWidgetPageFilter => {
             const scopeSelected = scope[field];
             const labels = readUsageScopeOptions(slices, field, scopeSelected, field === 'projects' ? projectAnchorOf.resolve : undefined);
             const title = t(FIELD_TITLE[field]);
@@ -164,9 +242,10 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                         // "All sources", so a source with a gap carries the dot and, failing other facts, the short fact.
                         ...(field === 'sources' ? sourceOptionDetail(slices, id, sourceGap !== undefined) : {}) };
                 })];
-            return { field, title, selected, options, select: createScopeSelection(field, selected, listed, setScope) };
+            const filter = { field, title, selected, options, select: createScopeSelection(field, selected, listed, setScope) };
+            return apps && field === 'sources' ? withShowChoice(filter, apps, setScope) : filter;
         });
-    }, [machineNames, projectAnchorOf, projectNames, scope, setScope, sessionScoped, fallbackSlices]);
+    }, [machineNames, projectAnchorOf, projectNames, scope, setScope, sessionScoped, fallbackSlices, appEnvironments]);
     const filters = useUsageWidgetBatchInventorySelection(selectFilters, sameFilters);
     // Retain the rendered choices, rather than intermediate selector reads
     // that React can coalesce during one Resource publication.

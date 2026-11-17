@@ -14,7 +14,7 @@ import {
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import type { UsageWidgetPageScope } from './usageWidgetPageContext';
-import { USAGE_SCOPE_FILTER_ALL, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
+import { USAGE_SCOPE_FILTER_ALL, USAGE_SOURCES_SHOW_AGENTS, USAGE_SOURCES_SHOW_APPS, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
 import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import { UsageAgentMark } from './widgets/usageBodyKit';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -72,37 +72,19 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   const filters = React.useMemo(
     (): SelectionListFilter[] =>
       props.scopeFilters.map((filter) => {
-        const { field, selected, options, title } = filter;
+        const { field, selected, title } = filter;
+        const options = filter.options.filter(option => option.section !== 'show');
         const label = (key: string) => options.find(option => option.id === key)?.label ?? key;
-        const value =
+        const value = filter.valueLabel ?? (
           selected.length === 0
             // An unnarrowed scope reads "All" (lab d2views, d2filter); a bare count reads as a selection, so the
             // count stays with the menu's "All N" row. Width-neutral, so the row keeps its one line (R135 call 1).
             ? t('usage.board.page.filterAll')
             : selected.length <= 2
               ? selected.map(label).join(', ')
-              : t('usage.board.page.filterCount', { count: selected.length });
-        return {
-          id: field,
-          label: title,
-          showLabel: true,
-          valueLabel: value,
-          active: selected.length > 0,
-          // The gap dot comes and goes with coverage; its slot stays so the chips beside Sources never move.
-          ...(field === 'sources' ? { reservePresence: true } : {}),
-          ...(field === 'sources' && coverageIncomplete ? { presence: 'attention' as const } : {}),
-          ...(field === 'agents' && selected.length === 1
-            ? {
-                icon: (
-                  <UsageAgentMark
-                    agentId={selected[0]!}
-                    serverId={null}
-                    size={14}
-                  />
-                ),
-              }
-            : {}),
-          options: options.map(({ agentId, partial, ...option }) => ({
+              : t('usage.board.page.filterCount', { count: selected.length }));
+        const selectedIds = new Set(selected.length === 0 ? [USAGE_SCOPE_FILTER_ALL] : selected);
+        const choices = options.map(({ agentId, partial, section: _section, ...option }) => ({
               ...option,
               // A source reads by its Agent's mark; one amber dot flags a gap (lab d2filter-SRC).
               ...(field === 'sources' && agentId ? { icon: <UsageAgentMark agentId={agentId} serverId={null} size={16} /> } : {}),
@@ -118,9 +100,36 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
                     ),
                   }
                 : {}),
-            })),
-          selectedIds: new Set(selected.length === 0 ? [USAGE_SCOPE_FILTER_ALL] : selected),
+            }));
+        return {
+          id: field,
+          label: title,
+          showLabel: true,
+          valueLabel: value,
+          // Your apps narrows the page away from its default Agents, so its chip reads as chosen.
+          active: selected.length > 0 || filter.shown === 'apps',
+          // The gap dot comes and goes with coverage; its slot stays so the chips beside Sources never move.
+          ...(field === 'sources' ? { reservePresence: true } : {}),
+          ...(field === 'sources' && coverageIncomplete ? { presence: 'attention' as const } : {}),
+          ...(field === 'agents' && selected.length === 1
+            ? {
+                icon: (
+                  <UsageAgentMark
+                    agentId={selected[0]!}
+                    serverId={null}
+                    size={14}
+                  />
+                ),
+              }
+            : {}),
+          options: choices,
+          selectedIds,
           onChange: filter.select,
+          // Sources with apps opens one chooser: Show (Agents or Your apps, exclusive), then that side's choices (D33).
+          ...(filter.shown ? { renderPopoverContent: ({ close, maxHeight }: Readonly<{ close: () => void; maxHeight: number }>) => (
+            <UsageScopeSections sections={usageFilterSections(filter, choices, selectedIds, filter.select)} onRequestClose={close} maxHeight={maxHeight}
+              testID={`${props.testID}.${field}`} />
+          ) } : {}),
           testID: `${props.testID}.${field}`,
         };
       }),
@@ -168,13 +177,15 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
             reservePresence: true,
             ...(coverageIncomplete ? { presence: 'attention' as const } : {}),
             renderPopoverContent: ({ close, maxHeight }) => (
-              <UsageScopeSections filters={filters} onRequestClose={close} maxHeight={maxHeight}
-                testID={`${props.testID}.scope`} />
+              <UsageScopeSections sections={props.scopeFilters.flatMap((filter, index) => usageFilterSections(filter,
+                filters[index]?.options ?? [], filters[index]?.selectedIds ?? new Set(),
+                (id, context, invocation) => filters[index]?.onChange?.(id, context, invocation)))}
+                onRequestClose={close} maxHeight={maxHeight} testID={`${props.testID}.scope`} />
             ),
             testID: `${props.testID}.scope`,
           }
         : null,
-    [condensed, filters, coverageIncomplete, props.testID],
+    [condensed, filters, props.scopeFilters, coverageIncomplete, props.testID],
   );
   const chips = (
     <>
@@ -245,31 +256,57 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
 
 const SECTION_KEY = '\u0001';
 
-/** Every scope as one section of the phone chooser; a row toggles exactly what its own chip would. */
+type UsageScopeSection = Readonly<{
+  id: string;
+  title: string;
+  options: readonly Readonly<{ id: string; label: string; subtitle?: string; icon?: React.ReactNode; accessory?: React.ReactNode }>[];
+  selectedIds: ReadonlySet<string>;
+  onChange: (id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => unknown;
+  resultHint?: string;
+}>;
+
+/**
+ * One scope's sections in a chooser. Sources with apps leads with the exclusive Show choice, then that side's
+ * choices under their own title; Your apps ends with the one line saying the two are never added together.
+ */
+function usageFilterSections(filter: UsageWidgetPageFilter, choices: UsageScopeSection['options'], selectedIds: ReadonlySet<string>,
+  onChange: UsageScopeSection['onChange']): UsageScopeSection[] {
+  if (!filter.shown) return [{ id: filter.field, title: filter.title, options: choices, selectedIds, onChange }];
+  const shownId = filter.shown === 'apps' ? USAGE_SOURCES_SHOW_APPS : USAGE_SOURCES_SHOW_AGENTS;
+  return [
+    { id: `${filter.field}.show`, title: t('usage.board.page.sourcesShow'),
+      options: filter.options.filter(option => option.section === 'show'), selectedIds: new Set([shownId]), onChange },
+    { id: filter.field, title: filter.shown === 'apps' ? t('usage.board.page.sourcesAppsTitle') : filter.title, options: choices, selectedIds, onChange,
+      ...(filter.shown === 'apps' ? { resultHint: t('usage.board.page.sourcesExclusive') } : {}) },
+  ];
+}
+
+/** Every scope as one section of a chooser; a row toggles exactly what its own chip would. */
 function UsageScopeSections(props: Readonly<{
-  filters: readonly SelectionListFilter[];
+  sections: readonly UsageScopeSection[];
   onRequestClose: (callerContext?: ActionExecutorContext) => void;
   maxHeight: number;
   testID: string;
 }>) {
   const step = React.useMemo((): SelectionListStep => ({
     id: 'usage-scope',
-    sections: props.filters.map(filter => ({
+    sections: props.sections.map(section => ({
       kind: 'static' as const,
-      id: filter.id,
-      title: filter.label,
-      options: (filter.options ?? []).map(option => ({
-        id: `${filter.id}${SECTION_KEY}${option.id}`,
+      id: section.id,
+      title: section.title,
+      ...(section.resultHint ? { resultHint: section.resultHint } : {}),
+      options: section.options.map(option => ({
+        id: `${section.id}${SECTION_KEY}${option.id}`,
         label: option.label,
         ...(option.subtitle ? { subtitle: option.subtitle } : {}),
         ...(option.icon ? { icon: option.icon } : {}),
         ...(option.accessory ? { rightAccessory: option.accessory } : {}),
-        testID: `${props.testID}:${filter.id}:${option.id}`,
+        testID: `${props.testID}:${section.id}:${option.id}`,
       })),
     })),
-  }), [props.filters, props.testID]);
-  const selectedIds = React.useMemo(() => new Set(props.filters.flatMap(filter =>
-    [...(filter.selectedIds ?? [])].map(id => `${filter.id}${SECTION_KEY}${id}`))), [props.filters]);
+  }), [props.sections, props.testID]);
+  const selectedIds = React.useMemo(() => new Set(props.sections.flatMap(section =>
+    [...section.selectedIds].map(id => `${section.id}${SECTION_KEY}${id}`))), [props.sections]);
   return (
     <SelectionList
       testID={`${props.testID}.list`}
@@ -278,8 +315,8 @@ function UsageScopeSections(props: Readonly<{
       rootStep={step}
       selection={{ kind: 'multiple', selectedIds }}
       onSelect={(id, _option, callerContext, invocation) => {
-        const [field, option] = id.split(SECTION_KEY);
-        props.filters.find(filter => filter.id === field)?.onChange?.(option ?? '', callerContext, invocation);
+        const [section, option] = id.split(SECTION_KEY);
+        void props.sections.find(candidate => candidate.id === section)?.onChange(option ?? '', callerContext, invocation);
       }}
       onRequestClose={props.onRequestClose}
       listAccessibilityLabel={t('usage.board.page.filtersLabel')}

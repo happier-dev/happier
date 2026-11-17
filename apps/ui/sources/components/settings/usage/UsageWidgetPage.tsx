@@ -45,6 +45,8 @@ import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresent
 import { t } from '@/text';
 import { UsageFilterBar, usageTokensCostMetricOptions } from './UsageFilterBar';
 import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
+import { useUsageAppEnvironments } from './useUsageAppEnvironments';
+import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
 import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
@@ -381,7 +383,10 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const selectAreaLayout = React.useCallback(async (layoutId: string, callerContext?: ActionExecutorContext) =>
     (await bindingSelectLayout(layoutId, callerContext)).ok, [bindingSelectLayout]);
   const publishedLayouts = React.useMemo(() => tabs.map((tab) => ({ id: tab.id, name: tab.name })), [tabs]);
-  const scopeFilters = useUsageWidgetPageFilters(page, filterSlices, props.sessionId !== undefined, props.authority?.scope.serverId ?? '');
+  // Your apps (D33) is offered once the viewer's app Environments are known; a Session's usage has no apps.
+  const appEnvironments = useUsageAppEnvironments(props.sessionId === undefined ? props.authority ?? null : null);
+  const scopeFilters = useUsageWidgetPageFilters(page, filterSlices, props.sessionId !== undefined, props.authority?.scope.serverId ?? '',
+    appEnvironments);
   const filterCommands = React.useMemo(() => scopeFilters.flatMap(filter => filter.options.map(option => ({
     field: filter.field,
     id: option.id,
@@ -465,6 +470,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     <>
       {publication}
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
+        appsShown={readUsageAppCallsEnvironmentIds(page.scope.sources) !== null}
         homeUnavailable={homeUnavailable} phone={phone}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
@@ -609,6 +615,8 @@ function UsagePageHeader(
     /** A session's own usage: the page is about that session, so it opens with its name (`surf-SES`). */
     sessionId?: string;
     phone?: boolean;
+    /** Your apps is shown: an empty period is the apps' own fact, and starting a session is not its next step. */
+    appsShown?: boolean;
   }>,
 ) {
   const { retry, history, layouts, phone } = props;
@@ -630,7 +638,8 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     );
-    const resolved = resolveUsagePageNotice(props.facts, retry, history, layouts, startSession);
+    const resolved = resolveUsagePageNotice(props.appsShown ? { ...props.facts, nothingRecorded: false } : props.facts,
+      retry, history, layouts, startSession);
     const shortened = phone && resolved?.short && !resolved.action ? resolved.short : null;
     // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
     // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).
@@ -652,7 +661,7 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     ) : null;
-  }, [props.facts, props.homeUnavailable, retry, history, layouts, startSession, phone, noticeOpen]);
+  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, noticeOpen]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
       ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]

@@ -1,7 +1,9 @@
 import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
+import { readUsageAppCallsAccounting } from './usageAppCallsAccounting';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -2003,7 +2005,14 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             return (async () => {
                 const cancellation = mergeAbortSignals([signal, evidenceAbort.signal]);
                 try {
-                    const value = await accountingReads.read(request, cancellation.signal, includeContributions, includeSessionIds, workOnly, onIssued);
+                    // "Your apps" (D33) answers from the selected Environments' collectors, never the Agents' accounting.
+                    const appEnvironmentIds = readUsageAppCallsEnvironmentIds(request.filters?.sources);
+                    const value = appEnvironmentIds ? (onIssued?.(), await readUsageAppCallsAccounting({
+                        execute: createFrontDoorUiActionExecutor(undefined, { serverId: sharedContext.accountLifetime.scope.serverId,
+                            expectedAccountId: sharedContext.accountLifetime.scope.accountId }),
+                        serverId: sharedContext.accountLifetime.scope.serverId, request, environmentIds: appEnvironmentIds,
+                        readCatalog: signal => readUiUsageModelPrices(sharedContext, false, signal), signal: cancellation.signal,
+                    })) : await accountingReads.read(request, cancellation.signal, includeContributions, includeSessionIds, workOnly, onIssued);
                     requireCurrent(sharedContext, cancellation.signal);
                     // Borrowers of the same pending acquisition share its one admitted
                     // answer, including preparation completed by an earlier borrower.
