@@ -82,7 +82,7 @@ test('dependency publication rejects a finite result spanning a failed writer ge
   const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
   const generationPath = `${resolveDependencyRefreshLockPath(sourceDir, env)}.generation`;
   await mkdir(dirname(generationPath), { recursive: true });
-  await writeFile(generationPath, JSON.stringify({ generation: 'before' }));
+  await writeFile(generationPath, JSON.stringify({ generation: 'before', completedGeneration: 'before' }));
   await assert.rejects(convergence.withBuildInputDependencies({ sourceDir, env }, async () => {
     // A failed install leaves the ready marker unchanged. Its actual writer
     // start still changes the canonical generation before touching packages.
@@ -97,7 +97,7 @@ test('dependency publication preserves the first loader failure when generation 
   const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
   const generationPath = `${resolveDependencyRefreshLockPath(sourceDir, env)}.generation`;
   await mkdir(dirname(generationPath), { recursive: true });
-  await writeFile(generationPath, JSON.stringify({ generation: 'before' }));
+  await writeFile(generationPath, JSON.stringify({ generation: 'before', completedGeneration: 'before' }));
   let original;
   let attempts = 0;
   await assert.rejects(convergence.withSingleTrailingBuildPass({ run: () =>
@@ -132,7 +132,8 @@ test('dependency publication settles after one rebuild when writers span both at
   let builds = 0;
   await assert.rejects(convergence.withSingleTrailingBuildPass({ run: () =>
     convergence.withBuildInputDependencies({ sourceDir, env }, async () => {
-      await writeFile(generationPath, JSON.stringify({ generation: String(++builds) }));
+      const generation = String(++builds);
+      await writeFile(generationPath, JSON.stringify({ generation, completedGeneration: generation }));
       return 'unpublishable';
     }) }), { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
   assert.equal(builds, 2);
@@ -161,7 +162,7 @@ test('dependency publication preserves retryable drift across the private worker
   assert.equal(attempts, 2);
 });
 
-test('dependency publication rejects an unsafe captured package; the next demand rebuilds it', async t => {
+test('dependency publication rejects an unsafe captured package until explicit recovery rebuilds it', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-dependency-publication-package-' });
   const sourceDir = fixture.path('repo');
   const packageDir = join(sourceDir, 'packages/example');
@@ -180,7 +181,7 @@ test('dependency publication rejects an unsafe captured package; the next demand
   const env = { ...process.env, HAPPIER_WORKSPACE_CAPTURE_INPUTS: '1' };
   const generationPath = `${resolveDependencyRefreshLockPath(sourceDir, env)}.generation`;
   await mkdir(dirname(generationPath), { recursive: true });
-  await writeFile(generationPath, JSON.stringify({ generation: 'before' }));
+  await writeFile(generationPath, JSON.stringify({ generation: 'before', completedGeneration: 'before' }));
   let builds = 0;
   const build = () => ensureWorkspacePackagesBuiltForComponent(join(sourceDir, 'apps/ui'), { env, publicationMode: 'artifact',
     workspaceBuildBoundary: {
@@ -193,9 +194,15 @@ test('dependency publication rejects an unsafe captured package; the next demand
         if (builds === 1) await writeFile(generationPath, JSON.stringify({ generation: 'after-failed-writer' }));
       },
     } });
-  await assert.rejects(build(), { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: false });
+  await assert.rejects(build(), { code: 'HAPPIER_DEPENDENCIES_NEED_REFRESH', reason: 'unfinished-installation' });
   assert.equal(builds, 1, 'unsafe live dependency consumption does not reopen a compiler pass');
   await assert.rejects(lstat(join(packageDir, 'dist/index.js')), { code: 'ENOENT' });
+  await assert.rejects(build(), { code: 'HAPPIER_DEPENDENCIES_NEED_REFRESH', reason: 'unfinished-installation' });
+  await withDependencyRefresh({ installDir: sourceDir, force: true,
+    env: { ...env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' },
+  }, async () => {
+    await mkdir(join(sourceDir, 'node_modules'), { recursive: true });
+  });
   await build();
   assert.equal(builds, 2);
   assert.equal(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), 'export const pass = 2;\n');
