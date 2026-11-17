@@ -1,6 +1,7 @@
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { randomUUID } from 'node:crypto';
 
-import type { SessionAttachMetadataIdentityPolicy, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol';
 
 import type {
   ApiSessionClient,
@@ -47,7 +48,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
   explicitPermissionModeUpdatedAt?: number;
   sessionModeId?: string | null;
   sessionModeUpdatedAt?: number;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
   terminalRuntime?: TerminalRuntimeFlags | null;
   launchControlMetadata: SessionLaunchControlMetadata;
   augmentSessionMetadata?: (metadata: Metadata) => Metadata;

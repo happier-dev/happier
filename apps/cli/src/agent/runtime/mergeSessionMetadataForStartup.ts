@@ -186,7 +186,7 @@ export type SessionModeOverride = {
     updatedAt?: number | null;
 };
 
-export type ModelOverride = SessionModelSelectionIntentV1;
+export type ModelOverride = SessionModelSelectionIntentV1 | SessionModelSelectionV2;
 
 function resolveSessionCapabilitySelectionForStartup(opts: {
     current: Metadata;
@@ -294,7 +294,7 @@ function resolveSessionModeOverrideForStartup(opts: {
 function resolveModelAgentTargetKey(opts: Readonly<{
     current: Metadata;
     next: Metadata;
-    override?: ModelOverride | null;
+    override?: SessionModelSelectionIntentV1 | null;
 }>): string {
     const overrideTarget = opts.override?.selection?.agentTargetKey;
     if (overrideTarget) return overrideTarget;
@@ -309,7 +309,7 @@ function resolveModelOverrideForStartup(opts: {
     current: Metadata;
     next: Metadata;
     nowMs: number;
-    override?: ModelOverride | null;
+    override?: SessionModelSelectionIntentV1 | null;
     mode: StartupMergeMode;
 }): SessionModelSelectionIntentV1 | null {
     const hasModelIntent = (metadata: Metadata): boolean => Object.prototype.hasOwnProperty.call(metadata, 'modelSelectionIntentV1')
@@ -536,9 +536,17 @@ export function mergeSessionMetadataForStartup(opts: {
 
     const retainedModelV2 = restoreAcceptedSessionTeamCredentialModelIntent(
         readSessionModelSelectionV2FromMetadata(opts.current), opts.acceptedTeamCredentialBinding);
-    const capturedModel = opts.modelOverride;
+    const carriedModelV2 = opts.modelOverride?.v === 2 ? opts.modelOverride : null;
+    const capturedModel = opts.modelOverride?.v === 1 ? opts.modelOverride : null;
     const capturedBinding = opts.capturedTeamCredentialBinding;
     const acceptedBinding = opts.acceptedTeamCredentialBinding;
+    const currentLegacyModel = carriedModelV2
+        ? resolveModelSelectionIntentFromSessionMetadata(opts.current, carriedModelV2.ref.agentTargetKey) : null;
+    const capturedModelV2 = carriedModelV2
+        && !(retainedModelV2 && ((mode === 'attach' && retainedModelV2.ref.source === 'team_resource')
+            || retainedModelV2.updatedAt >= carriedModelV2.updatedAt))
+        && !(currentLegacyModel && currentLegacyModel.updatedAt > carriedModelV2.updatedAt)
+        ? carriedModelV2 : null;
     const currentModel = capturedModel?.selection
         ? resolveModelSelectionIntentFromSessionMetadata(opts.current, capturedModel.selection.agentTargetKey) : null;
     // A legacy launch carrier cannot name its Team source. Qualify only the
@@ -568,14 +576,16 @@ export function mergeSessionMetadataForStartup(opts: {
         && capturedModel.selection.providerConnectionId === (retainedModelV2.ref.source === 'account_provider_connection'
             ? retainedModelV2.ref.providerConnectionId : null)
     ));
-    const model = preserveModelV2 || capturedTeamModel ? null : resolveModelOverrideForStartup({
+    const model = capturedModelV2 || preserveModelV2 || capturedTeamModel ? null : resolveModelOverrideForStartup({
             current: opts.current,
             next: opts.next,
             nowMs: opts.nowMs,
-            override: opts.modelOverride,
+            override: capturedModel,
             mode,
         });
-    if (capturedTeamModel) {
+    if (capturedModelV2) {
+        merged = { ...clearModelIntentSessionMetadata(merged), modelSelectionIntentV2: capturedModelV2 } as Metadata;
+    } else if (capturedTeamModel) {
         // Representation normalization is not a newer person-authored choice.
         merged = { ...clearModelIntentSessionMetadata(merged), modelSelectionIntentV2: capturedTeamModel } as Metadata;
     } else if (preserveModelV2) {

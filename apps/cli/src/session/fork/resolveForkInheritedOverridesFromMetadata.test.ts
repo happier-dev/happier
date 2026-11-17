@@ -71,7 +71,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
     expect(result.spawn.connectedServices).toEqual(connectedServices);
   });
   it('uses canonical legacy normalization before deciding whether a missing agent target is an error', () => {
-    for (const modelId of [' default ', '   ', 'invalid legacy model']) {
+    for (const modelId of ['default', '', '   ']) {
       expect(resolveForkInheritedOverridesFromMetadata({
         modelOverrideV1: { v: 1, updatedAt: 456, modelId },
       }, null)).toEqual({ spawn: {}, metadata: {} });
@@ -79,8 +79,17 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
 
     expect(resolveForkInheritedOverridesFromMetadata({
       modelSelectionIntentV1: { v: 1, updatedAt: 455, selection: null },
-      modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'invalid legacy model' },
+      modelOverrideV1: { v: 1, updatedAt: 456, modelId: '   ' },
     }, null)).toEqual({ spawn: {}, metadata: {} });
+  });
+
+  it('inherits opaque model identifiers without trimming or rejecting embedded whitespace', () => {
+    for (const modelId of [' default ', 'provider model name']) {
+      const result = resolveForkInheritedOverridesFromMetadata({
+        modelOverrideV1: { v: 1, updatedAt: 456, modelId },
+      }, codexTarget);
+      expect(result.spawn.modelSelection?.ref.modelId).toBe(modelId);
+    }
   });
 
   it('uses canonical timestamp precedence before deciding whether a missing agent target is an error', () => {

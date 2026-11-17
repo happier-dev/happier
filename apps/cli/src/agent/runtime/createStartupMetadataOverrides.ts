@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import {
   buildModelOverride,
   buildPermissionModeOverride,
@@ -8,7 +8,7 @@ import {
 export function createStartupMetadataOverrides(opts: {
   permissionMode?: PermissionMode;
   permissionModeUpdatedAt?: number;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
 }) {
   return {
     permissionModeOverride: buildPermissionModeOverride({

@@ -10,6 +10,7 @@ import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { agentRoutingIdAddressesContributionIdentityV1, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -399,7 +400,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
   >>;
 }>): Promise<DirectProviderLaunchResult<Readonly<{ ok: false; error: ProviderErrorV1 | SessionSpawnLaunchErrorV1 }>> | null> {
   const { request, lease, dependencies } = input;
-  if ((!request.selection || request.selection.ref.providerConnectionId === null)
+  if ((!request.selection || readSessionModelSelectionProviderConnectionId(request.selection) === null)
     && !request.previousBinding && !request.connectedServices) return null;
   const requester = dependencies.requesterSessionBootstrap;
   const featureEnabled = async () => (
@@ -811,7 +812,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
         request.selection
           ? {
               connectionId:
-                request.selection.ref.providerConnectionId ?? undefined,
+                readSessionModelSelectionProviderConnectionId(request.selection) ?? undefined,
               machineId: request.machineId,
             }
           : { machineId: request.machineId },

@@ -20,6 +20,7 @@ import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionV1Schema } 
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionManagedTargetPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { AccountScopedCryptoMaterial, BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input, AgentExecutionTargetV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -262,14 +263,14 @@ function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unkn
   const { runtimeDescriptorV1 } = runtimeSelection;
   const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(candidate.environmentVariables);
   const hasCanonicalModelSelection = candidate.modelSelection !== undefined;
-  const parsedSelection = SessionModelSelectionV1Schema.safeParse(candidate.modelSelection);
+  const parsedSelection = SessionModelSelectionSchema.safeParse(candidate.modelSelection);
   const normalizedParsedSelection = parsedSelection.success
     ? (() => {
         try {
           const selectionTarget = readBackendTargetRefV2(
             parsedSelection.data.ref.agentTargetKey as BackendTargetRefV2Input,
           );
-          return SessionModelSelectionV1Schema.parse({
+          return SessionModelSelectionSchema.parse({
             ...parsedSelection.data,
             ref: {
               ...parsedSelection.data.ref,
@@ -342,7 +343,7 @@ export const SessionRunnerRespawnDescriptorSchema = lazyZodSchema(() => (<I exte
     permissionModeUpdatedAt: z.optional(z.number().check(z.int())),
     agentModeId: z.optional(z.string()),
     agentModeUpdatedAt: z.optional(z.number().check(z.int())),
-    modelSelection: z.optional(SessionModelSelectionV1Schema),
+    modelSelection: z.optional(SessionModelSelectionSchema),
     modelId: z.optional(z.string()),
     modelUpdatedAt: z.optional(z.number().check(z.int())),
     providerBindingMetadataV1: z.optional(SessionProviderBindingMetadataV1Schema),
@@ -402,7 +403,7 @@ export const SessionRunnerRespawnDescriptorSchema = lazyZodSchema(() => (<I exte
         message: 'Model selection agent target must match the persisted Session target',
       });
     }
-    const providerConnectionId = value.modelSelection?.ref.providerConnectionId ?? null;
+    const providerConnectionId = value.modelSelection ? readSessionModelSelectionProviderConnectionId(value.modelSelection) : null;
     const hasProviderContinuity = providerConnectionId !== null || value.providerBindingMetadataV1 !== undefined;
     if (value.version === 1 && hasProviderContinuity) {
       ctx.addIssue({
@@ -547,7 +548,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(spawnOptions.environmentVariables);
   const persistedEnvironmentVariables = pickPersistedEnvironmentVariables(spawnOptions.environmentVariables);
   const runtimeDescriptorV1 = readSpawnRuntimeDescriptorV1(spawnOptions);
-  const selectedProviderConnectionId = spawnOptions.modelSelection?.ref.providerConnectionId ?? null;
+  const selectedProviderConnectionId = spawnOptions.modelSelection ? readSessionModelSelectionProviderConnectionId(spawnOptions.modelSelection) : null;
   const backendTarget = selectedProviderConnectionId
     ? backendTargetRefs?.backendTargetV2
     : backendTargetRefs?.backendTarget;
@@ -598,7 +599,8 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     ...(typeof spawnOptions.agentModeId === 'string' ? { agentModeId: spawnOptions.agentModeId } : {}),
     ...(typeof spawnOptions.agentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: spawnOptions.agentModeUpdatedAt } : {}),
     ...(spawnOptions.modelSelection ? { modelSelection: spawnOptions.modelSelection } : {}),
-    ...(spawnOptions.modelSelection?.ref.providerConnectionId === null
+    ...(spawnOptions.modelSelection && (spawnOptions.modelSelection.v === 1
+      ? spawnOptions.modelSelection.ref.providerConnectionId === null : spawnOptions.modelSelection.ref.source === 'native')
       ? {
           modelId: spawnOptions.modelSelection.ref.modelId,
           modelUpdatedAt: spawnOptions.modelSelection.updatedAt,

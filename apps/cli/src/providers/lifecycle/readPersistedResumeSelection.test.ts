@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol';
 
-import { readPersistedProviderResumeState } from './readPersistedResumeSelection';
+import { PersistedProviderResumeBindingError, readPersistedProviderResumeState } from './readPersistedResumeSelection';
 
 const binding = {
   v: 1,
@@ -26,6 +26,19 @@ const binding = {
 } as const;
 
 describe('readPersistedProviderResumeState', () => {
+  it.each([
+    { source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 7, deliveryMode: 'brokered' },
+    { source: 'account_provider_connection', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'account-model', providerConnectionId: 'pc_gateway' },
+  ] as const)('restores the exact typed $source intent without an older carrier', ref => {
+    const selection = { v: 2 as const, updatedAt: 123, ref };
+    expect(readPersistedProviderResumeState({ modelSelectionIntentV2: selection })).toEqual({ selection, binding: null });
+  });
+
+  it('refuses malformed typed intent instead of restoring an older native selection', () => {
+    expect(() => readPersistedProviderResumeState({ modelSelectionIntentV2: { v: 2, ref: { source: 'team_resource' } },
+      modelSelectionIntentV1: { v: 1, updatedAt: 1, selection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'native' } } }))
+      .toThrow(PersistedProviderResumeBindingError);
+  });
   it('restores the exact structured selection associated with the persisted binding', () => {
     const metadata = {
       providerBindingV1: binding,

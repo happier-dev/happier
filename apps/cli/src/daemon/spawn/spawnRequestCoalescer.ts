@@ -4,7 +4,7 @@ import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { SessionCapabilitySelectionV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
@@ -81,7 +81,7 @@ function normalizeCapabilitySelectionForFingerprint(value: SpawnSessionOptions['
 
 function normalizeModelSelectionForFingerprint(value: SpawnSessionOptions['modelSelection']): Json {
   if (value === undefined) return null;
-  const parsed = SessionModelSelectionV1Schema.safeParse(value);
+  const parsed = SessionModelSelectionSchema.safeParse(value);
   if (!parsed.success) return null;
 
   return {

@@ -3,8 +3,8 @@ import { logger } from '@/ui/logger';
 import type {
   SessionAttachMetadataIdentityPolicy,
   SessionModelSelectionIntentV1,
-  SessionModelSelectionV1,
 } from '@happier-dev/protocol';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import {
   mergeSessionMetadataForStartup,
@@ -125,9 +125,10 @@ export function buildPermissionModeOverride(opts: {
 }
 
 export function buildModelOverride(opts: {
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
 }): ModelOverride {
   if (!opts.modelSelection) return null;
+  if (opts.modelSelection.v === 2) return opts.modelSelection;
   return {
     v: 1,
     updatedAt: opts.modelSelection.updatedAt,

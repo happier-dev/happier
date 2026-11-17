@@ -35,7 +35,6 @@ import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectTeamCredentialLaunchFailure } from './sessionTeamCredentialLaunchError';
-import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 import { teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
@@ -134,19 +133,14 @@ describe('Session Team launch composition', () => {
       } }, resourceId: resource.id, teamId: resource.teamId, deliveryMode: 'direct',
     })]);
   });
-  it.each([false, true])('preserves an explicit Team-only model tuple emitted by the V2 authoring owner (profile default: %s)', async profileDefault => {
+  it('preserves a typed Team source without requiring a second binding carrier', async () => {
     const selected = { v: 2, updatedAt: 1, ref: { source: 'team_resource',
       ...resource.providerModels[0]!.selection } } as const;
     const { kind: _kind, ...ref } = selected.ref;
     const selectionV2 = { ...selected, ref };
-    const legacy = projectSessionModelSelectionV2ToV1(selectionV2);
-    expect(legacy).toBeNull();
     const launch = await normalizeSessionTeamCredentialLaunch({
-      options: { directory: options.directory, ...(legacy ? { modelSelection: legacy } : {}),
-        ...(profileDefault ? { modelSelection: { v: 1 as const, updatedAt: 2,
-          ref: { agentTargetKey: target, providerConnectionId: ProviderConnectionIdSchema.parse('pc_profile'),
-            modelId: 'profile-default-model' } } } : {}),
-        teamCredentialBindings: [sessionModelSelectionV2TeamBindingIntent(selectionV2)],
+      options: { directory: options.directory,
+        modelSelection: selectionV2,
         sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
           overrides: { reasoning_effort: { value: 'low', updatedAt: 1 } } } },
       agentId: 'codex', agentTargetKey: target, executionMachineId: 'worker',
@@ -154,10 +148,25 @@ describe('Session Team launch composition', () => {
     });
     expect(launch.teamModelRow).toEqual(resource.providerModels[0]);
     expect(launch.options).toMatchObject({
-      modelSelection: { ref: { agentTargetKey: target, modelId: selectionV2.ref.modelId } },
+      modelSelection: selectionV2,
       teamCredentialBindings: [{ resourceId: resource.id, providerModelSelection: { modelId: selectionV2.ref.modelId } }],
       sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'low' } } },
     });
+  });
+  it.each([
+    { source: 'native', agentTargetKey: target, modelId: 'native-model' },
+    { source: 'account_provider_connection', agentTargetKey: target, modelId: 'personal-model', providerConnectionId: 'pc_personal' },
+  ] as const)('preserves an explicit typed $source model against a stale Team binding', async ref => {
+    const modelSelection = { v: 2 as const, updatedAt: 10, ref };
+    const launch = await normalizeSessionTeamCredentialLaunch({ options: { ...options, modelSelection,
+      teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: resource.id,
+        teamId: resource.teamId, expectedResourceRevision: resource.resourceRevision, deliveryMode: 'brokered' }] },
+      agentId: 'codex', agentTargetKey: target, contributions: readCurrentContributionRegistry(),
+      applications, readCatalog: async () => [resource],
+    });
+    expect(launch.options.modelSelection).toEqual(modelSelection);
+    expect(launch.teamModelRow).toBeNull();
+    expect(launch.options.teamCredentialBindings).toContainEqual({ v: 1, slot: { kind: 'provider_model' }, resourceId: null });
   });
   it.each([
     { kind: 'unknown', code: 'action_outcome_unknown' },
@@ -357,7 +366,9 @@ describe('Session Team launch composition', () => {
       expect.objectContaining({ slot: expect.objectContaining({ kind: 'connected_service_purpose' }),
         resourceId: 'resource-a', expectedResourceRevision: 7 }),
     ]));
-    expect(result.options.modelSelection).toEqual(options.modelSelection);
+    expect(result.options.modelSelection).toMatchObject({ v: 2, updatedAt: 1,
+      ref: { source: 'team_resource', resourceId: resource.id, teamId: resource.teamId,
+        expectedResourceRevision: resource.resourceRevision, agentTargetKey: target, modelId: 'gpt-6-luna' } });
     expect(result.teamModelRow).toEqual(resource.providerModels[0]);
   });
 

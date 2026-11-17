@@ -29,7 +29,7 @@ import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/c
 import { SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
-import { serializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { serializeSessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import {
   PersistedProviderResumeBindingError,
   readPersistedProviderResumeState,
@@ -372,7 +372,7 @@ export async function handleResumeCommand(
           '--started-by',
           'terminal',
           ...(providerResumeSelection
-            ? ['--model-selection-v1', serializeSessionModelSelectionV1(providerResumeSelection)]
+            ? ['--model-selection-v1', serializeSessionModelSelection(providerResumeSelection)]
             : []),
         ],
         rawArgv: deps?.rawArgv ?? ['happier', 'resume', rawSession.id],
@@ -402,7 +402,7 @@ export async function handleResumeCommand(
           '--resume', vendorResume.vendorResumeId,
           '--started-by', 'terminal',
           ...(providerResumeSelection
-            ? ['--model-selection-v1', serializeSessionModelSelectionV1(providerResumeSelection)]
+            ? ['--model-selection-v1', serializeSessionModelSelection(providerResumeSelection)]
             : []),
         ],
         rawArgv: deps?.rawArgv ?? ['happier', 'resume', rawSession.id],

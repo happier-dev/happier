@@ -1,8 +1,9 @@
+import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { join } from 'node:path';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveProviderBindingCompatibilityFromSourceFactsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
-import type { ConnectedServiceBindingsV2, PluginExecutionScopeV1, SessionEnvOverlayV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceBindingsV2, PluginExecutionScopeV1, SessionEnvOverlayV1, ProviderBoundModelRef } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
@@ -49,7 +50,7 @@ export type PreparedManagedPurposeLaunch = Readonly<{
   ok: true;
   kind: 'managedPurpose';
   agentTargetKey: string;
-  selection: NonNullable<SessionModelSelectionV1['ref']>;
+  selection: ProviderBoundModelRef;
   model: AgentSessionProviderBinding['model'];
   connectedServices: ConnectedServiceBindingsV2;
   materialize(scope: Extract<PluginExecutionScopeV1, { kind: 'session' | 'execution_run' }>): Promise<MaterializedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
@@ -61,10 +62,11 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   agentId: string;
   featureEnabled: import('./prepareLaunch').PrepareProviderLaunchInput['featureEnabled'];
   machineId?: string;
-  selection?: SessionModelSelectionV1;
-  resolveSelectionTarget(): Readonly<{ agentTargetKey: string; selection: SessionModelSelectionV1 }> | null;
+  selection?: SessionModelSelection;
+  resolveSelectionTarget(): Readonly<{ agentTargetKey: string; selection: SessionModelSelection }> | null;
   connectedServices: ConnectedServiceBindingsV2 | null;
 }>): Promise<PreparedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }> | null> {
+  if (input.selection?.v === 2 && input.selection.ref.source === 'team_resource') return null;
   const candidates = resolveAgentManagedPurposeSelections({ contributions: input.lease.registry.contributes,
     agentId: input.agentId, connectedServices: input.connectedServices, selection: input.selection });
   if (candidates.length === 0) return null;
@@ -124,7 +126,8 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   // order resolves equivalent accepted protocols, as it does for catalog routing.
   const { candidate, provider, group, row, selection, catalog, transport, compatibility } = chosen;
   const connectedServices = input.connectedServices!;
-  const selectedModelRef = canonicalSelection.ref;
+  const selectedModelRef = { agentTargetKey: canonicalSelection.ref.agentTargetKey,
+    providerConnectionId: readSessionModelSelectionProviderConnectionId(canonicalSelection), modelId: canonicalSelection.ref.modelId };
   return { ok: true, kind: 'managedPurpose', agentTargetKey, selection: selectedModelRef,
     model: row.descriptor, connectedServices,
     materialize: async scope => {

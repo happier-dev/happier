@@ -1,12 +1,12 @@
+import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { BackendTargetKeyV2InputSchema, BackendTargetKeyV2Schema, PersistedBackendTargetRefV2Schema,
   parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { CallerInputConstraintsV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionPermissionMode, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
+import type { CallerInputConstraintsV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1, SessionPermissionMode, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
 
 import {
   filterSuppressedConnectedServiceBindings,
@@ -22,7 +22,7 @@ type ProviderLaunchPrerequisiteContext = Readonly<{
 }>;
 
 type CreateAuthorizationAttemptInput = Readonly<{
-  selection: SessionModelSelectionV1;
+  selection: SessionModelSelection;
   machineId: string;
   agentTargetKey: string;
   agentId: string;
@@ -46,7 +46,7 @@ export type PrepareProviderLaunchResult<PrerequisiteFailure extends Readonly<{ o
   | PrerequisiteFailure;
 
 export type PrepareProviderLaunchInput<PrerequisiteFailure extends Readonly<{ ok: false }> = never> = Readonly<{
-  selection?: SessionModelSelectionV1;
+  selection?: SessionModelSelection;
   callerInputConstraints?: CallerInputConstraintsV1;
   permissionMode?: SessionPermissionMode;
   backendTarget: BackendTargetRefV2Input;
@@ -82,7 +82,7 @@ export type PrepareProviderLaunchInput<PrerequisiteFailure extends Readonly<{ ok
 export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly<{ ok: false }> = never>(
   input: PrepareProviderLaunchInput<PrerequisiteFailure>,
 ): Promise<PrepareProviderLaunchResult<PrerequisiteFailure>> {
-  const selection = input.selection ? SessionModelSelectionV1Schema.parse(input.selection) : undefined;
+  const selection = input.selection ? SessionModelSelectionSchema.parse(input.selection) : undefined;
   if (input.callerInputConstraints) {
     if (!isModelRefGrantedV1(input.callerInputConstraints, selection?.ref ?? 'automatic')) {
       return { ok: false, error: createProviderErrorV1('model_not_granted') };
@@ -124,7 +124,7 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
 
     return { agentTargetKey, selection: canonicalSelection };
   };
-  if ((!selection || selection.ref.providerConnectionId === null) && input.agentId && input.managedPurposeContext) {
+  if ((!selection || readSessionModelSelectionProviderConnectionId(selection) === null) && input.agentId && input.managedPurposeContext) {
     try {
       const managed = await prepareManagedPurposeLaunch({ ...input.managedPurposeContext,
         agentId: input.agentId, machineId: input.machineId, selection, connectedServices: input.connectedServices,
@@ -148,8 +148,8 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
     }
     return { ok: true, kind: 'native' };
   }
-  if (selection.ref.providerConnectionId === null) return { ok: true, kind: 'native' };
-  const connectionId = selection.ref.providerConnectionId;
+  const connectionId = readSessionModelSelectionProviderConnectionId(selection);
+  if (connectionId === null) return { ok: true, kind: 'native' };
 
   const errorContext = {
     connectionId,

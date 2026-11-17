@@ -1,7 +1,7 @@
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { BackendTargetRefV2InputSchema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveSessionModelSelectionInputRefV1, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
@@ -21,27 +21,27 @@ export function resolveSessionStartBackendTarget(params: Readonly<{
 /** Canonicalizes the CLI child-process ingress before the host runtime sees it. */
 export function resolveSessionStartModelSelection(params: Readonly<{
   backendTarget: unknown;
-  canonicalSelection?: SessionModelSelectionV1;
-  fallbackSelection?: SessionModelSelectionV1;
+  canonicalSelection?: SessionModelSelection;
+  fallbackSelection?: SessionModelSelection;
   legacyModelId?: string;
   providerConnectionId?: string;
   legacyModelUpdatedAt?: number;
   nowMs?: number;
-}>): SessionModelSelectionV1 | undefined {
+}>): SessionModelSelection | undefined {
   const legacyModelId = params.legacyModelId;
   if (!params.canonicalSelection && typeof legacyModelId !== 'string' && !params.fallbackSelection) return undefined;
   const agentTargetKey = buildBackendTargetKeyV2(readBackendTargetRefV2(
     BackendTargetRefV2InputSchema.parse(params.backendTarget),
   ));
   if (params.canonicalSelection) {
-    const selection = SessionModelSelectionV1Schema.parse(params.canonicalSelection);
+    const selection = SessionModelSelectionSchema.parse(params.canonicalSelection);
     if (selection.ref.agentTargetKey !== agentTargetKey) {
       throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
     }
     return selection;
   }
   if (typeof legacyModelId !== 'string') {
-    const selection = SessionModelSelectionV1Schema.parse(params.fallbackSelection);
+    const selection = SessionModelSelectionSchema.parse(params.fallbackSelection);
     if (selection.ref.agentTargetKey !== agentTargetKey) {
       throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
     }

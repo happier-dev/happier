@@ -5,8 +5,9 @@ import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/c
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { SessionModelSelectionResolutionError, sessionModelSelectionIntentRequiresAgentTargetV1 } from '@happier-dev/protocol/providers/model-selection';
 import { readSessionModesMetadata, projectSessionModesV1Compatibility } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import { backendTargetKeysMatch, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { readPersistedProviderResumeState } from '@/providers/lifecycle/readPersistedResumeSelection';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
@@ -14,6 +15,7 @@ import { readSessionMetadataConnectedServiceBindings } from '@happier-dev/agents
 import {
   readAcpSessionModeIntentFromMetadata,
   resolveModelSelectionIntentFromSessionMetadata,
+  readSessionModelSelectionV2FromMetadata,
   resolvePermissionIntentFromSessionMetadata,
 } from '@happier-dev/agents/session/state/metadataReaders';
 import {
@@ -31,7 +33,7 @@ type ForkInheritedSpawnOverrides = {
   permissionModeUpdatedAt?: number;
   agentModeId?: string;
   agentModeUpdatedAt?: number;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
   providerBindingMetadataV1?: SessionProviderBindingMetadataV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   connectedServices?: ConnectedServiceBindingsV2;
@@ -60,6 +62,7 @@ type ForkInheritedMetadataOverrides = Pick<
   | 'connectedServices'
   | 'connectedServicesUpdatedAt'
   | 'modelSelectionIntentV1'
+  | 'modelSelectionIntentV2'
 > & {
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1;
 };
@@ -350,10 +353,17 @@ export function resolveForkInheritedOverridesFromMetadata(
   })) {
     throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
   }
-  const model = agentTarget
+  const capturedModel = readSessionModelSelectionV2FromMetadata(metadata);
+  if (capturedModel && (!agentTarget || !backendTargetKeysMatch(capturedModel.ref.agentTargetKey, buildBackendTargetKeyV2(agentTarget)))) {
+    throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+  }
+  const model = !capturedModel && agentTarget
     ? resolveModelSelectionIntentFromSessionMetadata(metadata, buildBackendTargetKeyV2(agentTarget))
     : null;
-  if (model?.selection) {
+  if (capturedModel) {
+    spawn.modelSelection = capturedModel;
+    metadataOverrides.modelSelectionIntentV2 = capturedModel;
+  } else if (model?.selection) {
     spawn.modelSelection = { v: 1, ref: model.selection, updatedAt: model.updatedAt };
   }
   const persistedProviderResumeState = readPersistedProviderResumeState(metadata ?? null);

@@ -1,3 +1,4 @@
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import chalk from 'chalk';
 
 import { readProviderConnectionFlag } from '@/cli/commands/session/shared/readProviderConnectionFlag';
@@ -7,11 +8,11 @@ import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
-import { deserializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { deserializeSessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
-import type { SessionCreationCorrespondenceV1, MachinePoolSelectionOriginV1, SessionModelSelectionV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import type { SessionCreationCorrespondenceV1, MachinePoolSelectionOriginV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 import { SESSION_PERMISSION_INTENT_INPUTS } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
@@ -42,7 +43,7 @@ export interface ProviderSessionArgPartitionResult {
   readonly modelId: string | undefined;
   readonly providerConnectionId: string | undefined;
   readonly modelUpdatedAt: number | undefined;
-  readonly modelSelection: SessionModelSelectionV1 | undefined;
+  readonly modelSelection: SessionModelSelection | undefined;
   /** One-shot, value-free Saved Secret reference override for this launch. */
   readonly secretReferenceOverlay: SecretReferenceOverlayV1 | undefined;
   readonly existingSessionId: string | undefined;
@@ -205,7 +206,7 @@ export function partitionProviderSessionArgs(
   let modelId: string | undefined;
   let providerConnectionId: string | null | undefined;
   let modelUpdatedAt: number | undefined;
-  let modelSelection: SessionModelSelectionV1 | undefined;
+  let modelSelection: SessionModelSelection | undefined;
   const secretReferenceOverlayBindings: Record<string, { ref: string; revision?: number }> = {};
   let existingSessionId: string | undefined;
   let resume: string | undefined;
@@ -419,7 +420,7 @@ export function partitionProviderSessionArgs(
       const raw = equalsValue ?? readRequiredNext(input, i, '--model-selection-v1', 'base64url model selection');
       if (!equalsValue) i += 1;
       try {
-        modelSelection = deserializeSessionModelSelectionV1(raw);
+        modelSelection = deserializeSessionModelSelection(raw);
       } catch {
         console.error(chalk.red('Invalid --model-selection-v1 value: expected canonical base64url model selection'));
         process.exit(1);

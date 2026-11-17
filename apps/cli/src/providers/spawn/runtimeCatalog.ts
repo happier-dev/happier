@@ -1,3 +1,4 @@
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import { projectProviderCatalogProbeModelDescriptorV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import { DaemonProviderModelProjectionResponseV1Schema, type DaemonProviderModelProjectionRequestV1, type DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
@@ -172,7 +173,7 @@ async function readProviderRuntimeCatalogSelectionProjection(
 export async function resolveProviderRuntimeCatalogSelectionObservation(
   input: ResolveProviderRuntimeCatalogModelInput,
 ): Promise<ProviderRuntimeCatalogSelectionObservation | null> {
-  const connectionId = input.selection.ref.providerConnectionId;
+  const connectionId = readSessionModelSelectionProviderConnectionId(input.selection);
   if (connectionId === null) return null;
   const resolution = resolveProviderConnectionForMachine({
     connectionId,

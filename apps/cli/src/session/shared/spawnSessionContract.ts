@@ -7,7 +7,7 @@ import { SPAWN_SESSION_ERROR_CODES, SpawnSessionErrorCodeSchema, normalizeSpawnS
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionTurnProviderCheckpointV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
-import type { AcpConfigOptionOverridesV1, AgentExecutionTargetV1, AgentSessionStartupInstructionsV1, BackendTargetRefV2, CallerInputConstraintsV1, MachinePoolSelectionOriginV1, ConnectedServiceMaterializationIdentityV1, RuntimeDescriptorV1, SessionAttachMetadataIdentityPolicy, SessionCapabilitySelectionV1, SessionInitialAccessDraftV1, SessionManagerV1, SessionRolesV1, SessionInitialGoalRequestV1, SessionCreateOriginFieldsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1, SecretReferenceOverlayV1, SpawnSessionExecutionAuthorization, SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, AgentExecutionTargetV1, AgentSessionStartupInstructionsV1, BackendTargetRefV2, CallerInputConstraintsV1, MachinePoolSelectionOriginV1, ConnectedServiceMaterializationIdentityV1, RuntimeDescriptorV1, SessionAttachMetadataIdentityPolicy, SessionCapabilitySelectionV1, SessionInitialAccessDraftV1, SessionManagerV1, SessionRolesV1, SessionInitialGoalRequestV1, SessionCreateOriginFieldsV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1, SecretReferenceOverlayV1, SpawnSessionExecutionAuthorization, SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 
 import type { PermissionMode, SessionCreationOutcome } from '@/api/types';
 import type {
@@ -247,7 +247,7 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   permissionModeUpdatedAt?: number;
   agentModeId?: string;
   agentModeUpdatedAt?: number;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: import('@happier-dev/protocol/providers/selection/v2').SessionModelSelection;
   /** Daemon-owned continuity metadata; transport callers cannot author this value. */
   providerBindingMetadataV1?: SessionProviderBindingMetadataV1;
   providerBindingSecurityChangeConfirmationV1?: SessionProviderBindingSecurityChangeConfirmationV1;

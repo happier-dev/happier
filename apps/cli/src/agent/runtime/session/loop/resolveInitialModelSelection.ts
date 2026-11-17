@@ -1,12 +1,12 @@
 import { BackendTargetKeyV2InputSchema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 export function resolveInitialHostSessionModelSelection(params: Readonly<{
   agentTargetKey: string;
-  runtimeSelection?: SessionModelSelectionV1;
-  lifecycleSelection?: SessionModelSelectionV1;
-}>): SessionModelSelectionV1 | undefined {
+  runtimeSelection?: SessionModelSelection;
+  lifecycleSelection?: SessionModelSelection;
+}>): SessionModelSelection | undefined {
   const selection = params.runtimeSelection ?? params.lifecycleSelection;
   if (!selection) return undefined;
 

@@ -1,3 +1,4 @@
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
 import { randomUUID } from 'node:crypto';
@@ -509,7 +510,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   const observePhase = async <T>(phase: 'catalog' | 'agent_activation' | 'dns' | 'purpose_bindings' | 'managed_runtime' | 'model_projection', work: () => Promise<T>): Promise<T> => {
     const startedAt = performance.now();
     const record = (status: 'started' | 'completed' | 'failed', reason?: string, detail?: ReturnType<typeof readNativeStartupFailureDetail>) => logger.infoFile('[PROVIDER] Spawn authorization phase', {
-      authorizationId, connectionId: input.selection.ref.providerConnectionId, machineId: input.machineId,
+      authorizationId, connectionId: readSessionModelSelectionProviderConnectionId(input.selection), machineId: input.machineId,
       phase, status, durationMs: Math.round(performance.now() - startedAt),
       elapsedMs: Math.round(performance.now() - authorizationStartedAt), ...(reason ? { reason } : {}),
       ...detail,
@@ -537,7 +538,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     return {
       ok: false,
       error: createProviderErrorV1('provider_connection_not_found', {
-        connectionId: input.selection.ref.providerConnectionId ?? undefined,
+        connectionId: readSessionModelSelectionProviderConnectionId(input.selection) ?? undefined,
         machineId: input.machineId,
       }),
     };
@@ -552,10 +553,10 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   initialSnapshot = getAccountSettingsSnapshot();
   if (catalog.status !== 'ready' || !initialSnapshot) return { ok: false, error: createProviderCatalogAdmissionError(
     !initialSnapshot ? { status: 'unavailable', reason: 'scope-retired' } : catalog,
-    { connectionId: input.selection.ref.providerConnectionId ?? undefined, machineId: input.machineId },
+    { connectionId: readSessionModelSelectionProviderConnectionId(input.selection) ?? undefined, machineId: input.machineId },
   ) };
   const definitive = resolveProviderSpawnDefinitiveRejection({
-    selection: input.selection.ref,
+    selection: { ...input.selection.ref, providerConnectionId: readSessionModelSelectionProviderConnectionId(input.selection) },
     agentTargetKey: input.agentTargetKey,
     agentId: input.agentId,
     providerSettings: readProviderSettingsForCli(initialSnapshot).settings,
@@ -585,7 +586,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     return {
       ok: false,
       error: createProviderErrorV1('agent_error', {
-        connectionId: input.selection.ref.providerConnectionId ?? undefined,
+        connectionId: readSessionModelSelectionProviderConnectionId(input.selection) ?? undefined,
         machineId: input.machineId,
       }),
     };
@@ -605,13 +606,13 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   const resolveCurrent = async (): Promise<ProviderSpawnAuthorizationResult> => {
     const admittedCatalog = await readProviderSpawnCatalogSnapshot({
       readSnapshot: getAccountSettingsSnapshot, expectedScopeKey: initialScopeKey, lifetime: admissionLifetime,
-      connectionId: input.selection.ref.providerConnectionId, machineId: input.machineId,
+      connectionId: readSessionModelSelectionProviderConnectionId(input.selection), machineId: input.machineId,
     });
     if (!admittedCatalog.ok) return admittedCatalog;
     let snapshot = admittedCatalog.snapshot;
     let admittedSavedSecretCatalog: SavedSecretCatalogOperationAdmissionV1 | undefined;
     const providerSettings = readProviderSettingsForCli(snapshot).settings;
-    const connectionId = input.selection.ref.providerConnectionId;
+    const connectionId = readSessionModelSelectionProviderConnectionId(input.selection);
     if (connectionId === null) {
       return { ok: false, error: createProviderErrorV1('provider_connection_not_found') };
     }

@@ -11,7 +11,6 @@ import {
   accountSettingsParse,
   projectSessionMetadataForWire,
   buildConnectedServiceCredentialRecord,
-  deserializeSessionModelSelectionV1,
   ProviderConnectionIdSchema,
   sealAccountScopedBlobCiphertext,
   sealEncryptedDataKeyEnvelopeV1,
@@ -20,6 +19,7 @@ import {
   ConnectedServiceBindingsV2IngressSchema,
   AgentNativeResumeIdentityV1Schema,
 } from '@happier-dev/protocol';
+import { deserializeSessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import { reloadConfiguration } from '@/configuration';
 import type { Credentials, Settings } from '@/persistence';
@@ -347,7 +347,7 @@ describe('happier resume', () => {
     expect(resolveAgentHandlerFn).not.toHaveBeenCalled();
   });
 
-  it('restores layout-v1 owner Provider state and fails closed on unreadable owner metadata', async () => {
+  it.each([1, 2] as const)('restores layout-v1 owner Provider state (selection V%s) and fails closed on unreadable owner metadata', async (selectionVersion) => {
     accountEncryptionMode = 'plain';
     const home = await mkdtemp(join(tmpdir(), 'happier-resume-provider-'));
     const directory = await mkdtemp(join(tmpdir(), 'happier-resume-provider-dir-'));
@@ -357,6 +357,7 @@ describe('happier resume', () => {
     const credentials = {
       token: 'native-credentials-deliberately-present',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) },
+      accountE2eeCustody: 'historical',
     } satisfies Credentials;
     const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
       v: 1,
@@ -374,6 +375,9 @@ describe('happier resume', () => {
         },
       },
       runtime: {
+        ...(selectionVersion === 2 ? { modelSelectionIntentV2: { v: 2, updatedAt: 123,
+          ref: { source: 'account_provider_connection', agentTargetKey: 'agent:happier.agent.codex/codex',
+            providerConnectionId: 'pc_gateway', modelId: 'vendor/model' } } } : {}),
         modelSelectionIntentV1: {
           v: 1,
           updatedAt: 123,
@@ -419,10 +423,11 @@ describe('happier resume', () => {
     const agentHandler: CommandHandler = vi.fn(async (context) => {
       const flagIndex = context.args.indexOf('--model-selection-v1');
       expect(flagIndex).toBeGreaterThan(0);
-      expect(deserializeSessionModelSelectionV1(context.args[flagIndex + 1]!)).toEqual({
-        v: 1,
+      expect(deserializeSessionModelSelection(context.args[flagIndex + 1]!)).toEqual({
+        v: selectionVersion,
         updatedAt: 123,
         ref: {
+          ...(selectionVersion === 2 ? { source: 'account_provider_connection' } : {}),
           agentTargetKey: 'agent:happier.agent.codex/codex',
           providerConnectionId: 'pc_gateway',
           modelId: 'vendor/model',

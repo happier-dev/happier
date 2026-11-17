@@ -5,6 +5,7 @@ import { SessionContinueWithReplayRequestSchema, SessionContinueWithReplayRpcPar
 import { normalizeLegacyContinueWithReplayRpcParamsInput, validateLegacyContinueWithReplayRpcParamsCompat } from '@happier-dev/protocol/backends/targets/compat/continueWithReplayRpcParamsCompat';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionContinueWithReplayRpcParams } from '@happier-dev/protocol';
 
 const SessionContinueWithReplayCompatIngressSchema = z.pipe((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyContinueWithReplayRpcParamsInput), z.looseObject({
@@ -16,7 +17,7 @@ const SessionContinueWithReplayCompatIngressSchema = z.pipe((<I extends z.core.$
       permissionModeUpdatedAt: z.optional(z.number()),
       modelId: z.optional(z.string()),
       modelUpdatedAt: z.optional(z.number()),
-      modelSelection: z.optional(SessionModelSelectionV1Schema),
+      modelSelection: z.optional(SessionModelSelectionSchema),
       replay: SessionContinueWithReplayRequestSchema,
     })).check(z.superRefine((value, ctx) => {
     validateLegacyContinueWithReplayRpcParamsCompat(value, ctx);

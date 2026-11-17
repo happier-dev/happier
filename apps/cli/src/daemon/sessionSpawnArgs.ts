@@ -1,8 +1,9 @@
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
-import { serializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { serializeSessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
-import type { BackendTargetRefV2, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
@@ -17,7 +18,7 @@ export function buildHappySessionControlArgs(opts: Readonly<{
   permissionModeUpdatedAt?: number;
   agentModeId?: string;
   agentModeUpdatedAt?: number;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
   resume?: string;
   nativeForkSource?: NativeForkSource;
   /** Opaque host-derived identity carried only from daemon to its runner. */
@@ -120,7 +121,7 @@ export function buildHappySessionControlArgs(opts: Readonly<{
   }
 
   if (opts.modelSelection) {
-    args.push('--model-selection-v1', serializeSessionModelSelectionV1(opts.modelSelection));
+    args.push('--model-selection-v1', serializeSessionModelSelection(opts.modelSelection));
   }
 
   return args;

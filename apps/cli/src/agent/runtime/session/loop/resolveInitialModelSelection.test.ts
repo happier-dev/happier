@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderConnectionIdSchema, SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { resolveInitialHostSessionModelSelection } from './resolveInitialModelSelection';
 
@@ -14,6 +15,14 @@ const providerSelection = SessionModelSelectionV1Schema.parse({
 });
 
 describe('resolveInitialHostSessionModelSelection', () => {
+  it('keeps the Team resource identity through initial runtime model selection', () => {
+    const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref: {
+      source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model',
+      resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 4, deliveryMode: 'brokered',
+    } });
+    expect(resolveInitialHostSessionModelSelection({ agentTargetKey: selection.ref.agentTargetKey,
+      lifecycleSelection: selection })).toEqual(selection);
+  });
   it('preserves provider identity and literal provider model id default', () => {
     expect(resolveInitialHostSessionModelSelection({
       agentTargetKey: 'agent:happier.agent.codex/codex',

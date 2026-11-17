@@ -1,3 +1,4 @@
+import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createProviderBindingSecurityFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderUsageRequestFingerprintV1, createProviderEndpointSetFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
@@ -13,7 +14,7 @@ import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/mod
 import { ProviderModelDescriptorV1Schema, resolveModelDisplayName } from '@happier-dev/protocol/models/descriptor';
 import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { ProviderCredentialTransportAmbiguityErrorV1, resolveProviderBindingDeclarationCompatibilityV1, selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
-import type { AgentProviderRequirementsV1, ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelDescriptorV1, ProviderSettingsV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeRequestFingerprintV1, ResolvedProviderManagedRuntimeDeclarationV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import type { AgentProviderRequirementsV1, ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelDescriptorV1, ProviderSettingsV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeRequestFingerprintV1, ResolvedProviderManagedRuntimeDeclarationV1, QualifiedConnectedAccountPurposeBindingsV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import type {
   AgentProviderBindingAdapter,
   AgentProviderBindingPrepared,
@@ -271,7 +272,7 @@ export type ProviderModelLoadHostAuthorizationResult =
     }>;
 
 export type ResolveProviderSpawnAuthorizationInput = Readonly<{
-  selection: SessionModelSelectionV1;
+  selection: SessionModelSelection;
   /** Requested launch overrides only; inherited/default configuration is normalized by the runtime. */
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   machineId: string;
@@ -962,7 +963,7 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
 type ProviderSpawnSelectionResult = Readonly<
   | { ok: false; error: ProviderErrorV1 }
   | { ok: true; selection: Readonly<{
-      connectionId: NonNullable<SessionModelSelectionV1['ref']['providerConnectionId']>;
+      connectionId: string;
       providerSettings: ProviderSettingsV1;
       record: ResolvedProviderConnectionRecord;
       authorization: Extract<ResolvedProviderConnectionRecord['authorization'], { authorized: true }>;
@@ -987,7 +988,7 @@ export function resolveProviderSpawnSelection(
   // connection record, no runtime catalog observation, and the lease registry
   // rather than this call's own — so consulting it would make it a second,
   // stricter authority over facts this owner resolves below.
-  const connectionId = input.selection.ref.providerConnectionId;
+  const connectionId = readSessionModelSelectionProviderConnectionId(input.selection);
   if (connectionId === null || input.selection.ref.agentTargetKey !== input.agentTargetKey) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent') };
   }

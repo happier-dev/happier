@@ -13,6 +13,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { SessionTeamCredentialLaunchUnavailableError, projectTeamCredentialLaunchFailure } from './sessionTeamCredentialLaunchError';
 import { selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
+import { readSessionModelSelectionProviderConnectionId, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 
 export { readSessionTeamCredentialResourceCatalog } from './sessionTeamCredentialCatalog';
 export { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
@@ -32,7 +33,11 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   applications: readonly ProviderBrokerApplicationBindingV1[];
   readCatalog(): Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
 }>): Promise<NormalizedSessionTeamCredentialLaunch> {
-  const { options } = input;
+  const typedModel = input.options.modelSelection?.v === 2 ? input.options.modelSelection : undefined;
+  const typedModelBinding = typedModel ? sessionModelSelectionV2TeamBindingIntent(typedModel) : undefined;
+  const options = typedModelBinding ? { ...input.options, teamCredentialBindings: mergeSessionTeamCredentialBindingIntents({
+    explicit: [typedModelBinding], admitted: input.options.teamCredentialBindings,
+  }) } : input.options;
   const connectedServices = options.connectedServices == null ? null
     : ConnectedServiceBindingsV2IngressSchema.safeParse(options.connectedServices);
   if (connectedServices && !connectedServices.success) throw new SessionTeamCredentialLaunchUnavailableError('invalid_request', 'connected_services');
@@ -40,7 +45,8 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   const explicitTeamModel = explicitModelBinding?.resourceId ? explicitModelBinding.providerModelSelection : undefined;
   const model = explicitTeamModel
     ? { agentTargetKey: explicitTeamModel.agentTargetKey, modelId: explicitTeamModel.modelId, providerConnectionId: null }
-    : options.modelSelection?.ref;
+    : options.modelSelection ? { ...options.modelSelection.ref,
+      providerConnectionId: readSessionModelSelectionProviderConnectionId(options.modelSelection) } : undefined;
   const declarations = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
     agentId: input.agentId, contributions: input.contributions,
   });
@@ -166,10 +172,9 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
       ...(input.executionMachineId ? { application: row.application, executionMachineId: input.executionMachineId } : {}),
       ...(row.nativeSource ? { nativeSource: { sourceRevision: row.sourceRevision, providerTicket: row.nativeSource.providerTicket } } : {}),
     }, ...(row.selection.nativeDelivery ? { nativeDelivery: row.selection.nativeDelivery } : {}) } : binding);
-  // V2 authors carry the Team source and tuple in the binding alone. Project
-  // the admitted tuple for runtime consumers, retaining the Team source above.
+  const { kind: _kind, ...teamModelRef } = row.selection;
   return { options: { ...options, teamCredentialBindings,
-    modelSelection: { v: 1, updatedAt: options.modelSelection?.updatedAt ?? Date.now(),
-      ref: { agentTargetKey: row.selection.agentTargetKey, providerConnectionId: null, modelId: row.selection.modelId } },
+    modelSelection: { v: 2, updatedAt: options.modelSelection?.updatedAt ?? Date.now(),
+      ref: { source: 'team_resource', ...teamModelRef } },
   }, teamModelRow: row };
 }

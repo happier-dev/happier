@@ -16,6 +16,7 @@ import { z } from 'zod/mini';
 import { buildSessionWorkspaceLocationV1 } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import type { SessionMetadata, SessionModelSelectionIntentV1, RuntimeDescriptorV1, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
+import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { SessionIdentityAdditionsV1Schema, type SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { type SessionAttestedContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -28,6 +29,7 @@ import {
     applySessionConfigOptionOverridesToMetadata,
     applyAcpSessionModeIntentSessionMetadata,
     applyModelIntentSessionMetadata,
+    clearModelIntentSessionMetadata,
     applyPermissionModeIntentSessionMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
 
@@ -95,7 +97,7 @@ export interface CreateSessionMetadataOptions {
     /** Timestamp (ms) for sessionModeId, used for arbitration across devices (optional) */
     sessionModeUpdatedAt?: number;
     /** Canonical provider/native model-selection intent to publish for the session. */
-    modelSelectionIntent?: SessionModelSelectionIntentV1;
+    modelSelectionIntent?: SessionModelSelectionIntentV1 | SessionModelSelectionV2;
     /** Provider-owned metadata augmentation hook applied after shared metadata creation. */
     augmentMetadata?: ((metadata: Metadata) => Metadata) | null;
     /** Non-secret launch controls captured once at the host/session boundary. */
@@ -232,7 +234,9 @@ function applyInitialIntentMetadata(metadata: Metadata, opts: CreateSessionMetad
     }
 
     if (opts.modelSelectionIntent) {
-        nextMetadata = applyModelIntentSessionMetadata(nextMetadata, opts.modelSelectionIntent) as Metadata;
+        nextMetadata = opts.modelSelectionIntent.v === 2
+            ? { ...clearModelIntentSessionMetadata(nextMetadata), modelSelectionIntentV2: opts.modelSelectionIntent } as Metadata
+            : applyModelIntentSessionMetadata(nextMetadata, opts.modelSelectionIntent) as Metadata;
     }
 
     return nextMetadata;

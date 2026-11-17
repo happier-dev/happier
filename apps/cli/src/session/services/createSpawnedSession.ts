@@ -16,7 +16,8 @@ import { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from '@
 import { hasSessionInputContentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1';
 import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { supportsMachineSessionSpawnProtocolVersionV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
-import type { BackendTargetRefV2, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionCreationTagV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnSourceContextV1, SessionOrganizationPlacementV1, SessionModelSelectionV1, SpawnSessionNonceResolution, PluginSessionInputAttachmentV1, RawIngressStructuredInputV1, SessionForkFilesNotCopiedV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionCreationTagV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnSourceContextV1, SessionOrganizationPlacementV1, SpawnSessionNonceResolution, PluginSessionInputAttachmentV1, RawIngressStructuredInputV1, SessionForkFilesNotCopiedV1 } from '@happier-dev/protocol';
+import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionSpawnNewInitialInputV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { SessionCreationHostContinuationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
@@ -170,7 +171,7 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   /** Canonical Action host's resolved snapshot; never accepted from raw public Action input. */
   initialSessionRolesV1?: import('@happier-dev/protocol').SessionRolesV1;
   primaryTeamId?: string | null;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
   /** Mutable presentation written only through the fresh create envelope. */
   initialTitle?: string;
   identity?: import('@happier-dev/protocol/sessions/identity/sessionBotV1').SessionIdentityAdditions;
@@ -1074,7 +1075,8 @@ export async function createSpawnedSession(
     spawnRequestInput = { ...spawnRequestInput, ...prepared };
     spawnRequest = params.deferLaunch ? spawnRequestInput : SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
   };
-  const isProviderBound = spawnRequest.modelSelection?.ref.providerConnectionId != null;
+  const isProviderBound = spawnRequest.modelSelection !== undefined
+    && readSessionModelSelectionProviderConnectionId(spawnRequest.modelSelection) !== null;
   if (!params.authorizeRequest) await assertStoredAuthTokenValidForSpawn(params.credentials.token);
   params.signal?.throwIfAborted();
   const rejoinExistingCreation = async (afterSpawnFailure = false, observeBirthOnly = false): Promise<Awaited<ReturnType<typeof createSpawnedSession>> | null> => {

@@ -11,7 +11,7 @@ import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/pr
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { ProfileRowRevisionV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type {
   AgentCliSessionCommandBuildInputV1,
@@ -74,7 +74,7 @@ export const ForegroundAgentRuntimeAdmissionRequestV1Schema = z.strictObject({
   profileRecordRevision: z.optional(ProfileRowRevisionV1Schema),
   accountSettingsScopeKey: z.optional(z.string().check(z.minLength(1), z.maxLength(1_024))),
   accountSettingsVersion: z.optional(z.number().check(z.int(), z.nonnegative())),
-  selection: z.optional(SessionModelSelectionV1Schema),
+  selection: z.optional(SessionModelSelectionSchema),
   previousBinding: z.optional(z.nullable(SessionProviderBindingMetadataV1Schema)),
   connectedServices: ConnectedServicesBindingsIngressSchema,
   vendorResumeId: z.optional(BoundedIdSchema),

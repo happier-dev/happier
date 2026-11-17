@@ -1,6 +1,6 @@
 import type { PermissionMode } from '@/api/types';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import {
     createSessionMetadata,
@@ -30,7 +30,7 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
     explicitPermissionModeUpdatedAt?: number;
     sessionModeId?: string;
     sessionModeUpdatedAt?: number;
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: SessionModelSelection;
     launchControlMetadata: SessionLaunchControlMetadata;
     accountSettings?: Readonly<Record<string, unknown>>;
     augmentSessionMetadata?: (metadata: Metadata) => Metadata;

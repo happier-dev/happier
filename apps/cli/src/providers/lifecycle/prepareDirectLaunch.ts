@@ -1,5 +1,6 @@
+import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
-import type { AgentProviderBindingLaunchMaterializationV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, PluginExecutionScopeV1, ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
+import type { AgentProviderBindingLaunchMaterializationV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, PluginExecutionScopeV1, ProviderErrorV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
 
 import { prepareProviderLaunch, type PrepareProviderLaunchInput } from './prepareLaunch';
 import {
@@ -24,7 +25,7 @@ type ProviderLaunchPrerequisiteContext = Readonly<{
 }>;
 
 type CreateAuthorizationAttemptContext = Readonly<{
-  selection: SessionModelSelectionV1;
+  selection: SessionModelSelection;
   machineId: string;
   agentTargetKey: string;
   agentId: string;
@@ -124,7 +125,7 @@ export type DirectProviderLaunchResult<PrerequisiteFailure extends Readonly<{ ok
  */
 export async function prepareDirectProviderLaunch<PrerequisiteFailure extends Readonly<{ ok: false }> = never>(input: Readonly<{
   signal?: AbortSignal;
-  selection?: SessionModelSelectionV1;
+  selection?: SessionModelSelection;
   backendTarget: BackendTargetRefV2Input;
   machineId?: string;
   agentId: string | null;
@@ -191,7 +192,7 @@ export async function prepareDirectProviderLaunch<PrerequisiteFailure extends Re
         return {
           ok: false,
           error: createProviderErrorV1('provider_managed_requires_daemon', {
-            connectionId: input.selection?.ref.providerConnectionId ?? undefined,
+            connectionId: (input.selection ? readSessionModelSelectionProviderConnectionId(input.selection) : null) ?? undefined,
             ...(input.machineId ? { machineId: input.machineId } : {}),
           }),
         };
@@ -316,7 +317,7 @@ export async function prepareDirectProviderLaunch<PrerequisiteFailure extends Re
     const providerError = ProviderErrorV1Schema.safeParse(error);
     if (!providerError.success) logProviderUnexpectedFailure('launch', error);
     if (providerError.success) return { ok: false, error: providerError.data };
-    const connectionId = input.selection?.ref.providerConnectionId ?? undefined;
+    const connectionId = (input.selection ? readSessionModelSelectionProviderConnectionId(input.selection) : null) ?? undefined;
     return {
       ok: false,
       error: createProviderErrorV1('agent_error', {

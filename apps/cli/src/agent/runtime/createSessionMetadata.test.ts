@@ -16,6 +16,7 @@ import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from './sessionCo
 import { createDeferredStartupMetadataPlan } from './startup/createDeferredStartupMetadataPlan';
 import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
@@ -32,6 +33,18 @@ function createMetadata(
 }
 
 describe('createSessionMetadata', () => {
+    it('creates private owner metadata with the exact typed Team model source', () => {
+        const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref: {
+            source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model',
+            resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 4, deliveryMode: 'brokered',
+        } });
+        const { metadata } = createMetadata({ flavor: 'codex', directory: '/repo', modelSelectionIntent: modelSelection });
+        const owner = createSessionOwnerMetadataV1({ metadata });
+        if (!owner.ok) throw new Error(owner.unsupportedFields.join(','));
+        expect(owner.ownerMetadata.runtime?.modelSelectionIntentV2).toEqual(modelSelection);
+        expect(owner.ownerMetadata.runtime?.modelSelectionIntentV1).toBeUndefined();
+        expect(projectSessionSharedMetadataV1({ metadata })).not.toHaveProperty('modelSelectionIntentV2');
+    });
     it('captures sandbox choice at birth without leaking it into the shared host environment', () => {
         const processEnvironment = { HAPPIER_SESSION_NATIVE_SANDBOX: 'off' };
         const launchControlMetadata = captureSessionLaunchControlMetadata({ processEnvironment });

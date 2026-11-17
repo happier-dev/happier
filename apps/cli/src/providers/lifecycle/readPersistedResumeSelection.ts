@@ -2,7 +2,9 @@ import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids'
 import { SESSION_PROVIDER_BINDING_METADATA_KEY_V1, readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readSessionModelSelectionIntentSourceV1 } from '@happier-dev/protocol/providers/model-selection';
-import type { ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 
 export class PersistedProviderResumeBindingError extends Error {
   readonly providerError: ProviderErrorV1;
@@ -44,13 +46,21 @@ function readRawIntentConnectionIdHint(value: unknown): string | undefined {
 export function readPersistedProviderResumeState(
   metadata: Readonly<Record<string, unknown>> | null,
 ): Readonly<{
-  selection: SessionModelSelectionV1 | null;
+  selection: SessionModelSelection | null;
   binding: SessionProviderBindingMetadataV1 | null;
 }> {
   const rawBinding = metadata?.[SESSION_PROVIDER_BINDING_METADATA_KEY_V1];
   const rawIntent = metadata?.modelSelectionIntentV1;
   const bindingState = readSessionProviderBindingMetadataStateV1(metadata);
   const binding = bindingState.kind === 'valid' ? bindingState.binding : null;
+  if (bindingState.kind === 'invalid') {
+    throw new PersistedProviderResumeBindingError(readRawConnectionIdHint(rawBinding));
+  }
+  if (metadata?.modelSelectionIntentV2 !== undefined) {
+    const selection = readSessionModelSelectionV2FromMetadata(metadata);
+    if (!selection) throw new PersistedProviderResumeBindingError();
+    return { selection, binding };
+  }
   // Protocol owns canonical-carrier presence and invalidity. In particular, a
   // present malformed value is corrupted state, never an implicit native
   // selection merely because it lacks a recognizable Provider-shaped field.
@@ -60,9 +70,6 @@ export function readPersistedProviderResumeState(
   });
   const intentData = intentSource.status === 'canonical' ? intentSource.intent : null;
   const selection = intentData?.selection ?? null;
-  if (bindingState.kind === 'invalid') {
-    throw new PersistedProviderResumeBindingError(readRawConnectionIdHint(rawBinding));
-  }
   const rawIntentConnectionIdHint = readRawIntentConnectionIdHint(rawIntent);
   if (intentSource.status === 'invalid') {
     throw new PersistedProviderResumeBindingError(rawIntentConnectionIdHint);

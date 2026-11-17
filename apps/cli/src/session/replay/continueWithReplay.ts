@@ -1,3 +1,4 @@
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { isPermissionMode } from '@/api/types';
@@ -8,7 +9,7 @@ import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHos
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
-import type { BackendTargetRefV2Input, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
@@ -37,7 +38,7 @@ export type ContinueSessionWithReplayParams = Readonly<{
     approvedNewDirectoryCreation?: boolean;
     permissionMode?: string;
     permissionModeUpdatedAt?: number;
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: SessionModelSelection;
     approvalProfileId?: string | null;
     spawnNonce?: string;
     replay: ContinueWithReplayReplayParams;

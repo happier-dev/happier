@@ -12,6 +12,7 @@ import {
   writeSessionRunnerRespawnDescriptorForPersistence,
 } from './sessionRunnerRespawnDescriptor';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import {
   ProviderConnectionIdSchema,
 } from '@happier-dev/protocol';
@@ -65,6 +66,19 @@ const REMOTE_DEV_NATIVE_RESPAWN_DESCRIPTOR_V1 = {
 };
 
 describe('sessionRunnerRespawnDescriptor', () => {
+  it.each(['native', 'team_resource'] as const)('retains the exact V2 %s source after persisted respawn', (source) => {
+    const ref = { source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model',
+      ...(source === 'team_resource' ? { resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 4,
+        deliveryMode: 'brokered' as const } : {}) };
+    const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref });
+    const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({ directory: '/workspace',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, modelSelection });
+    expect(descriptor).not.toBeNull();
+    const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(SessionRunnerRespawnDescriptorV1Schema.parse(
+      JSON.parse(JSON.stringify(writeSessionRunnerRespawnDescriptorForPersistence(descriptor!))),
+    ));
+    expect(restored.modelSelection).toEqual(modelSelection);
+  });
   it('keeps a placed Session on its target across a daemon restart (reattach and respawn read the marker)', () => {
     const managedTargetPlacement = { managedId: 'managed-row-1', workspaceRoot: '/workspace' };
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({ directory: '/tmp/p03-cmuse', managedTargetPlacement, nativeSandbox: 'on' } as SpawnSessionOptions);

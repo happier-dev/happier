@@ -1,4 +1,5 @@
-import type { ConnectedServiceBindingsV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { resolveAgentSpawnPurposeDeclarations, type AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import { projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 
@@ -21,7 +22,7 @@ export function resolveAgentPurposeSelections(input: Readonly<{
 
 /** Managed launch consumes only purposes that delegate endpoint acquisition. */
 export function resolveAgentManagedPurposeSelections(input: Parameters<typeof resolveAgentPurposeSelections>[0] & Readonly<{
-  selection?: SessionModelSelectionV1;
+  selection?: SessionModelSelection;
 }>) {
   return resolveAgentPurposeSelections(input).filter(({ declaration }) => {
     const route = declaration.managedProviderEndpoint;

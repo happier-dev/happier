@@ -1,7 +1,7 @@
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { PermissionMode } from '@/api/types';
 import type {
   SecretReferenceOverlayV1,
-  SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 import type { AgentId } from '@happier-dev/agents';
 import { getAgentSessionModesKind } from '@happier-dev/agents/permissions';
@@ -17,7 +17,7 @@ export type ParsedSessionStartArgs = {
   modelId: string | undefined;
   providerConnectionId: string | undefined;
   modelUpdatedAt: number | undefined;
-  modelSelection: SessionModelSelectionV1 | undefined;
+  modelSelection: SessionModelSelection | undefined;
   /** One-shot, value-free Saved Secret reference override for this launch. */
   secretReferenceOverlay: SecretReferenceOverlayV1 | undefined;
 };
@@ -73,7 +73,7 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   modelId: string | undefined;
   providerConnectionId?: string | undefined;
   modelUpdatedAt: number | undefined;
-  modelSelection: SessionModelSelectionV1 | undefined;
+  modelSelection: SessionModelSelection | undefined;
 }): {
   startedBy: 'daemon' | 'terminal' | undefined;
   permissionMode: PermissionMode | undefined;
@@ -83,7 +83,7 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   modelId: string | undefined;
   providerConnectionId: string | undefined;
   modelUpdatedAt: number | undefined;
-  modelSelection: SessionModelSelectionV1 | undefined;
+  modelSelection: SessionModelSelection | undefined;
   warnings: string[];
 } {
   const warnings: string[] = [];

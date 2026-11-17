@@ -1,5 +1,6 @@
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { PersistedTakeoverAdmissionWaitRegistration } from './persistedTakeoverAdmission';
-import type { BackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import type { ResolvedTerminalRequest } from '@/terminal/runtime/terminalConfig';
@@ -67,7 +68,7 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   permissionModeUpdatedAt?: number;
   agentModeId?: string;
   agentModeUpdatedAt?: number;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
   directoryCreated: boolean;
   extraEnvForChildWithMessage: Record<string, string>;
   unsetEnvKeys?: readonly string[];

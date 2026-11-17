@@ -1,10 +1,10 @@
+import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { prepareProviderSettingsForCli } from '@/providers/settings/hydrate';
 import { join } from 'node:path';
 
 import type {
     BackendTargetRefV2,
     ArtifactSharingResourceV1,
-    SessionModelSelectionV1,
     SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -62,7 +62,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
     options: SpawnSessionOptions;
     effectiveBackendTarget: BackendTargetRefV2;
     catalogAgentId: CatalogAgentId | null;
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: SessionModelSelection;
     /** Exact offered source row resolved by Session launch composition. Not authentication authority. */
     teamModelRow?: TeamCredentialProviderModelCatalogEntryV1;
     profileEnvironmentVariables: Readonly<Record<string, string>>;
@@ -95,7 +95,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
         ...(sourceModel ? { sourceModel: sourceModel.descriptor } : {}),
         selection: {
             modelId: input.modelSelection?.ref.modelId,
-            providerConnectionId: input.modelSelection?.ref.providerConnectionId,
+            providerConnectionId: input.modelSelection ? readSessionModelSelectionProviderConnectionId(input.modelSelection) : undefined,
             acpSessionModeId: input.options.agentModeId,
             sessionConfigOptionOverrides: input.options.sessionConfigOptionOverrides,
         },

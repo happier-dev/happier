@@ -8,8 +8,22 @@ import { createSessionOwnerMetadataV1, SessionOwnerMetadataV1Schema } from '@hap
 import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { readCapabilityLaunchRestartFromMetadataV1, resolveCapabilityApplyTimingV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
 import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 describe('mergeSessionMetadataForStartup', () => {
+    it.each(['native', 'account_provider_connection', 'team_resource'] as const)('starts with the exact typed %s model source', source => {
+        const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 100, ref: {
+            source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model',
+            ...(source === 'account_provider_connection' ? { providerConnectionId: 'pc_work' } : {}),
+            ...(source === 'team_resource' ? { resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 4,
+                deliveryMode: 'brokered' } : {}),
+        } });
+        const overrides = createStartupMetadataOverrides({ modelSelection });
+        const merged = mergeSessionMetadataForStartup({ current: createTestMetadata({ flavor: 'codex' }),
+            next: createTestMetadata({ flavor: 'codex' }), mode: 'start', nowMs: 110, ...overrides });
+        expect(merged.modelSelectionIntentV2).toEqual(modelSelection);
+        expect(merged.modelSelectionIntentV1).toBeUndefined();
+    });
     it.each([undefined, { seed: 'saved-face' }] as const)('retains the existing face choice on attach (%j)', botFace => {
         const current = createTestMetadata({ bot: { kind: 'bot' }, ...(botFace ? { botFace } : {}) });
         const merged = mergeSessionMetadataForStartup({ current,
