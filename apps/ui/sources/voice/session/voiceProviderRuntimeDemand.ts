@@ -52,7 +52,7 @@ export function acquireVoiceProviderRuntimeDemand(providerId: string, signal: Ab
   };
   const readReady = () => {
     const registration = getExternalVoiceProviderRegistration(providerId);
-    if (registration?.settingsActions && registration.occurrenceId) {
+    if (registration?.occurrenceId && (registration.settingsActions || registration.settingsOperations?.listCatalog)) {
       settle();
       return true;
     }

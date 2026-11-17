@@ -55,6 +55,17 @@ describe('the shared catalog preview owner', () => {
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(boundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
   });
+  it.each(['stop', 'completion'] as const)('retains provider resources until preview %s', async end => {
+    let released = false;
+    await playRealtimeCatalogPreview({ providerId: 'preview-runtime',
+      row: { id: 'calm', name: 'Calm', previewUrl: 'https://preview.example.test/calm.wav' },
+      isCurrent: () => true, releaseRuntime: () => { released = true; } });
+    expect(released).toBe(false);
+    if (end === 'stop') stopRealtimeCatalogPreview('preview-runtime');
+    else audio.onStatus?.({ didJustFinish: true });
+    expect(released).toBe(true);
+    await restored.promise;
+  });
   it('releases the catalog playback lease when the OS reports completion', async () => {
     await playRealtimeCatalogPreview({ providerId: 'preview-completion', row: { id: 'calm', name: 'Calm',
       previewUrl: 'https://preview.example.test/calm.wav' }, isCurrent: () => true });

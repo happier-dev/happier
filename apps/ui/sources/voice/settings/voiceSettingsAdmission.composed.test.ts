@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred, createMachineFixture, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { DaemonVoiceInferenceModelStatusSchema } from '@happier-dev/protocol/daemon/voiceInference';
 
@@ -30,6 +30,39 @@ function observeVoiceReads(settings: ReturnType<typeof settingsParse>) {
 }
 
 describe('finite Voice Settings Action admission', () => {
+    it('admits a cold provider catalog and releases its runtime demand after delivering rows', async () => {
+        const runtime = createElevenLabsSettingsRuntimeTestHarness();
+        const descriptor = createDefaultVoiceProviderRegistry().get(runtime.entry.providerId)?.providerSettings;
+        if (!descriptor) throw new Error('Expected ElevenLabs provider Settings');
+        const account = await createVoiceSettingsAccountTestHarness(settingsParse({ voice: { providerId: runtime.entry.providerId,
+            providers: { [runtime.entry.providerId]: { schemaVersion: descriptor.schemaVersion,
+                config: { ...descriptor.defaultConfig, billingMode: 'byo' } } } } }));
+        onTestFinished(async () => { await runtime.dispose(); await account.dispose(); });
+        account.replaceSettings(await withVoiceSettingsCredentialResource(account, { settings: account.settings,
+            declaration: runtime.entry.declaration, pluginId: runtime.entry.pluginId, resourceId: 'cold-catalog-secret' }));
+        await refreshSavedSecretCatalog(account.scope);
+        await waitForTestEvent(subscribeSavedSecretCatalogSnapshots, () => getSavedSecretCatalogSnapshot(account.scope),
+            snapshot => snapshot?.status === 'ready' && !snapshot.stale && snapshot.legacyImport?.status === 'complete');
+        const demand = await import('@/voice/session/voiceProviderRuntimeDemand');
+        // The host consumes the real demand notification and commits the real
+        // plugin activation. Only Account/vendor HTTP transports are fixtures.
+        let activation: Promise<void> | undefined;
+        const unsubscribe = demand.subscribeVoiceProviderSettingsRuntimeDemand(() => {
+            if (!activation && demand.getVoiceProviderSettingsRuntimeDemand().has(runtime.entry.providerId)) {
+                activation = runtime.register();
+                demand.bindVoiceProviderRuntimeDemandActivation(new Set([runtime.entry.providerId]), activation);
+            }
+        });
+        onTestFinished(unsubscribe);
+        const result = await createDefaultActionExecutor().execute('settings.invoke', {
+            anchor: `voiceConversations.provider.${runtime.entry.providerId}.tts.voiceId.listCatalog`,
+        }, { surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId, expectedAccountId: account.scope.accountId });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'completed', value: {
+            rows: [{ id: 'hpp4J3VqNfWAUOO0d1Us', name: 'Happier voice' }],
+        } } });
+        expect(demand.getVoiceProviderSettingsRuntimeDemand().has(runtime.entry.providerId)).toBe(false);
+        expect(account.writes).toHaveLength(0);
+    });
     it('keeps models_inspect rows across unrelated Voice edits with zero settings re-reads after admission', async () => {
         const machineId = 'admitted-model-machine';
         const account = await createVoiceSettingsAccountTestHarness(settingsParse({ experiments: true,
@@ -41,8 +74,7 @@ describe('finite Voice Settings Action admission', () => {
             new URL(String(input)).pathname, init, account.scope.accountId) ?? request(input, init));
         const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), storageMode: 'plain',
             access: createPlainMachineRowFixture({ id: machineId, accountId: account.scope.accountId }).access });
-        storage.setState({ machines: { [machineId]: machine }, machineListByServerId: { [account.scope.serverId]: [machine] } });
-        observeMachinePresenceForTest(account.scope, [machineId]);
+        await publishMachineInventoryForTest(account.scope, [machine]);
         const entered = createDeferred<void>();
         const release = createDeferred<void>();
         const status = DaemonVoiceInferenceModelStatusSchema.parse({ packId: 'admitted-model', kind: 'stt_sherpa',
@@ -92,7 +124,7 @@ describe('finite Voice Settings Action admission', () => {
         const release = createDeferred<void>();
         const fetch = runtime.fetch.getMockImplementation()!;
         runtime.fetch.mockImplementation(async (input, init) => {
-            if (new URL(String(input)).pathname === '/v1/voices') { entered.resolve(); await release.promise; }
+            if (new URL(String(input)).pathname === '/v2/voices') { entered.resolve(); await release.promise; }
             return fetch(input, init);
         });
         const pending = executor.execute('settings.invoke', actionInput, actionContext);

@@ -35,6 +35,22 @@ it('waits for the producer settings occurrence and reuses an already registered 
   }
 });
 
+it('admits a catalog-only settings occurrence after activation completes', async () => {
+  const token = {};
+  const operation = acquireVoiceProviderRuntimeDemand('test.voice/catalog-ready', new AbortController().signal);
+  try {
+    commitExternalVoiceProviderRegistration({ token, pluginId: 'test.voice', localId: 'catalog-ready',
+      providerId: 'test.voice/catalog-ready', descriptor: null, adapter: null, occurrenceId: 'catalog-occurrence',
+      settingsOperations: { listCatalog: async () => ({ voices: [] }) },
+    });
+    bindVoiceProviderRuntimeDemandActivation(new Set(['test.voice/catalog-ready']), Promise.resolve());
+    await expect(operation.ready).resolves.toBeUndefined();
+  } finally {
+    operation.release();
+    removeExternalVoiceProviderRegistration(token);
+  }
+});
+
 it('admits settings demand without a call attempt, shares unchanged target membership, and propagates activation failure', async () => {
   const snapshot = useVoiceSessionStore.getState();
   useVoiceSessionStore.setState({ adapterId: null, canStop: false });

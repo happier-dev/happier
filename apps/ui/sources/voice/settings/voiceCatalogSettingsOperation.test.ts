@@ -5,6 +5,8 @@ import { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderReg
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getVoiceProviderSettingsRuntimeDemand } from '@/voice/session/voiceProviderRuntimeDemand';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 // Catalog reads never play audio; Expo is the native playback boundary.
@@ -21,12 +23,12 @@ describe('Voice catalog Settings operation failures', () => {
             source: { kind: 'external', pluginId: 'test.voice', localId: 'catalog' },
             providerSettings: createExternalVoiceProviderSettingsDescriptor(undefined),
         };
-        const cause = Object.assign(new Error('Credential required'), {
-            code: 'credential_unavailable', details: { credentialSlotId: 'api_key' },
+        const cause = createActionExecuteFailureError({
+            ok: false, error: 'Credential required', errorCode: 'credential_unavailable', details: { credentialSlotId: 'api_key' },
         });
         // The public plugin callback is the external provider boundary; host catalog logic remains real.
         commitExternalVoiceProviderRegistration({ token, pluginId: entry.pluginId, localId: 'catalog',
-            providerId: entry.providerId, descriptor: entry, adapter: null,
+            providerId: entry.providerId, descriptor: entry, adapter: null, occurrenceId: 'catalog-occurrence',
             settingsOperations: { async listCatalog() { throw cause; } },
         });
         const result = await invokeVoiceCatalogSettingsOperation(entry, createDefaultVoiceProviderRegistry(), operation, {
@@ -34,5 +36,6 @@ describe('Voice catalog Settings operation failures', () => {
             mutateSettings: async () => { throw new Error('Catalog reads cannot write Settings'); },
         }).catch(error => ({ ok: false, ...normalizeActionExecutorThrownError(error) }));
         expect(result).toMatchObject({ ok: false, errorCode: cause.code, error: cause.message, details: cause.details });
+        expect(getVoiceProviderSettingsRuntimeDemand().has(entry.providerId)).toBe(false);
     });
 });

@@ -36,6 +36,7 @@ export async function playRealtimeCatalogPreview(input: Readonly<{
     signal?: AbortSignal;
     isCurrent(): boolean;
     subscribeCurrent?(listener: () => void): () => void;
+    releaseRuntime?(): void;
 }>): Promise<SettingOperationResult> {
     if (!input.row.previewUrl) return { status: 'unavailable', reason: 'voice_preview_unavailable' };
     if (input.signal?.aborted || !input.isCurrent()) return { status: 'cancelled' };
@@ -51,6 +52,7 @@ export async function playRealtimeCatalogPreview(input: Readonly<{
         input.signal?.removeEventListener('abort', stop);
         accountRetirement?.dispose();
         unsubscribeCurrent?.();
+        input.releaseRuntime?.();
     };
     let lease: VoiceAudioModeLease | null = null;
     let transferred = false;
