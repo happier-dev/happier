@@ -13,6 +13,7 @@ import {
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { assertPublicGenericKvKey } from "./accountScopedKv";
 import { getDbProviderFromEnv, isPrismaErrorCode } from "@/storage/prisma";
+import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { db } from "@/storage/db";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { assertUserKvKeyStorageAdmission } from "./userKvKeyStorage";
@@ -82,7 +83,7 @@ export async function readUserKvMutationConflict(error: unknown,
 
 /** Domain operations that read before writing an existing KV row share its DB lock. */
 export async function acquireUserKvRowLockInTx(tx: Tx, input: Readonly<{ accountId: string; key: string }>): Promise<boolean> {
-    const provider = getDbProviderFromEnv(process.env, "postgres");
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
     if (provider === "sqlite") {
         return await tx.userKVStore.findUnique({ where: { accountId_key: input }, select: { id: true } }) !== null;
     }

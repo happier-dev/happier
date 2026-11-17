@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { inTx } from "@/storage/inTx";
-import { applyUserKvMutationsInTx, kvMutate } from "./kvMutate";
+import { acquireUserKvRowLockInTx, applyUserKvMutationsInTx, kvMutate } from "./kvMutate";
 import { kvBulkGet } from "./kvBulkGet";
 import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
@@ -24,6 +24,22 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("U
         connected = true;
     });
     afterAll(async () => { if (connected) await db.$disconnect(); });
+
+    it("locks existing KV rows with the pglite PostgreSQL dialect and preserves missing-row results", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        await db.userKVStore.create({ data: { accountId: account.id, key: "dialect", version: 0, value: Buffer.from("value") } });
+        vi.stubEnv("HAPPIER_DB_PROVIDER", "pglite");
+        try {
+            await db.$transaction(async tx => {
+                expect(await acquireUserKvRowLockInTx(tx, { accountId: account.id, key: "dialect" })).toBe(true);
+                expect(await acquireUserKvRowLockInTx(tx, { accountId: account.id, key: "missing" })).toBe(false);
+                expect(await tx.$queryRawUnsafe<Array<{ mode: string }>>(
+                    `SELECT mode FROM pg_locks WHERE pid = pg_backend_pid()
+                        AND relation = '"UserKVStore"'::regclass AND mode = 'RowShareLock'`,
+                )).toEqual([{ mode: "RowShareLock" }]);
+            });
+        } finally { vi.unstubAllEnvs(); }
+    });
 
     it("set-reads requested keys once while publishing changed values and preserving stale/foreign isolation", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
