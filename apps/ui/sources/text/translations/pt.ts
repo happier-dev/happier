@@ -20470,6 +20470,7 @@ settingsSession: {
     fallback: "Usando fallback do plugin",
   },
     pluginRuntime: {
+      invalidParameters: "A solicitação desta ação foi rejeitada por ser inválida. Verifique os dados e tente novamente.",
         actionFailed: "Esta ação falhou. Verifica o resultado antes de tentares novamente.",
         actionUnavailable: "Esta ação está indisponível. Verifica o plugin e a ligação à máquina.",
         actionStale: "Esta ação já não está atualizada. Abre-a novamente para continuar.",

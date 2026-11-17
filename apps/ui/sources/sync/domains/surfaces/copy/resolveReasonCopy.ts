@@ -398,6 +398,7 @@ const PLUGIN_RUNTIME_KEYS = {
     plugin_source_not_ready: 'pluginSurfaces.originReason.source_not_ready',
     plugin_collection_contract_conflict: 'pluginRuntime.collectionConflict',
     plugin_resource_admission_unavailable: 'pluginRuntime.resourceAdmissionUnavailable',
+    invalid_parameters: 'pluginRuntime.invalidParameters',
     plugin_host_access_disclosure_mismatch: 'pluginRuntime.hostAccessMismatch',
     artifact_bytes_rpc_unavailable: 'pluginRuntime.routeUnavailable',
     artifact_bytes_response_invalid: 'pluginRuntime.responseInvalid',
@@ -533,6 +534,7 @@ type PluginRuntimeMessageKey =
     | `pluginSurfaces.originReason.${'home_unreachable' | 'daemon_unsupported' | 'daemon_invalid_response' | 'daemon_unavailable' | 'activation_refused' | 'source_not_ready'}`
     | 'pluginRuntime.collectionConflict'
     | 'pluginRuntime.resourceAdmissionUnavailable'
+    | 'pluginRuntime.invalidParameters'
     | 'pluginRuntime.hostAccessMismatch'
     | 'pluginRuntime.routeUnavailable'
     | 'pluginRuntime.responseInvalid'

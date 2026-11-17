@@ -19979,6 +19979,7 @@ settingsSession: {
     fallback: "正在使用插件回退",
   },
     pluginRuntime: {
+      invalidParameters: "此操作的请求因无效而被拒绝。请检查输入后重试。",
         actionFailed: "操作失败。重试前请先检查结果。",
         actionUnavailable: "此操作不可用。请检查插件和机器连接。",
         actionStale: "此操作已失效。请重新打开以继续。",

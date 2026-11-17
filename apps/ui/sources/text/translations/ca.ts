@@ -19164,6 +19164,7 @@ La meva pregunta: `,
         fallback: "S'està utilitzant l'alternativa del plugin",
     },
     pluginRuntime: {
+      invalidParameters: "La sol·licitud d’aquesta acció s’ha rebutjat perquè no és vàlida. Comprova les dades i torna-ho a provar.",
         actionFailed: "Aquesta acció ha fallat. Comprova’n el resultat abans de tornar-ho a provar.",
         actionUnavailable: "Aquesta acció no està disponible. Comprova el connector i la connexió amb la màquina.",
         actionStale: "Aquesta acció ja no és vigent. Torna-la a obrir per continuar.",

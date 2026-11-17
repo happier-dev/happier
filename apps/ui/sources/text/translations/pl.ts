@@ -20189,6 +20189,7 @@ settingsSession: {
     fallback: "Używanie fallbacku wtyczki",
   },
     pluginRuntime: {
+      invalidParameters: "Żądanie tej akcji zostało odrzucone jako nieprawidłowe. Sprawdź dane i spróbuj ponownie.",
         actionFailed: "Ta czynność nie powiodła się. Sprawdź wynik przed ponowną próbą.",
         actionUnavailable: "Ta czynność jest niedostępna. Sprawdź wtyczkę i połączenie z maszyną.",
         actionStale: "Ta czynność jest już nieaktualna. Otwórz ją ponownie, aby kontynuować.",

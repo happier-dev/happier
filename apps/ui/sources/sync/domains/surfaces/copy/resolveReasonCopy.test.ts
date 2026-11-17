@@ -634,6 +634,18 @@ const HOSTED_WEB_LOCAL_TERMINAL_CODES = [
 ] as const;
 
 describe('resolveReasonCopy — simulator / stream / plugin-runtime kinds (L0-3)', () => {
+  it.each(SUPPORTED_LANGUAGE_CODES)('explains a rejected Action request instead of startup in %s', async language => {
+    await preloadTranslations(language);
+    setPreferredLanguageFromSettings(language);
+    try {
+      // Captured from the live Account Action form, not an unavailable host.
+      const copy = resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: 'invalid_parameters' });
+      expect(copy.body).toBe(t('pluginRuntime.invalidParameters'));
+      expect(copy.body).not.toBe(t('pluginRuntime.unavailableGeneric'));
+      expect(copy.diagnosticCode).toBe('invalid_parameters');
+    } finally { setPreferredLanguageFromSettings('en'); }
+  });
+
   it.each(['timeout', 'plugin_action_outcome_unknown'])('preserves the unsettled Action outcome for %s', reasonCode => {
     const copy = resolveReasonCopy({ kind: 'pluginRuntime', reasonCode });
     expect(copy.body).toBe(t('ui.pluginUi.actionNoAnswer'));

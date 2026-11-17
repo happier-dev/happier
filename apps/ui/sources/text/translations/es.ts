@@ -20364,6 +20364,7 @@ settingsSession: {
     fallback: "Usando la alternativa del plugin",
   },
     pluginRuntime: {
+      invalidParameters: "La solicitud de esta acción se rechazó por no ser válida. Revisa los datos e inténtalo de nuevo.",
         actionFailed: "Esta acción ha fallado. Comprueba el resultado antes de volver a intentarlo.",
         actionUnavailable: "Esta acción no está disponible. Comprueba el plugin y la conexión con la máquina.",
         actionStale: "Esta acción ya no está vigente. Ábrela de nuevo para continuar.",
