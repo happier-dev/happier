@@ -1,10 +1,11 @@
 import { Platform } from 'react-native';
 import Color from 'color';
 import { parseThemeColor } from '@/theme/parseThemeColor';
-import { happierMaterialBackgroundColor, happierMaterialBackgroundPaint, happierMaterialInnerBackgroundPaint } from '@happier-dev/plugin-ui/presentation';
-import { deriveThemePaint, fixedThemePaint, type ThemePaint } from '@/theme/profiles/themePaint';
+import { happierMaterialBackgroundPaint, happierMaterialInnerBackgroundPaint } from '@happier-dev/plugin-ui/presentation';
+import { deriveThemePaint, deriveThemePaintResult, fixedThemePaint, type ThemePaint } from '@/theme/profiles/themePaint';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
-import { GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassFloatingCoat, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup } from './glassMaterial';
+import { GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMapPaint, resolveGlassBackdropTone, resolveGlassPanelCoatOpacity, resolveGlassSurfaceMaterial, type GlassBackdropPaintMap, type GlassFloatingCoat, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup, type GlassSurfaceMaterial } from './glassMaterial';
+import type { GlassCapability } from './resolveGlassCapability';
 import { resolveGlassSurfacePlaneMaterial, type AtmosphereContentCoat } from './glassSurfaceColor';
 export { resolveGlassSurfacePlaneMaterial, type AtmosphereContentCoat } from './glassSurfaceColor';
 
@@ -31,19 +32,27 @@ export function glassSurfacePlaneBackdropStyle(settings: GlassMaterialSettings, 
  * NATIVE-STABILITY M1). Custom and solid retain their authored color.
  */
 export function glassSurfaceTintColor(input: Readonly<{ color: string; ink: string; controlFill?: string; dark: boolean; settings: GlassMaterialSettings; group: GlassSurfaceGroup; environment?: GlassMaterialEnvironment; page?: string; panel?: GlassFloatingCoat }>): string {
-    if (Platform.OS === 'web' && input.page !== undefined) {
-        const color = parseThemeColor(input.color);
-        const page = parseThemeColor(input.page);
-        if (color === null || page === null) return input.color;
-        const coat = resolveGlassBackdropMap(input.settings, input.group, input.dark, input.environment, {
-            page: page.rgb().string(), solid: color.rgb().string(), ink: input.ink, controlFill: input.controlFill,
-        }, input.panel ?? false)?.coat;
+    const solid = fixedThemePaint(input.color);
+    const ink = fixedThemePaint(input.ink);
+    const page = input.page === undefined ? undefined : fixedThemePaint(input.page);
+    const map = Platform.OS === 'web' && page ? resolveGlassBackdropMapPaint(input.settings, input.group, input.dark, input.environment ?? {}, {
+        page, solid, ink, ...(input.controlFill === undefined ? {} : { controlFill: fixedThemePaint(input.controlFill) }),
+    }, input.panel ?? false) : null;
+    return resolveGlassTintPaint({ ...input, solid, ink, page, web: Platform.OS === 'web' }, map).color;
+}
+
+function resolveGlassTintPaint(input: Readonly<{ solid: ThemePaint; ink: ThemePaint; page?: ThemePaint; web: boolean; dark: boolean;
+    settings: GlassMaterialSettings; group: GlassSurfaceGroup; environment?: GlassMaterialEnvironment; panel?: GlassFloatingCoat }>, map: GlassBackdropPaintMap | null): ThemePaint {
+    if (input.web && input.page !== undefined) {
+        const color = parseThemeColor(input.solid.color);
+        const page = parseThemeColor(input.page.color);
+        if (color === null || page === null) return input.solid;
         // Keep the authored spelling when the coat is the paint itself.
-        if (coat) return coat === color.rgb().round().string() ? input.color : coat;
+        if (map?.coatPaint) return { ...map.coatPaint, color: map.coatPaint.color === color.rgb().round().string() ? input.solid.color : map.coatPaint.color };
     }
     return input.dark && input.group === 'floating' && !input.panel && readGlassPreset(input.settings) !== 'custom'
         && resolveGlassSurfaceMaterial(input.settings, input.group, input.environment).material.opacity < 1
-        ? input.ink : input.color;
+        ? input.ink : input.solid;
 }
 
 /**
@@ -51,27 +60,115 @@ export function glassSurfaceTintColor(input: Readonly<{ color: string; ink: stri
  * the page under it is gone, so its coat keeps the page it stands for; opaque and unresolved fills pass.
  */
 export function glassElementsCoatColor(authored: string, authoredPage: string): string {
-    const fill = parseThemeColor(authored);
-    const ground = parseThemeColor(authoredPage);
-    if (fill === null || ground === null) return authored;
-    const alpha = fill.alpha();
-    // Opaque fills are already the paper; a fully clear fill draws no paper to keep.
-    if (alpha >= 1 || alpha === 0) return authored;
-    const [r, g, b] = fill.rgb().array();
-    const [pr, pg, pb] = ground.rgb().array();
-    return Color.rgb(pr + (r - pr) * alpha, pg + (g - pg) * alpha, pb + (b - pb) * alpha).round().string();
+    return glassElementsCoatPaint(fixedThemePaint(authored), fixedThemePaint(authoredPage)).color;
+}
+
+export function glassElementsCoatPaint(authored: ThemePaint, authoredPage: ThemePaint): ThemePaint {
+    const result = deriveThemePaintResult([authored, authoredPage], (color, page) => {
+        const fill = parseThemeColor(color);
+        const ground = parseThemeColor(page);
+        if (fill === null || ground === null || fill.alpha() >= 1 || fill.alpha() === 0) return { color, transformed: false };
+        const alpha = fill.alpha();
+        const [r, g, b] = fill.rgb().array();
+        const [pr, pg, pb] = ground.rgb().array();
+        return { color: Color.rgb(pr + (r - pr) * alpha, pg + (g - pg) * alpha, pb + (b - pb) * alpha).round().string(), transformed: true };
+    });
+    return result.transformed ? { color: result.color, source: result.source } : authored;
 }
 
 /** Shared presentation owner changes only paint alpha, never foreground opacity. */
 export function glassSurfaceBackgroundColor(color: string, group: GlassSurfaceGroup, nested = false, plane = nested, coatOpacity?: number): string {
-    if (Platform.OS === 'web' && coatOpacity !== undefined) {
-        return `color-mix(in srgb, ${color} ${coatOpacity * 100}%, transparent)`;
+    return glassSurfaceBackgroundPaint(fixedThemePaint(color), group, Platform.OS === 'web', nested, plane, coatOpacity).color;
+}
+
+export function glassSurfaceBackgroundPaint(color: ThemePaint, group: GlassSurfaceGroup, web: boolean, nested: boolean, plane: boolean, coatOpacity?: number): ThemePaint {
+    if (web && coatOpacity !== undefined) {
+        return deriveThemePaint([color], value => `color-mix(in srgb, ${value} ${coatOpacity * 100}%, transparent)`);
     }
-    if (Platform.OS === 'web' && group === 'content' && plane) {
+    if (web && group === 'content' && plane) {
         const prefix = `--happier-glass-content-${nested ? 'nested-' : ''}`;
-        return `var(${prefix}plane-background-color, color-mix(in srgb, ${color} var(${prefix}plane-opacity, var(${prefix}opacity, 100%)), transparent))`;
+        return deriveThemePaint([color], value => `var(${prefix}plane-background-color, color-mix(in srgb, ${value} var(${prefix}plane-opacity, var(${prefix}opacity, 100%)), transparent))`);
     }
-    return happierMaterialBackgroundColor(color, group, Platform.OS === 'web', nested);
+    return happierMaterialBackgroundPaint(color, group, web, nested, deriveThemePaint);
+}
+
+/** Resolved facts from the mounted surface; this does not decide capability or material policy. */
+export type GlassSurfaceCompositionContext = Readonly<{
+    settings: GlassMaterialSettings;
+    environment: GlassMaterialEnvironment;
+    web: boolean;
+    group: GlassSurfaceGroup;
+    nested: boolean;
+    plane: boolean;
+    noCoat: boolean;
+    enabled: boolean;
+    shellHeld: boolean;
+    capability: GlassCapability;
+    material: GlassSurfaceMaterial;
+    inheritsTranslucentMaterial: boolean;
+    hasNativeBackdrop: boolean;
+    tintsWithoutBlur: boolean;
+    panel: GlassFloatingCoat;
+    atmosphereCoat?: AtmosphereContentCoat;
+}>;
+
+export function resolveGlassSurfaceSolidPaint(solid: ThemePaint, page: ThemePaint, shellHeld: boolean): ThemePaint {
+    return shellHeld && solid.color !== 'transparent' ? page : solid;
+}
+
+type GlassSurfaceCoatInput = Readonly<{
+    solid: ThemePaint; page: ThemePaint; ink: ThemePaint; controlFill: ThemePaint; dark: boolean;
+    context: Pick<GlassSurfaceCompositionContext, 'settings' | 'group' | 'environment' | 'panel' | 'web' | 'noCoat'>;
+}>;
+
+export function resolveGlassSurfaceCoatPaint(input: GlassSurfaceCoatInput): Readonly<{ tint: ThemePaint; backdropTone: string; coatOpacity?: number }> {
+    const { context } = input;
+    if (context.noCoat) return { tint: fixedThemePaint('transparent'), backdropTone: '' };
+    const ground = context.group === 'card' ? glassElementsCoatPaint(input.solid, input.page) : input.solid;
+    const map = resolveGlassBackdropMapPaint(context.settings, context.group, input.dark, context.environment, {
+        page: input.page, solid: ground, ink: input.ink, controlFill: input.controlFill,
+    }, context.panel);
+    const tint = resolveGlassTintPaint({ solid: ground, page: input.page, ink: input.ink, dark: input.dark, ...context }, map);
+    return { tint, backdropTone: map?.tone ?? '', coatOpacity: map?.opacity };
+}
+
+function materialOpacityPaint(color: ThemePaint, opacity: number): ThemePaint {
+    const result = deriveThemePaintResult([color], value => {
+        const parsed = parseThemeColor(value);
+        return { color: parsed?.alpha(opacity).rgb().string() ?? value, transformed: parsed !== null };
+    });
+    return result.transformed ? { color: result.color, source: result.source } : color;
+}
+
+export function resolveGlassSurfacePaintLayers(input: Readonly<{
+    solid: ThemePaint; tint: ThemePaint; dark: boolean; coatOpacity?: number; context: GlassSurfaceCompositionContext;
+}>): Readonly<{ background: ThemePaint; coat?: ThemePaint }> {
+    const { solid, tint, context: c } = input;
+    if (!c.web) {
+        const coatOpacity = !c.hasNativeBackdrop ? undefined
+            : c.atmosphereCoat === 'reading' ? c.material.opacity
+            : c.group === 'floating' ? resolveGlassPanelCoatOpacity(c.settings, input.dark, c.panel, { nativeRenderer: true }) : undefined;
+        const background = (c.plane && c.material.opacity === 0 && c.enabled) || c.hasNativeBackdrop || c.inheritsTranslucentMaterial
+            ? fixedThemePaint('transparent') : c.tintsWithoutBlur && c.enabled ? materialOpacityPaint(tint, c.material.opacity) : solid;
+        return { background, ...(coatOpacity === undefined ? {} : { coat: materialOpacityPaint(tint, coatOpacity) }) };
+    }
+    if (c.noCoat) return { background: fixedThemePaint('transparent') };
+    const background = c.plane
+        ? glassSurfaceBackgroundPaint(solid, c.group, true, c.nested, true, c.atmosphereCoat ? c.material.opacity : undefined)
+        : c.inheritsTranslucentMaterial ? fixedThemePaint('transparent')
+        : c.capability === 'webBlur' ? glassSurfaceBackgroundPaint(tint, c.group, true, c.group === 'card' ? false : c.nested, false, input.coatOpacity)
+        : !c.enabled || (c.group === 'card' && c.material.opacity === 1) ? solid
+        : glassSurfaceBackgroundPaint(c.group === 'card' ? tint : solid, c.group, true, c.group === 'card' ? false : c.nested, false);
+    return { background };
+}
+
+/** The guide can use exactly the same compositor when the mounted instance supplied its facts. */
+export function resolveGlassSurfaceCompositionPaint(input: Omit<GlassSurfaceCoatInput, 'context'> & Readonly<{ context: GlassSurfaceCompositionContext }>): Readonly<{
+    solid: ThemePaint; tint: ThemePaint; backdropTone: string; coatOpacity?: number; background: ThemePaint; coat?: ThemePaint;
+}> {
+    const solid = resolveGlassSurfaceSolidPaint(input.solid, input.page, input.context.shellHeld);
+    const coat = resolveGlassSurfaceCoatPaint({ ...input, solid });
+    return { solid, ...coat, ...resolveGlassSurfacePaintLayers({ ...input, solid, ...coat }) };
 }
 
 /**

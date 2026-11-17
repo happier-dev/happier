@@ -1,4 +1,7 @@
 import { fixedThemePaint, tokenThemePaint, type ThemePaint } from '@/theme/profiles/themePaint';
+import type { Theme } from '@/theme';
+import { resolveGlassSurfaceCompositionPaint, type GlassSurfaceCompositionContext } from '@/components/ui/glass/glassSurfacePaint';
+export type { GlassSurfaceCompositionContext } from '@/components/ui/glass/glassSurfacePaint';
 
 export type ComposerSurfaceStyle = 'standard' | 'glass';
 
@@ -18,6 +21,18 @@ export function resolveComposerSurfacePaint(input: Readonly<{
     const paint = input.glass ? input.glassPaint ?? fixedThemePaint(input.theme.colors.glass.composerSurface)
         : tokenThemePaint(input.theme, 'control.input.background');
     return input.embedded || input.customBackground !== undefined ? fixedThemePaint(paint.color) : paint;
+}
+
+export function resolveComposerMaterialPaint(input: Parameters<typeof resolveComposerSurfacePaint>[0] & Readonly<{
+    theme: Theme;
+    material?: GlassSurfaceCompositionContext;
+}>): ThemePaint {
+    const solid = resolveComposerSurfacePaint(input);
+    if (!input.material || input.embedded || input.customBackground !== undefined) return fixedThemePaint(solid.color);
+    const result = resolveGlassSurfaceCompositionPaint({ solid, page: tokenThemePaint(input.theme, 'surface.base'),
+        ink: tokenThemePaint(input.theme, 'text.primary'), controlFill: tokenThemePaint(input.theme, 'surface.selected'),
+        dark: input.theme.dark, context: input.material });
+    return result.coat ?? result.background;
 }
 
 /**

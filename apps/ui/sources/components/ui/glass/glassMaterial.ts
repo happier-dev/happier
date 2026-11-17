@@ -1,5 +1,6 @@
 import Color from 'color';
 import { parseThemeColor } from '@/theme/parseThemeColor';
+import { deriveThemePaintResult, fixedThemePaint, type ThemePaint } from '@/theme/profiles/themePaint';
 export { readThemeDocumentColor as readGlassDocumentColor } from '@/theme/parseThemeColor';
 import { DEFAULT_GLASS_TINT_INTENSITY, readGlassMaterials, readGlassPreset, readGlassTintedMaterials, readGlassTintIntensity, resolveGlassTintValues } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 import type { GlassMaterialSettings, GlassSurfaceGroup, GlassSurfaceMaterial } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
@@ -80,6 +81,9 @@ export function resolveGlassSurfaceMaterial(settings: GlassMaterialSettings, gro
  * `controlFill`, the translucent fill a control nested in the glass paints over it (a bordered pill).
  */
 export type GlassBackdropGround = Readonly<{ page: string; solid: string; ink?: string; controlFill?: string }>;
+export type GlassBackdropPaintGround = Readonly<{ page: ThemePaint; solid: ThemePaint; ink?: ThemePaint; controlFill?: ThemePaint }>;
+export type GlassBackdropPaintMap = GlassBackdropMap & Readonly<{ coatPaint?: ThemePaint }>;
+type GlassCompression = Readonly<{ value: number; inputs: readonly ThemePaint[] }>;
 
 /**
  * Glass composites the filtered backdrop and coat C at opacity α. Before filter clipping, brightness
@@ -153,11 +157,16 @@ const parseRgb = (value: string): readonly [number, number, number] | null => {
  * feasible coat, rather than clamp the coat.
  * This is colour feasibility for named materials, never a legibility floor on custom opacity.
  */
-function solveGlassFixedPoint(compression: number, alpha: number, ground: GlassBackdropGround | null): GlassBackdropMap {
-    const page = ground ? parseRgb(ground.page) : null;
-    const solid = ground ? parseRgb(ground.solid) ?? page : null;
+function solveGlassFixedPoint(compressionPaint: GlassCompression, alpha: number, ground: GlassBackdropPaintGround | null): GlassBackdropPaintMap {
+    const compression = compressionPaint.value;
+    const page = ground ? parseRgb(ground.page.color) : null;
+    const authoredSolid = ground ? parseRgb(ground.solid.color) : null;
+    const solid = authoredSolid ?? page;
     const scale = compression / (1 - alpha);
     if (!page || !solid || alpha <= 0) return { tone: `brightness(${toneNumber(scale)}) saturate(1.05)`, coat: null };
+    const solidPaint = authoredSolid ? ground!.solid : ground!.page;
+    // The parsed channels above came from these selected paired inputs; keep the solve single-pass.
+    const result = deriveThemePaintResult([solidPaint, ground!.page, ...compressionPaint.inputs], () => {
     const clamp = (value: number) => Math.min(1, Math.max(0, value));
     // CSS saturate(1.05)'s sRGB matrix, expressed using its luminance weights.
     const saturate = (rgb: readonly number[]) => {
@@ -212,8 +221,11 @@ function solveGlassFixedPoint(compression: number, alpha: number, ground: GlassB
         }
         coat = coatFor(opacity);
     }
-    return { tone, coat: Color.rgb(coat.map(value => value * 255)).round().string(),
+    return { tone, color: Color.rgb(coat.map(value => value * 255)).round().string(),
         ...(opacity !== alpha ? { opacity } : {}) };
+    });
+    return { tone: result.tone, coat: result.color, coatPaint: { color: result.color, source: result.source },
+        ...(result.opacity === undefined ? {} : { opacity: result.opacity }) };
 }
 
 /**
@@ -231,8 +243,8 @@ const contrast = (a: readonly number[], b: readonly number[]) => {
     return (high! + 0.05) / (low! + 0.05);
 };
 /** The page's own content as the backdrop a floating surface may cover: its ink is the darkest (and lightest) it carries. */
-const pageInkTone = (ground: GlassBackdropGround | null): GlassAtmosphereTone | undefined => {
-    const ink = ground?.ink ? parseRgb(ground.ink) : null;
+const pageInkTone = (ground: GlassBackdropPaintGround | null): GlassAtmosphereTone | undefined => {
+    const ink = ground?.ink ? parseRgb(ground.ink.color) : null;
     if (!ink) return undefined;
     const luminance = relativeLuminance(ink);
     return { dark: luminance, light: luminance, focus: luminance };
@@ -253,14 +265,15 @@ const greyOf = (luminance: number) => {
  * `coat` is the page coat the surface stands on (an Element on the reading coat): its glass sees the picture through
  * it, so the solve does not dim a backdrop the coat has already calmed (owner, 2026-11-11 #04).
  */
-function legibleCompression(compression: number, dark: boolean, tone: GlassAtmosphereTone | undefined, ground: GlassBackdropGround | null, coat = 0): number {
-    const page = ground ? parseRgb(ground.page) : null;
-    const solid = ground ? parseRgb(ground.solid) ?? page : null;
-    const ink = ground?.ink ? parseRgb(ground.ink) : null;
-    if (!tone || !page || !solid || !ink) return compression;
+function legibleCompression(compression: number, dark: boolean, tone: GlassAtmosphereTone | undefined, ground: GlassBackdropPaintGround | null, coat = 0): GlassCompression {
+    const page = ground ? parseRgb(ground.page.color) : null;
+    const solid = ground ? parseRgb(ground.solid.color) ?? page : null;
+    const ink = ground?.ink ? parseRgb(ground.ink.color) : null;
+    if (!tone || !page || !solid || !ink) return { value: compression, inputs: [] };
     const extreme = greyOf(dark ? tone.light : tone.dark);
     const picture = page.map(value => value * coat + extreme * (1 - coat));
-    const fill = ground?.controlFill ? parseThemeColor(ground.controlFill) : null;
+    const fill = ground?.controlFill ? parseThemeColor(ground.controlFill.color) : null;
+    const inputs = [ground!.ink!, ...(fill ? [ground!.controlFill!] : [])];
     const fillRgb = fill ? fill.rgb().array().map(value => value / 255) : null;
     const fillAlpha = fill ? fill.alpha() : 0;
     const holds = (k: number) => {
@@ -271,14 +284,14 @@ function legibleCompression(compression: number, dark: boolean, tone: GlassAtmos
         return contrast(ink, glass) >= LEGIBLE_BODY_CONTRAST && contrast(faint, glass) >= LEGIBLE_FAINT_CONTRAST
             && contrast(ink, control) >= LEGIBLE_BODY_CONTRAST;
     };
-    if (holds(compression)) return compression;
+    if (holds(compression)) return { value: compression, inputs };
     let low = 0;
     let high = compression;
     for (let step = 0; step < 20; step++) {
         const middle = (low + high) / 2;
         if (holds(middle)) low = middle; else high = middle;
     }
-    return low;
+    return { value: low, inputs };
 }
 
 /**
@@ -287,6 +300,17 @@ function legibleCompression(compression: number, dark: boolean, tone: GlassAtmos
  * Custom, Solid, Reduce Transparency and unbacked surfaces return null and paint exactly as set.
  */
 export function resolveGlassBackdropMap(settings: GlassMaterialSettings, group: GlassSurfaceGroup, dark: boolean, environment: GlassMaterialEnvironment = {}, ground: GlassBackdropGround | null = null, panel: GlassFloatingCoat = false): GlassBackdropMap | null {
+    const result = resolveGlassBackdropMapPaint(settings, group, dark, environment, ground ? {
+        page: fixedThemePaint(ground.page), solid: fixedThemePaint(ground.solid),
+        ...(ground.ink === undefined ? {} : { ink: fixedThemePaint(ground.ink) }),
+        ...(ground.controlFill === undefined ? {} : { controlFill: fixedThemePaint(ground.controlFill) }),
+    } : null, panel);
+    if (!result) return null;
+    const { coatPaint: _paint, ...map } = result;
+    return map;
+}
+
+export function resolveGlassBackdropMapPaint(settings: GlassMaterialSettings, group: GlassSurfaceGroup, dark: boolean, environment: GlassMaterialEnvironment, ground: GlassBackdropPaintGround | null, panel: GlassFloatingCoat): GlassBackdropPaintMap | null {
     const wallpaperPlane = isWallpaperShellPlane(group, environment);
     if ((group !== 'floating' && group !== 'card' && !wallpaperPlane) || readGlassPreset(settings) === 'custom') return null;
     const { opacity } = resolveGlassSurfaceMaterial(settings, group, environment).material;

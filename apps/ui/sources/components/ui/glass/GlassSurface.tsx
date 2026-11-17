@@ -13,18 +13,17 @@ import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 import { drawsTintWithoutBlur, getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
 import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
 import { resolveGlassCapability } from './resolveGlassCapability';
-import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassPanelCoatOpacity, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
+import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
 import { useGlassMaterialSettings } from './useGlassMaterialSettings';
 import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
-import { glassElementsCoatColor, glassSurfaceBackgroundColor, glassSurfaceTintColor, resolveGlassSurfacePlaneMaterial, glassSurfacePlaneBackdropStyle, type AtmosphereContentCoat } from './glassSurfacePaint';
+import { resolveGlassSurfaceSolidPaint, resolveGlassSurfaceCoatPaint, resolveGlassSurfacePaintLayers, resolveGlassSurfacePlaneMaterial, glassSurfacePlaneBackdropStyle, type AtmosphereContentCoat } from './glassSurfacePaint';
 import { useGlassMaterialColorResolver } from './useGlassSurfaceColor';
-import { parseThemeColor } from '@/theme/parseThemeColor';
+import { fixedThemePaint, tokenThemePaint } from '@/theme/profiles/themePaint';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { GLASS_BACKED_FAINT_INK_SHARE, GLASS_QUIET_INK_WEB_TOKENS, GlassBackedInkContext, glassQuietThemeInks, glassThemeInkWebStyle, resolveGlassBackedInk, resolveGlassPictureInk, useRetainedGlassBackedInk } from './glassBackedInk';
 import { GlassLivePictureBackdropContext } from './livePictureBackdrop';
 
 const retainSolidColor = (input: Readonly<{ color: string }>) => input.color;
-const withMaterialOpacity = (color: string, opacity: number) => parseThemeColor(color)?.alpha(opacity).rgb().string() ?? color;
 
 // The containing material owns its plane. Lists inside a floating surface inherit that paint
 // instead of covering only the body with an opaque fill and leaving separate header/footer bands.
@@ -191,8 +190,11 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         : resolveHappierSurfaceFinish({ role: finishRole, gradients: { [finishRole]: props.gradient }, nested: inheritsFinish })) : null;
     const finishLift = finishRole ? happierSurfaceFinishLift(gradient, finishRole, theme.dark, Platform.OS === 'web') : null;
     const authoredSolid = props.solidColor ?? (typeof styleBackground === 'string' ? styleBackground : undefined);
-    const solidColor = shellHeld && authoredSolid !== 'transparent' ? theme.colors.surface.base
-        : authoredSolid ?? (group === 'floating' ? theme.colors.edge.floatingFill : theme.colors.surface.base);
+    const pagePaint = tokenThemePaint(theme, 'surface.base');
+    const solidPaint = resolveGlassSurfaceSolidPaint(authoredSolid === undefined
+        ? group === 'floating' ? fixedThemePaint(theme.colors.edge.floatingFill) : pagePaint
+        : fixedThemePaint(authoredSolid), pagePaint, shellHeld);
+    const solidColor = solidPaint.color;
     const viewProps = { ref: props.ref, testID: props.testID, accessibilityRole: props.accessibilityRole, accessibilityLabel: props.accessibilityLabel, role: props.role, 'aria-label': props['aria-label'], onLayout: props.onLayout,
         collapsable: props.collapsable, onPointerEnter: props.onPointerEnter, onPointerLeave: props.onPointerLeave,
         onFocus: props.onFocus, onBlur: props.onBlur,
@@ -214,20 +216,13 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     const panel: GlassFloatingCoat = group !== 'floating' ? false
         : overLivePicture ? props.floatingRole === 'panel' ? 'livePicturePanel' : 'livePicture'
         : props.floatingRole === 'panel';
-    const [tintColor, backdropTone, panelCoatOpacity] = React.useMemo(() => {
-        if (props.noCoat) return ['transparent', '', undefined] as const;
-        const toneEnvironment = { ...environment, reduceTransparency: toneReduceTransparency };
-        // The solid paint this surface shows over the plain page: the glass resolves to it there.
-        const groundSolid = group === 'card' ? glassElementsCoatColor(solidColor, theme.colors.surface.base) : solidColor;
-        // Controls nested in this glass paint its translucent inner fill; their labels stand on it too.
-        const controlFill = props.translucentColor ?? theme.colors.surface.selected;
-        const map = resolveGlassBackdropMap(settings, group, theme.dark, toneEnvironment, { page: theme.colors.surface.base, solid: groundSolid, ink: theme.colors.text.primary, controlFill }, panel);
-        return [
-            glassSurfaceTintColor({ color: groundSolid, ink: theme.colors.text.primary, controlFill, dark: theme.dark, settings, group, page: theme.colors.surface.base, environment: toneEnvironment, panel }),
-            map?.tone ?? '',
-            map?.opacity,
-        ] as const;
-    }, [solidColor, theme, settings, group, environment, toneReduceTransparency, panel, props.translucentColor, props.noCoat]);
+    const coatPaint = React.useMemo(() => resolveGlassSurfaceCoatPaint({
+        solid: solidPaint, page: pagePaint, ink: tokenThemePaint(theme, 'text.primary'),
+        controlFill: props.translucentColor === undefined ? tokenThemePaint(theme, 'surface.selected') : fixedThemePaint(props.translucentColor),
+        dark: theme.dark, context: { settings, group, environment: { ...environment, reduceTransparency: toneReduceTransparency },
+            panel, noCoat: props.noCoat === true, web: Platform.OS === 'web' },
+    }), [solidColor, authoredSolid, shellHeld, theme, settings, group, environment, toneReduceTransparency, panel, props.translucentColor, props.noCoat]);
+    const backdropTone = coatPaint.backdropTone;
 
     // A floating surface opened from inside another (Inputs over the Run now panel, a select in a dialog)
     // has controls behind it, not atmosphere: under every named preset it stands on its own floating paint
@@ -280,6 +275,13 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         }
     }
 
+    const layerPaint = resolveGlassSurfacePaintLayers({ solid: solidPaint, tint: coatPaint.tint,
+        dark: theme.dark, coatOpacity: coatPaint.coatOpacity, context: {
+            settings, environment: effectiveEnvironment, web: Platform.OS === 'web', group, nested,
+            plane: props.plane === true, noCoat: props.noCoat === true, enabled, shellHeld, capability, material,
+            inheritsTranslucentMaterial, hasNativeBackdrop: Boolean(nativeBackdrop), tintsWithoutBlur, panel, atmosphereCoat: props.atmosphereCoat,
+        } });
+
     // Inheritance follows the rendered tier, not a preference whose SDK may be unavailable.
     const translucent = material.opacity < 1 && enabled && (transparentPlane || (Platform.OS === 'web'
         ? capability === 'webBlur' || group === 'card' : tintsWithoutBlur || Boolean(nativeBackdrop) || inheritsTranslucentMaterial));
@@ -324,13 +326,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         // The coat a native material carries over its glass: a reading ground's own, or a floating surface's heavy
         // panel coat (light popovers read through without it, NATIVE-SWEEP M3). Native glass has no backdrop tone,
         // so the web's fixed-point hair is not painted: a dark menu or bar stays clear glass (owner, 2026-11-10).
-        const nativeCoatOpacity = !nativeBackdrop ? undefined
-            : props.atmosphereCoat === 'reading' ? material.opacity
-            : group === 'floating' ? resolveGlassPanelCoatOpacity(settings, theme.dark, panel, { nativeRenderer: true }) : undefined;
         const surfaceFill = readSurfaceStyleProperty(surfaceStyle, 'backgroundColor');
-        const backgroundColor = transparentPlane && enabled ? 'transparent' : nativeBackdrop || inheritsTranslucentMaterial ? 'transparent'
-            : tintsWithoutBlur && enabled
-                ? withMaterialOpacity(tintColor, material.opacity) : solidColor;
+        const backgroundColor = layerPaint.background.color;
         // Only the SDK background changes tier. Input/scroll/selection state
         // must stay under the same native parent when a preset or OS choice changes.
         // A surface that keeps its tint on Android (no blur behind it) is not lifted there; an opaque one keeps its lift.
@@ -341,8 +338,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
             <View pointerEvents="none" style={[
                 StyleSheet.absoluteFillObject,
                 { top: materialInset, left: materialInset, right: materialInset, bottom: materialInset, ...materialShape, overflow: 'hidden' },
-            ]}>{nativeBackdrop}{surfaceFill !== undefined || nativeCoatOpacity !== undefined ? <View pointerEvents="none"
-                style={[StyleSheet.absoluteFillObject, { backgroundColor: surfaceFill ?? withMaterialOpacity(tintColor, nativeCoatOpacity!) }]} /> : null}
+            ]}>{nativeBackdrop}{surfaceFill !== undefined || layerPaint.coat !== undefined ? <View pointerEvents="none"
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: surfaceFill ?? layerPaint.coat!.color }]} /> : null}
                 <HappierSurfaceGradientLayer gradient={surfaceFill === undefined ? gradient : null} borderRadius={typeof borderRadius === 'number' ? borderRadius : undefined} /></View>
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
@@ -364,22 +361,21 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     // root: on the surface itself it would cut everything inside (a menu, tooltip or popover opened
     // from this surface) off the page, and that nested glass would blur an empty plane.
     const frosted = capability === 'webBlur' && props.plane !== true && !props.noCoat && !inheritsTranslucentMaterial;
-    const paint = props.noCoat ? { backgroundColor: 'transparent' } : props.plane === true
+    const paint = props.noCoat ? { backgroundColor: layerPaint.background.color } : props.plane === true
         // The same CSS-to-RN-web boundary as the functional surface's backdrop below.
         ? { ...glassSurfacePlaneBackdropStyle(settings, group, theme.dark, effectiveEnvironment, props.atmosphereCoat),
-            backgroundColor: glassSurfaceBackgroundColor(solidColor, group, nested, true, props.atmosphereCoat ? material.opacity : undefined) } as unknown as ViewStyle
-        : inheritsTranslucentMaterial ? { backgroundColor: 'transparent' }
+            backgroundColor: layerPaint.background.color } as unknown as ViewStyle
+        : inheritsTranslucentMaterial ? { backgroundColor: layerPaint.background.color }
         : capability === 'webBlur'
         // `createBackdropWebStyle` returns web `CSSProperties` (backdrop-filter + -webkit- prefix +
         // tint); cast to the RN-web `ViewStyle` at this web boundary.
         ? createBackdropWebStyle({
-            backgroundColor: glassSurfaceBackgroundColor(tintColor, group, group === 'card' ? false : nested, false, panelCoatOpacity),
+            backgroundColor: layerPaint.background.color,
             blurPx: props.blurIntensity === undefined ? GLASS_BLUR_RADIUS_PX[material.blur as keyof typeof GLASS_BLUR_RADIUS_PX] : Math.round(intensity / 5),
             surfaceGroup: group,
             backdropTone: inheritsTranslucentMaterial ? undefined : backdropTone,
         }) as unknown as ViewStyle
-        : { backgroundColor: !enabled || (group === 'card' && material.opacity === 1) ? solidColor
-            : glassSurfaceBackgroundColor(group === 'card' ? tintColor : solidColor, group, group === 'card' ? false : nested, false) };
+        : { backgroundColor: layerPaint.background.color };
     // The concrete surface owns local exceptions (an opaque reading ground, an unbacked
     // sidebar card, or a clear content plane); descendants keep the same CSS binding.
     const innerMaterial = material.opacity === 1 ? material : resolveGlassSurfaceMaterial(settings, group, runtimeEnvironment).material;

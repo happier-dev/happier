@@ -7,7 +7,10 @@ import { glassPresetMaterials } from './glassMaterial';
 import { applyThemeRuntimeSelection, type ThemeRuntimeUnistylesAdapter } from '@/theme/profiles/themeProfileRuntime';
 import { darkTheme, lightTheme } from '@/theme';
 import { resolveGlassSurfaceColor } from './useGlassSurfaceColor';
-import { glassSurfaceTintColor, glassContentFillPaint } from './glassSurfacePaint';
+import { glassSurfaceTintColor, glassContentFillPaint, resolveGlassSurfaceCompositionPaint, resolveGlassSurfacePaintLayers } from './glassSurfacePaint';
+import { resolveGlassSurfaceMaterial } from './glassMaterial';
+import { resolveGlassCapability } from './resolveGlassCapability';
+import { tokenThemePaint } from '@/theme/profiles/themePaint';
 
 // Only the web platform boundary is mocked; document resolution and glass paint stay real.
 vi.mock('react-native', async () => {
@@ -16,6 +19,40 @@ vi.mock('react-native', async () => {
 });
 
 describe('live document material boundary', () => {
+    it('retains the native noCoat fallback paint selection when the instance has no material backdrop', () => {
+        const solid = tokenThemePaint(darkTheme, 'control.input.background');
+        expect(resolveGlassSurfacePaintLayers({ solid, tint: solid, dark: true, context: {
+            settings: { glassSurfaceMaterials: glassPresetMaterials('solid') }, environment: {}, web: false,
+            group: 'card', nested: true, plane: false, noCoat: true, enabled: false, shellHeld: false,
+            capability: 'solid', material: { blur: 'off', opacity: 1 }, inheritsTranslucentMaterial: false,
+            hasNativeBackdrop: false, tintsWithoutBlur: false, panel: false,
+        } }).background).toEqual(solid);
+    });
+    it('keeps a solid fill direct but derives the final card coat from the real fixed-point inputs', () => {
+        const theme = darkTheme;
+        const input = { solid: tokenThemePaint(theme, 'control.input.background'), page: tokenThemePaint(theme, 'surface.base'),
+            ink: tokenThemePaint(theme, 'text.primary'), controlFill: tokenThemePaint(theme, 'surface.selected'), dark: true };
+        const context = { settings: { glassSurfaceMaterials: glassPresetMaterials('solid') }, environment: {}, web: true,
+            group: 'card' as const, nested: true, plane: false, noCoat: false, enabled: true,
+            capability: 'solid' as const, material: { blur: 'off' as const, opacity: 1 },
+            inheritsTranslucentMaterial: false, hasNativeBackdrop: false, tintsWithoutBlur: false, panel: false as const, shellHeld: false };
+        expect(resolveGlassSurfaceCompositionPaint({ ...input, context }).background).toEqual(input.solid);
+        const settings = { glassSurfaceMaterials: glassPresetMaterials('everywhere') };
+        const environment = { desktopWindow: true, nativeWindowMaterialLive: true };
+        const material = resolveGlassSurfaceMaterial(settings, 'card', environment).material;
+        const capability = resolveGlassCapability({ ...environment, settings, surfaceGroup: 'card', liquidGlassAvailable: false,
+            blurAvailable: false, webBlurAvailable: true, reduceTransparency: false });
+        expect(material.opacity).toBeLessThan(1);
+        const coated = resolveGlassSurfaceCompositionPaint({ ...input, context: { ...context, settings, environment, material, capability } });
+        expect(coated.background.color).not.toBe(input.solid.color);
+        expect(coated.background.source).toEqual({ kind: 'derived',
+            from: ['control.input.background', 'surface.base'] });
+        expect(coated.background.color).toContain('color-mix(');
+        const picture = resolveGlassSurfaceCompositionPaint({ ...input, context: { ...context, settings, material, capability,
+            environment: { ...environment, atmosphereBehind: 'wallpaper', atmosphereTone: { dark: 0, light: 1, focus: 1 } } } });
+        expect(picture.background.source).toEqual({ kind: 'derived',
+            from: ['control.input.background', 'surface.base', 'text.primary', 'surface.selected'] });
+    });
     it('derives an inner coat from both real inputs, retaining authored translucent and nested provenance', () => {
         const base = { color: '#112233', source: { kind: 'token' as const, ref: 'message.user.background' } };
         const selected = { color: 'rgba(235, 230, 225, 0.1)', source: { kind: 'token' as const, ref: 'surface.selected' } };

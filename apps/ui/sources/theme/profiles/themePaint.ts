@@ -18,9 +18,16 @@ export function fixedThemePaint(color: string): ThemePaint {
 /** Calculations consume the same paired inputs that supply their editable references. */
 export function deriveThemePaint<const Inputs extends readonly ThemePaint[]>(inputs: Inputs,
     calculate: (...colors: { [Key in keyof Inputs]: string }) => string): ThemePaint {
-    const color = calculate(...inputs.map(input => input.color) as { [Key in keyof Inputs]: string });
+    return deriveThemePaintResult(inputs, (...colors) => ({ color: calculate(...colors) }));
+}
+
+/** Keep a paint calculation's accompanying material facts without calculating it again. */
+export function deriveThemePaintResult<const Inputs extends readonly ThemePaint[], Result extends Readonly<{ color: string }>>(inputs: Inputs,
+    calculate: (...colors: { [Key in keyof Inputs]: string }) => Result): Result & Readonly<{ source: ThemeSurfacePaintSource }> {
+    const result = calculate(...inputs.map(input => input.color) as { [Key in keyof Inputs]: string });
     const from = [...new Set(inputs.flatMap(input => input.source.kind === 'token' ? [input.source.ref]
         : input.source.kind === 'derived' ? input.source.from : []))];
     const [first, ...rest] = from;
-    return first === undefined ? fixedThemePaint(color) : { color, source: { kind: 'derived', from: [first, ...rest] } };
+    const source: ThemeSurfacePaintSource = first === undefined ? { kind: 'fixed' } : { kind: 'derived', from: [first, ...rest] };
+    return { ...result, source };
 }
