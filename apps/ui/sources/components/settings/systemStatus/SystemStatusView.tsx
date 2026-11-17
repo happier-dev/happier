@@ -79,6 +79,7 @@ import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDispla
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { resolveThisComputerConnection } from '@/sync/domains/server/relayDrift/thisComputerConnection';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
 
 function resolveServerProfileLabel(profile: ServerProfile): string {
   return resolveHomeDisplayLabel(profile, profile.id);
@@ -523,7 +524,9 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
 
         <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
           {machineGroups.map((serverId, groupIndex) => {
-            const rawList = machineListByServerId[serverId];
+            const inventory = resolveServerScopedMachineInventory({ serverId,
+              activeServerId: '', activeMachines: [], machineListByServerId, machineListStatusByServerId });
+            const rawList = inventory.machines;
             const list = Array.isArray(rawList) ? rawList.filter(isMachineVisibleForLaunchSelection) : rawList;
             const binding = machineScopeBindings.get(resolveServerProfileScopeIdForIdentifier(serverId));
             const isOnline = (machine: NonNullable<typeof list>[number]) => isMachineReachable(binding?.isCurrent() ? binding.scope : null, machine, presenceNowMs);
@@ -548,7 +551,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
               ? t('systemStatus.sections.machinesActiveServer')
               : t('systemStatus.sections.machinesOtherServer', { server: resolveHomeDisplayLabel(serverProfile, serverId) });
 
-            const status = machineListStatusByServerId[serverId];
+            const status = inventory.status;
             const showStatusSubtitle = typeof status === 'string' && status !== 'idle';
             const statusSubtitle = showStatusSubtitle ? t('systemStatus.machines.status', { status }) : undefined;
 
@@ -561,7 +564,9 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                   action={refreshAction}
                 >
                   <Item
-                    title={t('systemStatus.machines.none')}
+                    title={status === 'idle' && Array.isArray(list) ? t('systemStatus.machines.none')
+                      : status === 'loading' ? t('common.loading')
+                        : status === 'error' ? t('common.requestFailed') : t('common.unknown')}
                     mode="info"
                   />
                 </ItemGroup>

@@ -314,6 +314,29 @@ describe('SystemStatusView runtime inventory', () => {
         });
     });
 
+    it.each([undefined, 'loading', 'error', 'signedOut'] as const)('keeps an unanswered Machine inventory distinct from confirmed empty (status=%s)', async status => {
+        state.machineListByServerId = { srv_1: [] };
+        const screen = await renderStatus();
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(screen.getTextContent()).toContain('systemStatus.machines.none');
+        const statuses: typeof beforeStorage.machineListStatusByServerId = status ? { srv_1: status } : {};
+        await act(async () => storage.setState({
+            machineListByServerId: { srv_1: null },
+            machineListStatusByServerId: statuses,
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(storage.getState().machineListStatusByServerId).toEqual(statuses);
+        expect(screen.getTextContent()).not.toContain('systemStatus.machines.none');
+        expect(screen.getTextContent()).toContain(status === 'loading' ? 'common.loading'
+            : status === 'error' ? 'common.requestFailed' : 'common.unknown');
+        await act(async () => storage.setState({
+            machineListByServerId: { srv_1: [] },
+            machineListStatusByServerId: { srv_1: 'idle' },
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(screen.getTextContent()).toContain('systemStatus.machines.none');
+    });
+
     it('renders the current CLI, daemon, and runtime inventory summary', async () => {
         const screen = await renderStatus();
 
