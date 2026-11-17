@@ -15,12 +15,14 @@ import { readPersistedConversationConnectionPollFailure } from './connectionPoll
 const validatesPersistedPollFailure = compilePluginJsonSchema(
   ConversationConnectionPollFailureJsonSchema,
 );
+const validAttemptCounts = [1, 5, 6, Number.MAX_SAFE_INTEGER];
+const invalidAttemptCounts = [0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1];
 
 describe('Conversation connection poll-failure codec', () => {
   it('accepts exactly the Collection manifest union at the persisted-value seam', () => {
     const accepted = [
       null,
-      ...[1, 5, 6, Number.MAX_SAFE_INTEGER].map(attemptCount => ({
+      ...validAttemptCounts.map(attemptCount => ({
         phase: 'retryDue' as const,
         attemptCount,
         retryNotBeforeMs: 0,
@@ -35,7 +37,7 @@ describe('Conversation connection poll-failure codec', () => {
     ] as const;
     const rejected: readonly (JsonValue | undefined)[] = [
       undefined,
-      ...[0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1].map(attemptCount => ({
+      ...invalidAttemptCounts.map(attemptCount => ({
         phase: 'retryDue',
         attemptCount,
         retryNotBeforeMs: 0,
@@ -99,16 +101,15 @@ describe('Conversation connection poll-failure codec', () => {
       evidence: { kind: 'provider', reason: 'credentialInvalid' },
     });
     expect(readConversationConnectionPollFailureAttention(attention)).toEqual(attention);
-    expect(readConversationConnectionPollFailureAttention({
-      ...attention,
-      phase: 'retryDue',
-      attemptCount: 6,
-      retryNotBeforeMs: 0,
-    })).toMatchObject({ phase: 'retryDue', attemptCount: 6 });
-    expect(readConversationConnectionPollFailureAttention({
-      ...attention,
-      attemptCount: Number.MAX_SAFE_INTEGER + 1,
-    })).toBeUndefined();
+    // This reader has no Collection admission ahead of it to reject bad counts.
+    for (const attemptCount of validAttemptCounts) {
+      expect(readConversationConnectionPollFailureAttention({
+        ...attention, phase: 'retryDue', attemptCount, retryNotBeforeMs: 0,
+      })).toMatchObject({ phase: 'retryDue', attemptCount });
+    }
+    for (const attemptCount of invalidAttemptCounts) {
+      expect(readConversationConnectionPollFailureAttention({ ...attention, attemptCount })).toBeUndefined();
+    }
   });
 
   it('re-redacts historical Action messages while retaining actionable text and code-only readers', () => {
