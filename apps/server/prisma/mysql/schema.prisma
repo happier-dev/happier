@@ -1360,6 +1360,7 @@ model AccountChange {
 }
 
 model TerminalAuthRequest {
+    deploymentAppEnrollment Json?
     id                String   @id @default(cuid())
     publicKey         String   @unique
     supportsV2        Boolean  @default(false)
@@ -2610,6 +2611,7 @@ enum MachineKind {
 }
 
 model Machine {
+    deploymentAppDeploymentId String?
     environmentSecretGrants MachineSecretGrant[]
     controlledDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentController")
     builtDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentBuilder")

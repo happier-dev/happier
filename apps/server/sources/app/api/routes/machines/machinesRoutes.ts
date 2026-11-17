@@ -4,6 +4,7 @@ import { Fastify } from "../../types";
 import { persistentMachineWhere } from '@/app/machines/machineSelection';
 import { withManagedWakeAvailabilityInTx } from '@/app/machines/managed/managedWakeAvailability';
 import { z } from "zod/mini";
+import { readDeploymentAppEnrollmentsForMachinesInTx } from '@/app/deployments/deploymentAppEnrollment';
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
@@ -54,9 +55,9 @@ import { registerMachineSessionMessageReplyRoutes } from './registerMachineSessi
 import { registerMachinePoolRoutes } from "./pools/registerMachinePoolRoutes";
 import { registerMachinePresetRoutes } from "./managed/registerMachinePresetRoutes";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
-import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/enrollmentV1';
 import { registerManagedMachineRoutes } from "@/app/machines/managed/managedRoutes";
-import { requireManagedMachineRegistrationInTx, linkManagedEnrollmentInTx } from "@/app/machines/managed/managedMutations";
+import { requireMachineEnrollmentInTx, linkMachineEnrollmentInTx } from "@/app/machines/machineEnrollment";
 import { ManagedMachineError, readMachineDevcontainerChildInTx, readMachineDevcontainerChildrenInTx } from "@/app/machines/managed/managedRows";
 import { MachineContentKeyTransitionInputV1Schema, MachineContentKeyTransitionResultV1Schema, MachinePublishedRowV1Schema } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
@@ -94,6 +95,7 @@ async function readAccessibleMachineProjectionsInTx(
         ...(input.admission ? { admission: input.admission } : {}),
         ...(schedulesRecipientRepair ? { includeRecipientWork: true as const } : {}) });
     const children = input.projection === 'hostFacts' ? null : await readMachineDevcontainerChildrenInTx(tx, [...openings.keys()]);
+    const apps = input.projection === 'hostFacts' ? null : await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [...openings.values()].map(opening => opening.machine) });
     return input.machineIds.flatMap(machineId => {
         const opening = openings.get(machineId);
         if (!opening) return [];
@@ -102,6 +104,7 @@ async function readAccessibleMachineProjectionsInTx(
             : serializeAccessibleMachineRow(machine, {
             ...opening,
             devcontainerChild: children?.get(machine.id) ?? null,
+            deploymentApp: apps?.get(machine.id) ?? null,
             recipientAccountStoredContentProtocolVersion:
                 readAccountStoredContentCompatibilityForHttpRequest(input.request).declaration?.protocolVersion,
         }) }];
@@ -160,13 +163,16 @@ async function serializeMachineRowForRequest(
 ) {
     const projection = await inTx(async tx => {
         const machine = await tx.machine.findUniqueOrThrow({ where: { id: row.id }, select: {
-            managedResource: true,
+            id: true, managedResource: true, deploymentAppDeploymentId: true, revokedAt: true, replacedByMachineId: true,
         } });
         const [projectedMachine] = await withManagedWakeAvailabilityInTx(tx, [machine]);
-        return { machine: projectedMachine, devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id) };
+        const apps = await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [machine] });
+        return { machine: projectedMachine, devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id),
+            deploymentApp: apps.get(row.id) ?? null };
     });
     return serializeMachineRow({ ...row, ...projection.machine }, {
         devcontainerChild: projection.devcontainerChild,
+        deploymentApp: projection.deploymentApp,
         ...(storageMode ? { storageMode } : {}),
         recipientAccountStoredContentProtocolVersion:
             readAccountStoredContentCompatibilityForHttpRequest(request)
@@ -252,7 +258,7 @@ export function machinesRoutes(app: Fastify) {
                 replacesMachineId: z.optional(z.string()),
                 replacementReason: z.optional(z.string()),
                 contentPublicKeyFingerprint: z.optional(z.string()),
-                managedEnrollment: z.optional(ManagedEnrollmentCorrelationV1Schema),
+                managedEnrollment: z.optional(MachineEnrollmentCorrelationV1Schema),
             })
         }
     }, async (request, reply) => {
@@ -541,7 +547,7 @@ export function machinesRoutes(app: Fastify) {
                 && !managedEnrollment
             ) {
                 try {
-                    await inTx(tx => requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id }), { readOnly: true });
+                    await inTx(tx => requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id }), { readOnly: true });
                 } catch (error) {
                     if (error instanceof ManagedMachineError) return reply.code(409).send({ error: "invalid-params", reason: error.code });
                     throw error;
@@ -570,7 +576,7 @@ export function machinesRoutes(app: Fastify) {
             try {
                 updated = await inTx(async (tx) => {
                     const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
-                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
+                    await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                     const current = await tx.machine.findFirst({
                         where: {
                             accountId: userId,
@@ -609,7 +615,7 @@ export function machinesRoutes(app: Fastify) {
                         !currentWantsInstallationUpdate
                         && !currentWantsAutomaticReplacement
                     ) {
-                        if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, current.id, declarationBodies);
+                        if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, current.id, declarationBodies, request.authTerminalRequestId);
                         return current;
                     }
 
@@ -638,7 +644,7 @@ export function machinesRoutes(app: Fastify) {
                         });
                     }
 
-                    if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, updatedMachine.id, declarationBodies);
+                    if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, updatedMachine.id, declarationBodies, request.authTerminalRequestId);
                     return updatedMachine;
                 }, {
                     // Exclusive Account admission protects installation and managed lifecycle predicates.
@@ -658,7 +664,7 @@ export function machinesRoutes(app: Fastify) {
                 // best-effort installation refreshes. Content/key replacement is never a registration write.
                 if (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008')) {
                     try {
-                        await inTx(tx => requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id }), { readOnly: true });
+                        await inTx(tx => requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id }), { readOnly: true });
                     } catch (currentnessError) {
                         if (currentnessError instanceof ManagedMachineError) return reply.code(409).send({ error: "invalid-params", reason: currentnessError.code });
                         throw currentnessError;
@@ -718,7 +724,7 @@ export function machinesRoutes(app: Fastify) {
             try {
                 const created = await inTx(async (tx) => {
                     const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
-                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
+                    await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                     const registered = await createMachineWithInstallationIdentityInTx(tx, {
                     accountId: userId,
                     machineId: id,
@@ -730,6 +736,7 @@ export function machinesRoutes(app: Fastify) {
                     replacementReason: automaticReplacementReason,
                     managedEnrollment,
                     declarationBodies,
+                    terminalAuthRequestId: request.authTerminalRequestId,
                     });
                     return registered;
                 }, {
@@ -769,7 +776,7 @@ export function machinesRoutes(app: Fastify) {
                             try {
                                 rejoinedMachine = await inTx(async tx => {
                                     const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
-                                    await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
+                                    await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                                     const current = await tx.machine.findUnique({ where: { accountId_id: { accountId: userId, id } } }).then(decodeMachineStoredContent);
                                     if (!current || current.revokedAt) throw new ManagedMachineError("enrollment_retired");
                                     let winningMachine = current;
@@ -779,7 +786,7 @@ export function machinesRoutes(app: Fastify) {
                                         winningMachine = await updateMachineInstallationIdentityInTx(tx, current, identityUpdate.data);
                                         await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: current.id });
                                     }
-                                    if (managedEnrollment) await linkManagedEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id, declarationBodies);
+                                    if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id, declarationBodies, request.authTerminalRequestId);
                                     if (verifiedInstallationIdentity?.replacesMachineId) {
                                         machineReplacement = await applyVerifiedMachineRegistrationReplacement({ tx, accountId: userId,
                                             replacementMachineId: existingSameAccount.id, replacementMachine: winningMachine,

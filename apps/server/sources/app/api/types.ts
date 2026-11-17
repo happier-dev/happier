@@ -142,6 +142,8 @@ declare module 'fastify' {
         authTokenLegacy?: boolean;
         /** Epoch of the exact verified signed bearer; never inferred from current Account state. */
         authTokenEpoch?: number;
+        /** Existing pairing-request id from this verified terminal credential's signed extras. */
+        authTerminalRequestId?: string;
         /** Server-produced method/provider facts carried by the verified credential. */
         authTokenAuthenticationEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
         /** Request-local verified provenance for an admitted PAT; never a raw bearer. */

@@ -29,6 +29,7 @@ export type VerifiedRequestPrincipal = Readonly<{
     apiTokenPrincipal: VerifiedApiTokenPrincipal | null;
     sessionRuntimePrincipal: VerifiedEphemeralSessionRunnerPrincipal | null;
     authenticationEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
+    terminalAuthRequestId?: string;
 }>;
 
 export type RequestPrincipalVerification =
@@ -189,6 +190,9 @@ export async function verifyRequestPrincipal(input: Readonly<{
             accountId: verified.userId,
             ...(verified.tokenEpoch !== undefined ? { tokenEpoch: verified.tokenEpoch } : {}),
             kind: provenance.kind,
+            ...(provenance.kind === 'terminal' && typeof verified.extras === 'object' && verified.extras !== null
+                && 'session' in verified.extras && typeof verified.extras.session === 'string'
+                ? { terminalAuthRequestId: verified.extras.session } : {}),
             authority: effectiveAuthority.data,
             legacy: verified.legacy,
             apiTokenPrincipal: resolveVerifiedApiTokenPrincipal(verified, provenance.kind),

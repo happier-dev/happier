@@ -20,6 +20,7 @@ import {
 } from "@/app/auth/authenticationEvidence";
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema, type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
+import { deploymentAppTerminalEnrollmentIsActiveInTx } from '@/app/deployments/deploymentAppEnrollment';
 
 const BASE64_URL_REGEX = /^[A-Za-z0-9_-]+$/;
 const EXPIRED_TERMINAL_AUTH_CLEANUP_LIMIT = 32;
@@ -407,6 +408,7 @@ export function registerTerminalAuthRequestRoutes(
                         "provisioning_material_unavailable",
                         "already_completed",
                         "credential_authentication_evidence_unavailable",
+                        "enrollment_unavailable",
                     ]),
                 }),
                 426: z.strictObject({ error: z.literal("terminal_provisioning_update_required") }),
@@ -444,6 +446,8 @@ export function registerTerminalAuthRequestRoutes(
                 return { status: "expired" } as const;
             }
             if (!authRequest.supportsV2) return { status: "update_required" } as const;
+            if (authRequest.deploymentAppEnrollment !== null && !await deploymentAppTerminalEnrollmentIsActiveInTx(
+                tx, authRequest.deploymentAppEnrollment, request.userId)) return { status: 'enrollment_unavailable' } as const;
 
             const account = await tx.account.findUnique({
                 where: { id: request.userId },
@@ -527,6 +531,7 @@ export function registerTerminalAuthRequestRoutes(
         if (outcome.status === "already_completed") {
             return reply.code(409).send({ error: "already_completed" });
         }
+        if (outcome.status === 'enrollment_unavailable') return reply.code(409).send({ error: 'enrollment_unavailable' });
         if (outcome.status === "evidence_unavailable") {
             return reply.code(409).send({ error: "credential_authentication_evidence_unavailable" });
         }

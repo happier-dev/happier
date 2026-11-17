@@ -16,8 +16,8 @@ import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessio
 import { serializeMachineKeyBasis } from "./machineSerialization";
 import { acquireManagedMachinePublicationAccountsInTx, readMachineDevcontainerChildInTx, readManagedMachineInTx,
     readManagedRowDeclarationBodiesInTx, type ManagedDeclarationBodies } from './managed/managedRows';
-import { linkManagedEnrollmentInTx } from './managed/managedMutations';
-import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { linkMachineEnrollmentInTx } from './machineEnrollment';
+import { isDeploymentAppEnrollmentCorrelationV1, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import { resolveMachineAccessInTx } from './machineAccess';
 import { withManagedWakeAvailabilityInTx, invalidateManagedWakeControllerInTx } from './managed/managedWakeAvailability';
 
@@ -66,14 +66,16 @@ export function recheckMachineStoredContentMutationAdmissionInTx(tx: Tx, input: 
 
 /** Persistent registration fences its predicates; Runner creation keeps activation's content admission. */
 export async function acquireMachineRegistrationAccountsInTx(tx: Tx, input: Readonly<{
-    accountId: string; machineId: string; kind?: MachineKind; managedEnrollment?: ManagedEnrollmentCorrelationV1;
+    accountId: string; machineId: string; kind?: MachineKind; managedEnrollment?: MachineEnrollmentCorrelationV1;
     declarationBodies?: ManagedDeclarationBodies;
 }>): Promise<ManagedDeclarationBodies | undefined> {
     const intent = isPersistentMachine(input) ? 'exclusive' : 'content';
-    const declarationBodies = input.declarationBodies ?? (intent === 'exclusive' && input.managedEnrollment
-        ? await readManagedRowDeclarationBodiesInTx(tx, await readManagedMachineInTx(tx, input.managedEnrollment)) : undefined);
-    if (input.managedEnrollment) {
-        await acquireManagedMachinePublicationAccountsInTx(tx, input.managedEnrollment,
+    const managedEnrollment = input.managedEnrollment && !isDeploymentAppEnrollmentCorrelationV1(input.managedEnrollment)
+        ? input.managedEnrollment : undefined;
+    const declarationBodies = input.declarationBodies ?? (intent === 'exclusive' && managedEnrollment
+        ? await readManagedRowDeclarationBodiesInTx(tx, await readManagedMachineInTx(tx, managedEnrollment)) : undefined);
+    if (managedEnrollment) {
+        await acquireManagedMachinePublicationAccountsInTx(tx, managedEnrollment,
             { intent, additionalAccountIds: [input.accountId], additionalMachineIds: [input.machineId] });
     } else {
         await acquireAccountChangePublicationLocksInTx(tx, [input.accountId], { includeSingleAccount: true, intent });
@@ -95,8 +97,9 @@ export async function createMachineWithInstallationIdentityInTx(
         installationIdentity: VerifiedMachineInstallationIdentity | null;
         contentPublicKeyFingerprint: string | null;
         replacementReason: string;
-        managedEnrollment?: ManagedEnrollmentCorrelationV1;
+        managedEnrollment?: MachineEnrollmentCorrelationV1;
         declarationBodies?: ManagedDeclarationBodies;
+        terminalAuthRequestId?: string;
     }>,
 ): Promise<Readonly<{
     machine: Awaited<ReturnType<Tx["machine"]["create"]>>;
@@ -163,7 +166,7 @@ export async function createMachineWithInstallationIdentityInTx(
         })
         : null;
 
-    if (params.managedEnrollment) await linkManagedEnrollmentInTx(tx, params.managedEnrollment, params.accountId, machine.id, declarationBodies);
+    if (params.managedEnrollment) await linkMachineEnrollmentInTx(tx, params.managedEnrollment, params.accountId, machine.id, declarationBodies, params.terminalAuthRequestId);
     const [enrolled] = await withManagedWakeAvailabilityInTx(tx, [await tx.machine.findUniqueOrThrow({ where: { id: machine.id }, select: {
         managedResource: true,
     } })]);

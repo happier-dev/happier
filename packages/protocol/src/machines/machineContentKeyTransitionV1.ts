@@ -11,6 +11,7 @@ import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.
 import { encodeBase64 } from '../crypto/base64.js';
 import { createMachineDataEncryptionKeyV1, isMachineDataEncryptionKeyTransferableV1, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from './machineStoredContent.js';
 import { DevcontainerChildProjectionV1Schema } from './managed/devcontainerV1.js';
+import { DeploymentAppMachineAssociationV1Schema } from './enrollmentV1.js';
 import { ManagedMachineRefV1Schema, ManagedMachineRefReadV1Schema, ManagedMachineInputRuntimeV1Schema } from './managed/managedMachineV1.js';
 
 /** The persisted owner envelope and both revisions form one content identity. */
@@ -64,6 +65,7 @@ const MachinePublishedRowCanonicalV1Schema = lazyZodSchema(() => z.strictObject(
   managedMachineRef: defineStoredReadProjection(z.nullable(ManagedMachineRefV1Schema), () => ManagedMachineRefReadV1Schema),
   managedInputRuntime: z.optional(z.nullable(ManagedMachineInputRuntimeV1Schema)),
   devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)),
+  deploymentApp: z.optional(z.nullable(DeploymentAppMachineAssociationV1Schema)),
   metadata: z.nullable(z.string()),
   metadataVersion: z.number().check(z.int(), z.nonnegative()),
   daemonState: z.nullable(z.string()),

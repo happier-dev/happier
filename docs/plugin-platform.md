@@ -1114,6 +1114,18 @@ ordinary forms write declared object paths rather than inventing package arrays.
 
 ## Deployment execution custody (0.3 development source)
 
+An own-server App may enroll its existing daemon through the ordinary terminal
+request, approval and Machine-registration flow. The accepted Deployment's
+installed controller binds that request at `app-enrollment`; the receipt's
+`requestedByAccountId` selects the enrollment Account. The existing
+`TerminalAuthRequest` holds pending public correlation, and successful ordinary
+registration writes `Machine.deploymentAppDeploymentId`. A retained App Home
+reports its existing Machine through the native daemon-status owner; the same
+controller can move that Machine's pointer to a new accepted receipt in the same
+Environment. Compose owns process and volume lifecycle. No ManagedMachine is
+created. Machine reads project public receipt provenance in `deploymentApp`;
+the service name and port remain in Account-mode Machine metadata.
+
 `DeploymentExecEnvPortV1` is a public opaque invocation facade. Its materializer,
 grant admission and process environment remain host-private. The existing
 own-server executor composes it with source custody; canonical SDK Exec consumes

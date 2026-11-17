@@ -12,6 +12,7 @@ import type { ManagedMachineRefV1, ManagedMachineInputRuntimeV1, ManagedMachineN
 import { resolveManagedMachineRuntimeV1, resolveManagedWakeAvailabilityV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { projectManagedMachine } from './managed/managedMachineProjection';
 import type { StoredManagedMachine } from './managed/managedRows';
+import type { DeploymentAppMachineAssociationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 
 export type MachineSerializationRow = Readonly<{
     id: string;
@@ -86,6 +87,7 @@ export function serializeMachineRow(
         recipientAccountStoredContentProtocolVersion?: number | null;
         storageMode?: "plain" | "e2ee";
         devcontainerChild?: DevcontainerChildProjectionV1 | null;
+        deploymentApp?: DeploymentAppMachineAssociationV1 | null;
     }> = {},
 ) {
     const kind = MachineKindFromLegacyProjectionSchema.parse(row.kind);
@@ -135,6 +137,7 @@ export function serializeMachineRow(
         managedMachineRef: serializeManagedMachineRef(row),
         managedInputRuntime: serializeManagedInputRuntime(row),
         devcontainerChild: row.revokedAt === null && row.replacedByMachineId == null ? options.devcontainerChild ?? null : null,
+        deploymentApp: row.revokedAt === null && row.replacedByMachineId == null ? options.deploymentApp ?? null : null,
         kind,
         ...(options.storageMode ? { storageMode: options.storageMode } : {}),
         metadata: row.metadata,
@@ -187,6 +190,7 @@ export function serializeAccessibleMachineRow(
         recipientWorkPending?: boolean;
         recipientWorkCursor?: number;
         devcontainerChild?: DevcontainerChildProjectionV1 | null;
+        deploymentApp?: DeploymentAppMachineAssociationV1 | null;
         recipientAccountStoredContentProtocolVersion?: number | null;
     }>,
 ) {
@@ -194,6 +198,7 @@ export function serializeAccessibleMachineRow(
         storageMode: options.access.resourceMode,
         recipientAccountStoredContentProtocolVersion: options.recipientAccountStoredContentProtocolVersion,
         devcontainerChild: options.devcontainerChild,
+        deploymentApp: options.deploymentApp,
     });
     const recipientWork = options.access.role === 'manage' && options.recipientWorkPending !== undefined
         ? { recipientWorkPending: options.recipientWorkPending, recipientWorkCursor: options.recipientWorkCursor } : {};
@@ -213,6 +218,7 @@ export function serializeAccessibleMachineRow(
         access: options.access,
         metadata: canReadContent ? projection.metadata : null,
         devcontainerChild: canReadContent ? projection.devcontainerChild : null,
+        deploymentApp: canReadContent ? projection.deploymentApp : null,
         daemonState: canReadContent ? projection.daemonState : null,
         dataEncryptionKey,
         runnerContentKeyBinding: null,

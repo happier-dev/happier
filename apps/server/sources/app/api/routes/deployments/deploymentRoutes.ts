@@ -1,4 +1,5 @@
 import { listDeploymentDomainPageInTx, listDeploymentDataPageInTx } from '@/app/deployments/deploymentAccountPageReadService';
+import { registerDeploymentAppEnrollmentRoute } from './deploymentAppEnrollmentRoute';
 import { z } from 'zod/mini';
 import { DeploymentApprovalEnvironmentInputV1Schema, DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { isDeploymentApprovalMetadataPreparationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -57,6 +58,7 @@ function status(result: { ok: boolean; error?: string }) {
 
 /** Authenticated storage only: the daemon owns review, effects and observation. */
 export function registerDeploymentRoutes(app: Fastify): void {
+    registerDeploymentAppEnrollmentRoute(app);
     registerDeploymentDomainRoutes(app);
     app.post('/v1/deployments/machines/:machineId/telemetry-assignments', {
         preHandler: app.authenticate, attachValidation: true,

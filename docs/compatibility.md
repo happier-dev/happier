@@ -1,5 +1,38 @@
 # Compatibility and version skew
 
+## Compose App enrollment (unreleased 0.3)
+
+The existing `managedEnrollment` registration carrier accepts a `deploymentApp`
+correlation alongside the unchanged managed-compute schema. App writers require
+the matching development server's `app-enrollment` endpoint. Existing managed
+writers keep their admission and replacement checks. The additive persistence
+change adds nullable terminal-request correlation and a nullable Machine receipt
+pointer; existing rows need no backfill. Machine reads add optional public
+`deploymentApp` receipt provenance. Service names and ports remain Account-mode
+content, with no new plaintext service index or compatibility fallback.
+
+An older 0.2 client that rewrites whole Machine metadata may omit the optional
+private `deploymentApp` binding, leaving collector routing unavailable
+(`collector_route_unavailable`). A normal 0.3 App redeploy repairs that binding
+from the App definition while reusing the same Machine and retained Home volume.
+
+## Bot pet faces (unreleased 0.3)
+
+Bot faces accept an optional Account pet reference while retaining their seeded
+style. Template authoring permits built-in references only; the template owner
+projects Account pets to the seeded face when creating a shareable template.
+Matching development writers and strict face readers reload together for this
+optional field. Existing faces without a pet remain unchanged.
+
+The Account pet library optionally carries cell-local `opaqueBounds` computed
+by the existing server admission scan and retained in its stored manifest
+metadata. Older entries without bounds remain readable and use the full cell;
+built-in packages carry precomputed bounds. No database migration or device-side
+atlas scan is introduced. The shared reference lookup distinguishes an initial
+pending library from a settled missing or unavailable pet. Companion preferences
+remain separate from face lookup. Animation still frames and playback timing
+come from the existing pet timeline owner.
+
 ## Managed acquisition child refusals (unreleased 0.3)
 
 Current Action operation failures retain the child Action's optional `requestId`
