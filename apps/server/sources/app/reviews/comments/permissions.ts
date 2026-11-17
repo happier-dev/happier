@@ -5,9 +5,12 @@ import { type ReviewCommentStoredSourceV1, reviewCommentActorsEqualV1 } from '@h
 
 import type { AccountEncryptionCurrentness } from "@/app/encryption/accountContentKeyAdmission";
 import { ReviewCommentOperationError } from "./errors";
+import type { ReviewAccessCapability } from "../reviewAccess";
+export type { ReviewAccessCapability } from "../reviewAccess";
 
 export type ReviewCommentPrincipal = Readonly<{
     accountId: string;
+    reviewAccess?: ReviewAccessCapability;
     actor: ReviewCommentActorRefV1;
     grants?: readonly string[];
     currentIntent?: ReviewCommentCurrentIntentV1;
