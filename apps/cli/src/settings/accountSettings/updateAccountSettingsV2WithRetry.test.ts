@@ -6,6 +6,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { Credentials, StoredCredentials, TokenOnlyCredentials } from '@/persistence';
 import {
   ACCOUNT_SETTINGS_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES,
+  ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   accountSettingsParse,
   decryptSecretValueWithKeysV1,
   encryptSecretStringV1,
@@ -126,14 +127,14 @@ describe('updateAccountSettingsV2WithRetry', () => {
         }, writeCache: async () => {} },
     });
     expect(result).toMatchObject({ status: 'applied', version: 6,
-      settings: { sessionReplayMaxSeedChars: 120000, machineOfflineAlertsV1: { machineIds: ['peer'] } } });
+      settings: { sessionReplayMaxSeedChars: raw.sessionReplayMaxSeedChars, machineOfflineAlertsV1: { machineIds: ['peer'] } } });
     if (content.t !== 'encrypted') throw new Error('Expected encrypted readback');
     expect(openAccountScopedBlobCiphertext({ kind: 'account_settings', material: credentials.encryption, ciphertext: content.c })?.value)
       .toEqual({ ...raw, machineOfflineAlertsV1: { machineIds: ['peer'] } });
   });
   it.each(['immutable', 'callback'] as const)('reuses a validated unchanged plain baseline for less CPU than parsing its bytes twice (%s)', async (kind) => {
     const credentials = createTokenOnlyCredentialsStub();
-    const raw = { schemaVersion: 6, analyticsOptOut: false, unrelated: { retained: true } };
+    const raw = { schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, analyticsOptOut: false, unrelated: { retained: true } };
     const deps = {
         // Only Account HTTP/cache boundaries are replaced; opener, mutation,
         // encryption-mode admission and schema parsing remain real.
@@ -830,7 +831,7 @@ describe('updateAccountSettingsV2WithRetry', () => {
       ciphertext: posted.c,
     });
     expect(opened?.value).toEqual({
-      schemaVersion: 2,
+      schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
       customFutureField: { preserved: true },
       analyticsOptOut: true,
     });
@@ -877,7 +878,7 @@ describe('updateAccountSettingsV2WithRetry', () => {
       ciphertext: posted.c,
     });
     expect(opened?.value).toEqual({
-      schemaVersion: 2,
+      schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
       customFutureField: { preserved: true },
       analyticsOptOut: true,
     });
@@ -976,7 +977,7 @@ describe('updateAccountSettingsV2WithRetry', () => {
     } as any);
 
     const result = await updateAccountSettingsV2WithRetry({
-      credentials: createLegacyCredentialsStub(),
+      credentials: { ...createTokenOnlyCredentialsStub(), token: 't' },
       mutation: { operations: [{ op: 'set', key: 'analyticsOptOut', value: true }] },
     });
 

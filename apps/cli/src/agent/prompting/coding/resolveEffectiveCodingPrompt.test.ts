@@ -27,7 +27,10 @@ void missingToolDelivery;
 
 describe('compaction prompt delivery', () => {
   it('uses the delivered native alias and omits advice when delivery or Action availability cannot support it', async () => {
-    const settings = { codingPromptBehaviorV1: { sessionCompactionNudge: true } };
+    const settings = {
+      codingPromptBehaviorV1: { sessionCompactionNudge: true },
+      actionsSettingsV1: { v: 1, actions: { 'session.compact': { toolExposureModes: { agent: 'direct' } } } },
+    };
     const sessionMetadata = { agentRuntimeCapabilitiesV1: { sessionCapabilities: {
       sessionListing: 'unsupported', sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
       sessionRollback: { conversation: 'unsupported' }, compaction: { events: true, manual: true },

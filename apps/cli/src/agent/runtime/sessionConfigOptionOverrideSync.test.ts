@@ -112,7 +112,10 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     // Canonical plugin host-port fixtures substitute OS/native services only.
     const context = {
       signal, agent: { id: 'claude' }, services: { logger: fixture.logger, settings: fixture.settings, storage: fixture.storage,
-        exec: { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'claude-cli' }, executablePath: '/managed/claude' }) },
+        exec: {
+          // OS boundary: this replay has no inherited Claude launch options.
+          readEnvironment: () => ({}),
+          systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'claude-cli' }, executablePath: '/managed/claude' }) },
           run: async () => ({ termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
             stdout: new TextEncoder().encode('--effort <level>'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false }) } },
       session: { services: { features: fixture.features, terminalHost: fixture.agentRuntime.terminalHost,

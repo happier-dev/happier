@@ -146,12 +146,20 @@ describe('external Saved Secret operation acquisition', () => {
       savedSecretCatalogState: 'ready', savedSecretResources: [resource, inlineResource] };
     operationContext = createInvocationSavedSecretOperationContextV1({ snapshot, credentials: { token, encryption: null },
       serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true, secretSources: fixture.host });
+    const capturedResources = operationContext.readSnapshot()?.savedSecretResources;
+    const capturedKey = capturedResources?.find(item => item.resourceId === resource.resourceId)?.resourceDataKey;
+    const capturedInlineKey = capturedResources?.find(item => item.resourceId === inlineResource.resourceId)?.resourceDataKey;
+    if (!capturedKey || !capturedInlineKey) throw new Error('Expected invocation-owned Secret keys');
     try {
+      expect(capturedKey).not.toBe(originalKey);
+      expect(capturedInlineKey).not.toBe(inlineKey);
       const admitted = await acquireSavedSecretMaterializerForOperation({ snapshot, operationContext,
         references: [{ ref }, { ref: inlineRef }] });
-      expect(originalKey.every(byte => byte === 0)).toBe(true);
+      expect(capturedKey.every(byte => byte === 0)).toBe(true);
+      expect(originalKey).toEqual(new Uint8Array(32).fill(7));
       expect(admitted.resolve(ref)).toMatchObject({ status: 'ready', value: 'acquired-with-inline-service-token' });
-      expect(inlineKey.every(byte => byte === 0)).toBe(true);
+      expect(capturedInlineKey.every(byte => byte === 0)).toBe(true);
+      expect(inlineKey).toEqual(new Uint8Array(32).fill(9));
       expect(admitted.resolve(inlineRef)).toMatchObject({ status: 'ready', value: 'admitted-inline-value' });
     } finally {
       await fixture.dispose();

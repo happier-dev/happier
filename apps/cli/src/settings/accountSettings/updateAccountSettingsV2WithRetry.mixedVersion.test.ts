@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol';
+import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 
@@ -77,7 +77,7 @@ describe('updateAccountSettingsV2WithRetry mixed-version preservation', () => {
       content: {
         t: 'plain',
         v: {
-          schemaVersion: 6,
+          schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
           analyticsOptOut: true,
           providerSettingsV1,
           connectedAccountPurposeBindingsV1,
