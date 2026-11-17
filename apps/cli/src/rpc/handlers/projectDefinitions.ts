@@ -23,6 +23,7 @@ import { projectSetupInspectionFailure } from '@/workspaces/projectSetup/project
 import { isReviewedServiceMoveChild } from '@/api/externalActionExecutionAuthorization';
 import { logger } from '@/ui/logger';
 import { selectProjectDefinitionRead } from '@/workspaces/projectSetup/projectDefinitionRead';
+import { inspectProjectEnvironmentImport } from '@/workspaces/projectSetup/projectDotenv';
 import type { ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
 import type { ProjectManifestInspectionSnapshot, ProjectDefinitionInspectOutput } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 
@@ -210,10 +211,17 @@ export function createProjectDefinitionAction(params: Readonly<{
     }
     context.signal?.throwIfAborted();
     const { setupReadiness, setupReview, setupConsent } = setup;
+    const importedEnvironment = selection.read.kind === 'imports'
+      ? await phase('environment_import', () => inspectProjectEnvironmentImport(root)) : undefined;
+    const environmentImport = importedEnvironment?.kind === 'environment' ? importedEnvironment
+      : importedEnvironment?.kind === 'refused' ? { kind: 'environment' as const, file: '.env.example' as const,
+        requirements: [], diagnostics: [{ code: importedEnvironment.code }] } : undefined;
+    context.signal?.throwIfAborted();
     const output = { definition: selection.definition,
       ...(!repositoryOnly ? { effectiveDefinition: selection.effectiveDefinition } : {}),
       ...(sharedSetupChange ? { sharedSetupChange } : {}),
       ...(selection.definitionScope ? { definitionScope: selection.definitionScope } : {}), detection: selection.detection,
+      ...(environmentImport ? { environmentImport } : {}),
       ...(selection.read.kind === 'scripts' || selection.read.kind === 'guidance'
         || (selection.read.kind === 'overview' || selection.read.kind === 'rail') && definition.document?.status !== 'valid'
         ? { detectionSummary: selection.detectionSummary } : {}), ...facts,

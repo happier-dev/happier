@@ -63,6 +63,19 @@ it('returns recognized repository facts through the registered inspection Action
 });
 
 describe('project definition Actions through registered Machine RPC', () => {
+  it('offers optional environment names without copying or evaluating example values', async () => {
+    const h = await setup();
+    await writeFile(join(h.root, '.env.example'), 'TOKEN=secret-example-sentinel\nTOKEN=duplicate\nURL=${TOKEN}\nBROKEN LINE\n');
+    const result = await h.handlers.get('daemon.projects.inspect.v1')!({ workspace: h.workspace, read: { kind: 'imports' } });
+    expect(result).toMatchObject({ environmentImport: { kind: 'environment', file: '.env.example', requirements: [
+      { name: 'TOKEN', kind: 'config', required: false }, { name: 'URL', kind: 'config', required: false },
+    ], diagnostics: [{ line: 4, code: 'malformed_dotenv' }] } });
+    expect(JSON.stringify(result)).not.toContain('secret-example-sentinel');
+    expect(JSON.stringify(result)).not.toContain('${TOKEN}');
+    const list = await h.handlers.get('daemon.projects.inspect.v1')!({ workspace: h.workspace, read: { kind: 'scripts' } });
+    expect(list).not.toHaveProperty('environmentImport');
+  });
+
   it('keeps all 6230 Script summaries compact and performs no native discovery for the author document', async () => {
     const resolveTool = vi.fn(async () => ({ executablePath: '/installed/pnpm', version: '10' }));
     const h = await setup({ resolveTool });

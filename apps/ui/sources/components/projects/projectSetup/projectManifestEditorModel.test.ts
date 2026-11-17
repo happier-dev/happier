@@ -71,6 +71,63 @@ describe('project manifest editor model', () => {
     const draft = model.getSnapshot().draft;
     expect(draft.status === 'valid' ? draft.manifest.services?.web.runtime : null).toBeUndefined();
   });
+  it('keeps personal drafts separate from repo drafts and saves against the actual row revision', async () => {
+    const writes: Array<{ expectedRevision: number | 'absent'; bytes: string }> = [];
+    const personalInput = { target: 'personal' as const, workspace, expectedAccountId: 'alice',
+      projectRef: { serverId: workspace.serverId, projectKey: 'project' },
+      inheritedRequirements: [{ name: 'DATABASE_URL', kind: 'secret', required: true }] as const,
+      definition: { basis: { kind: 'personal', revision: 8 }, document: readProjectManifestDocument('{"version":1}') },
+      actions: { async update(request) {
+        writes.push(request);
+        const document = readProjectManifestDocument(request.bytes);
+        if (document.status !== 'valid') throw new Error('Invalid save');
+        return { status: 'saved', basis: { kind: 'personal', revision: request.expectedRevision === 'absent' ? 1 : request.expectedRevision + 1 }, document };
+      } } } satisfies Parameters<typeof createProjectManifestEditorModel>[0] & { inheritedRequirements: readonly unknown[] };
+    const personal = createProjectManifestEditorModel(personalInput);
+    personal.importEnvironmentRequirements([
+      { name: 'TOKEN', kind: 'secret', required: true }, { name: 'DATABASE_URL', kind: 'config', required: false },
+    ]);
+    expect(personal.getSnapshot().draft).toMatchObject({ manifest: { environmentVariables: [
+      { name: 'TOKEN', kind: 'secret', required: true },
+    ] } });
+    const repository = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice',
+      definition: present(initialBytes), actions: boundary().actions });
+    expect(repository.getSnapshot().draft.bytes).toBe(initialBytes);
+    expect((await personal.save())?.status).toBe('saved');
+    expect(writes).toHaveLength(1);
+    expect(writes[0].expectedRevision).toBe(8);
+    personal.importEnvironmentRequirements([{ name: 'PORT', kind: 'config', required: false }]);
+    await personal.save();
+    expect(writes[1].expectedRevision).toBe(9);
+    personal.importEnvironmentRequirements([{ name: 'NEXT', kind: 'config', required: false }]);
+    personal.receiveDefinition({ basis: { kind: 'personal', revision: 11 }, document: readProjectManifestDocument('{"version":1}') });
+    expect(personal.getSnapshot().conflict?.basis).toEqual({ kind: 'personal', revision: 11 });
+    expect(await personal.save()).toBeNull();
+    personal.reviewCurrentBasis();
+    await personal.save();
+    expect(writes[2].expectedRevision).toBe(11);
+  });
+
+  it('imports names without replacing authored requirement choices or accepting values', async () => {
+    const definition = present(JSON.stringify({ version: 1, environmentVariables: [
+      { name: 'TOKEN', kind: 'secret', required: true },
+    ] }));
+    const transport = boundary(definition);
+    const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice', definition, actions: transport.actions });
+    expect(model.importEnvironmentRequirements([
+      { name: 'TOKEN', kind: 'config', required: false },
+      { name: 'PORT', kind: 'config', required: false },
+      { name: 'PORT', kind: 'config', required: false },
+    ])).toBe(true);
+    expect(model.getSnapshot().draft).toMatchObject({ manifest: { environmentVariables: [
+      { name: 'TOKEN', kind: 'secret', required: true }, { name: 'PORT', kind: 'config', required: false },
+    ] } });
+    expect(model.importEnvironmentRequirements([{ name: 'VALUE', kind: 'config', required: false, value: 'secret-sentinel' }])).toBe(false);
+    await model.save();
+    expect(transport.writes).toHaveLength(1);
+    expect(transport.writes[0].bytes).not.toContain('sentinel');
+  });
+
   it('restores a compact persisted draft against its matching disk basis without persisting original bytes', () => {
     const persisted: unknown[] = [];
     const draftBytes = '{"version":1,"future":"restored"}';

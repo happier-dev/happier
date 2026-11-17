@@ -15,6 +15,7 @@ import {
   type ProjectPrepareInputV1,
   type ProjectWorkerNoAcceptanceFailureDetailsV1,
 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema,
   type ProjectOrganizationUpdateInputV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
@@ -22,8 +23,12 @@ import { ProjectSetupSetInputV1Schema, ProjectSetupSetOutputV1Schema,
   type ProjectSetupSetInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import {
   ProjectManifestUpdateResultSchema,
+  readProjectManifestDocument,
   type ProjectManifestFileBasisV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
+import { readAcceptedProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import type { ProjectAccountOrganizationV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import type { PersonalProjectManifestEditorUpdateResult, ProjectManifestEditorDefinition } from './projectManifestEditorModel';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { ActionOperationProjectScriptSelection } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { safeParse, type core } from 'zod/mini';
@@ -38,7 +43,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { HappyError } from '@/utils/errors/errors';
 
 type ActionInvocation = (
-  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update' | 'projects.setup.set' | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
+  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update' | 'projects.setup.set' | 'artifact.get' | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
   input: unknown,
   context?: Parameters<ReturnType<typeof createFrontDoorActionExecute>>[2],
 ) => ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
@@ -48,6 +53,10 @@ type Outcome<T> =
   | Readonly<{ ok: false; code: string; workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1 }>;
 
 export type ProjectScriptSelection = ActionOperationProjectScriptSelection;
+
+export type PersonalProjectManifestRead =
+  | Readonly<{ kind: 'ready'; definition: Extract<ProjectManifestEditorDefinition, { basis: { kind: 'personal' } }> }>
+  | Readonly<{ kind: 'unavailable'; code: string }>;
 
 /**
  * The one Project Action client: inspection, guarded manifest writes, script runs and setup
@@ -210,6 +219,38 @@ export function createProjectManifestActionClient(
     },
     /** Personal definitions and shared selections use the protected detail/CAS owner. */
     setSetup,
+    /** The selected Account row points at protected detail; the accepted-record owner checks its exact revision. */
+    async loadPersonalSetup(request: Readonly<{
+      revision: ProjectSetupSetInputV1['expectedRevision']; organization: ProjectAccountOrganizationV1;
+    }>): Promise<PersonalProjectManifestRead> {
+      const setup = await readAcceptedProjectSetupV1({
+        setupContent: request.organization.setupContent,
+        setupSelection: request.organization.setupSelection,
+        ...(input.signal ? { signal: input.signal } : {}),
+        readArtifact: async artifactId => {
+          const result = await execute('artifact.get', { artifactId }, context);
+          if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
+          return ArtifactActionOutputSchemasV1['artifact.get'].parse(result.result).artifact;
+        },
+      });
+      if (setup.kind !== 'ready') return setup;
+      return { kind: 'ready', definition: {
+        basis: { kind: 'personal', revision: request.revision },
+        document: setup.setupOverrides ? readProjectManifestDocument(JSON.stringify(setup.setupOverrides)) : null,
+      } };
+    },
+    /** Row revisions stay row revisions; personal editing never calls the repository file writer. */
+    async updatePersonalSetup(request: Readonly<{
+      projectRef: ProjectSetupSetInputV1['projectRef']; expectedRevision: ProjectSetupSetInputV1['expectedRevision']; bytes: string;
+    }>): Promise<PersonalProjectManifestEditorUpdateResult> {
+      const document = readProjectManifestDocument(request.bytes);
+      if (document.status !== 'valid') return { status: 'refused', code: 'invalid_manifest' };
+      const result = await setSetup({ projectRef: request.projectRef, expectedRevision: request.expectedRevision,
+        intent: { kind: 'personal', setupOverrides: document.manifest } });
+      // A refused CAS retains the draft and its old basis until an actual current detail is received.
+      if (!result.ok) return { status: 'refused', code: result.errorCode };
+      return { status: 'saved', basis: { kind: 'personal', revision: result.revision }, document };
+    },
     runScript(selection: ProjectScriptSelection, choice?: ProjectExecutionChoiceV1) {
       const actionInput = PROJECT_ACTION_INPUT_SCHEMAS_V1[
         'projects.script.run'
