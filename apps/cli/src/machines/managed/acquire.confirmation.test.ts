@@ -12,6 +12,7 @@ import { StoredApprovalRequestSchema, type ApprovalRequest } from '@happier-dev/
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { ManagedAcquireInputV1Schema, ManagedControllerReportV1Schema, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
@@ -211,6 +212,7 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
             stdout = JSON.stringify({ platform: 'linux', arch: 'x86_64' }) + '\n';
         } else if (command.includes('uname -s')) stdout = command.includes('uname -m') ? 'Linux\nx86_64\n/home/happier\n' : 'Linux\n';
         else if (command.includes('/etc/os-release')) stdout = 'ubuntu\nnoble\namd64\n';
+        else if (command.includes('managed_guest_cli_absent')) stdout = 'managed_guest_cli_absent\n';
         else if (command.includes('version_path')) stdout = 'current=\nprevious=\n';
         else if (command.includes('mktemp -d /tmp/happier-bootstrap-upload.')) stdout = '/tmp/happier-bootstrap-upload.fixture\n';
         else if (command.includes('effect-internal')) {
@@ -242,8 +244,9 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     });
     // Only Home/provider HTTP and Artifact persistence are substituted. Parent
     // preparation, approval decision/replay, native custody and provider run real.
+    const guestCli = GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'stable' });
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: { teams: { enabled: true } },
-        capabilities: { serverIdentity: { serverIdentityId: homeId } }, homeConnectionDescriptor: homeDescriptor })));
+        capabilities: { serverIdentity: { serverIdentityId: homeId }, guestCli }, homeConnectionDescriptor: homeDescriptor })));
     vi.spyOn(axios, 'get').mockImplementation(async rawUrl => {
         const path = new URL(String(rawUrl)).pathname;
         if (path === '/v1/machines/mac36-guest') return { status: 200, data: { machine: guestRow } };
