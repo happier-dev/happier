@@ -7,6 +7,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HomeOwnerClaimCommandOutputV1Schema, HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1 } from '@happier-dev/protocol/home/governance/claim';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { readAccountIdFromToken } from '../../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { decodeStoredCredentials, type Settings } from '../../../../../apps/cli/src/persistence';
@@ -29,6 +30,7 @@ import { resolveMachineIdForServerFromSettings } from '../../../../../apps/cli/s
 import type { CliTestLaunchSpec } from '../process/cliLaunchSpec';
 import type { TestAccountCliAuthCredentials } from '../cliAuth';
 import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
+import { reserveAvailablePort } from '../network/reserveAvailablePort';
 
 /** Project journeys compose the existing authenticated daemon harness. Account
  * and terminal credentials come from their committed auth/cliAuth owners;
@@ -46,9 +48,13 @@ export async function startProjectDaemonFixture(params: Readonly<{
   const sourceOptions = [process.env.NODE_OPTIONS, '--import',
     pathToFileURL(resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs')).href].filter(Boolean).join(' ');
   const serverSourceOptions = [sourceOptions, ...(params.serverPreloadModules ?? []).flatMap(module => ['--import', module])].join(' ');
+  const port = await reserveAvailablePort();
   const serverEnv = { NODE_OPTIONS: serverSourceOptions, HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
-    HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1', ...params.serverEnv };
-  const server = await startServerLight({ testDir: join(params.testDir, 'server'), dbProvider: params.dbProvider ?? 'postgres', extraEnv: serverEnv });
+    HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
+    // Real CLI enrollment retains the authenticated descriptor published for this ingress.
+    HAPPIER_PUBLIC_SERVER_URL: `http://127.0.0.1:${port}`, ...params.serverEnv };
+  const server = await startServerLight({ testDir: join(params.testDir, 'server'), port,
+    dbProvider: params.dbProvider ?? 'postgres', extraEnv: serverEnv });
   const daemons: StartedDaemon[] = [];
   let requestProxy: HttpRequestRecordingProxy | undefined;
   try {
@@ -140,8 +146,10 @@ export async function startProjectDaemonFixture(params: Readonly<{
         const workspaceDir = join(directory, 'workspace');
         const claudeConfigDir = join(homeDir, '.claude');
         await Promise.all([mkdir(workspaceDir, { recursive: true }), mkdir(claudeConfigDir, { recursive: true })]);
-        const enrollment = options.pairedHome ?? await enrollProjectDaemonHome({ homeDir, testDir: directory,
-          serverUrl: actionServerApiUrl, serverId, sourceOptions, account, cliLaunchSpec: options.cliLaunchSpec });
+        const enrollment = options.pairedHome
+          ? await readEnrolledProjectDaemonHome({ homeDir, serverId, accountToken: account.auth.token })
+          : await enrollProjectDaemonHome({ homeDir, testDir: directory,
+            serverUrl: actionServerApiUrl, serverId, sourceOptions, account, cliLaunchSpec: options.cliLaunchSpec });
         const launch = () => startTestDaemon({ testDir: directory, happyHomeDir: homeDir, requireMachineControlReady: true,
           ...(options.cliLaunchSpec ? { cliLaunchSpec: options.cliLaunchSpec } : {}), env: {
           ...process.env, CI: '1', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: actionServerApiUrl,
@@ -239,14 +247,29 @@ export async function enrollProjectDaemonHome(params: Readonly<{
       await login.waitForSuccess();
     } finally { await resolution.transport.close(); }
   } finally { await login.stop(); }
+  return readEnrolledProjectDaemonHome({ homeDir, serverId: params.serverId, accountToken: account.auth.token });
+}
+
+async function readEnrolledProjectDaemonHome(params: Readonly<{
+  homeDir: string;
+  serverId: string;
+  accountToken: string;
+}>) {
+  const { homeDir } = params;
   // This is the settings file just committed by the canonical CLI login owner.
   const settings = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8')) as Settings;
   if (!settings || typeof settings !== 'object' || !('activeServerId' in settings)
     || typeof settings.activeServerId !== 'string') {
     throw new Error('Production terminal login did not persist Machine registration');
   }
+  const profile = settings.servers?.[settings.activeServerId];
+  const descriptor = HomeConnectionDescriptorV1Schema.safeParse(profile?.homeConnectionDescriptor);
+  if (profile?.homeConnectionDescriptorAuthority !== 'exact' || !descriptor.success
+    || descriptor.data.homeServerIdentityId !== params.serverId) {
+    throw new Error(`Production terminal login did not persist its authenticated Home descriptor in active profile ${settings.activeServerId}`);
+  }
   const machineId = resolveMachineIdForServerFromSettings(settings, settings.activeServerId,
-    readAccountIdFromToken(account.auth.token));
+    readAccountIdFromToken(params.accountToken));
   if (!machineId) throw new Error('Production terminal login omitted its Account Machine identity');
   return { homeDir, serverId: settings.activeServerId, machineId };
 }
