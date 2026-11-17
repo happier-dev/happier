@@ -1400,7 +1400,7 @@ function isProjectPrepareReviewEffect(rootActionId: string, effectActionId: stri
 
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
-    effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof) {
+    effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof, signerAccountId: string) {
     const reviewedManagedAcquirePurpose = await isReviewedManagedAcquirePurpose(binding, effectActionId, proof);
     const domainPurpose = readExternalActionDeploymentDomainPurpose(binding, effectActionId, proof);
     const teardownDomainContinuation = binding.actionId === 'deployments.teardown' && domainPurpose?.kind === 'transition';
@@ -1424,7 +1424,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         isEnvironmentRead: () => isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof),
         isCurrentnessRead: () => isAccountEncryptionCurrentnessHttpRead(proof),
         readArtifactId: () => readArtifactGetHttpPurpose(proof),
-    });
+    }, signerAccountId);
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
@@ -1608,7 +1608,7 @@ async function verifyCommon(
                     custodianAccountId: verified.binding.custodianAccountId };
             }
         }
-        const childPurpose = await readSignedChildPurpose(verified.binding, effectActionId.data, target, proof);
+        const childPurpose = await readSignedChildPurpose(verified.binding, effectActionId.data, target, proof, signer.custodianAccountId);
         if (proof.reviewedChild && childPurpose.deploymentReferenceRead !== true) return refuseExternalActionExecutionRequest('verification_purpose', proof);
         const preparationRead = childPurpose.deploymentReferenceRead === null
             ? await readDeploymentPreparationHttpReadPurpose(db, verified.binding, effectActionId.data, proof,
@@ -1629,7 +1629,7 @@ async function verifyCommon(
     })) return refuse('resolved_target');
     if (!await hasCurrentOriginalSessionActionTargetInTx(db, binding, target)) return refuse('original_target');
     if (binding.actionId === 'session.pending.resetStart.set' && !binding.pendingResetStartAdmission) return refuse('pending_reset_admission');
-    const childPurpose = await readSignedChildPurpose(binding, effectActionId.data, target, proof);
+    const childPurpose = await readSignedChildPurpose(binding, effectActionId.data, target, proof, binding.custodianAccountId);
     const { createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild,
         reviewedSetupRead, nativeTransition, domainPurpose } = childPurpose;
     if (!childPurpose.effectFamilyAdmitted) return refuse('effect_family');

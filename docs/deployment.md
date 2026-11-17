@@ -65,7 +65,12 @@ the existing host-reviewed read child. Its signed `environmentId` must match the
 child's Action input digest. The shared preparation scope opens only that
 Environment's metadata, owned content and Machine codec reads while the root
 deployment runs. Source and Artifact access remain with their resource owners;
-the reference does not inherit the root receipt's content custody. Member
+the reference does not inherit the root receipt's content custody. The signing
+Machine's custodian chose the operand, so when that custodian is not the
+requester (a Team member's Machine, or a controller another person owns) the same
+owner also requires the custodian's own Account to read the referenced
+Environment; otherwise Home refuses with `verification_purpose`. A requester's
+personal Environment is never readable from another person's Machine. Member
 activation always runs as a forwarded `member` child (even on the controller's
 own Machine), so the member carrier signs this one reviewed read too: the child
 packet plus the `deployment.reference` proof, effect `deployments.environments.get`

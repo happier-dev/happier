@@ -1347,6 +1347,45 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it.each(['member', 'controller'] as const)('admits a foreign %s custodian\'s saved-reference read only for Environments that custodian can read itself', async signer => {
+        // SEC-ODEPLOY-172 F1: a Team deploy placed on another member's Machine. The
+        // signing custodian may read the requester's Team Environment, never A's personal one.
+        const f = await fixture('team', 'account', { readableEnvironment: true,
+            ...(signer === 'member' ? { separateMemberCustodian: true } : { separateControllerCustodian: true }) });
+        const custodian = signer === 'member' ? f.member : f.controller;
+        expect(custodian.accountId).not.toBe(f.account.id);
+        const personalSource = await inTx(tx => createProjectSourceInTx(tx, f.account.id, { serverId, requestKey: crypto.randomUUID(),
+            name: 'A personal', audience: [], repository: { protocol: 'https',
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'a/private', cloneUrl: 'https://github.com/a/private.git' } } }));
+        if (!personalSource.ok) throw new Error(personalSource.error);
+        const created = (projectSourceId: string) => f.content('deployment-environment.v1').then(content => db.deploymentEnvironment.create({ data: {
+            projectSourceId, createdByAccountId: f.account.id, protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId: f.controller.id, ...content } }));
+        const personal = await created(personalSource.source.id);
+        const shared = await created(f.environment.projectSourceId);
+        const action = 'deployments.environments.get';
+        const target = f.authorization.binding.target;
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); }, async app => {
+            const read = (environmentId: string) => {
+                const path = `/v1/deployments/environments/${environmentId}?serverId=${serverId}`;
+                const reviewedChild = { actionId: action, role: 'deployment.reference', environmentId,
+                    inputDigest: computeActionInputApprovalDigestV1(action, { serverId, environmentId }) };
+                return app.inject({ method: 'GET', url: path, headers: { ...currentAccountStoredContentCompatibilityHeaders,
+                    ...createExternalActionAuthorizedRequestHeaders({ authorization: f.authorization, effectActionId: action, target,
+                        installationId: custodian.installationId, method: 'GET', path, reviewedChild,
+                        ...(signer === 'member' ? { deploymentChildExecution: f.rpc() } : {}),
+                        privateKey: custodian.keys.secretKey }) } });
+            };
+            const refused = await read(personal.id);
+            expect(refused.statusCode, refused.body).toBe(401);
+            expect(refused.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
+            expect(refused.body).not.toContain('A personal');
+            const admitted = await read(shared.id);
+            expect(admitted.statusCode, admitted.body).toBe(200);
+        }, { authentication: 'real' });
+    });
+
     it('admits a saved-reference read during the root review before any receipt exists', async () => {
         // DB-MOVE cutover (COR3B-DATA-1115): Environment A references B's export.
         // The Deploy review renders A's runtime bindings before Home accepts a

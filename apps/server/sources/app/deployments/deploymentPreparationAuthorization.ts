@@ -1641,11 +1641,15 @@ async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Exter
 /** Saved references are private Environment content. The host's reviewed child
  * retains the selected operand; Home consumes it without rediscovering bindings
  * or granting the root's accepted-content custody to the referenced Source.
- * This owner decides the read's currentness; ordinary routes retain access. */
+ * This owner decides the read's currentness; ordinary routes retain the
+ * requester's access. A signing custodian other than the requester (a Team
+ * member's Machine) chose the operand itself, so it may name only Environments
+ * its own Account can already read: no requester material crosses to it. */
 export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
     transports: Readonly<{ isEnvironmentRead(): boolean; isCurrentnessRead(): boolean; readArtifactId(): string | null }>,
+    signerAccountId: string,
 ): Promise<boolean | null> {
     const child = proof.reviewedChild;
     if (child?.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && child?.environmentId === undefined) return null;
@@ -1660,6 +1664,8 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     // bindings, before Home accepts a receipt; once accepted, the job must still run.
     if (await readAcceptedDeploymentReceiptInTx(tx, binding, undefined,
         { state: { notIn: deploymentInProgressStates() } })) return false;
+    if (signerAccountId !== binding.accountId && !(await loadDeploymentEnvironmentInTx(tx, signerAccountId,
+        binding.serverIdentityId, child.environmentId)).ok) return false;
     if (transports.isEnvironmentRead()) return sameStrictJsonValue(proof.routeInput, input);
     if (transports.isCurrentnessRead()) return proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, {});
     const artifactId = transports.readArtifactId();
