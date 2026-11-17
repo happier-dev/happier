@@ -22,6 +22,29 @@ This is an unpublished 0.3 error-contract addition. Matching Protocol, server an
 app readers deploy together; no database migration or released-version adapter
 is introduced.
 
+## Browser exception setup (0.3 development)
+
+“Add telemetry to this app” supplies the agent with copyable app code in the
+existing setup brief's evidence. The agent adapts the global `error` and
+`unhandledrejection` listeners and `POST /api/telemetry` Web Request handler to
+the app's framework. Install listeners once, preserving the app's own handlers.
+Static-only apps need a server/edge route or an existing error integration.
+
+The browser sends only exception fields to its own origin. The app route uses
+the existing P6 server-side collector settings, stamps the served browser build's
+`service.version` and Environment, and forwards structured OTLP logs through the
+existing receiver. Never expose collector authentication in a browser bundle or
+Session. Apply the app's existing ingress/body/abuse policies to this public route;
+an Origin check alone does not authenticate visitors. Reporting is best effort:
+forwarding failures return an empty failure response and never break app handling.
+
+Exceptions must be selected on the Environment. Ingest owns redaction and grouping
+once; the native issue writer and Team Collection sharing remain unchanged. For
+minified evidence, investigation uses the matching release's repository/build and
+local source map. Missing or mismatched builds remain unsymbolicated; there is no
+source-map upload service. Verify setup with a controlled throw and rejection
+outside spans, then inspect the selected occurrence and its release.
+
 ## First repository deploy (0.3 development)
 
 The app's Environment Deploy gesture prepares a missing Source checkout on its

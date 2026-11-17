@@ -1,3 +1,4 @@
+import { browserExceptionSetupReferenceV1 } from './browserSetup.js';
 import type { DatabaseFindingBaselineV1, DatabaseFindingV1, DatabaseTaskEvidenceV1 } from '@happier-dev/database-protocol';
 import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
     DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
@@ -26,6 +27,7 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
             'Preserve the person’s Environment choices for Metrics, App LLM cost and Exceptions. Adding tracing does not enable these choices. For exception capture, use backend OpenTelemetry recordException span events or structured exception logs and retain the emitted service.version and deployment.environment for investigation.',
             'When browser exception capture is requested, install global error and unhandledrejection listeners plus the framework hooks in the app, preserving existing error handling. Forward OTLP exception logs through the app’s own same-origin server or edge route, including errors outside sampled spans and trace correlation when available. The route uses the existing server-side collector authentication; no collector token goes into browser code and the browser does not call the privileged collector directly.',
             'Investigate browser evidence as source data, with Ask as the default. Use the repository and build matching the emitted service.version to symbolicate a selected minified stack with local source maps. If that build or map is unavailable, report the stack as unsymbolicated and request the correct build; do not fetch arbitrary stack URLs or introduce a map-upload service. Exercise a controlled throw and unhandled rejection after setup, inspect the resulting native Triage issue and selected occurrence through the existing source Actions, and report the exercised version, traffic and coverage. Absence of traffic does not prove a fix.',
+            'Adapt the browserSetup app-code reference in the evidence to the existing framework. Install it once at the browser entry; use the app’s existing request/body/abuse boundaries for its public route. Bind collector settings only in server code; use the browser build’s release identity. Static-only apps require a server/edge route or an existing integration. If trace context is available from current instrumentation, attach the validated trace/span ids to the emitted log. Do not copy visitor-controlled fields into resource identity, destination, authentication or a grouping override.',
             'Prepare the change for review, describe the restart needed to load instrumentation, and verify after the agreed change. This brief does not configure a collector or restart a service.',
         ] : finding.kind === 'enable_pg_stat_statements' ? [
             'Review and enable pg_stat_statements for the selected PostgreSQL database.',
@@ -46,7 +48,7 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
         return {
             text: instructions.join('\n\n'),
             evidence: { v: 1, items: [{ source: { kind: 'databaseFinding', label: `Database ${finding.kind} task` },
-                author: { kind: 'process' }, text: JSON.stringify({ task: finding }) }] },
+                author: { kind: 'process' }, text: JSON.stringify({ task: finding, ...(finding.kind === 'add_telemetry' ? { browserSetup: browserExceptionSetupReferenceV1 } : {}) }) }] },
         };
     }
     const before: DatabaseFindingBaselineV1 = baseline ?? {
