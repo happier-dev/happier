@@ -43,6 +43,24 @@ describe('public Lima native leaf', () => {
     await expect(provider.acquire({ managedId, launch: requested })).rejects.toThrow();
     expect(boundary.effects).toEqual([]);
   });
+  it('refuses legacy mounted guest access and restart while preserving exact inspection and deletion', async () => {
+    const mounts = [{ location: '/host/project', mountPoint: '/workspace', writable: true }];
+    const legacy = { ...resource, mounts };
+    let present = true;
+    const boundary = processBoundary(args => {
+      if (args[0] === 'delete') present = false;
+      return { exitCode: 0, out: present ? JSON.stringify({ ...native, config: { ...native.config, mounts } }) : '', err: '' };
+    });
+    const provider = createLimaProvider(boundary.executor);
+    await expect(provider.bootstrap(legacy)).rejects.toMatchObject({ code: 'native_resource_unavailable' });
+    await expect(provider.exec(legacy, ['sh'])).rejects.toMatchObject({ code: 'native_resource_unavailable' });
+    await expect(provider.stream(legacy, ['sh'])).rejects.toMatchObject({ code: 'native_resource_unavailable' });
+    await expect(provider.putFile(legacy, '/tmp/file', new Uint8Array())).rejects.toMatchObject({ code: 'native_resource_unavailable' });
+    await expect(provider.power(legacy, 'start')).rejects.toMatchObject({ code: 'native_resource_unavailable' });
+    expect(boundary.effects).toEqual([]);
+    expect(await provider.inspect(legacy)).toMatchObject({ availability: 'present' });
+    expect(await provider.destroy(legacy)).toEqual({ kind: 'confirmed' });
+  });
   it.each(['exec', 'stream', 'putFile', 'power', 'destroy'] as const)('%s inspects native identity only at the shared effect boundary', async role => {
     let status = 'Running';
     let present = true;

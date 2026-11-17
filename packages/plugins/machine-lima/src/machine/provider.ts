@@ -9,7 +9,7 @@ import {
 import type { LimaCommandResult, LimaExecutor, LimaInstance } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import type { MachineProvisionerOptionsResultV1, MachineProvisionerSizeV1, MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { observeMachineProvisionerNativeRead, MachineProvisionerSizeV1Schema, projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_CLOUD_SSH_USER } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './schemas.js';
+import { LimaGuestMountsSchema, LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './schemas.js';
 import type { LimaLaunch, LimaResource } from './schemas.js';
 import { machinePresentationLabel } from '../ui/translations.js';
 import { LimaNativeCommandError } from './nativeExecutor.js';
@@ -177,6 +177,13 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
     }
     return launch.vmType === 'qemu' ? requireQemu(launch.arch) : { available: true };
   }
+  function requireGuestResource(rawResource: LimaResource) {
+    const resource = LimaResourceSchema.parse(rawResource);
+    if (!LimaGuestMountsSchema.safeParse(resource.mounts).success) {
+      throw new PluginError({ code: 'native_resource_unavailable' });
+    }
+    return resource;
+  }
   async function inspectExact(rawResource: LimaResource) {
     const resource = LimaResourceSchema.parse(rawResource);
     validateLimaStore(resource.store);
@@ -310,7 +317,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       }
     },
     async bootstrap(resource: LimaResource) {
-      const { native } = await inspectExact(resource);
+      const { native } = await inspectExact(requireGuestResource(resource));
       if (!native || String(limaInstanceField(native, 'status')).toLowerCase() !== 'running') {
         // Lima's start command is awaited by acquire/power. A later Stopped
         // observation alone cannot establish an outstanding start.
@@ -323,7 +330,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
     async reconcile(target: Readonly<{ managedId: string; launch: LimaLaunch }> | Readonly<{ resource: LimaResource }>) {
       const expected = 'launch' in target ? limaAcquisitionResource(LimaLaunchSchema.parse(target.launch), target.managedId) : target.resource;
       try {
-        const { resource, native } = await inspectExact(expected);
+        const { resource, native } = await inspectExact(requireGuestResource(expected));
         if (!native) return { kind: 'rejected' as const, code: 'managed_not_found' as const };
         return { kind: 'bound' as const, resource: { origin: 'created' as const, contributionRef, schemaVersion: 1, value: resource } };
       } catch (error) {
@@ -364,7 +371,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
     },
     async power(rawResource: LimaResource, intent: 'start' | 'stop') {
       try {
-        const resource = LimaResourceSchema.parse(rawResource);
+        const resource = intent === 'start' ? requireGuestResource(rawResource) : LimaResourceSchema.parse(rawResource);
         validateLimaStore(resource.store);
         const power = await changeLimaPower({ executor, ...resource, intent });
         return { kind: power.status.toLowerCase() === (intent === 'start' ? 'running' : 'stopped') ? 'confirmed' as const : 'unknown' as const };
@@ -387,20 +394,20 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       }
     },
     async exec(rawResource: LimaResource, argv: readonly string[], input?: Uint8Array) {
-      const resource = LimaResourceSchema.parse(rawResource);
+      const resource = requireGuestResource(rawResource);
       validateLimaStore(resource.store);
       return execLimaGuest({ executor, ...resource, argv, input });
     },
     /** The optional `stream` role: one long-lived guest shell process carrying the invocation channel. */
     async stream(rawResource: LimaResource, argv: readonly string[]): Promise<TChannel> {
-      const resource = LimaResourceSchema.parse(rawResource);
+      const resource = requireGuestResource(rawResource);
       validateLimaStore(resource.store);
       const { channel } = executor;
       if (!channel) throw Object.assign(new Error('native Lima channel is unavailable'), { code: 'LIMA_CHANNEL_UNSUPPORTED' });
       return openLimaGuestChannel({ executor: { ...executor, channel }, ...resource, argv });
     },
     async putFile(rawResource: LimaResource, guestPath: string, bytes: Uint8Array, mode?: string) {
-      const resource = LimaResourceSchema.parse(rawResource);
+      const resource = requireGuestResource(rawResource);
       validateLimaStore(resource.store);
       return putLimaGuestFile({ executor, ...resource, guestPath, bytes, mode });
     },

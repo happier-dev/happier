@@ -18,12 +18,12 @@ const mount = defineProtocolObject({
   ]),
 }, closed);
 const mounts = defineProtocolArray(mount);
-const noHostMounts = defineProtocolArray(mount, { maxItems: 0 });
+export const LimaGuestMountsSchema = defineProtocolArray(mount, { maxItems: 0 });
 
 export const LimaLaunchSchema = defineProtocolObject({
   store: absolutePath, image, arch: architecture, vmType,
   cpus: positiveInteger, memoryGiB: positiveInteger, diskGiB: positiveInteger,
-  mounts: noHostMounts,
+  mounts: LimaGuestMountsSchema,
   preparedBase: preparedBase.optional(),
 }, closed);
 
@@ -32,7 +32,7 @@ export const LimaLaunchSchema = defineProtocolObject({
 export const LimaOptionsInputSchema = defineProtocolObject({
   store: absolutePath.optional(), image: image.optional(),
   arch: architecture.optional(), vmType: vmType.optional(), cpus: positiveInteger.optional(),
-  memoryGiB: positiveInteger.optional(), diskGiB: positiveInteger.optional(), mounts: noHostMounts.optional(),
+  memoryGiB: positiveInteger.optional(), diskGiB: positiveInteger.optional(), mounts: LimaGuestMountsSchema.optional(),
   preparedBase: preparedBase.optional(),
 }, closed);
 
