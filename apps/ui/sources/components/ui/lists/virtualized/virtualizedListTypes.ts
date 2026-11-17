@@ -96,6 +96,8 @@ export type VirtualizedListProps<T> = Readonly<{
     onStartReachedThreshold?: number;
 
     initialScrollIndex?: number;
+    /** Where a newly mounted list starts, in pixels: a remounted list resumes the reader's place in its first layout. */
+    initialScrollOffset?: number;
     initialNumToRender?: number;
     maxToRenderPerBatch?: number;
     disableVirtualization?: boolean;

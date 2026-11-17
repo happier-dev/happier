@@ -96,8 +96,8 @@ describe('useSessionListScrollRetention', () => {
             removed.getCurrent().handleLayout(layoutEvent(416));
             retained.getCurrent().handleLayout(layoutEvent(416));
         });
-        expect(firstScrollToOffset).not.toHaveBeenCalled();
-        expect(secondScrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
+        expect(removed.getCurrent().initialScrollOffset).toBeUndefined();
+        expect(retained.getCurrent().initialScrollOffset).toBe(280);
         await removed.unmount();
         await retained.unmount();
     });
@@ -157,11 +157,12 @@ describe('useSessionListScrollRetention', () => {
             scrollToOffset: remountScrollToOffset,
         }));
 
+        // The remounted list starts at the reader's place; its first layout does not scroll it again.
+        expect(remountedHook.getCurrent().initialScrollOffset).toBe(280);
         await act(async () => {
             remountedHook.getCurrent().handleLayout(layoutEvent(416));
         });
-
-        expect(remountScrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
+        expect(remountScrollToOffset).not.toHaveBeenCalled();
     });
 
     it('ignores native refresh bounce offsets instead of clearing the retained scroll position', async () => {

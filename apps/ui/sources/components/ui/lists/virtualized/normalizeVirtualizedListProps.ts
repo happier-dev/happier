@@ -49,6 +49,7 @@ export type NormalizedSharedListProps<T> = Readonly<{
     onEndReached?: VirtualizedListProps<T>['onEndReached'];
     onEndReachedThreshold?: number;
     initialScrollIndex?: number;
+    initialScrollOffset?: number;
     initialNumToRender?: number;
     maxToRenderPerBatch?: number;
     disableVirtualization?: boolean;
@@ -126,6 +127,7 @@ export function normalizeVirtualizedListProps<T>(
             onEndReached: props.onEndReached,
             onEndReachedThreshold: props.onEndReachedThreshold,
             initialScrollIndex: props.initialScrollIndex,
+            initialScrollOffset: props.initialScrollOffset,
             initialNumToRender: props.initialNumToRender,
             maxToRenderPerBatch: props.maxToRenderPerBatch,
             disableVirtualization: props.disableVirtualization,

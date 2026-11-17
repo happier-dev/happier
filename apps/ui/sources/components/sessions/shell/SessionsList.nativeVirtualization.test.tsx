@@ -1479,6 +1479,22 @@ describe('SessionsList (native virtualization)', () => {
         expect(scrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
     });
 
+    it('starts a remounted list at the reader offset instead of scrolling it after layout', async () => {
+        // A Settings round trip remounts the column; its list lays out behind first-composition rows, and a
+        // scroll issued before the list's own first layout was lost on web (measured live: 1,412 px to 0).
+        const first = await renderSessionsList();
+        await act(async () => {
+            const props = virtualizedListState.current?.props;
+            props?.onLayout?.({ nativeEvent: { layout: { height: 416 } } });
+            props?.onScroll?.({ nativeEvent: { contentOffset: { y: 280 }, layoutMeasurement: { height: 416 } } });
+        });
+        await first.unmount();
+
+        const second = await renderSessionsList();
+        expect(virtualizedListState.current?.props?.initialScrollOffset).toBe(280);
+        await second.unmount();
+    });
+
     it('keeps native virtualized list prop identities stable across unrelated rerenders', async () => {
         const screen = await renderSessionsList();
         const initialProps = virtualizedListState.current?.props;

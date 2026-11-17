@@ -130,6 +130,16 @@ export function useSessionListScrollRetention(params: Readonly<{
         [params.retentionKey],
     );
 
+    // A remount (a Settings round trip swaps the column) starts its list at the reader's place. An imperative scroll
+    // here is lost on web: the list lays out behind its first-composition rows, and its first scroll call precedes
+    // its own initial layout (measured live: 1,412 px restored to 0). The list takes the offset as its starting point.
+    const initialScrollOffset = React.useMemo(
+        () => retentionEntry.restorePending && retentionEntry.lastVisibleOffsetY > 0 ? retentionEntry.lastVisibleOffsetY : undefined,
+        [retentionEntry],
+    );
+    React.useLayoutEffect(() => {
+        if (initialScrollOffset !== undefined) retentionEntry.restorePending = false;
+    }, [initialScrollOffset, retentionEntry]);
     const visibleViewportHeightRef = React.useRef(0);
     const contentHeightRef = React.useRef<number | null>(null);
     const pendingMembershipRestoreRef = React.useRef<Readonly<{
@@ -325,5 +335,6 @@ export function useSessionListScrollRetention(params: Readonly<{
         handleScroll,
         handleScrollInteractionStart,
         handleViewableItemsChanged,
-    }), [handleLayout, handleScroll, handleScrollInteractionStart, handleViewableItemsChanged]);
+        initialScrollOffset,
+    }), [handleLayout, handleScroll, handleScrollInteractionStart, handleViewableItemsChanged, initialScrollOffset]);
 }

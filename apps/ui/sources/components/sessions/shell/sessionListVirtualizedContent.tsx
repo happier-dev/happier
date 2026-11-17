@@ -171,6 +171,8 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
         waitForInteraction?: boolean;
     }>;
     onLayout?: (event: SessionListLayoutEvent) => void;
+    /** The reader's retained place, where a remounted list starts (`useSessionListScrollRetention`). */
+    initialScrollOffset?: number;
     onContentSizeChange?: (width: number, height: number) => void;
     onStopScrollEventPropagationOnWeb: (event: any) => void;
     filteredNoResultsMessage?: TranslationKey;
@@ -336,6 +338,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             onViewableItemsChanged={handleViewableItemsChanged as any}
             viewabilityConfig={viewabilityConfig as any}
             onLayout={props.onLayout}
+            initialScrollOffset={props.initialScrollOffset}
             onContentSizeChange={props.onContentSizeChange}
             scrollEventThrottle={isWeb ? WEB_LIST_SCROLL_EVENT_THROTTLE_MS : NATIVE_LIST_SCROLL_EVENT_THROTTLE_MS}
             keyboardShouldPersistTaps="handled"

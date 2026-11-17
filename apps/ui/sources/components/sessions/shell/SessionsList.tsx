@@ -626,6 +626,7 @@ function VisibleSessionsListViewContent(
                         onViewableItemsChanged={handleViewableItemsChanged}
                         viewabilityConfig={viewState.viewabilityConfig}
                         onLayout={handleTreeViewportLayout}
+                        initialScrollOffset={scrollRetention.initialScrollOffset}
                         onContentSizeChange={viewState.onTreeContentSizeChange}
                         onRegisterTreeRowBounds={viewState.onRegisterTreeRowBounds}
                         onUnregisterTreeRowBounds={viewState.onUnregisterTreeRowBounds}
