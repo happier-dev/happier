@@ -8,7 +8,9 @@ describe("Team managed defaults audience", () => {
         const managedDefaults = { team: { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" as const } }, groups: {} };
         const homeDefaults = { permissionModeByAgentTargetKey: { "agent:example.agent/example": "default" as const } };
         const capabilities = { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true };
+        const membership = { viewerJoinedAt: 1700000000000 };
         const summary = projectTeamSummaryV1({
+            ...membership,
             team: {
                 id: "team", name: "Team", description: null, logo: null, archivedAt: null,
                 sessionCreationPolicy: "private_default", externalSharingPolicy: "allowed",
@@ -21,6 +23,7 @@ describe("Team managed defaults audience", () => {
         });
         expect(summary.policy.managedDefaults).toEqual(viewerRole === "guest" ? null : managedDefaults);
         expect(summary.policy.homeDefaults).toEqual(homeDefaults);
+        expect(summary).toMatchObject(membership);
     });
 
     it("withholds managed defaults from a safe summary when Team reading is denied", () => {
@@ -40,5 +43,6 @@ describe("Team managed defaults audience", () => {
         expect(summary.id).toBe(team.id);
         expect(summary.policy.managedDefaults).toBeNull();
         expect(summary.managedDefaultsGroupIds).toEqual([]);
+        expect(summary).toMatchObject({ viewerJoinedAt: null });
     });
 });

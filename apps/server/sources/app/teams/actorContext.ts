@@ -78,6 +78,8 @@ export type TeamActorContext = Readonly<{
         role: TeamRole;
         status: TeamMembershipStatus;
         managedExternally: boolean;
+        /** Membership creation time projected for the viewer's Home setup offer. */
+        joinedAt?: number;
     }> | null;
     homeAuthority: HomeGovernanceAuthority;
     /** Team-membership authority before the independent Home detail/lifecycle arm is composed. */
@@ -189,7 +191,7 @@ export async function resolveTeamActorContextsInTx(
         // Actor id plus the two one-to-one relation LIMIT operands on PostgreSQL.
         Promise.all(portableQueryChunks({ values: teamIds, bindingsPerValue: 1, fixedBindings: 3 }).map(ids => tx.teamMembership.findMany({
             where: { teamId: { in: [...ids] }, accountId: input.actorAccountId },
-            select: { id: true, teamId: true, role: true, status: true,
+            select: { id: true, teamId: true, role: true, status: true, createdAt: true,
                 provisionedIdentity: { select: { id: true } },
                 identityConnectionManagement: { select: { teamMembershipId: true } } },
         }))),
@@ -204,8 +206,8 @@ export async function resolveTeamActorContextsInTx(
     const teams = teamPages.flat();
     const memberships = membershipPages.flat();
     const ownerRows = ownerPages.flat();
-    const membershipByTeam = new Map(memberships.map(({ teamId, provisionedIdentity, identityConnectionManagement, ...membership }) => [teamId, {
-        ...membership, managedExternally: provisionedIdentity !== null || identityConnectionManagement !== null,
+    const membershipByTeam = new Map(memberships.map(({ teamId, createdAt, provisionedIdentity, identityConnectionManagement, ...membership }) => [teamId, {
+        ...membership, joinedAt: createdAt.getTime(), managedExternally: provisionedIdentity !== null || identityConnectionManagement !== null,
     }] as const));
     const ownerCounts = new Map<string, number>();
     for (const row of ownerRows) ownerCounts.set(row.teamId, (ownerCounts.get(row.teamId) ?? 0) + 1);
@@ -420,7 +422,7 @@ export async function resolveTeamActorContextForTeamInTx(
 
     const membership = await tx.teamMembership.findUnique({
         where: { teamId_accountId: { teamId: team.id, accountId: input.actorAccountId } },
-        select: { id: true, role: true, status: true,
+        select: { id: true, role: true, status: true, createdAt: true,
             provisionedIdentity: { select: { id: true } },
             identityConnectionManagement: { select: { teamMembershipId: true } } },
     });
@@ -433,6 +435,7 @@ export async function resolveTeamActorContextForTeamInTx(
         accountStatus,
         membership: membership ? {
             id: membership.id, role: membership.role, status: membership.status,
+            joinedAt: membership.createdAt.getTime(),
             managedExternally: membership.provisionedIdentity !== null || membership.identityConnectionManagement !== null,
         } : null,
         homeAuthority,

@@ -100,6 +100,8 @@ export const TeamSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   /** Effective Group membership identities, decided by the server's membership owner. */
   managedDefaultsGroupIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   viewerRole: z.nullable(TeamRoleV1Schema),
+  /** The viewer's membership lifetime; omission by an older Home is unknown. */
+  viewerJoinedAt: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0)))),
   capabilities: TeamCapabilitiesV1Schema,
   admission: TeamAdmissionProjectionV1Schema,
   counts: z.nullable(TeamSummaryCountsV1Schema),

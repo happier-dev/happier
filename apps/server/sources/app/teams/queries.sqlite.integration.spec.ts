@@ -94,6 +94,15 @@ describe('Team directory (SQLite integration)', () => {
     expect(ids).toContain(mine.id);
     expect(ids).not.toContain(theirs.id);
     expect(ids).not.toContain(archived.id);
+    // Home offers use this existing membership lifetime rather than fetching
+    // each Team's setup. Point reads must preserve the same summary fact.
+    const membership = await db.teamMembership.findUniqueOrThrow({
+      where: { teamId_accountId: { teamId: mine.id, accountId: viewer.id } },
+    });
+    const joinedAt = membership.createdAt.getTime();
+    expect(active.page.items.find(item => item.id === mine.id)).toMatchObject({ viewerJoinedAt: joinedAt });
+    expect(await inTx(tx => readTeamSummaryForActorInTx(tx, { teamId: mine.id, actorAccountId: viewer.id })))
+      .toMatchObject({ ok: true, team: { viewerJoinedAt: joinedAt } });
 
     const archivedPage = await list(viewer.id, { archived: 'archived' });
     expect(archivedPage.ok).toBe(true);
@@ -141,6 +150,7 @@ describe('Team directory (SQLite integration)', () => {
     expect(row).toBeDefined();
     // Administrative visibility is not membership.
     expect(row?.viewerRole).toBeNull();
+    expect(row).toMatchObject({ viewerJoinedAt: null });
     expect(row?.capabilities.manageMembers).toBe(false);
 
     expect(await list(stranger.id, { scope: 'administered' })).toEqual({

@@ -213,6 +213,10 @@ describe('Team summary projection', () => {
 
   it('round-trips and rejects undeclared fields', () => {
     expect(TeamSummaryV1Schema.parse(summary)).toEqual(summary);
+    expect(TeamSummaryV1Schema.parse({ ...summary, viewerJoinedAt: 1700000000000 }))
+      .toMatchObject({ viewerJoinedAt: 1700000000000 });
+    expect(TeamSummaryV1Schema.parse({ ...summary, viewerJoinedAt: null }))
+      .toMatchObject({ viewerJoinedAt: null });
     expect(TeamSummaryV1Schema.safeParse({ ...summary, memberCount: 12 }).success).toBe(false);
     const directoryMembership = { providerDisplayName: 'Okta via WorkOS', state: 'healthy' };
     expect(TeamSummaryV1Schema.parse({ ...summary, directoryMembership }).directoryMembership).toEqual(directoryMembership);

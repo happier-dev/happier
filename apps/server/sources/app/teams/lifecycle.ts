@@ -481,6 +481,7 @@ async function projectQualifiedTeamContextInTx(
             teamCapabilities: qualification.ok ? context.teamCapabilities : NO_TEAM_CAPABILITIES_V1,
             team: context.team,
             viewerRole: context.membership?.role ?? null,
+            viewerJoinedAt: context.membership?.joinedAt ?? null,
             capabilities: qualification.ok ? context.capabilities : resolveTeamCapabilitiesV1({
                 accountStatus: context.accountStatus,
                 homeAuthority: context.homeAuthority,

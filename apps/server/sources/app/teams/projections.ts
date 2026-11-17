@@ -168,6 +168,7 @@ export type TeamSummaryCountFacts = Readonly<Omit<TeamSummaryCountsV1, "groups" 
 export function projectTeamSummaryV1(input: Readonly<{
     team: TeamRecord;
     viewerRole: TeamRole | null;
+    viewerJoinedAt?: number | null;
     capabilities: TeamCapabilitiesV1;
     ownerRequired: boolean;
     homeAuthority: Pick<HomeGovernanceAuthority, "manageAllTeams">;
@@ -211,6 +212,7 @@ export function projectTeamSummaryV1(input: Readonly<{
             directoryMembership: projectTeamDirectoryMembershipFact(input.team.directorySources),
         } : {}),
         viewerRole: input.viewerRole,
+        viewerJoinedAt: input.capabilities.viewTeam ? input.viewerJoinedAt ?? null : null,
         capabilities: input.capabilities,
         admission: resolveTeamAdmissionProjectionV1(),
         counts: projectTeamSummaryCountsV1({
