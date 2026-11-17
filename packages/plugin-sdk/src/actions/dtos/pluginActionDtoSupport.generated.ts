@@ -105,6 +105,12 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
     selector: "self";
     of?: string | undefined;
 } | {
+    selector: "sessions";
+    addresses: {
+        serverId: string;
+        sessionId: string;
+    }[];
+} | {
     selector: "siblings";
     of?: string | undefined;
 } | {
@@ -199,6 +205,12 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
 } | {
     selector: "self";
     of?: string | undefined;
+} | {
+    selector: "sessions";
+    addresses: {
+        serverId: string;
+        sessionId: string;
+    }[];
 } | {
     selector: "siblings";
     of?: string | undefined;

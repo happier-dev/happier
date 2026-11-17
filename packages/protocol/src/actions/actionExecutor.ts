@@ -131,6 +131,7 @@ import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 
 import { SessionArchiveResultSchema, SessionArchiveActionInputV1Schema, SessionArchiveActionResultV1Schema, type SessionArchiveReportOutcomeV1 } from '../sessions/control/contract.js';
 import { readSessionManagerSessionIdV1 } from '../sessions/follow/sessionManagerV1.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../sessions/listing/query.js';
+import { runActionSessionFanout } from './executor/sessionFanout.js';
 import { bindActionSessionTargetOperands, previewActionSessionTargets, projectChildActionSessionTargetsV1, readActionSessionTargetField, readActionSessionTargetOperands, replaceActionSessionTargetField, resolveActionSessionAddress, resolveActionSessionTargets } from './executor/sessionTargets.js';
 import { SessionMessageExplicitReplyV1Schema, SessionMessageReplyMutationResultV1Schema,
   classifySessionMessageReplyPublicationFailureV1, deriveSessionMessageReplyReturnLocalIdV1,
@@ -3979,11 +3980,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf) {
         const snapshot = ctx.sessionTargetsV1;
         const { actionAutomationAdmission: _groupAutomationAdmission,
-          prepareAdmittedExecutionOrigin: _groupExecutionOrigin, ...materialContext } = ctx;
+          prepareAdmittedExecutionOrigin: _groupExecutionOrigin, onSessionTargetResult: _groupTargetResult, ...materialContext } = ctx;
         const runTargets = async (): Promise<ActionExecuteResult> => {
-          const results: Array<{ target: ActionSessionAddress; result: ActionExecuteResult }> = [];
           const parentRequestId = ctx.actionRequestId ?? bytesToHex(randomBytes(16));
-          for (const [position, target] of snapshot.targets.entries()) {
+          const results = await runActionSessionFanout({ actionId, targets: snapshot.targets, context: snapshot.selector ? ctx : materialContext, deps,
+            execute: async (target, position) => {
             // The group already admitted Account authority, the credential's
             // Action ceiling and enablement. Each new target retains its own
             // credential-target, caller-scope and domain admission.
@@ -4003,8 +4004,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                     bypassApprovals: delegatesApprovalClassificationToResolvedAction(actionId)
                       ? materialContext.bypassApprovals : true }, true,
                   legacyMetadataLabel, undefined, options?.approvalReplay === true, undefined, true, undefined, hostInternal);
-            results.push({ target, result });
-          }
+            return result;
+          } });
           return snapshot.selector
             ? { ok: true, result: { kind: 'fanout', results } }
             : results[0].result;

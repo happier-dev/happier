@@ -10,6 +10,8 @@ const ExactSessionReferenceV1Schema = lazyZodSchema(() => z.string().check(z.tri
 
 /** Closed routing intent. `of` is an exact reference and never another selector. */
 export const SessionTargetSelectorV1Schema = lazyZodSchema(() => z.discriminatedUnion('selector', [
+  z.strictObject({ selector: z.literal('sessions'), addresses: z.array(ActionSessionAddressV1Schema).check(z.minLength(1)).check(z.overwrite(addresses =>
+    [...new Map(addresses.map(address => [JSON.stringify([address.serverId, address.sessionId]), address])).values()])) }),
   z.strictObject({ selector: z.literal('self'), of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('manager'), of: z.optional(ExactSessionReferenceV1Schema) }),
   z.strictObject({ selector: z.literal('workers'), of: z.optional(ExactSessionReferenceV1Schema), recursive: z.optional(z.boolean()) }),

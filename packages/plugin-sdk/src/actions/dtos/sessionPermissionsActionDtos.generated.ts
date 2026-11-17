@@ -138,7 +138,7 @@ export type SessionPermissionsActionInputById = {
     readonly "session.mode.set": {
         [x: string]: unknown;
         modeId: string;
-        sessionId?: string | undefined;
+        sessionId?: SessionTargetV1<true> | undefined;
     };
 };
 export type SessionPermissionsActionResultById = {

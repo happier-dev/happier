@@ -1,6 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { SessionTargetV1Schema, withSessionTargetFanoutResultV1 } from '../sessionTargetV1.js';
 import { CapabilityApplyTimingV1Schema } from '../../reach/capabilityApplyTimingV1.js';
 import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
 import { DetectedMcpPreviewEntryV1Schema, ManagedMcpPreviewEntryV1Schema } from '../../mcp/servers/previewV1.js';
@@ -99,11 +100,13 @@ function createSessionCapabilitiesActionSpecsV1() {
       { path: ['session', 'capabilities', 'list'], positionalsBeforeLastSegment: ['sessionId'], visibility: 'canonical' }] },
   },
   { ...common, id: 'session.capabilities.set', title: 'Change session capabilities', safety: 'danger', sideEffectClass: 'write', executionPlacement: 'account',
+    sessionTarget: { field: 'sessionId', cardinality: 'many' },
     contextualDefaults: { sessionId: 'current_session' },
     approval: { result: 'required', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: 'direct' },
     bindings: { mcpToolName: 'session_capabilities_set', rpcMethod: 'session.capabilities.set' },
-    inputSchema: SessionCapabilitiesSetInputV1Schema, outputSchema: SessionCapabilitiesSetOutputV1Schema,
+    inputSchema: lazyZodSchema(() => z.extend(SessionCapabilitiesSetInputV1Schema, { sessionId: SessionTargetV1Schema })),
+    outputSchema: lazyZodSchema(() => withSessionTargetFanoutResultV1(SessionCapabilitiesSetOutputV1Schema)),
     outputFailures: [{ discriminant: 'ok', value: false, codeField: 'code' }],
     inputHints: { fields: [{ path: 'sessionId', title: 'Session', widget: 'text', required: true },
       { path: 'kind', title: 'Capability', widget: 'select', required: true, options: [

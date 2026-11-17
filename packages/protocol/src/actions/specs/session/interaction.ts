@@ -586,6 +586,7 @@ function createSessionInteractionActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.mode.set', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Set session mode',
     sideEffectClass: 'write',
     description: 'Request a new ACP session mode for the current session when the active provider supports session modes.',
@@ -620,10 +621,11 @@ function createSessionInteractionActionSpecs() {
       ],
     },
     outputSchema: StrictJsonValueSchema,
-    inputSchema: SessionModeSetInputSchema,
+    inputSchema: lazyZodSchema(() => z.extend(SessionModeSetInputSchema, { sessionId: z.optional(SessionTargetV1Schema) })),
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.config_option.set', approval: {result: 'optional',flow: 'deferred'},
+    sessionTarget: { field: 'sessionId', cardinality: 'many' },
     executionPlacement: 'client',
     title: 'Set session configuration option',
     sideEffectClass: 'write',
@@ -648,10 +650,11 @@ function createSessionInteractionActionSpecs() {
       ],
     },
     outputSchema: StrictJsonValueSchema,
-    inputSchema: SessionConfigOptionSetInputSchema,
+    inputSchema: lazyZodSchema(() => z.extend(SessionConfigOptionSetInputSchema, { sessionId: z.optional(SessionTargetV1Schema) })),
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.connected_services_auth.set', approval: {result: 'optional',flow: 'deferred'},
+    sessionTarget: { field: 'sessionId', cardinality: 'many' },
     executionPlacement: 'client',
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Set session connected-account routing',
@@ -663,7 +666,7 @@ function createSessionInteractionActionSpecs() {
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
     inputHints: { title: 'Set session connected-account routing', fields: [] },
     outputSchema: StrictJsonValueSchema,
-    inputSchema: SessionConnectedServicesAuthSetInputSchema,
+    inputSchema: lazyZodSchema(() => z.extend(SessionConnectedServicesAuthSetInputSchema, { sessionId: SessionTargetV1Schema })),
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.target.primary.set', executionPlacement: 'client', approval: {result: 'optional',flow: 'deferred'},

@@ -380,7 +380,19 @@ operand and one/many cardinality through `sessionTarget`. The shared
 `sessionTargets` owner resolves authorized qualified addresses before approval.
 `session.message.send` and `session.status.get` consume self, manager, workers
 (direct or recursive), siblings, Followers, Following, Discussion participants,
-and matching filters; `session.open` requires exactly one result.
+matching filters, and explicit `{selector:'sessions', addresses:[{serverId, sessionId}, ...]}`
+selections; `session.open` requires exactly one result. Explicit selections must
+be nonempty, are deduplicated by Home and Session, and resolve each address
+through the exact-reference admission owner before any effect.
+
+Fan-out runs concurrently across Machines and in selection order within each
+Machine, using the Machine id in the authorized Session status projection.
+If any target has unknown Machine placement, its whole Home runs sequentially.
+The executor preserves positional child request ids and selection-ordered final
+results. Hosts can pass `context.onSessionTargetResult` to receive each completed
+`{actionId, position, target, result}` immediately, including typed failures and
+cancellations; this in-process sink is not Action input or a plugin Host Event.
+Hosts can update result rows from these completions without another execution loop or polling.
 Plain Session IDs retain their existing result shape. Group sends/status reads
 return each target's outcome. Native participant recipients remain separate
 inside-Session routing identities.

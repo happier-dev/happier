@@ -803,6 +803,13 @@ export type ActionExecutorContext = Readonly<{
   }>;
   /** Receiving host's in-process runner port. Never serialized or accepted from Action input. */
   runActionOperation?: ActionExecutorDeps['runActionOperation'];
+  /** Executor-only fan-out completions; hosts deliver these through their existing result surface. */
+  onSessionTargetResult?: (event: Readonly<{
+    actionId: ActionId;
+    position: number;
+    target: ActionSessionAddress;
+    result: ActionExecuteResult;
+  }>) => void;
   /** Existing operation-owner sinks, strictly in-process and never Action input. */
   operationProgress?: Readonly<{
     update(progress: Readonly<{ label?: string; phase?: string; queueAhead?: number; current?: number; total?: number;

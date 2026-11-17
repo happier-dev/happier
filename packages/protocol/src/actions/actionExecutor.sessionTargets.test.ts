@@ -7,6 +7,7 @@ import { encodeV2SessionListCursorV2 } from '../sessions/listing/cursor.js';
 import { projectSessionSummaryV1 } from '../sessions/control/listResult.js';
 import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 import { createSessionMembershipReadFixture } from '../sessions/read/sessionReadBatchV1.testkit.js';
+import { deriveActionChildRequestIdV1 } from '../workflows/workflowInvocationIdentityV1.js';
 import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { resolveActionSessionTargets } from './executor/sessionTargets.js';
@@ -89,6 +90,85 @@ function harness() {
 }
 
 describe('SessionTarget at the Actions front door', () => {
+  it('previews explicit addresses and refuses foreign access through the exact reference owner', async () => {
+    const h = harness();
+    const executor = createActionExecutor({ ...h.deps,
+      resolveSessionReference: async ({ sessionId, context }: Parameters<NonNullable<ActionExecutorDeps['resolveSessionReference']>>[0]) =>
+        sessionId === 'foreign' ? { kind: 'none' as const } :
+          { kind: 'unique' as const, address: { serverId: context.serverId!, sessionId: sessionId! } },
+    } as unknown as ActionExecutorDeps);
+    const target = { selector: 'sessions', addresses: [{ serverId: 'home', sessionId: 'a' }] };
+    expect(await executor.execute('session.targets.resolve', { target, actionId: 'session.message.send' }, context))
+      .toMatchObject({ ok: true, result: { coverage: 'complete', addresses: target.addresses } });
+    expect(await executor.execute('session.message.send', { sessionId: target, message: 'hello' }, context))
+      .toMatchObject({ ok: true, result: { kind: 'fanout', results: [{ result: { ok: true } }] } });
+    expect(await executor.execute('session.message.send', { sessionId: { ...target,
+      addresses: [...target.addresses, { serverId: 'home', sessionId: 'foreign' }] }, message: 'hello' }, context))
+      .toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
+    expect(h.effects.map(row => row.sessionId)).toEqual(['a']);
+  });
+
+  it('starts different Machines together, sequences one Machine, and delivers positional progress and child ids', async () => {
+    const h = harness();
+    h.setWorkers(['a', 'b', 'c']);
+    const events: string[] = [];
+    const progress: string[] = [];
+    const ids: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    let startedOther!: () => void;
+    const other = new Promise<void>(resolve => { startedOther = resolve; });
+    const executor = createActionExecutor({ ...h.deps,
+      sessionStatusGet: async ({ sessionId }: { sessionId: string }) => ({ session: { machineId: sessionId === 'c' ? 'other' : 'same' } }),
+      sessionSendMessage: async ({ sessionId, context: child }: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]) => {
+        events.push(`start:${sessionId}`);
+        ids.push(child!.actionRequestId!);
+        if (sessionId === 'a') await blocked;
+        events.push(`finish:${sessionId}`);
+        return { status: 'accepted' as const, localId: sessionId };
+      },
+    } as unknown as ActionExecutorDeps);
+    const pending = executor.execute('session.message.send', { sessionId: { selector: 'workers' }, message: 'hello' },
+      { ...context, onSessionTargetResult: event => { progress.push(`${event.position}:${event.target.sessionId}`);
+        if (event.target.sessionId === 'c') startedOther(); } });
+    // Release independently of the assertion so a serial implementation fails without hanging.
+    await Promise.race([other, new Promise(resolve => setTimeout(resolve, 100))]);
+    const beforeRelease = [...events];
+    release();
+    const result = await pending;
+    expect(beforeRelease).toEqual(['start:a', 'start:c', 'finish:c']);
+    expect(events.indexOf('start:b')).toBeGreaterThan(events.indexOf('finish:a'));
+    expect(progress).toEqual(['2:c', '0:a', '1:b']);
+    expect(ids).toEqual([0, 2, 1].map(position => deriveActionChildRequestIdV1({
+      parentRequestId: context.actionRequestId!, parentActionId: 'session.message.send', childActionId: 'session.message.send', position })));
+    expect(result).toMatchObject({ ok: true, result: { kind: 'fanout', results:
+      ['a', 'b', 'c'].map(sessionId => ({ target: { sessionId }, result: { ok: true } })) } });
+  });
+  it('keeps a Home sequential when one target has unknown Machine placement', async () => {
+    const h = harness();
+    const events: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    let otherFinished!: () => void;
+    const other = new Promise<void>(resolve => { otherFinished = resolve; });
+    const executor = createActionExecutor({ ...h.deps,
+      sessionStatusGet: async ({ sessionId }: { sessionId: string }) => ({ session: sessionId === 'a' ? { machineId: 'same' } : {} }),
+      sessionSendMessage: async ({ sessionId }: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]) => {
+        events.push(`start:${sessionId}`);
+        if (sessionId === 'a') await blocked;
+        events.push(`finish:${sessionId}`);
+        if (sessionId === 'b') otherFinished();
+        return { status: 'accepted' as const, localId: sessionId };
+      },
+    } as unknown as ActionExecutorDeps);
+    const pending = executor.execute('session.message.send', { sessionId: { selector: 'workers' }, message: 'hello' }, context);
+    await Promise.race([other, new Promise(resolve => setTimeout(resolve, 100))]);
+    const beforeRelease = [...events];
+    release();
+    expect(await pending).toMatchObject({ ok: true });
+    expect(beforeRelease).toEqual(['start:a']);
+    expect(events).toEqual(['start:a', 'finish:a', 'start:b', 'finish:b']);
+  });
   it('resolves tag and nested participant selectors before their exact Home storage boundaries', async () => {
     const h = harness();
     h.setWorkers(['worker']);
@@ -709,12 +789,14 @@ describe('SessionTarget at the Actions front door', () => {
     const h = harness();
     h.deny('b');
     const recipient = { kind: 'execution_run', runId: 'run-exact' } as const;
-    const result = await h.executor.execute('session.message.send', { sessionId: { selector: 'workers' }, message: 'hello', recipient }, context);
+    const completions: Array<{ result: unknown }> = [];
+    const result = await h.executor.execute('session.message.send', { sessionId: { selector: 'workers' }, message: 'hello', recipient }, { ...context, onSessionTargetResult: event => { completions.push(event); } });
     expect(result).toMatchObject({ ok: true, result: { kind: 'fanout', results: [
       { target: { serverId: 'home', sessionId: 'a' }, result: { ok: true, result: { status: 'accepted' } } },
       { target: { serverId: 'home', sessionId: 'b' }, result: { ok: false, errorCode: 'permission_denied' } },
     ] } });
     expect(h.effects).toMatchObject([{ sessionId: 'a', recipient }]);
+    expect(completions).toMatchObject([{ result: { ok: true } }, { result: { ok: false, errorCode: 'permission_denied' } }]);
   });
 
   it('evaluates group enablement once while admitting every concrete credential target', async () => {

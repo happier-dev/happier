@@ -410,13 +410,24 @@ async function readActionSessionTargets(
     if (resolved.kind !== 'unique') return unavailable(resolved.kind === 'ambiguous' ? 'session_id_ambiguous' : 'session_context_unavailable');
     return { actionId, field: declaration.field, targets: [resolved.address], selector: false };
   }
-  const baseId = target.of ?? id(context.defaultSessionId);
-  if (!baseId && target.selector !== 'discussion' && (target.selector !== 'matching' || !target.filter.homeServerIds.length)) return unavailable('session_context_unavailable');
+  const of = 'of' in target ? target.of : undefined;
+  const baseId = target.selector === 'sessions' ? '' : of ?? id(context.defaultSessionId);
+  if (!baseId && target.selector !== 'sessions' && target.selector !== 'discussion' && (target.selector !== 'matching' || !target.filter.homeServerIds.length)) return unavailable('session_context_unavailable');
   const base = baseId ? await resolveActionSessionAddress(deps, { sessionId: baseId }, context, actionId,
-    Boolean(deps.resolveSessionReference) || target.of !== undefined) : null;
+    Boolean(deps.resolveSessionReference) || of !== undefined) : null;
   if (base && base.kind !== 'unique') return unavailable(base.kind === 'ambiguous' ? 'session_id_ambiguous' : 'session_context_unavailable');
   let targets: readonly ActionSessionAddress[];
-  if (target.selector === 'matching') {
+  if (target.selector === 'sessions') {
+    const selected: ActionSessionAddress[] = [];
+    for (const address of target.addresses) {
+      const resolved = await resolveActionSessionAddress(deps, { sessionId: address.sessionId },
+        { ...context, serverId: address.serverId }, actionId, true);
+      if (resolved.kind !== 'unique') return unavailable(resolved.kind === 'ambiguous'
+        ? 'session_id_ambiguous' : 'session_context_unavailable');
+      selected.push(resolved.address);
+    }
+    targets = selected;
+  } else if (target.selector === 'matching') {
     const selected = await matching(deps, target, context, base?.address ?? null);
     if ('ok' in selected) return selected;
     targets = selected;

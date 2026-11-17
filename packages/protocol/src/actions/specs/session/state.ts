@@ -53,9 +53,9 @@ export const SessionPermissionModeSetInputSchema = lazyZodSchema(() => z.strictO
   applyTiming: z.optional(SessionPermissionModeSetApplyTimingSchema),
 }));
 
-export const SessionModelSetInputSchema = lazyZodSchema(() => z.looseObject({
+const SessionModelSetActionInputSchema = lazyZodSchema(() => z.looseObject({
   applyTiming: z.optional(z.enum(['immediate', 'next_prompt'])),
-  sessionId: z.string().check(z.minLength(1)),
+  sessionId: SessionTargetV1Schema,
   modelId: z.optional(NonBlankOpaqueIdentifierSchema),
   providerConnectionId: z.optional(z.nullable(ProviderConnectionIdSchema)),
   teamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
@@ -79,6 +79,10 @@ export const SessionModelSetInputSchema = lazyZodSchema(() => z.looseObject({
     context.addIssue({ code: "custom", path: ['teamVisibilityGrantConsent'], message: 'Consent must match the selected Team' });
   }
 })));
+
+export const SessionModelSetInputSchema = lazyZodSchema(() => z.safeExtend(SessionModelSetActionInputSchema, {
+  sessionId: z.string().check(z.minLength(1)),
+}));
 
 export const SessionStatusGetInputSchema = lazyZodSchema(() => z.looseObject({
   sessionId: SessionTargetV1Schema,
@@ -319,6 +323,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.permission_mode.set', executionPlacement: 'session', approval: {result: 'none'},
+    sessionTarget: { field: 'sessionId', cardinality: 'many' },
     sideEffectClass: 'write',
     title: 'Set session permission mode',
     description: `Immediately update the permission intent (${SESSION_PERMISSION_INTENT_INPUTS.join('/')}) for the specified session. Compatible aliases are accepted. To apply a mode with the next prompt, use session.message.send with permissionModeOverride.`,
@@ -348,11 +353,12 @@ function createSessionStateActionSpecs() {
       ],
     },
     outputSchema: StrictJsonValueSchema,
-    inputSchema: SessionPermissionModeSetInputSchema,
+    inputSchema: lazyZodSchema(() => z.extend(SessionPermissionModeSetInputSchema, { sessionId: SessionTargetV1Schema })),
     cli: SESSION_PERMISSION_MODE_SET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.model.set', executionPlacement: 'session', approval: {result: 'none'},
+    sessionTarget: { field: 'sessionId', cardinality: 'many' },
     sideEffectClass: 'write',
     title: 'Set session model',
     description: 'Set the model override for the specified session.',
@@ -379,8 +385,8 @@ function createSessionStateActionSpecs() {
         { path: 'providerConnectionId', title: 'Provider connection id', widget: 'text' },
       ],
     },
-    outputSchema: SessionModelSetResultV1Schema,
-    inputSchema: SessionModelSetInputSchema,
+    outputSchema: lazyZodSchema(() => withSessionTargetFanoutResultV1(SessionModelSetResultV1Schema)),
+    inputSchema: SessionModelSetActionInputSchema,
     cli: SESSION_MODEL_SET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {

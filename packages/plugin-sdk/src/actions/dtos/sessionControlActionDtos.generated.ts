@@ -713,12 +713,11 @@ export type SessionControlActionInputById = {
     readonly "session.config_option.set": {
         configId: string;
         valueId: null | string;
-        sessionId?: string | undefined;
+        sessionId?: SessionTargetV1<true> | undefined;
     } & {
         clientId?: string | undefined;
     };
     readonly "session.connected_services_auth.set": {
-        sessionId: string;
         agentId: string;
         bindings: {
             v: 1;
@@ -782,6 +781,7 @@ export type SessionControlActionInputById = {
             }> | undefined;
         };
         machineId: string;
+        sessionId: SessionTargetV1<true>;
         rematerializeServiceId?: string | undefined;
         expectedGroupGenerationByServiceId?: Record<string, number> | undefined;
         teamCredentialBindings?: ({
@@ -1174,15 +1174,15 @@ export type SessionControlActionInputById = {
         };
     };
     readonly "session.permission_mode.set": {
-        sessionId: string;
         permissionMode: unknown;
+        sessionId: SessionTargetV1<true>;
         applyTiming?: 'immediate' | 'next_prompt' | undefined;
     } & {
         clientId?: string | undefined;
     };
     readonly "session.model.set": {
         [x: string]: unknown;
-        sessionId: string;
+        sessionId: SessionTargetV1<true>;
         applyTiming?: 'immediate' | 'next_prompt' | undefined;
         modelId?: string | undefined;
         providerConnectionId?: null | string | undefined;
@@ -2270,6 +2270,244 @@ export type SessionControlActionResultById = {
         readonly [key: string]: JsonValue;
     };
     readonly "session.model.set": {
+        kind: 'fanout';
+        results: {
+            target: {
+                serverId: string;
+                sessionId: string;
+            };
+            result: {
+                ok: false;
+                errorCode: string;
+                error: string;
+                requestId?: string | undefined;
+                effectAttempted?: boolean | undefined;
+                details?: unknown;
+                failureCause?: ActionFailureCauseV1 | undefined;
+                goalControlFailure?: undefined | {
+                    phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+                };
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
+            } | {
+                ok: true;
+                result: {
+                    modelId: string;
+                    selection: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    ok: true;
+                    status: 'intent_updated';
+                    sessionId: string;
+                    updatedAt: number;
+                    reversal?: undefined | {
+                        owner: 'active';
+                        scope: {
+                            serverId: string;
+                            accountId: string;
+                            sessionId: string;
+                        };
+                        runId: string;
+                        before: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        applied: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | {
+                        owner: 'inactive';
+                        scope: {
+                            serverId: string;
+                            accountId: string;
+                            sessionId: string;
+                        };
+                        before: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        applied: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    };
+                } | {
+                    selection: {
+                        ref: {
+                            source: 'account_provider_connection';
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
+                        ref: {
+                            source: 'native';
+                            agentTargetKey: string;
+                            modelId: string;
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
+                        ref: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            agentTargetKey: string;
+                            modelId: string;
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    };
+                    ok: true;
+                    status: 'intent_updated';
+                    sessionId: string;
+                    updatedAt: number;
+                    modelId?: string | undefined;
+                } | {
+                    sessionId: string;
+                    modelId: string;
+                    ok: true;
+                    status: 'already_active' | 'applied';
+                    activeSelection: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    reversal?: undefined | {
+                        owner: 'active';
+                        scope: {
+                            serverId: string;
+                            accountId: string;
+                            sessionId: string;
+                        };
+                        runId: string;
+                        before: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        applied: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | {
+                        owner: 'inactive';
+                        scope: {
+                            serverId: string;
+                            accountId: string;
+                            sessionId: string;
+                        };
+                        before: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        applied: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    };
+                } | {
+                    sessionId: string;
+                    modelId: string;
+                    ok: true;
+                    status: 'armed';
+                    activeSelection: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    requestedSelection: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                };
+            };
+        }[];
+    } | {
         modelId: string;
         selection: {
             agentTargetKey: string;

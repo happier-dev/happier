@@ -7,7 +7,7 @@ import { readOptionalString } from '../inputReading.js';
 import { AgentInventoryProbeInputSchema, type AdmittedActionInputById } from '../../actionSpecs.js';
 import { buildAgentInventorySelectionArgs } from '../../../inputs/inputOptions.js';
 import { resolveProfileSkillSeedsAtAdmissionV1 } from '../agentStartAdmission.js';
-import { SessionCapabilitiesGetOutputV1Schema, SessionCapabilitiesSetOutputV1Schema, SpawnCapabilitiesPreviewInputV1Schema, SpawnCapabilitiesPreviewOutputV1Schema } from '../../specs/sessionCapabilities.js';
+import { SessionCapabilitiesGetOutputV1Schema, SessionCapabilitiesSetOutputV1Schema, SpawnCapabilitiesPreviewInputV1Schema, SpawnCapabilitiesPreviewOutputV1Schema, type SessionCapabilitiesSetInputV1 } from '../../specs/sessionCapabilities.js';
 import { setSessionCapabilityV1 } from '../sessionCapabilities.js';
 import { resolveServerIdForSession } from '../sessionScope.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
@@ -206,7 +206,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
         if (actionId === 'session.capabilities.set') {
           if (!deps.sessionCapabilities) return completeActionResult({ ok: false, code: 'session_unavailable' });
           return completeActionResult(SessionCapabilitiesSetOutputV1Schema.parse(await setSessionCapabilityV1({
-            port: deps.sessionCapabilities, request: parsed.data as AdmittedActionInputById[typeof actionId], context: ctx,
+            port: deps.sessionCapabilities, request: parsed.data as SessionCapabilitiesSetInputV1, context: ctx,
           })));
         }
         if (actionId === 'sessions.spawn.mcp_servers.preview') {

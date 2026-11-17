@@ -4,6 +4,15 @@ import { normalizeSessionTargetV1, SessionTargetV1Schema, ActionResolvedSessionT
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 describe('Session target routing contract', () => {
+  it('accepts nonempty explicit addresses, dedupes by Home and Session, and keeps routing closed', () => {
+    const a = { serverId: 'one', sessionId: 'a' };
+    const b = { serverId: 'two', sessionId: 'a' };
+    expect(SessionTargetV1Schema.parse({ selector: 'sessions', addresses: [a, a, b] }))
+      .toEqual({ selector: 'sessions', addresses: [a, b] });
+    for (const addresses of [[], [{ ...a, machineId: 'untrusted' }]]) {
+      expect(SessionTargetV1Schema.safeParse({ selector: 'sessions', addresses }).success).toBe(false);
+    }
+  });
   it('retains unknown stored matching restrictions while refusing unsupported current routing inputs', () => {
     const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'] });
     const future = { selector: 'matching', filter: { ...filter, futureCore: { value: 'narrow' } } };
