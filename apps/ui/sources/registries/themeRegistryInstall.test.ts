@@ -84,6 +84,22 @@ function setup(acquisitionGate?: Promise<void>) {
 }
 
 describe('Store theme lifecycle through the MODEL library', () => {
+    it('publishes version-scoped non-theme exclusion once, coalescing 60 gallery consumers', async () => {
+        const state = setup();
+        state.acquired.item.payload.themes.length = 0;
+        state.acquired.item.payload.listing.includes.length = 0;
+        const listing = { ...state.listing, version: '1.0.0' };
+        let publications = 0;
+        const unsubscribe = state.lifecycle.subscribePreview(listing, state.options.expectedScope, () => { publications++; });
+        expect(state.lifecycle.isPreviewExcluded(listing, state.options.expectedScope)).toBe(false);
+        await Promise.all(Array.from({ length: 60 }, () => state.lifecycle.acquirePreview(listing, state.options)));
+        expect(state.lifecycle.isPreviewExcluded(listing, state.options.expectedScope)).toBe(true);
+        expect(state.lifecycle.isPreviewExcluded({ ...listing, version: '2.0.0' }, state.options.expectedScope)).toBe(false);
+        expect(state.lifecycle.isPreviewExcluded(listing, { ...state.options.expectedScope, accountId: 'account-b' })).toBe(false);
+        expect(state.counts().acquisitions).toBe(1);
+        expect(publications).toBe(1);
+        unsubscribe();
+    });
     it('acquires each visible package version once and reuses it after listing close and scroll-back', async () => {
         const state = setup();
         const listing = { ...state.listing, version: '1.0.0' };

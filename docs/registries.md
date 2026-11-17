@@ -113,6 +113,16 @@ their preview geometry; failed acquisitions retain the icon and name without
 retrying on scroll-back. Opening the listing or explicitly trying again can
 recover a failed acquisition through the same owner.
 
+Open VSX category=Themes also returns icon and product-icon extensions. The
+format owner reads the versioned manifest through that same acquisition and
+settles an empty colour-theme contribution without downloading its archive.
+The lifecycle retains this negative result per Home/Account/source/item/version.
+The listing immediately removes known negatives through the existing Collection
+projection, leaving no empty grid cell. Acquisition uses the near-viewport owner's
+existing prebuild margin so discovery can finish before a card enters view;
+late exclusions reflow through the same list layout. Network/parse failures
+remain recoverable failures, never negative theme classifications.
+
 Versioned `appearance.themes.store.get` inputs require matching unreleased 0.3
 UI and Protocol readers; older development readers reject the added version.
 Omitting the version continues to resolve latest within acquisition.

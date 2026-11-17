@@ -11,7 +11,7 @@ export type { ThemeInstallFaceOutcome, ThemeInstallResult, ThemeRegistryItemKey 
 
 export type AcquiredRegistryTheme = RegistryThemeAcquisitionV1;
 export type ThemeRegistryOperationOptions = Readonly<{ expectedScope: AccountSettingsScope | null; signal?: AbortSignal }>;
-type CachedRegistryThemeAcquisition = { promise: Promise<AcquiredRegistryTheme>; failed: boolean };
+type CachedRegistryThemeAcquisition = { promise: Promise<AcquiredRegistryTheme>; failed: boolean; excluded: boolean };
 
 /** Registry admission/acquisition and MODEL persistence retain their own authorities. */
 export function createThemeRegistryLifecycle(deps: Readonly<{
@@ -22,6 +22,19 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
 }>) {
     let opened: Readonly<{ acquired: AcquiredRegistryTheme; expectedScope: AccountSettingsScope | null }> | null = null;
     const previewAcquisitions = new Map<string, CachedRegistryThemeAcquisition>();
+    const previewListeners = new Map<string, Set<() => void>>();
+    const previewKey = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, scope: AccountSettingsScope) =>
+        serverAccountScopedResourceKey(scope, listing.sourceId, listing.itemId, listing.version);
+    const isPreviewExcluded = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, scope: AccountSettingsScope | null) =>
+        scope ? previewAcquisitions.get(previewKey(listing, scope))?.excluded === true : false;
+    const subscribePreview = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, scope: AccountSettingsScope | null, notify: () => void) => {
+        if (!scope) return () => {};
+        const key = previewKey(listing, scope);
+        let listeners = previewListeners.get(key);
+        if (!listeners) { listeners = new Set(); previewListeners.set(key, listeners); }
+        listeners.add(notify);
+        return () => { listeners.delete(notify); if (listeners.size === 0) previewListeners.delete(key); };
+    };
     const matches = (acquired: AcquiredRegistryTheme, listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>) =>
         acquired.item.summary.sourceId === listing.sourceId && acquired.item.summary.itemId === listing.itemId
         && (listing.version === undefined || acquired.item.summary.version === listing.version);
@@ -40,8 +53,13 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         const retained = previewAcquisitions.get(key);
         if (retained) return retained.promise;
         // One finite acquisition serves cards and opened listings; a card unmount only ends its publication.
-        const pending = { promise: acquire(listing, { expectedScope: options.expectedScope }), failed: false };
-        pending.promise = pending.promise.catch(error => {
+        const pending = { promise: acquire(listing, { expectedScope: options.expectedScope }), failed: false, excluded: false };
+        pending.promise = pending.promise.then(acquired => {
+            // Absence is a settled manifest fact, not an upstream/network failure.
+            pending.excluded = acquired.item.payload.themes.length === 0;
+            if (pending.excluded) for (const notify of previewListeners.get(key) ?? []) notify();
+            return acquired;
+        }).catch(error => {
             pending.failed = true;
             throw error;
         });
@@ -131,11 +149,11 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         }
         return { removedFaces };
     }, options);
-    return { acquirePreview, get, releaseOpened, prepareStorePreview, install, uninstall, keepStore };
+    return { acquirePreview, isPreviewExcluded, subscribePreview, get, releaseOpened, prepareStorePreview, install, uninstall, keepStore };
 }
 
 export type ThemeRegistryLifecycle = ReturnType<typeof createThemeRegistryLifecycle>;
 /** The runtime binds one operation's scope and signal without another lifecycle instance. */
 export type BoundThemeRegistryLifecycle = {
-    [Method in keyof ThemeRegistryLifecycle]: (input: Parameters<ThemeRegistryLifecycle[Method]>[0]) => ReturnType<ThemeRegistryLifecycle[Method]>;
+    [Method in Exclude<keyof ThemeRegistryLifecycle, 'isPreviewExcluded' | 'subscribePreview'>]: (input: Parameters<ThemeRegistryLifecycle[Method]>[0]) => ReturnType<ThemeRegistryLifecycle[Method]>;
 };

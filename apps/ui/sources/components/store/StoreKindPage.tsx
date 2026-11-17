@@ -63,6 +63,9 @@ import { kindCopy } from './catalog/storeKindCopy';
 export { kindCopy } from './catalog/storeKindCopy';
 import { projectStoreThemeCard, storeThemeSummary, themeSummaryMatchesMode, type StoreThemeItem } from './catalog/storeThemes';
 import { STORE_THEME_CARD_MIN_WIDTH, useStoreThemeCardAnatomy } from './storeThemeCardAnatomy';
+import { getThemeRegistryLifecycle } from '@/theme/profiles/themeTryOnRuntime';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { StoreThemeCardView } from './storeThemeViewTypes';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
@@ -413,7 +416,22 @@ type ThemeDirectoryRow = DirectoryRow & Readonly<{ card: StoreThemeCardView }>;
 export function useStoreThemeRows(list: Readonly<{ items: readonly StoreThemeItem[]; curation: RegistryList['curation'] }>,
   openRegistry: (item: RegistryCatalogItemSummary) => void, sourceTitle: (sourceId: string) => string) {
   const open = useOpenStoreListing();
-  const registryItems = React.useMemo(() => list.items.filter((item): item is RegistryCatalogItemSummary => item.kind !== 'pluginTheme'), [list.items]);
+  const scope = useAccountSettingsScope();
+  const presented = useLayoutPresentationActive();
+  const lifecycle = getThemeRegistryLifecycle();
+  const candidates = React.useMemo(() => list.items.filter((item): item is RegistryCatalogItemSummary => item.kind !== 'pluginTheme'), [list.items]);
+  const subscribe = React.useCallback((notify: () => void) => {
+    const stop = presented ? candidates.flatMap(item => item.version
+      ? [lifecycle.subscribePreview({ sourceId: item.sourceId, itemId: item.itemId, version: item.version }, scope, notify)] : []) : [];
+    return () => { for (const dispose of stop) dispose(); };
+  }, [candidates, lifecycle, scope, presented]);
+  const read = React.useCallback(() => JSON.stringify(candidates.filter(item => item.version
+    && lifecycle.isPreviewExcluded({ sourceId: item.sourceId, itemId: item.itemId, version: item.version }, scope)).map(item => item.itemId)),
+  [candidates, lifecycle, scope]);
+  const exclusions = React.useSyncExternalStore(subscribe, read, read);
+  const registryItems = React.useMemo(() => candidates.filter(item => !item.version
+    || !lifecycle.isPreviewExcluded({ sourceId: item.sourceId, itemId: item.itemId, version: item.version }, scope)),
+  [candidates, lifecycle, scope, exclusions]);
   const registry = useRegistryRows({ items: registryItems, curation: list.curation }, openRegistry, sourceTitle);
   return React.useMemo(() => {
     const plugins = list.items.flatMap((item): ThemeDirectoryRow[] => {

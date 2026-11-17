@@ -14,6 +14,8 @@ vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/moc
 const { useStoreThemeCardAnatomy } = await import('./storeThemeCardAnatomy');
 const { StoreThemeListingController } = await import('./StoreThemeListingController');
 const { StoreThemeListing } = await import('./StoreThemeListing');
+const { useStoreThemeRows } = await import('./StoreKindPage');
+const { useRegistryItems } = await import('@/registries/useRegistryItems');
 const { ThemeMiniaturePreview } = await import('@/components/settings/appearance/ThemeModePreview');
 const { HappierBrandMark } = await import('@/components/ui/media/HappierBrandMark');
 const { storage } = await import('@/sync/domains/state/storage');
@@ -23,10 +25,11 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     const indexUrl = 'https://theme-card-counts.example.test/index.json';
     const sourceId = deriveMarketplaceSourceId(indexUrl);
     const reads: string[] = [];
+    let bodyParses = 0;
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
         disabledSourceIds: [], sources: [{ id: sourceId, title: 'Themes', url: indexUrl,
             format: 'happier-catalog', kinds: ['theme'], enabled: true, addedAt: 1 }] } }] });
-    const ids = ['near-a', 'near-b', 'far', 'failed'];
+    const ids = ['near-a', 'near-b', 'far', 'failed', 'icons', ...Array.from({ length: 55 }, (_, i) => `distant-${i}`)];
     let releaseNearB: () => void = () => {};
     const nearBPending = new Promise<void>(resolve => { releaseNearB = resolve; });
     const fixture = await createArtifactInventoryDemandHarness({ handleRequest: async (url, init) => {
@@ -34,7 +37,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
         if (config) return config;
         if (url.href === indexUrl) return Response.json({ source: { id: sourceId, title: 'Themes', sourceUrl: indexUrl, kind: 'user' },
             freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], themes: ids.map(itemId => ({
-                itemId, title: itemId, version: '1.0.0', listing: { includes: [{ key: 'dark', label: 'Dark', mode: 'dark' }] },
+                itemId, title: itemId, version: '1.0.0', listing: { includes: itemId === 'icons' ? [] : [{ key: 'dark', label: 'Dark', mode: 'dark' }] },
                 contentUrl: `https://theme-card-counts.example.test/${itemId}.json`,
             })) });
         const id = ids.find(itemId => url.href === `https://theme-card-counts.example.test/${itemId}.json`);
@@ -42,14 +45,20 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
             reads.push(id);
             if (id === 'near-b') await nearBPending;
             if (id === 'failed') return Response.json({ error: 'unavailable' }, { status: 503 });
-            return Response.json({ themes: [{ key: 'dark', label: 'Dark', mode: 'dark', document: { schemaVersion: 1,
+            const response = Response.json({ themes: id === 'icons' ? [] : [{ key: 'dark', label: 'Dark', mode: 'dark', document: { schemaVersion: 1,
                 id, name: id, createdAt: '2026-11-17', updatedAt: '2026-11-17', base: { light: 'light', dark: 'dark' },
                 overrides: { light: {}, dark: {} }, assetAppearance: 'dark' } }] });
+            const json = response.json.bind(response);
+            response.json = () => { bodyParses++; return json(); };
+            return response;
         }
         return null;
     } });
     fixture.inventory = [];
     onTestFinished(async () => { releaseNearB(); await standardCleanup(); await fixture.dispose(); });
+    const initialBrowse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));
+    await vi.waitFor(() => expect(initialBrowse.getCurrent().items).toHaveLength(60));
+    const liveRows = await renderHook(() => useStoreThemeRows(initialBrowse.getCurrent(), () => {}, () => 'Themes'));
     const anatomy = await renderHook(() => useStoreThemeCardAnatomy());
     let offset = 0;
     const content = { getBoundingClientRect: () => ({ left: 0, top: -offset, width: 300, height: 2000 }) };
@@ -61,7 +70,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     let commits = 0;
     const surfaces = [];
     for (const [index, card] of cards.entries()) {
-        const top = [0, 240, 1200, 1600][index]!;
+        const top = [0, 240, 1200, 1600, 0][index] ?? 20000 + index * 240;
         const node = { getBoundingClientRect: () => ({ left: 0, top: top - offset, width: 300, height: 120 }) };
         const tree = () => <PluginUiScrollActivityProvider tracker={tracker}>
             <React.Profiler id={card.key} onRender={() => { commits++; }}>{anatomy.getCurrent().preview?.(card)}</React.Profiler>
@@ -69,22 +78,32 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
         const screen = await renderScreen(tree(), { createNodeMock: () => node });
         surfaces.push({ screen, tree, node });
     }
-    await vi.waitFor(() => expect(reads.sort()).toEqual(['near-a', 'near-b']));
+    await vi.waitFor(() => expect(liveRows.getCurrent().rows,
+        'a known non-theme contributes no grid cell, including when discovered on screen').toHaveLength(59));
+    expect(liveRows.getCurrent().rows.some(row => row.card.listing?.itemId === 'icons')).toBe(false);
+    await vi.waitFor(() => expect(reads.sort()).toEqual(['icons', 'near-a', 'near-b']));
     await vi.waitFor(() => expect(surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
     const pendingShell = surfaces[1]!.screen.findAll(node => node.type === 'View')[0]!;
     expect(surfaces[1]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
     await act(async () => { releaseNearB(); });
     await vi.waitFor(() => expect(surfaces[1]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
     expect(surfaces[1]!.screen.findAll(node => node.type === 'View')[0]).toBe(pendingShell);
+    const browse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));
+    await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(60));
+    const rows = await renderHook(() => useStoreThemeRows(browse.getCurrent(), () => {}, () => 'Themes'));
+    expect(rows.getCurrent().rows.some(row => row.card.listing?.itemId === 'icons')).toBe(false);
+    expect(rows.getCurrent().rows).toHaveLength(59);
     const listing = await renderScreen(<StoreThemeListingController listing={cards[0]!.listing}>
         {view => <StoreThemeListing {...view} />}
     </StoreThemeListingController>);
     await vi.waitFor(() => expect(listing.findAllByType(StoreThemeListing)[0]?.props.facesState).toBe('ready'));
     expect(listing.findAllByType(StoreThemeListing)[0]?.props.faces).toHaveLength(1);
-    expect(reads.sort(), 'opening the versioned listing through its Action reuses the card acquisition').toEqual(['near-a', 'near-b']);
+    expect(reads.sort(), 'opening the versioned listing through its Action reuses the card acquisition').toEqual(['icons', 'near-a', 'near-b']);
     await listing.unmount();
     expect(surfaces[2]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(0);
     expect(surfaces[2]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
+    console.info('STORE-PERF-1117 initial census', { cards: cards.length, previewCommits: commits, bodyParses, reads: reads.length });
+    expect(bodyParses).toBe(3);
     commits = 0;
     for (let index = 0; index < 10; index++) await act(async () => { storage.setState({ endpointStatus: index % 2 ? 'online' : 'offline' }); });
     expect(commits, 'unrelated Store publications do not redraw card previews').toBe(0);
@@ -94,7 +113,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     });
     const failedShell = surfaces[3]!.screen.findAll(node => node.type === 'View')[0]!;
     await scroll(1400);
-    await vi.waitFor(() => expect(reads.sort()).toEqual(['failed', 'far', 'near-a', 'near-b']));
+    await vi.waitFor(() => expect(reads.sort()).toEqual(['failed', 'far', 'icons', 'near-a', 'near-b']));
     await vi.waitFor(() => expect(surfaces[2]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
     expect(surfaces[3]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(0);
     expect(surfaces[3]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
@@ -103,10 +122,12 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     await surfaces[0]!.screen.unmount();
     surfaces[0]!.screen = await renderScreen(surfaces[0]!.tree(), { createNodeMock: () => surfaces[0]!.node });
     await vi.waitFor(() => expect(surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
-    expect(reads.sort(), 'scroll-back and a recycled card reuse the versioned package').toEqual(['failed', 'far', 'near-a', 'near-b']);
+    expect(reads.sort(), 'scroll-back and a recycled card reuse the versioned package').toEqual(['failed', 'far', 'icons', 'near-a', 'near-b']);
     await scroll(1400);
     await flushHookEffects();
-    expect(reads.sort(), 'revisiting an unavailable package does not retry its failed gallery read').toEqual(['failed', 'far', 'near-a', 'near-b']);
+    expect(bodyParses, 'scroll-back does not decode the retained response again').toBe(4);
+    console.info('STORE-PERF-1117 after scroll', { bodyParses, reads: reads.length });
+    expect(reads.sort(), 'revisiting an unavailable package does not retry its failed gallery read').toEqual(['failed', 'far', 'icons', 'near-a', 'near-b']);
 });
 
 it('keeps three Store theme cards across the wide column and two beside the open listing (lab C1/C2)', async () => {

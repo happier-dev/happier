@@ -67,6 +67,16 @@ describe('Open VSX theme acquisition through the registry host', () => {
     expect(acquired.item.payload.themes[0]!.document.profile.overrides.dark).toMatchObject({ 'background.canvas': '#111111', 'text.primary': '#eeeeee' });
     expect(f.calls).toHaveLength(4);
   });
+  it.each([{ iconThemes: [{ id: 'icons', path: './icons.json' }] }, { productIconThemes: [{ id: 'products', path: './products.json' }] }, { themes: [] }])('settles a non-colour manifest without downloading an archive: %j', async contributes => {
+    const f = await fixture();
+    const boundary = f.http.getJson;
+    f.http.getJson = async (url, options) => url.endsWith('/manifest.json')
+      ? (f.calls.push(url), { ok: true, fetchedAt: 1, value: { ...manifest, contributes } })
+      : boundary(url, options);
+    const result = await f.host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample/palette', version: '1.0.0', themeContent: true });
+    expect(result).toMatchObject({ op: 'read', item: { payload: { state: 'ready', themes: [], listing: { includes: [] } } } });
+    expect(f.calls).toHaveLength(2);
+  });
   it.each([{ badHash: true, issue: 'checksum_mismatch' }, { badIdentity: true, issue: 'manifest_mismatch' },
     { cycle: true, issue: 'include_cycle' }, { missing: true, issue: 'include_unavailable' }])('refuses invalid selected package %j without returning ready content', async options => {
     const f = await fixture(options);

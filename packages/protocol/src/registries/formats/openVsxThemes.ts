@@ -15,9 +15,9 @@ const summarySchema = z.object({ namespace: nonempty(), name: nonempty(), versio
   description: z.optional(z.string()), files: z.optional(z.object({ icon: z.optional(RegistryThemeContentUrlV1Schema) })) });
 const detailSchema = z.object({ ...summarySchema.shape, license: z.optional(z.string()), files: z.object({ manifest: RegistryThemeContentUrlV1Schema,
   download: RegistryThemeContentUrlV1Schema, sha256: RegistryThemeContentUrlV1Schema, icon: z.optional(RegistryThemeContentUrlV1Schema) }) });
-const manifestSchema = z.object({ publisher: nonempty(), name: nonempty(), version: nonempty(), contributes: z.object({ themes: z.array(z.object({
+const manifestSchema = z.object({ publisher: nonempty(), name: nonempty(), version: nonempty(), contributes: z.object({ themes: z._default(z.array(z.object({
   path: nonempty(), label: z.optional(z.string()), id: z.optional(z.string()), uiTheme: z.optional(z.string()),
-})) }) });
+})), []) }) });
 const invalid = (themeIssue?: import('../registryThemeV1.js').RegistryThemeIssueV1) => new RegistryFetchErrorV1({ state: 'invalid_source', ...(themeIssue ? { themeIssue } : {}) });
 function parse<T>(schema: z.ZodMiniType<T>, value: unknown): T {
   const parsed = schema.safeParse(value); if (!parsed.success) throw invalid(); return parsed.data;
@@ -95,6 +95,10 @@ export const openVsxThemesRegistryAdapterV1: RegistryFormatAdapterV1 = {
     const itemSummary = { ...summary(req.source, detail), ...(detail.license === undefined ? {} : { license: detail.license }), themeMetadata: listing };
     if (!req.themeContent) return { summary: itemSummary, fetchedAt: response.fetchedAt,
       payload: { kind: 'theme', state: 'listing', version: detail.version, listing, acquisition } };
+    // The Themes category also contains icon/product-icon extensions. A valid empty contribution
+    // settles the existing versioned acquisition without fetching or parsing an irrelevant VSIX.
+    if (listing.includes.length === 0) return { summary: itemSummary, fetchedAt: response.fetchedAt,
+      payload: { kind: 'theme', state: 'ready', version: detail.version, listing, themes: [], ref: { kind: 'version', version: detail.version } } };
     const [download, checksum] = await Promise.all([ctx.http.getBytes(acquisition.downloadUrl, { source: req.source }), ctx.http.getText(acquisition.checksumUrl, { source: req.source })]);
     if (!download.ok) throw new RegistryFetchErrorV1(download.status);
     if (!checksum.ok) throw new RegistryFetchErrorV1(checksum.status);
