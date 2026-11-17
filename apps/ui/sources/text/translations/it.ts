@@ -2999,7 +2999,7 @@ export const it: TranslationStructure = {
     enabled: "Abilitato",
     disabled: "Disabilitato",
     saveAs: "Salva con nome",
-    notChecked: "Non verificato",
+    notChecked: "Non controllato",
     requestFailed: "Richiesta non riuscita.",
 
     more: "Altro",
