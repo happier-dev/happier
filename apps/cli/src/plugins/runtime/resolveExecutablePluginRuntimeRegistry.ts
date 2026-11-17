@@ -539,6 +539,24 @@ function resolveManagedDependencyHostPlatform(): 'darwin' | 'linux' | 'win32' {
 }
 
 
+/**
+ * The Machine-local level read is a host read made while admitting an already-authorized request, not a
+ * child Action of that request's reviewed root: carrying the root's credential or reviewed plan made the
+ * root refuse it as an unplanned child (credential_scope_denied, QA C13 F2/F3). Only the requester facts
+ * the plugin's access fold reads are carried; the read is read-only and yields only an approval input.
+ */
+function readMachineLocalLevelRequester(context: ActionExecutorContext): ActionExecutorContext {
+    return {
+        ...(context.surface === undefined ? {} : { surface: context.surface }),
+        ...(context.actionCaller === undefined ? {} : { actionCaller: context.actionCaller }),
+        ...(context.authority === undefined ? {} : { authority: context.authority }),
+        ...(context.runtimeAccountId === undefined ? {} : { runtimeAccountId: context.runtimeAccountId }),
+        ...(context.machineAdmission === undefined ? {} : { machineAdmission: context.machineAdmission }),
+        ...(context.serverId === undefined ? {} : { serverId: context.serverId }),
+        ...(context.serverIdentityId === undefined ? {} : { serverIdentityId: context.serverIdentityId }),
+    };
+}
+
 // The literal canonical id always parses; the database plugin owns this read-only Action.
 const DATABASE_ACCESS_READ_REF = parseQualifiedPluginActionId(DATABASE_ACCESS_READ_ACTION_ID_V1)!;
 export async function resolveExecutablePluginRuntimeRegistry(
@@ -4572,7 +4590,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             const result = await invokeContributedAction({ action, input: { target }, surface: 'plugin', requiredReadOnly: true,
                 caller: Object.freeze({ kind: 'plugin' as const, pluginId: action.pluginId, occurrenceId, sourceCustody,
                     contribution: Object.freeze({ id: action.localId, qualifiedId: DATABASE_ACCESS_READ_ACTION_ID_V1 }) }),
-                approvalContext: context, signal: context.signal ?? new AbortController().signal });
+                approvalContext: readMachineLocalLevelRequester(context), signal: context.signal ?? new AbortController().signal });
             if (result.status !== 'executed') return undefined;
             const read = DatabaseAccessReadResultV1Schema.safeParse(result.value);
             return read.success && read.data.setBy === 'machine' ? read.data.agentAccess : undefined;
