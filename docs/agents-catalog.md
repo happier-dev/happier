@@ -1514,12 +1514,16 @@ a restart; it never silently widens the launch mode.
 
 In 0.3 development source, the SDK's shared foreground/control/compaction launch
 builder pre-enables live bypass switching only where Claude Code permits it.
-POSIX uid 0 without an existing `IS_SANDBOX=1` or `CLAUDE_CODE_BUBBLEWRAP=1` in
-the effective child environment omits the capability flag. The selected permission
+Local POSIX uid 0 launches without an existing `IS_SANDBOX=1` or `CLAUDE_CODE_BUBBLEWRAP=1`
+in the effective launch environment omit the capability flag. The selected permission
 mode is preserved, including native refusal for explicit bypass under unsandboxed
-root. Happier never manufactures a sandbox assertion. Non-root and explicitly
-declared sandbox SDK launches retain live switching; terminal launch policy above
-is unchanged.
+root. In 0.3 development source, the managed-target acquisition owner supplies
+`IS_SANDBOX=1` for isolated targets whose resource records prove Happier created
+them (`resource.origin: 'created'`). The existing target launch environment carries
+that assertion to the Agent, allowing root launches in default and bypass modes
+in those sandboxes. Personal Machines, adopted SSH hosts and targets without creation
+provenance receive no assertion. This decision does not add a Claude launcher UID
+check; terminal launch policy above is unchanged.
 
 Native startup questions retain their occurrence until an applied answer is
 acknowledged and settled in the Session. Advancing from workspace trust to the

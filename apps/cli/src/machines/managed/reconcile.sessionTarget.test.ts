@@ -12,6 +12,7 @@ import type { ManagedMachineAcquisitionDriverInput } from './acquire';
 import type { ManagedMachinePolicyInvalidation } from '@/api/apiMachine';
 import { createManagedNativeInvocation, reconcileManagedMachine } from './reconcile';
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
+import { deliverSessionTargetLaunch } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { createManagedPresetHydrator } from './presetHydration';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -475,6 +476,30 @@ describe('Session-target authority for managed provider channel roles', () => {
 describe('Session placement on a managed target (driver)', () => {
     const holder = { version: 'v1', resolveArtifacts: async () => ({ holder: { bytes: new Uint8Array([1]), sha256: 'a'.repeat(64) },
         helper: { bytes: new Uint8Array([2]), sha256: 'b'.repeat(64) } }) };
+
+    it.each([
+        { name: 'created container', created: true, identity: { kind: 'guestProcess', role: 'sandbox' }, sandbox: '1' },
+        { name: 'created VM', created: true, identity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+            role: 'server', adminAccessAtCreation: 'none' }, sandbox: '1' },
+        { name: 'personal native root Machine', created: false, identity: { kind: 'existingUser', role: 'personal' }, sandbox: undefined },
+        { name: 'adopted root SSH host', created: false, identity: { kind: 'existingUser', role: 'adopted' }, sandbox: undefined },
+        { name: 'guest without creation provenance', created: false, identity: { kind: 'guestProcess', role: 'sandbox' }, sandbox: undefined },
+    ] as const)('marks only Happier-created targets sandboxed for Agent launches ($name)', async scenario => {
+        const h = harness({ guest: true });
+        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true, enrollmentIdentity: scenario.identity,
+            resource: { ...machine.resource, ...(scenario.created ? { origin: 'created' } : {}) } });
+        const lifetime = new AbortController();
+        onTestFinished(() => lifetime.abort());
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 'root-permission-policy',
+            requesterAccountId: 'owner', lifetime: lifetime.signal, holder });
+        const launch = await deliverSessionTargetLaunch({ target, sessionKey: 'root-permission-policy',
+            // A host assertion cannot turn an adopted target into a sandbox.
+            runnerEnvironment: { IS_SANDBOX: '1' }, materializedRoot: null, requestAuthMaterializedRoot: null,
+            agentCommand: null, agent: null, workspace: { hostRoot: '/host/workspace', targetRoot: '/workspace' },
+            onSessionEnd() {} });
+        expect(launch.env.IS_SANDBOX).toBe(scenario.sandbox);
+    });
 
     const syncWorkspace = { v: 2 as const, kind: 'managed' as const, id: 'native-workspace', serverId: homeId,
         managedId: machine.id, controller: machine.controller!, rootPath: '/home/u/workspace', createdAtMs: 0 };

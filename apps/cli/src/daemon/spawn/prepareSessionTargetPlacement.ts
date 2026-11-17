@@ -289,7 +289,7 @@ async function hashFile(path: string): Promise<string> {
  *   reached from a target: typed refusal.
  */
 export async function deliverSessionTargetLaunch(input: Readonly<{
-    target: Pick<ManagedSessionTarget, 'id' | 'holderPath' | 'home' | 'platform' | 'helperPath' | 'exec' | 'putFile' | 'openChannel'>;
+    target: Pick<ManagedSessionTarget, 'id' | 'holderPath' | 'home' | 'platform' | 'helperPath' | 'exec' | 'putFile' | 'openChannel' | 'agentEnvironment'>;
     sessionKey: string;
     runnerEnvironment: Readonly<Record<string, string>>;
     materializedRoot: string | null;
@@ -423,6 +423,8 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
             if (rest !== null) env[name] = rest ? posix.join(base, 'agent-home', ...rest.split(sep)) : posix.join(base, 'agent-home');
         }
     }
+
+    Object.assign(env, input.target.agentEnvironment);
 
     const executables: Record<string, string> = {};
     if (input.agentCommand) {

@@ -2586,6 +2586,14 @@ the target launch environment reaches the Agent; host environment values are
 used for path projection and never forwarded. Source and publication failures
 retain `agent_launch_required_file_unavailable` with their materialization reason.
 
+In 0.3 development source, managed-target acquisition also publishes the Agent's
+`IS_SANDBOX=1` environment assertion only when the creating provider recorded
+`resource.origin: 'created'`. Placement merges that admitted Agent environment
+after credential-path projection. Happier-created isolated containers and VMs
+therefore retain root/bypass support; personal Machines, adopted SSH hosts and
+targets without creation provenance receive no generated sandbox assertion. The
+Claude launcher does not decide target ownership or add its own root check.
+
 Claude declares its generated MCP configuration and startup-instruction files
 through that same `requiredFiles` contract for SDK queries, unified terminal
 hosts and SDK-to-terminal presentation. Terminal plans carry the declaration

@@ -561,6 +561,8 @@ export type ManagedSessionTarget = Readonly<{
     /** The guest's platform and home (from the shared platform probe). */
     platform: ManagedGuestPlatform;
     home: string;
+    /** Agent environment admitted by the target owner, independent of the host environment. */
+    agentEnvironment?: Readonly<Record<string, string>>;
     exec(command: string, signal: AbortSignal): Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
     putFile(path: string, bytes: Uint8Array, signal: AbortSignal): Promise<void>;
     openChannel(argv: readonly string[], signal: AbortSignal): import('node:stream').Duplex;
@@ -764,6 +766,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         return Object.freeze({
             id: `managed:${current.id}`, holderPath: placed.holderPath, helperPath: placed.helperPath, socketDirectory: placed.socketDirectory,
             platform: placed.platform, home: placed.platform.home,
+            // Only the creating provider can attest an isolated target that Happier created.
+            ...(correlation.resource.origin === 'created' ? { agentEnvironment: { IS_SANDBOX: '1' } } : {}),
             putFile: (path, bytes, signal) => io.putFile({ path, bytes, signal }),
             exec: async (command, signal) => {
                 // The command (Agent args, paths) crosses as the exec's input, never as provider argv:
