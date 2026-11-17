@@ -107,6 +107,7 @@ const environmentPageMetadata = {
     history: { label: 'projects.deployments.history', icon: 'clock-counter-clockwise' },
     variables: { label: 'projects.deployments.tabVariables', icon: 'key' },
     domains: { label: 'projects.deployments.tabDomains', icon: 'globe' },
+    telemetry: { label: 'deploymentTelemetry.tab', icon: 'pulse' },
     permissions: { label: 'projects.deployments.tabPermissions', icon: 'shield-check' },
     settings: { label: 'projects.deployments.tabSettings', icon: 'sliders-horizontal' },
 } as const satisfies Record<DeploymentEnvironmentTabV1, { label: string; icon: DetailPageNavigationItem['icon'] }>;

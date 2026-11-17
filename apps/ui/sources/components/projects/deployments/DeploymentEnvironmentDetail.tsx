@@ -22,6 +22,7 @@ import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { DeploymentTelemetryPanel } from './DeploymentTelemetryPanel';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -1278,6 +1279,9 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onChanged: () => { void environment.refresh(); },
               } : null}
             />
+          ) : tab === 'telemetry' ? (
+            <DeploymentTelemetryPanel detail={detail} lifetime={props.lifetime ?? null}
+              environmentName={detail.content.name} onChanged={() => { void environment.refresh(); }} />
           ) : tab === 'permissions' ? (
             <DeploymentPermissionsPanel
               detail={detail}

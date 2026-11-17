@@ -6,6 +6,7 @@ import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
 import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { zhHant as actionTitlesZhHant } from './actionTitles/zh-Hant';
 import { newAppTranslations } from './newAppTranslations.shared';
+import { deploymentTelemetryTranslations } from './deploymentTelemetryTranslations.shared';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
@@ -15671,5 +15672,5 @@ settingsSession: {
 
 export function createZhHant(base: TranslationStructure): TranslationStructure {
     return deepMerge(base, { ...zhHantOverrides, botTemplates: botTemplateTranslations['zh-Hant'],
-  botTemplateRecipient: botTemplateRecipientTranslations['zh-Hant'], fileReviewNote: fileReviewNoteTranslations['zh-Hant'], hunkReview: hunkReviewTranslations['zh-Hant'], storeInstalled: storeInstalledTranslations['zh-Hant'], newApp: newAppTranslations['zh-Hant'], composerReferences: composerReferenceTranslations['zh-Hant'], screenCapture: screenCaptureCopy['zh-Hant'] });
+  botTemplateRecipient: botTemplateRecipientTranslations['zh-Hant'], petShare: petShareTranslations['zh-Hant'], fileReviewNote: fileReviewNoteTranslations['zh-Hant'], hunkReview: hunkReviewTranslations['zh-Hant'], storeInstalled: storeInstalledTranslations['zh-Hant'], newApp: newAppTranslations['zh-Hant'], deploymentTelemetry: deploymentTelemetryTranslations['zh-Hant'], composerReferences: composerReferenceTranslations['zh-Hant'], screenCapture: screenCaptureCopy['zh-Hant'] });
 }

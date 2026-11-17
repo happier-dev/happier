@@ -8,6 +8,7 @@ import { deploymentPreparationTranslations } from './deploymentPreparationTransl
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { fr as actionTitlesFr } from './actionTitles/fr';
 import { newAppTranslations } from './newAppTranslations.shared';
+import { deploymentTelemetryTranslations } from './deploymentTelemetryTranslations.shared';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
@@ -1405,7 +1406,7 @@ export const fr: TranslationStructure = {
     composerReferences: composerReferenceTranslations['fr'],
     screenCapture: screenCaptureCopy.fr,
     hunkReview: hunkReviewTranslations['fr'],
-    storeInstalled: storeInstalledTranslations['fr'], newApp: newAppTranslations['fr'],
+    storeInstalled: storeInstalledTranslations['fr'], newApp: newAppTranslations['fr'], deploymentTelemetry: deploymentTelemetryTranslations['fr'],
   llmTaskRunner: llmTaskRunnerTranslations['fr'],
   panes: { mainColumn: paneMainColumnTranslations['fr'], emptyEditor: paneEmptyEditorTranslations['fr'], shortcutsSheet: paneShortcutsSheetTranslations['fr'] },
   sessionCoordinator: {

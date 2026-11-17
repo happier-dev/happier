@@ -8,6 +8,7 @@ import { deploymentPreparationTranslations } from './deploymentPreparationTransl
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { zhHans as actionTitlesZhHans } from './actionTitles/zh-Hans';
 import { newAppTranslations } from './newAppTranslations.shared';
+import { deploymentTelemetryTranslations } from './deploymentTelemetryTranslations.shared';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
@@ -1448,7 +1449,7 @@ export const zhHans: TranslationStructure = {
     composerReferences: composerReferenceTranslations['zh-Hans'],
     screenCapture: screenCaptureCopy['zh-Hans'],
     hunkReview: hunkReviewTranslations['zh-Hans'],
-    storeInstalled: storeInstalledTranslations['zh-Hans'], newApp: newAppTranslations['zh-Hans'],
+    storeInstalled: storeInstalledTranslations['zh-Hans'], newApp: newAppTranslations['zh-Hans'], deploymentTelemetry: deploymentTelemetryTranslations['zh-Hans'],
   llmTaskRunner: llmTaskRunnerTranslations['zh-Hans'],
   panes: { mainColumn: paneMainColumnTranslations['zh-Hans'], emptyEditor: paneEmptyEditorTranslations['zh-Hans'], shortcutsSheet: paneShortcutsSheetTranslations['zh-Hans'] },
   sessionCoordinator: {

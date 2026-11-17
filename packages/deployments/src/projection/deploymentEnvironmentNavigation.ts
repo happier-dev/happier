@@ -1,9 +1,9 @@
 /**
- * P40-R54 Environment navigation: the one owner of the six Environment tabs and the six Settings
+ * P40-R54 Environment navigation: the one owner of the seven Environment tabs and the six Settings
  * section ids. Variables, Domains and Permissions are tabs, never Settings sections; consumers
  * (P41/P42/P45/P60 links, the host page and its URL) import these instead of copying ids.
  */
-export const DEPLOYMENT_ENVIRONMENT_TABS_V1 = ['overview', 'history', 'variables', 'domains', 'permissions', 'settings'] as const;
+export const DEPLOYMENT_ENVIRONMENT_TABS_V1 = ['overview', 'history', 'variables', 'domains', 'telemetry', 'permissions', 'settings'] as const;
 export type DeploymentEnvironmentTabV1 = (typeof DEPLOYMENT_ENVIRONMENT_TABS_V1)[number];
 
 export const DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1 = [

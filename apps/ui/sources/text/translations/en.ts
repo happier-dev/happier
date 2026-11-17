@@ -37,6 +37,7 @@ import { composerReferenceTranslations } from './composerReferenceTranslations.s
 import { hunkReviewTranslations } from './hunkReviewTranslations.shared';
 import { storeInstalledTranslations } from './storeInstalledTranslations.shared';
 import { newAppTranslations } from './newAppTranslations.shared';
+import { deploymentTelemetryTranslations } from './deploymentTelemetryTranslations.shared';
 import { capabilityKitTranslations } from './capabilityKitTranslations';
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 import { sessionListSpacesKeyboardTranslations } from './sessionListSpacesKeyboardTranslations.shared';
@@ -24420,7 +24421,7 @@ export const en: TranslationStructure = {
     composerReferences: composerReferenceTranslations.en,
     screenCapture: screenCaptureCopy.en,
     hunkReview: hunkReviewTranslations['en'],
-    storeInstalled: storeInstalledTranslations['en'], newApp: newAppTranslations['en'],
+    storeInstalled: storeInstalledTranslations['en'], newApp: newAppTranslations['en'], deploymentTelemetry: deploymentTelemetryTranslations['en'],
   llmTaskRunner: llmTaskRunnerTranslations['en'],
   panes: { mainColumn: paneMainColumnTranslations['en'], emptyEditor: paneEmptyEditorTranslations['en'], shortcutsSheet: paneShortcutsSheetTranslations['en'] },
     sessionCoordinator: {
@@ -25594,7 +25595,7 @@ type EnglishNamespaces30 = TranslationOverlay<
 
 type EnglishNamespaces31 = TranslationOverlay<EnglishNamespaces30, typeof themeSurfaces>;
 
-export type TranslationsEn = EnglishNamespaces31 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; projectStarters: { staticWebsite: { title: string; summary: string } }; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; storeInstalled: typeof storeInstalledTranslations.en; newApp: typeof newAppTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
+export type TranslationsEn = EnglishNamespaces31 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; petShare: typeof petShareTranslations.en; projectStarters: { staticWebsite: { title: string; summary: string } }; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; storeInstalled: typeof storeInstalledTranslations.en; newApp: typeof newAppTranslations.en; deploymentTelemetry: typeof deploymentTelemetryTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.

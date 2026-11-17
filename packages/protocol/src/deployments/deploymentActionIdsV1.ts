@@ -276,7 +276,8 @@ export function isDeploymentAccountMachineTransportActionIdV1(value: string): va
 /** Account-placed deployment roots dispatched through their installed controller, in addition to spec-native Machine Actions. */
 export function isDeploymentMachineTransportActionIdV1(value: string): boolean {
   return isDeploymentChildRootActionIdV1(value) || isDeploymentReadActionIdV1(value)
-    || isDeploymentAccountMachineTransportActionIdV1(value) || value === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
+    || isDeploymentAccountMachineTransportActionIdV1(value) || value === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
+    || value === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
 }
 
 export function isDeploymentNativeReadActionIdV1(value: string): value is

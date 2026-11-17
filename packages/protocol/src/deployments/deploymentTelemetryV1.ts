@@ -27,6 +27,13 @@ export const DeploymentEnvironmentTelemetrySetSuccessV1Schema = lazyZodSchema(()
     revision: DeploymentRevisionV1Schema, state: z.literal('redeploy_required'),
 }));
 export type DeploymentEnvironmentTelemetrySetSuccessV1 = z.infer<typeof DeploymentEnvironmentTelemetrySetSuccessV1Schema>;
+/** Typed refusals the host Action raises before any bindings write; presenters recover from each in place. */
+export const DEPLOYMENT_TELEMETRY_SET_REFUSALS_V1 = ['telemetry_deletion_confirmation_required', 'collector_required',
+    'telemetry_role_inactive', 'machine_unavailable'] as const;
+export type DeploymentTelemetrySetRefusalV1 = (typeof DEPLOYMENT_TELEMETRY_SET_REFUSALS_V1)[number];
+export function isDeploymentTelemetrySetRefusalV1(code: unknown): code is DeploymentTelemetrySetRefusalV1 {
+    return typeof code === 'string' && (DEPLOYMENT_TELEMETRY_SET_REFUSALS_V1 as readonly string[]).includes(code);
+}
 
 export const DeploymentTelemetryTokenHashV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[a-f0-9]{64}$/u)));
 export const DeploymentTelemetryAssignmentsInputV1Schema = lazyZodSchema(() => z.strictObject({}));

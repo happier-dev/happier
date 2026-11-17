@@ -30,6 +30,8 @@ import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protoco
 import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
+import { isDeploymentTelemetrySetRefusalV1, type DeploymentEnvironmentTelemetrySetInputV1, type DeploymentEnvironmentTelemetrySetSuccessV1,
+    type DeploymentTelemetrySetRefusalV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { DeploymentMoveToRepositoryResultV1Schema, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
 import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import type { DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
@@ -58,6 +60,11 @@ export type DeploymentUiBackupConfigureInput = DeploymentBackupConfigureInputV1 
 export type DeploymentUiDomainAddInput = DeploymentDomainAddInputV1 extends infer T
     ? T extends unknown ? Omit<T, 'serverId' | 'domainId' | 'requestKey'> & Readonly<{ domainId?: string; requestKey?: string }> : never : never;
 export type DeploymentUiDomainInput = Omit<DeploymentDomainRemoveInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>;
+export type DeploymentUiTelemetryInput = Pick<DeploymentEnvironmentTelemetrySetInputV1, 'collector' | 'capabilities' | 'confirmDelete'>;
+/** The host Action's typed pre-write refusals, kept with their details so the sheet recovers in place. */
+export type DeploymentUiTelemetryResult = DeploymentEnvironmentTelemetrySetSuccessV1
+    | Readonly<{ ok: false; error: DeploymentTelemetrySetRefusalV1; details?: unknown }>
+    | Extract<z.infer<typeof DeploymentActionOutputSchemasV1['deployments.environments.telemetry.set']>, { ok: false }>;
 
 export type DeploymentUiDomainDnsPreviewInput = Omit<DeploymentDomainPreviewInputV1, 'serverId' | 'mode' | 'requestKey'>
     & Readonly<{ requestKey?: string }>;
@@ -355,6 +362,21 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             const bindingBlueprints = applyEnvironmentSecretBindingsPatchV1(template.bindingBlueprints, { set, remove: input.remove }, randomUUID)
                 .filter(binding => binding.purpose === 'variable');
             return updateEnvironment(environment, { previewTemplate: { ...template, bindingBlueprints } }, operation);
+        },
+        /** Collector and capability choices through the host Action; it settles them on the bindings CAS at the next deploy. */
+        async setTelemetry(environment: Pick<DeploymentEnvironmentHeaderV1, 'id' | 'revision'>, input: DeploymentUiTelemetryInput,
+            operation?: UiActionOperation): Promise<DeploymentUiTelemetryResult> {
+            assertCurrent();
+            try {
+                return DeploymentActionOutputSchemasV1['deployments.environments.telemetry.set'].parse(await invoke(
+                    'deployments.environments.telemetry.set', { serverId: lifetime.scope.serverId, environmentId: environment.id,
+                        expectedRevision: environment.revision, ...input }, operation));
+            } catch (error) {
+                if (error instanceof HappyError && isDeploymentTelemetrySetRefusalV1(error.code)) {
+                    return { ok: false, error: error.code, ...(error.details === undefined ? {} : { details: error.details }) };
+                }
+                throw error;
+            }
         },
         /** Move scheduled jobs, alerts and outside checks to another Machine; workload content does not change. */
         async setController(environment: Pick<DeploymentEnvironmentHeaderV1, 'id' | 'revision'>, controllerMachineId: string,

@@ -186,6 +186,36 @@ describe('deployment UI Action callbacks', () => {
         expect(homes.artifacts(serverId).list()).toEqual([]);
     });
 
+    it('saves telemetry choices through the controller Action and keeps the typed deletion refusal', async () => {
+        const serverId = await homes.addHome({ name: 'Telemetry setup', serverUrl: 'https://telemetry-setup.test',
+            serverIdentityId: `srv_${'6'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] },
+        });
+        const seen: unknown[] = [];
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
+            actionId: 'deployments.environments.telemetry.set', tokenEpoch: 0, execute: (raw, context) => {
+                seen.push(raw);
+                expect(context.target).toEqual({ kind: 'machine', machineId: environment.controllerMachineId });
+                return seen.length === 1
+                    ? { ok: true, environmentId: environment.id, revision: environment.revision + 1, state: 'redeploy_required' }
+                    : { ok: false, errorCode: 'telemetry_deletion_confirmation_required', error: 'telemetry_deletion_confirmation_required',
+                        details: { machineId: 'old-collector' } };
+            } });
+        const actions = createDeploymentActions(lifetime, environment.projectSourceId);
+        await expect(actions.setTelemetry(environment, { collector: { machineId: 'collector-1' },
+            capabilities: { metrics: true, appLlmCost: false, exceptions: true } }))
+            .resolves.toEqual({ ok: true, environmentId: environment.id, revision: environment.revision + 1, state: 'redeploy_required' });
+        expect(seen[0]).toEqual({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), environmentId: environment.id,
+            expectedRevision: environment.revision, collector: { machineId: 'collector-1' },
+            capabilities: { metrics: true, appLlmCost: false, exceptions: true } });
+        await expect(actions.setTelemetry(environment, { collector: null }))
+            .resolves.toMatchObject({ ok: false, error: 'telemetry_deletion_confirmation_required' });
+    });
+
     it('authors the captured schedule with stable Environment and destination policy before the first deployment', async () => {
         const serverId = await homes.addHome({ name: 'Backup schedule', serverUrl: 'https://backup-schedule.test',
             serverIdentityId: `srv_${'4'.repeat(32)}`, accountId: 'owner', currentAccount: true });
