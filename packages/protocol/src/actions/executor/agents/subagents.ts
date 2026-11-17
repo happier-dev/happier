@@ -2,7 +2,7 @@ import { readRecord } from '../../../inputs/inputRecords.js';
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
-import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
+import { EXECUTION_RUN_ACTION_PERMISSION_MODES, defaultExecutionRunPermissionMode } from '../../executionRunActionPermissionMode.js';
 import { resolveRunStartModelAndConfig } from '../agentStartAdmission.js';
 import { normalizeId } from '../inputReading.js';
 import { completeActionResult } from '../resultProjection.js';
@@ -61,7 +61,7 @@ export async function dispatchAgentsSubagents1(inv: Pick<CoreInvocation, 'action
         if (intent === 'voice_agent' && teamCredentialModel.selection) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
-        const permissionModeDefault = intent === 'delegate' ? 'workspace_write' : 'read_only';
+        const permissionModeDefault = defaultExecutionRunPermissionMode(intent);
         const requestedPermissionMode = data.permissionMode;
         const executionRunPermission = resolveAgentExecutionRunPermission(
           ctx,
