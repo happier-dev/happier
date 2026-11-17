@@ -186,7 +186,7 @@ it.each([
     }
 });
 
-it('stands a failed registry line on the rows: its sentence on their titles, its Retry on their trailing edge', async () => {
+it('keeps a failed registry sentence on row titles and Retry on the state-line trailing inset', async () => {
     setViewport(1440);
     const host = document.createElement('div');
     document.body.appendChild(host);
