@@ -75,6 +75,7 @@ describe('captured theme Artifact adapter', () => {
         expect(home.requests.filter(request => request.method === 'POST' && request.path === `/v1/artifacts/${first}`)).toHaveLength(writesBefore);
         home.boundary.beforeNextUpdate(async () => {
             const current = home.boundary.read(first)!;
+            if (current.bodyVersion === undefined) throw new Error('Expected a persisted Artifact body version');
             home.boundary.replaceStoredRow({ ...current, bodyVersion: current.bodyVersion + 1 });
         });
         await expect(library(fresh).save({ document: mergeThemeProfileDocumentEdit(demanded!, { name: 'Conflicting edit' }) })).rejects.toThrow();
@@ -82,6 +83,7 @@ describe('captured theme Artifact adapter', () => {
         const keptLibrary = library(fresh);
         const kept = await keptLibrary.keep({ document: document('33333333-3333-4333-8333-333333333333'), mode: 'dark' });
         const row = home.boundary.read(kept.entry!.id)!;
+        if (row.bodyVersion === undefined) throw new Error('Expected a persisted Artifact body version');
         home.boundary.replaceStoredRow({ ...row, bodyVersion: row.bodyVersion + 1 });
         await expect(keptLibrary.undo(kept.undo!)).rejects.toThrow();
         expect(home.boundary.read(kept.entry!.id)).not.toBeNull();

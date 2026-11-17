@@ -133,7 +133,7 @@ export const PrimaryCircleIconButton = React.memo(
           {({ pressed, focused }) => (
             <View
               {...inspection}
-              dataSet={{ surface: surfaceAddress.surface, part: surfaceAddress.part, state: surfaceAddress.state ?? 'default' }}
+              {...{ dataSet: themeSurfaceDataSet(surfaceAddress.surface, surfaceAddress.part, surfaceAddress.state ?? 'default') }}
               style={[
                 styles.paint,
                 {
@@ -161,7 +161,7 @@ export const PrimaryCircleIconButton = React.memo(
               {/* The glyph stacks above the fill's positioned gradient layer: a bare (unpositioned) glyph is painted under
                   it on web, so Send and Stop read as blank discs (QA-SHELL-1114 F9). */}
               <View
-                dataSet={surfaceAddress.surface === 'button' ? themeSurfaceDataSet('button', 'icon', surfaceAddress.state ?? 'default') : undefined}
+                {...{ dataSet: surfaceAddress.surface === 'button' ? themeSurfaceDataSet('button', 'icon', surfaceAddress.state ?? 'default') : undefined }}
                 style={[styles.glyph, surfaceOverridesEnabled && surfaceAddress.surface === 'button' ? themeSurfaceStyles.surface({ ...surfaceAddress, part: 'icon' }) : null]}
               >
                 {props.loading ? (

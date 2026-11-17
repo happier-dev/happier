@@ -45,7 +45,7 @@ function resolvePaintRoles(address: SurfaceAddress, resolved: ResolvedThemeProfi
             // Both Markdown renderers allow textStyle to replace the base ink.
             if (address.part === 'text') return fixedRoles('foreground');
             return roles(resolveTranscriptPaint(theme, address.surface, address.part));
-        case 'assistant-text': return roles(resolveTranscriptPaint(theme, address.surface, address.part));
+        case 'assistant-text': return roles(resolveTranscriptPaint(theme, address.surface, 'root'));
         case 'tool-row': return roles(resolveToolRowPaint(theme, address.part));
         case 'tab-bar': return roles(resolveTabBarPaint(theme, address.part, address.state));
         case 'model-picker':

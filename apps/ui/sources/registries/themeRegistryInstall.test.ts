@@ -61,7 +61,7 @@ function setup(acquisitionGate?: Promise<void>) {
     const reverted: typeof listing[] = [];
     let upstream = acquired;
     const lifecycle = createThemeRegistryLifecycle({ withThemeProfileContext: operation => operation(context), readMode: () => 'dark',
-        acquire: async (key, operation) => {
+        acquire: async (key, operation): Promise<RegistryThemeAcquisitionV1> => {
             acquisitions++;
             await acquisitionGate;
             operation.signal?.throwIfAborted();
@@ -76,10 +76,10 @@ function setup(acquisitionGate?: Promise<void>) {
         }, revertStorePreview: key => { reverted.push(key); } });
     return { lifecycle, library, rows, listing, options, failed, savedFaces, acquired, selection, reverted,
         failNextAcquisition: (error: Error) => { acquisitionFailure = error; },
-        publishVersion: (version: string) => { upstream = { ...acquired,
+        publishVersion: (version: string) => { const ref = { kind: 'version', version } as const; upstream = { ...acquired,
             item: { ...acquired.item, summary: { ...acquired.item.summary, version },
-                payload: { ...acquired.item.payload, version, ref: { kind: 'version', version } } },
-            provenance: { ...acquired.provenance, ref: { kind: 'version', version } } }; },
+                payload: { ...acquired.item.payload, version, ref } },
+            provenance: { ...acquired.provenance, ref } }; },
         counts: () => ({ acquisitions, selections, writes: savedFaces.length }) };
 }
 

@@ -470,7 +470,9 @@ describe('portable presentation retention', () => {
         const portable = { ...profile, overrides: { light: {}, dark: {} }, seeds: { canvas: '#112233', accent: '#abcdef' },
             style: { radius: 'round', fontFamily: 'Inter', futureGlow: true }, css: '[data-surface="card"]{opacity:.9}',
             futurePresentation: { blur: 3 } };
-        const exported = JSON.parse(exportThemeProfileToJson(portable));
+        const parsed = parseThemeProfileDocument(portable);
+        if (!parsed.ok) throw new Error('Invalid portable theme fixture');
+        const exported = JSON.parse(exportThemeProfileToJson(parsed.document));
         expect(exported.profile).toMatchObject(portable);
         const imported = await importThemeProfileFromJson(JSON.stringify(exported), { now: portable.updatedAt });
         expect(imported.ok).toBe(true);
