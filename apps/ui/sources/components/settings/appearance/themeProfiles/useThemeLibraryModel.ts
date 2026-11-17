@@ -5,7 +5,7 @@ import type { ThemeLibraryEntry, ThemeProfileMode, ThemeReference } from '@/them
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
-import type { ThemePresetSourceOption } from './themeProfilePresetOptions';
+import { resolveCustomThemeSourceLabel, type ThemePresetSourceOption } from './themeProfilePresetOptions';
 import type { ThemeLibraryMenuItem, ThemeLibraryTile, ThemeLibrarySlot, ThemeLibraryViewProps } from './themeLibraryViewTypes';
 import type { ThemeUiActionExecute } from './useThemeActionExecution';
 
@@ -42,10 +42,7 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
         ? t('settingsAppearance.themeProfiles.defaultTheme') : option.title, []);
     const sourceLabel = React.useCallback((option: ThemeLibrarySourceOption) => {
         if (option.kind !== 'custom') return t('settingsAppearance.themeProfiles.builtInTheme');
-        const source = option.entry?.source;
-        if (source?.kind === 'store') return input.labels.sourceStore;
-        if (source?.kind === 'plugin') return input.pluginNames?.get(source.pluginId) ?? input.labels.sourcePlugin;
-        return input.labels.sourceYours;
+        return resolveCustomThemeSourceLabel(option.entry?.source, input.labels, input.pluginNames);
     }, [input.pluginNames, input.labels]);
     const activeOption = React.useCallback((slotMode: ThemeProfileMode) => input.options.find(option =>
         option.reference !== null && sameStrictJsonValue(option.reference, input.selection[slotMode]))

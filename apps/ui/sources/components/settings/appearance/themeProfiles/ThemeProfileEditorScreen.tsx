@@ -418,7 +418,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         .map((option) => ({
             key: option.id,
             name: option.kind === 'base' ? t('settingsAppearance.themeProfiles.defaultTheme') : option.title,
-            sourceLabel: t(option.kind === 'custom' ? 'settingsAppearance.themeProfiles.sourceYours' : 'settingsAppearance.themeProfiles.builtInTheme'),
+            sourceLabel: option.kind === 'custom' ? option.subtitle : t('settingsAppearance.themeProfiles.builtInTheme'),
             preview: option.miniature ? { kind: 'miniature' as const, miniature: option.miniature }
                 : { kind: 'palette' as const, palette: resolveThemeProfile({ mode: assetAppearance, profile: option.profile }) },
         })), [assetAppearance, presetOptions]);

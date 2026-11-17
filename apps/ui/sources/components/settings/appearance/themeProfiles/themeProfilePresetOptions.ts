@@ -61,50 +61,66 @@ const sortOverrides = (overrides: ThemeProfileV1['overrides']): ThemeProfileV1['
     dark: Object.fromEntries(Object.entries(overrides.dark).sort(([left], [right]) => left.localeCompare(right))),
 });
 
+export function resolveCustomThemeSourceLabel(
+    source: ThemeLibraryEntry['source'] | undefined,
+    labels: Readonly<{ sourceYours: string; sourceStore: string; sourcePlugin: string }>,
+    pluginNames?: ReadonlyMap<string, string>,
+): string {
+    if (source?.kind === 'store') return labels.sourceStore;
+    if (source?.kind === 'plugin') return pluginNames?.get(source.pluginId) ?? labels.sourcePlugin;
+    return labels.sourceYours;
+}
+
 export const buildThemePresetSourceOptions = (
     entries: readonly ThemeLibraryEntry[],
-): readonly ThemePresetSourceOption[] => [
-    ...entries.filter(entry => entry.source.kind !== 'built-in').map((entry): ThemePresetSourceOption => ({
-        id: getThemePresetSourceReferenceId(entry.reference),
-        kind: 'custom',
-        title: entry.name,
-        subtitle: t('settingsAppearance.themeProfiles.customProfileSubtitle'),
-        profile: null,
-        preferredMode: entry.mode,
-        reference: entry.reference,
-        miniature: entry.miniature,
-        entry,
-    })),
-    {
-        id: 'light',
-        kind: 'base',
-        title: t('settingsAppearance.themeOptions.light'),
-        subtitle: t('settingsAppearance.themeDescriptions.light'),
-        profile: null,
-        preferredMode: 'light',
-        reference: null,
-    },
-    {
-        id: 'dark',
-        kind: 'base',
-        title: t('settingsAppearance.themeOptions.dark'),
-        subtitle: t('settingsAppearance.themeDescriptions.dark'),
-        profile: null,
-        preferredMode: 'dark',
-        reference: null,
-    },
-    ...BUILT_IN_THEME_PROFILES.map((definition): ThemePresetSourceOption => ({
-        id: definition.profile.id,
-        kind: 'builtIn',
-        title: t(definition.translationKey),
-        subtitle: t('settingsAppearance.themeProfiles.readOnlyPreset'),
-        profile: definition.profile,
-        preferredMode: definition.preferredMode,
-        builtInDefinition: definition,
-        reference: { kind: 'built-in', presetId: definition.presetId },
-    })),
-
-];
+): readonly ThemePresetSourceOption[] => {
+    const labels = {
+        sourceYours: t('settingsAppearance.themeProfiles.sourceYours'),
+        sourceStore: t('settingsAppearance.themeProfiles.sourceStore'),
+        sourcePlugin: t('settingsAppearance.themeProfiles.sourcePlugin'),
+    };
+    return [
+        ...entries.filter(entry => entry.source.kind !== 'built-in').map((entry): ThemePresetSourceOption => ({
+            id: getThemePresetSourceReferenceId(entry.reference),
+            kind: 'custom',
+            title: entry.name,
+            subtitle: resolveCustomThemeSourceLabel(entry.source, labels),
+            profile: null,
+            preferredMode: entry.mode,
+            reference: entry.reference,
+            miniature: entry.miniature,
+            entry,
+        })),
+        {
+            id: 'light',
+            kind: 'base',
+            title: t('settingsAppearance.themeOptions.light'),
+            subtitle: t('settingsAppearance.themeDescriptions.light'),
+            profile: null,
+            preferredMode: 'light',
+            reference: null,
+        },
+        {
+            id: 'dark',
+            kind: 'base',
+            title: t('settingsAppearance.themeOptions.dark'),
+            subtitle: t('settingsAppearance.themeDescriptions.dark'),
+            profile: null,
+            preferredMode: 'dark',
+            reference: null,
+        },
+        ...BUILT_IN_THEME_PROFILES.map((definition): ThemePresetSourceOption => ({
+            id: definition.profile.id,
+            kind: 'builtIn',
+            title: t(definition.translationKey),
+            subtitle: t('settingsAppearance.themeProfiles.readOnlyPreset'),
+            profile: definition.profile,
+            preferredMode: definition.preferredMode,
+            builtInDefinition: definition,
+            reference: { kind: 'built-in', presetId: definition.presetId },
+        })),
+    ];
+};
 
 const valuesSignature = (profile: Pick<ThemeProfileV1, 'base' | 'assetAppearance' | 'overrides'> | null): string => JSON.stringify({
     base: profile?.base ?? { light: 'light', dark: 'dark' },

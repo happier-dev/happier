@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { t } from '@/text';
 
 import type { ThemePresetSourceOption } from './themeProfilePresetOptions';
 import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId, readThemePresetSourceReferenceId, resolveThemePresetSourcePreferredMode, themeProfileDraftMatchesPresetSource } from './themeProfilePresetOptions';
@@ -45,8 +46,15 @@ describe('themeProfilePresetOptions', () => {
         const plugin = (pluginId: string): ThemeLibraryEntry => ({ ...entry,
             reference: { kind: 'plugin', pluginId, contributionId: 'night' },
             source: { kind: 'plugin', pluginId, contributionId: 'night' }, editable: false, deletable: false });
-        const custom = buildThemePresetSourceOptions([entry, plugin('first.theme'), plugin('second.theme')]).filter(candidate => candidate.kind === 'custom');
-        expect(new Set(custom.map(candidate => candidate.id)).size).toBe(3);
+        const store: ThemeLibraryEntry = { ...entry, id: 'store-theme', reference: { kind: 'artifact', id: 'store-theme' },
+            source: { kind: 'store', contributionId: 'night', provenance: { sourceId: 'openvsx', itemId: 'publisher.palette',
+                format: 'git', sourceUrl: 'https://open-vsx.org', ref: { kind: 'version', version: '1.0' }, importedAt: 1 } } };
+        const custom = buildThemePresetSourceOptions([entry, store, plugin('first.theme'), plugin('second.theme')]).filter(candidate => candidate.kind === 'custom');
+        expect(new Set(custom.map(candidate => candidate.id)).size).toBe(4);
+        expect(custom.map(candidate => candidate.subtitle)).toEqual([
+            t('settingsAppearance.themeProfiles.sourceYours'), t('settingsAppearance.themeProfiles.sourceStore'),
+            t('settingsAppearance.themeProfiles.sourcePlugin'), t('settingsAppearance.themeProfiles.sourcePlugin'),
+        ]);
         const option = custom.find(candidate => candidate.reference === entry.reference);
         expect(option).toMatchObject({ title: entry.name, reference: entry.reference, miniature: entry.miniature, preferredMode: 'dark' });
         expect(option?.profile).toBeNull();

@@ -471,6 +471,19 @@ describe('Theme profile settings screen', () => {
 });
 
 describe('Theme profile editor', () => {
+    it('labels an installed Store starting preset by its source', async () => {
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [{
+            ...baseProfile('store-preset'), name: 'Installed palette', source: {
+                kind: 'store', contributionId: 'night', provenance: { sourceId: 'openvsx', itemId: 'publisher.palette',
+                    format: 'git', sourceUrl: 'https://open-vsx.org', ref: { kind: 'version', version: '1.0' }, importedAt: 1 },
+            },
+        }] });
+        const screen = await renderEditorScreen('new');
+        expect(screen.getTextContent()).toContain('Installed palette');
+        expect(screen.getTextContent()).toContain('settingsAppearance.themeProfiles.sourceStore');
+    });
+
+
     it('retains unsupported presentation through an unrelated edit and deliberate style changes', async () => {
         const raw = { ...baseProfile('862d417f-f6f9-480d-a7c0-82735194d027'), schemaVersion: 2,
             seeds: { canvas: '#101010', accent: '#abcdef', futureTone: 0.4 },
