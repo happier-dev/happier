@@ -53,15 +53,15 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
         // Lifecycle captured a resume, while these callers create a new native
         // conversation. Reuse the recorded create handshake without changing
         // the approval/effect/answer/reminder ordering or its playback indices.
-        const lifecycle = readMuseRecord(JSON.parse(await readFile(recordingPath!, 'utf8')));
-        const advanced = readMuseRecord(JSON.parse(await readFile(new URL('./fixtures/advanced.json', import.meta.url), 'utf8')));
-        if (!Array.isArray(lifecycle.rows) || !Array.isArray(advanced.rows)) throw new Error('Missing captured Muse startup');
+        const { rows: lifecycleRows } = readMuseRecord(JSON.parse(await readFile(recordingPath!, 'utf8')));
+        const { rows: advancedRows } = readMuseRecord(JSON.parse(await readFile(new URL('./fixtures/advanced.json', import.meta.url), 'utf8')));
+        if (!Array.isArray(lifecycleRows) || !Array.isArray(advancedRows)) throw new Error('Missing captured Muse startup');
         const sessionId = (row: JsonValue | undefined) => readMuseRecord(readMuseRecord(readMuseRecord(readMuseRecord(row).message).result).session).sessionId;
-        const sourceId = sessionId(lifecycle.rows[5]);
-        const targetId = sessionId(advanced.rows[8]);
+        const sourceId = sessionId(lifecycleRows[5]);
+        const targetId = sessionId(advancedRows[8]);
         if (typeof sourceId !== 'string' || typeof targetId !== 'string') throw new Error('Missing captured Muse Session identity');
-        recording = { rows: [0, 1, 2, 6, 7, 8].map(index => advanced.rows[index]!)
-            .concat(JSON.parse(JSON.stringify(lifecycle.rows.slice(6)).replaceAll(sourceId, targetId))) };
+        recording = { rows: [0, 1, 2, 6, 7, 8].map(index => advancedRows[index]!)
+            .concat(JSON.parse(JSON.stringify(lifecycleRows.slice(6)).replaceAll(sourceId, targetId))) };
         recordingPath = undefined;
         if (options.auditPath) {
             // Captures exceed the native launch wire's per-environment value
