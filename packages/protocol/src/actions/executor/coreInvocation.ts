@@ -29,6 +29,7 @@ export type PreparedCoreAdmission = Readonly<{
     /** Private parent-child admission survives preparation; never caller-authored or persisted. */
     hostInternal?: true;
     approvalScope?: ActionApprovalPolicyScopeV1;
+    automationSubjects?: readonly import('../../automations/automationSubjectV1.js').AutomationSubjectContextV1[];
     memoryAdmission?: MemoryWriteAdmissionV1;
     /** Keep the original creation consequence after effective policy narrows the input. */
     visualAdmission?: SessionVisualAdmissionV1;
@@ -84,6 +85,7 @@ export type CoreOptions = Readonly<{
       approvedApiTokenExecution?: import('../blockingApprovalCoordinator.js').BlockingApprovalTokenExecution;
       /** Private Home binding from the already-verified approval replay owner. */
       sameHome?: ActionHomeEquivalence;
+      onAutomationAdmission?: (context: ActionExecutorContext) => void;
     }>;
 
 export type DispatchFacts = {

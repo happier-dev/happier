@@ -7,6 +7,11 @@ import { AUTH_TOKEN_KIND_AUTHORITIES, type AuthTokenAuthority, type AuthTokenKin
 export const AUTHORITY_CEILING_HEADER_V1 =
   'x-happier-authority-ceiling' as const;
 
+/** Missing host authority retains the incumbent automation ceiling. */
+export function resolveHostStampedAuthority(ctx: ActionExecutorContext): ActionRequiredAuthority {
+  return ctx.authority ?? 'account_automation';
+}
+
 /** Nested Plugin Actions retain the original host-stamped initiating caller. */
 export function readInitiatingActionCallerV1(caller: ActionExecutorContext['actionCaller'] | ApprovalExecutionOriginV1['caller']):
   ActionExecutorContext['actionCaller'] | ApprovalExecutionOriginV1['caller'] {

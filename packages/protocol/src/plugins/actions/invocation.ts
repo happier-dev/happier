@@ -153,6 +153,8 @@ export type PluginActionInvocationHandlerInput = Readonly<{
   input: StrictJsonValue;
   qualifiedId: string;
   signal: AbortSignal;
+  /** Host-private effect fact from the declaration and normalized invocation input. */
+  isReadOnly: boolean;
 }>;
 
 /**
@@ -908,6 +910,7 @@ type PluginActionInvocationPreparation = Readonly<
   | {
     kind: 'ready';
     input: StrictJsonValue;
+    isReadOnly: boolean;
     invoke(options: PluginActionInvocationOptions): Promise<PluginActionInvocationResult>;
     /** Uses the same admitted input and lifecycle, with no Action result payload. */
     observe(options: PluginActionInvocationOptions): Promise<PluginActionInvocationResult>;
@@ -1023,21 +1026,22 @@ export function createPluginActionInvocation(params: Readonly<{
             .map(issue => ({ ...issue, message: issue.message ?? invalidInput.message })))
           : invalidInput);
       }
+      const isReadOnly = pluginActionDeclarationIsReadOnlyForInput(params.declaration, normalizedInput);
       return Object.freeze({
-        kind: 'ready', input: normalizedInput,
-        invoke: (invokeOptions: PluginActionInvocationOptions) => invokePrepared(normalizedInput, invokeOptions),
-        observe: (observeOptions: PluginActionInvocationOptions) => invokePrepared(normalizedInput, observeOptions, true),
+        kind: 'ready', input: normalizedInput, isReadOnly,
+        invoke: (invokeOptions: PluginActionInvocationOptions) => invokePrepared(normalizedInput, isReadOnly, invokeOptions),
+        observe: (observeOptions: PluginActionInvocationOptions) => invokePrepared(normalizedInput, isReadOnly, observeOptions, true),
       });
   };
-  const invokePrepared = async (normalizedInput: StrictJsonValue, options: PluginActionInvocationOptions, observation = false): Promise<PluginActionInvocationResult> => {
-    const result = await invokePreparedResult(normalizedInput, options, observation);
+  const invokePrepared = async (normalizedInput: StrictJsonValue, isReadOnly: boolean, options: PluginActionInvocationOptions, observation = false): Promise<PluginActionInvocationResult> => {
+    const result = await invokePreparedResult(normalizedInput, isReadOnly, options, observation);
     const diagnostic = readActionOutputDiagnostic(result);
     if (diagnostic) {
       try { options.recordDiagnostic?.(diagnostic); } catch { /* Logging cannot replace settlement. */ }
     }
     return result;
   };
-  const invokePreparedResult = async (normalizedInput: StrictJsonValue, options: PluginActionInvocationOptions, observation = false): Promise<PluginActionInvocationResult> => {
+  const invokePreparedResult = async (normalizedInput: StrictJsonValue, isReadOnly: boolean, options: PluginActionInvocationOptions, observation = false): Promise<PluginActionInvocationResult> => {
       if (!params.isCurrent() || params.occurrenceSignal.aborted) {
         return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action occurrenceId is no longer current');
       }
@@ -1054,6 +1058,7 @@ export function createPluginActionInvocation(params: Readonly<{
           input: normalizedInput,
           qualifiedId,
           signal: linked.signal,
+          isReadOnly,
         });
         const preDispatch = options.preDispatch;
         if (preDispatch) {
@@ -1106,7 +1111,7 @@ export function createPluginActionInvocation(params: Readonly<{
             actionHandlerStarted = true;
             return options.handler(handlerInput);
           },
-          !observation && !pluginActionDeclarationIsReadOnlyForInput(params.declaration, normalizedInput),
+          !observation && !isReadOnly,
         );
         if (settlement.kind === 'aborted') {
           const unavailableAfterCancellation = actionHandlerStarted

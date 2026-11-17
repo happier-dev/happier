@@ -16,7 +16,7 @@ import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import type { ApprovalStaleReason } from '../../approvals/approvalExecutionFailure.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
-import { ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
+import { ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, withActionAutomationNoticesV1 } from '../actionExecutionResult.js';
 import { RpcError } from '../../rpc/errors.js';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from '../invocationAuthority.js';
 
@@ -116,6 +116,8 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecu
   exec: ActionExecuteResult;
   authority: ActionExecutorContext['authority'];
 }>): ActionExecuteResult {
+  const withNotices = (result: ActionExecuteResult) => withActionAutomationNoticesV1(result,
+    request.v === 2 ? request.automaticChecks?.notices : undefined);
   const currentActionId = ActionIdSchema.safeParse(request.actionId);
   // Deferred execution has no original waiter. Its deciding human receives
   // the fresh result once, including when execution ran through daemon replay.
@@ -131,12 +133,12 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecu
     && currentActionId.success && getActionSpec(currentActionId.data).approvalInputCustody === 'live_only') {
     const details = ApprovalStaleFailureDetailsSchema.safeParse(request.execution.details);
     if (details.success && details.data.reason === 'live_invocation_unavailable') {
-      return buildApprovalOriginFailure(details.data.reason);
+      return withNotices(buildApprovalOriginFailure(details.data.reason));
     }
   }
   const observedExecution = projectApprovalExecutionForObservation(request);
   try {
-    return {
+    return withNotices({
       ok: true,
       // Typed Action results can retain native optional members. The decision
       // is a strict JSON observation, after the target's custody projection.
@@ -146,28 +148,29 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecu
         ...(observedExecution ? { execution: observedExecution } : {}),
         ...(liveResult?.ok ? { liveExecution: liveResult } : {}),
       }),
-    };
+    });
   } catch {
-    return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    return withNotices({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
   }
 }
 
 export function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequest | TargetActionApprovalRequestV1 | ApprovalRequestPublicRead): ActionExecuteResult | null {
   if (!request.execution) return null;
+  const withNotices = (result: ActionExecuteResult) => withActionAutomationNoticesV1(result,
+    request.v === 2 || !('actionId' in request) ? request.automaticChecks?.notices : undefined);
   const operationCredentialUses = request.v === 2 || !('actionId' in request)
     ? request.execution.operationCredentialUses : undefined;
   if (request.execution.ok) {
     const actionId = ActionIdSchema.safeParse('actionId' in request ? request.actionId : undefined);
     if (actionId.success && getActionSpec(actionId.data).approvalResultCustody === 'live_only') {
-      return { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held',
-        ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) };
+      return withNotices({ ok: false, errorCode: 'approval_result_held', error: 'approval_result_held',
+        ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) });
     }
-    return { ok: true, result: request.execution.result,
-      ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) };
+    return withNotices({ ok: true, result: request.execution.result,
+      ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) });
   }
   const failure = readApprovalExecutionFailure(request);
-  return failure && operationCredentialUses?.length
-    ? { ...failure, operationCredentialUses } : failure;
+  return failure ? withNotices(operationCredentialUses?.length ? { ...failure, operationCredentialUses } : failure) : null;
 }
 
 export function projectApprovalRequestPluginCaller(

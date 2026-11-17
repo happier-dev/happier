@@ -212,6 +212,7 @@ async function reportFailure(params: Readonly<{
       {
         ok: false,
         kind: params.kind,
+        ...(params.failure.automationNotices ? { automationNotices: params.failure.automationNotices } : {}),
         error: {
           ...(params.extraFields ?? {}),
           ...projectCliActionFailure(params.failure),
@@ -552,7 +553,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
 
   const payload = result.ok ? unwrapCliActionSuccessPayload(result.result) : undefined;
   if (result.ok) {
-    if (await tryHandleApprovalRequestCreated({ envelopeKind: kind, json, result: payload,
+    if (await tryHandleApprovalRequestCreated({ envelopeKind: kind, json, result: payload, automationNotices: result.automationNotices,
       executionPlacement: resolveActionExecutionPlacementForInput(command.spec, input, undefined, bridgeSessionId ? 'agent' : 'cli') })) return;
     // The Action succeeded; its outcome union may still report a pending or
     // refused operation. Classify that canonical payload before generic nested
@@ -562,7 +563,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       await reportFailure({
         json,
         kind,
-        failure: classified,
+        failure: { ...classified, ...(result.automationNotices ? { automationNotices: result.automationNotices } : {}) },
         extraFields: presentation?.failureFields?.(classified, context) ?? null,
         humanSuffix: presentation?.describeFailure?.(classified, context) ?? null,
         unexpected: false,
@@ -624,7 +625,8 @@ export async function runCompiledActionCliCommand(params: Readonly<{
   }
 
   if (json) {
-    await printJsonEnvelope({ ok: true, kind, data: payload });
+    await printJsonEnvelope({ ok: true, kind, data: payload,
+      ...(result.automationNotices ? { automationNotices: result.automationNotices } : {}) });
     return;
   }
   await writeJsonStdout(payload, { pretty: true });

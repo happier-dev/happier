@@ -9,8 +9,10 @@ import {
   WorkflowRoleOverridesV1Schema,
   WorkflowResolvedInputsV1Schema,
   WorkflowRunExecutionTargetV1Schema,
+  WorkflowMaterializedLeafV1Schema,
 } from '../workflows/workflowDefinitionV1.js';
-import { WorkflowDefinitionV1Schema } from '../workflows/workflowV1.js';
+import { WorkflowDefinitionV1Schema, WorkflowStepSchema } from '../workflows/workflowV1.js';
+import { AutomationActionTriggerSchema } from './automationActionTriggerV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { SessionPlacementSelectionV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
 import { AutomationTriggerIdSchema } from './automationTriggerIdentity.js';
@@ -90,6 +92,25 @@ const LegacyAutomationDeploymentTriggerV1Schema = lazyZodSchema(() => z.strictOb
   })),
 }));
 
+/** Private authority-bearing projection: an unknown restriction must never be erased on a stored read. */
+export const WorkflowTriggerActorConsentV1Schema = lazyZodSchema(() => z.strictObject({
+  actionIds: AutomationActionTriggerSchema.shape.actionIds,
+  phase: AutomationActionTriggerSchema.shape.phase,
+  subject: AutomationActionTriggerSchema.shape.subject,
+  agentSteps: z.array(z.strictObject({
+    sourceKey: WorkflowMaterializedLeafV1Schema.shape.sourceKey,
+    blockId: WorkflowMaterializedLeafV1Schema.shape.blockId,
+    document: WorkflowStepSchema.shape.document,
+    input: WorkflowStepSchema.shape.input,
+    inputMode: WorkflowStepSchema.shape.inputMode,
+    selection: WorkflowMaterializedLeafV1Schema.shape.selection,
+    executionTarget: WorkflowMaterializedLeafV1Schema.shape.executionTarget,
+    participant: WorkflowMaterializedLeafV1Schema.shape.participant,
+    role: WorkflowMaterializedLeafV1Schema.shape.role,
+  })),
+}));
+defineStoredReadProjection(WorkflowTriggerActorConsentV1Schema, () => WorkflowTriggerActorConsentV1Schema);
+
 export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.strictObject({
   /** Present for every new definition; omitted only by retained 0.2 storage. */
   display: z.optional(AutomationDefinitionDisplayV1Schema),
@@ -112,6 +133,8 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
     triggerId: AutomationTriggerIdSchema,
     operation: WorkflowApprovedOperationV1Schema,
   }))),
+  /** Actor-reviewed shared trigger facts; private content never enters summaries. */
+  actorConsent: z.optional(WorkflowTriggerActorConsentV1Schema),
   onComplete: z.optional(z.strictObject({ kind: z.literal('originating_session') })),
 }));
 export type AutomationStoredWorkflowDefinitionV2 = z.infer<typeof AutomationStoredWorkflowDefinitionV2Schema>;

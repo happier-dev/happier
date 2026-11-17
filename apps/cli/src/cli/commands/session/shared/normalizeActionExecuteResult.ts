@@ -13,6 +13,7 @@ export type CliActionFailure = Readonly<{
   failureCause?: ActionFailureCauseV1;
   effectAttempted?: boolean;
   goalControlFailure?: SessionGoalControlFailureV1;
+  automationNotices?: ActionExecuteResult['automationNotices'];
 }>;
 
 class CliActionFailureError extends Error {
@@ -72,6 +73,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
     return {
       ok: false,
       errorCode: result.errorCode,
+      ...(result.automationNotices ? { automationNotices: result.automationNotices } : {}),
       ...(result.requestId === undefined ? {} : { requestId: result.requestId }),
       ...(errorMessage ? { errorMessage } : {}),
       ...(result.details !== undefined ? { details: result.details } : {}),
@@ -100,6 +102,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
     return {
       ok: false,
       errorCode,
+      ...(result.automationNotices ? { automationNotices: result.automationNotices } : {}),
       ...(errorMessage ? { errorMessage } : {}),
       ...(candidates && candidates.length > 0 ? { candidates } : {}),
       ...(details !== undefined ? { details } : {}),

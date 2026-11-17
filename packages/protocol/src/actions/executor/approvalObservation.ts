@@ -5,6 +5,7 @@ import type { ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { ApprovalRequestV2Schema, ApprovalRequestV2StatusSchema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import { projectDeploymentApprovalReceiptV1 } from '../../approvals/approvalRequestPublicRead.js';
+import { canAuthorApprovalAutomaticConsentV1 } from './automaticApprovalContinuation.js';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreationObservationV1Schema } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { isApprovalArtifactObservationGrantedV1, readApprovalArtifactObservationRequestV1,
   readApprovalArtifactObservationSubjectV1 } from '../../approvals/approvalArtifactHeaderV1.js';
@@ -80,7 +81,11 @@ export async function executeApprovalObservationAction(params: Readonly<{
   }
   const observed = parsed.family === 'built_in' ? await reconcileWorkspaceLink(parsed.request, artifactId, context, deps) : parsed.request;
   const deploymentReceipt = parsed.family === 'built_in' ? projectDeploymentApprovalReceiptV1(artifactId, parsed.request) : null;
+  const automaticRequest = parsed.family === 'target_action' ? parsed.request : observed.v === 2 ? observed : null;
+  const canAllow = automaticRequest?.automaticChecks?.consents.some(row => row.decision === 'pending') === true
+    && canAuthorApprovalAutomaticConsentV1(automaticRequest, context, actionId);
   return { ok: true, result: { artifactId, request: projectApprovalRequestForPublicRead(observed),
+    canAllow,
     ...(deploymentReceipt ? { deploymentReceipt } : {}),
     queryPlan: { kind: 'approval_artifact_id_lookup', backingStore: 'ArtifactStore',
       boundedBy: 'approval artifact id', hydratedTranscripts: false } } };

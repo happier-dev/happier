@@ -694,7 +694,30 @@ export const ApprovalRequestV1Schema = lazyZodSchema(() => z.looseObject({
 export type ApprovalRequestV1 = z.infer<typeof ApprovalRequestV1Schema>;
 
 /** Current durable replay format. V1 remains readable history but carries no replay authority. */
-export const ApprovalRequestV2Schema = lazyZodSchema(() => z.strictObject({
+export const ApprovalRequestV2Schema: z.ZodMiniObject<{
+  v: z.ZodMiniLiteral<2>;
+  status: typeof ApprovalRequestV2StatusSchema;
+  createdAtMs: z.ZodMiniNumber;
+  updatedAtMs: z.ZodMiniNumber;
+  createdBy: typeof ApprovalRequestCreatedBySchema;
+  requestedSurface: z.ZodMiniOptional<typeof ApprovalRequestedSurfaceSchema>;
+  origin: z.ZodMiniOptional<typeof ApprovalRequestOriginV1Schema>;
+  actionId: typeof ActionIdSchema;
+  actionArgs: z.ZodMiniUnknown;
+  summary: z.ZodMiniString;
+  preview: z.ZodMiniOptional<z.ZodMiniUnknown>;
+  approval: z.ZodMiniOptional<typeof ActionApprovalSchema>;
+  sessionCreationDirectoryApproval: z.ZodMiniOptional<typeof SessionCreationDirectoryApprovalV1Schema>;
+  handoffTargetReplacementApproval: z.ZodMiniOptional<typeof HandoffTargetReplacementApprovalV1Schema>;
+  executionOriginV1: typeof ApprovalExecutionOriginV1Schema;
+  requestInputDigest: z.ZodMiniOptional<z.ZodMiniString>;
+  requesterConfirmation: z.ZodMiniOptional<typeof ApprovalRequesterConfirmationV1Schema>;
+  discussionDraftReview: z.ZodMiniOptional<z.ZodMiniLiteral<true>>;
+  decision: z.ZodMiniOptional<typeof ApprovalDecisionV2Schema>;
+  automaticChecks: z.ZodMiniOptional<typeof ApprovalAutomaticChecksV1Schema>;
+  execution: z.ZodMiniOptional<typeof ApprovalExecutionV2Schema>;
+  storageRetryResults: z.ZodMiniOptional<z.ZodMiniArray<typeof PileApplyResultV1Schema>>;
+}, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   v: z.literal(2),
   status: ApprovalRequestV2StatusSchema,
   createdAtMs: z.number().check(z.int(), z.minimum(0)),

@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { logExternalActionCurrentIntentMismatch } from '@/daemon/externalActions/externalActionPhase';
-import { createPluginActionPresentUserGate, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createApprovalAutomaticChecksV1 } from '@happier-dev/protocol/actions/executor/automaticApprovalContinuation';
+import type { ApprovalAutomaticChecksV1 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 import { readCurrentIntentMismatchFieldV1, type CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
-import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -100,6 +102,9 @@ export type TargetActionCurrentIntentUnavailableReason =
   | 'approval_presentation_unavailable' | 'approval_artifact_create_failed' | 'approval_artifact_id_unavailable';
 
 export type TargetActionCurrentIntentRequest = Readonly<{
+  /** Host-private snapshot and ports retained by the incumbent approval owner. */
+  automaticChecks?: ApprovalAutomaticChecksV1;
+  automationContext?: ActionExecutorContext;
   /** Private live inputs resume only in their original captured invoking host. */
   approvalInputCustody?: 'live_only';
   action: ResolvedTargetAction;
@@ -117,7 +122,7 @@ export type TargetActionCurrentIntentRequest = Readonly<{
   reportUnavailable?: (reason: TargetActionCurrentIntentUnavailableReason) => void;
 }>;
 
-export type TargetActionCurrentIntentResult = Readonly<
+export type TargetActionCurrentIntentResult = Pick<ActionExecuteResult, 'automationNotices'> & Readonly<
   | {
     status: 'approved';
     fingerprint: string;
@@ -134,6 +139,8 @@ export type TargetActionCurrentIntentResult = Readonly<
   | { status: 'deferred'; artifactId: string }
   | { status: 'rejected' | 'unavailable'; code: string; mismatch?: CurrentIntentMismatchV1 }
 >;
+
+type TargetActionHostExecutionResult = TargetActionExecutionResult & Pick<ActionExecuteResult, 'automationNotices'>;
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -270,12 +277,13 @@ export function createTargetActionExecutor(deps: Readonly<{
   }>;
 
   const prepare = async (args: ExecuteArgs): Promise<Readonly<
-    | { kind: 'settled'; result: TargetActionExecutionResult }
-    | { kind: 'ready'; actor?: ActionActorV1 | null; run: () => Promise<TargetActionExecutionResult> }
+    | { kind: 'settled'; result: TargetActionHostExecutionResult }
+    | { kind: 'ready'; actor?: ActionActorV1 | null; run: () => Promise<TargetActionHostExecutionResult> }
   >> => {
       let action: ResolvedTargetAction | null = null;
       let approvalArtifactId: string | undefined;
       let actor: ActionActorV1 | null | undefined;
+      let automationNotices: ActionExecuteResult['automationNotices'];
       let settleExecution: Extract<TargetActionCurrentIntentResult, { status: 'approved' }>['settleExecution'];
       const operationCredentialUses: ActionOperationCredentialUseV1[] = [];
       let observingCredentialUse = true;
@@ -287,7 +295,7 @@ export function createTargetActionExecutor(deps: Readonly<{
         }
       };
       const invocationSurface = args.invocationSurface ?? args.surface;
-      const finish = async (result: TargetActionExecutionResult): Promise<TargetActionExecutionResult> => {
+      const finish = async (result: TargetActionExecutionResult): Promise<TargetActionHostExecutionResult> => {
         if (result.status === 'unavailable' && result.code === 'plugin_action_current_intent_mismatch') {
           // Emit only the owner's closed category, never either compared value or plugin-authored data.
           const field = readCurrentIntentMismatchFieldV1(readRecord(readRecord(readRecord(result.data).details).currentIntentMismatch).field);
@@ -328,7 +336,7 @@ export function createTargetActionExecutor(deps: Readonly<{
             return Object.freeze({ status: 'failed', code: 'approval_execution_outcome_unknown', message: 'approval_execution_outcome_unknown' });
           }
         }
-        return publicResult;
+        return automationNotices ? { ...publicResult, automationNotices } : publicResult;
       };
       const gate = createPluginActionPresentUserGate<Readonly<{
         action: ResolvedTargetAction;
@@ -389,11 +397,17 @@ export function createTargetActionExecutor(deps: Readonly<{
                 fingerprint: request.fingerprint,
                 surface: request.surface,
                 invocationSurface: request.invocationSurface,
+                ...(args.approvalContext?.actionAutomationAdmission ? {
+                  automaticChecks: createApprovalAutomaticChecksV1(args.approvalContext.actionAutomationAdmission.selection,
+                    pluginActionRequiresPresentUserIntent(request.action.action, invocationSurface, args.input, args.invocationAuthority)),
+                  automationContext: args.approvalContext,
+                } : {}),
                 ...(args.replayPlacement === undefined
                   ? {}
                   : { replayPlacement: args.replayPlacement }),
                 ...(request.signal === undefined ? {} : { signal: request.signal }),
               });
+              automationNotices = intent.automationNotices;
               if (intent.status === 'approved' && intent.fingerprint === request.fingerprint) {
                 approvalArtifactId = intent.artifactId;
                 actor = intent.actor;
@@ -439,8 +453,8 @@ export function createTargetActionExecutor(deps: Readonly<{
           { details: { currentIntentMismatch: { field: 'binding' } } })) });
       }
       approvalArtifactId = admission.artifactId;
-      let runPromise: Promise<TargetActionExecutionResult> | null = null;
-      const run = (): Promise<TargetActionExecutionResult> => {
+      let runPromise: Promise<TargetActionHostExecutionResult> | null = null;
+      const run = (): Promise<TargetActionHostExecutionResult> => {
         if (runPromise) return runPromise;
         runPromise = (async () => {
           if (args.signal?.aborted) return await finish(unavailable('plugin_action_aborted'));
@@ -464,7 +478,7 @@ export function createTargetActionExecutor(deps: Readonly<{
 
   return Object.freeze({
     prepare,
-    async execute(args: ExecuteArgs): Promise<TargetActionExecutionResult> {
+    async execute(args: ExecuteArgs): Promise<TargetActionHostExecutionResult> {
       const prepared = await prepare(args);
       return prepared.kind === 'settled' ? prepared.result : await prepared.run();
     },

@@ -48,7 +48,7 @@ type ActionExecutorLike = Readonly<{
 }>;
 
 type ActionToolBridgeResult =
-  | Readonly<{ ok: true; result: unknown }>
+  | Extract<ActionExecuteResult, { ok: true }>
   | ActionExecuteFailure;
 
 type DynamicActionOptionsResult = Readonly<{
@@ -85,7 +85,9 @@ function normalizeActionExecutorFailure(result: Extract<ActionExecutorResult, { 
 }
 
 function normalizeActionExecutorResult(result: ActionExecutorResult): ActionToolBridgeResult {
-  return result.ok ? { ok: true, result: result.result } : normalizeActionExecutorFailure(result);
+  return result.ok ? { ok: true, result: result.result,
+    ...(result.automationNotices ? { automationNotices: result.automationNotices } : {}) }
+    : normalizeActionExecutorFailure(result);
 }
 
 function normalizeActionToolResult(
@@ -94,7 +96,7 @@ function normalizeActionToolResult(
   input: unknown,
 ): ActionToolBridgeResult {
   if (result.ok && isInputRecord(result.result) && result.result.kind === 'approval_request_created') {
-    return { ok: true, result: result.result };
+    return normalizeActionExecutorResult(result);
   }
   if (!actionId.startsWith('execution.run.')) {
     return normalizeActionExecutorResult(result);
@@ -104,12 +106,13 @@ function normalizeActionToolResult(
     return normalizeActionExecutorResult(result);
   }
 
-  return normalizeExecutionRunToolResult(
+  const normalized = normalizeExecutionRunToolResult(
     result.result,
     actionId === 'execution.run.wait'
       ? { runId: readTrimmedStringField(isInputRecord(input) ? input : {}, 'runId') }
       : undefined,
   );
+  return result.automationNotices ? { ...normalized, automationNotices: result.automationNotices } : normalized;
 }
 
 async function buildActionExecutorContext(params: Readonly<{

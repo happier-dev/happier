@@ -1,4 +1,6 @@
 import type { TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
+import { preservesApprovalAutomaticChecksV1 } from './approvalRequestTransition.js';
+import { isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 import { readSettledApprovalInputCustodyV1 } from './approvalInputCustody.js';
 
 /** Terminal receipts retain admission evidence, never the live invocation's raw operands.
@@ -24,7 +26,6 @@ export function settleTargetActionApprovalReplayInputs(
     ...(originReceipt ? { executionOriginV1: originReceipt } : {}),
   };
 }
-
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -56,6 +57,10 @@ function subject(request: TargetActionApprovalRequestV1): unknown {
     requesterConfirmation: request.requesterConfirmation,
     summary: request.summary,
     detail: request.detail,
+    ...(request.automaticChecks ? { automaticChecks: {
+      selected: request.automaticChecks.selected, subjects: request.automaticChecks.subjects,
+      selectionStatus: request.automaticChecks.selectionStatus, humanApprovalRequired: request.automaticChecks.humanApprovalRequired,
+    } } : {}),
   };
 }
 
@@ -86,7 +91,8 @@ export function admitTargetActionApprovalTransition(
     existing = receipt;
     request = settleTargetActionApprovalReplayInputs(request, existing.status);
   }
-  if (!targetActionApprovalSubjectsEqual(existing, request)) {
+  if (!targetActionApprovalSubjectsEqual(existing, request)
+    || !preservesApprovalAutomaticChecksV1(existing.automaticChecks, request.automaticChecks)) {
     return { ok: false, errorCode: 'subject_mismatch', error: 'target_action_approval_subject_mismatch' };
   }
   const invalid = { ok: false, errorCode: 'invalid_transition', error: 'target_action_approval_invalid_transition' } as const;
@@ -95,21 +101,25 @@ export function admitTargetActionApprovalTransition(
   }
   const isOpenDecision = existing.status === 'open'
     && (request.status === 'approved' || request.status === 'rejected' || request.status === 'canceled');
+  const isAutomaticProgress = existing.status === 'open' && request.status === 'open'
+    && existing.automaticChecks !== undefined && request.automaticChecks !== undefined;
+  const isAutomaticRefusal = existing.status === 'open' && request.status === 'failed'
+    && request.automaticChecks?.phase === 'refused' && request.execution?.effectAttempted === false;
   const isApprovedExecution = existing.status === 'approved' && request.status === 'executing'
-    && request.decision?.kind === 'approve' && request.execution === undefined;
+    && isApprovalRequestExecutionApproved(request) && request.execution === undefined;
   const isApprovedStale = existing.status === 'approved' && request.status === 'failed'
-    && request.decision?.kind === 'approve' && request.execution?.ok === false && (request.execution.errorCode === 'approval_stale'
+    && isApprovalRequestExecutionApproved(request) && request.execution?.ok === false && (request.execution.errorCode === 'approval_stale'
       || request.execution.errorCode === 'approval_origin_unavailable' && request.execution.effectAttempted === false);
   const isApprovedCancellation = existing.status === 'approved' && request.status === 'failed'
-    && request.decision?.kind === 'approve' && request.execution?.ok === false
+    && isApprovalRequestExecutionApproved(request) && request.execution?.ok === false
     && request.execution.errorCode === 'approval_canceled' && request.execution.effectAttempted === false
     && stable(existing.decision) === stable(request.decision);
   const isExecutingTerminal = existing.status === 'executing'
     && (request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
-    && request.decision?.kind === 'approve' && request.execution !== undefined
+    && isApprovalRequestExecutionApproved(request) && request.execution !== undefined
     // A cancellation receipt cannot settle custody another invocation claimed.
     && !(request.execution.errorCode === 'approval_canceled' && request.execution.effectAttempted === false);
-  return (!isOpenDecision && !isApprovedExecution && !isApprovedStale && !isApprovedCancellation && !isExecutingTerminal)
+  return (!isOpenDecision && !isAutomaticProgress && !isAutomaticRefusal && !isApprovedExecution && !isApprovedStale && !isApprovedCancellation && !isExecutingTerminal)
     || request.updatedAtMs < existing.updatedAtMs ? invalid : { ok: true, unchanged: false };
 }
 

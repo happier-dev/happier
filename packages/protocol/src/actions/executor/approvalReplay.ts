@@ -1,3 +1,4 @@
+import { isApprovalRequestExecutionApproved } from '../../approvals/approvalAutomaticChecks.js';
 import { buildApprovalOriginFailure } from '../../approvals/approvalStaleReason.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { isInternalActionId } from '../pluginActionSurface.js';
@@ -17,6 +18,7 @@ type Replay = ReturnType<typeof createActionExecutor>['replayApprovedApprovalReq
 
 /** Admission and effect-entry facts for the existing canonical approval execution owner. */
 export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGet' | 'approvalsUpdate'> & Readonly<{
+  resumeAutomaticApproval(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext): Promise<ApprovalRequest | ActionExecuteFailure>;
   requireDiscussionDraftReviewAuthority(request: ApprovalRequest, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
   settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
   resolveBlockingDecisionIfClaimed(args: Readonly<{
@@ -47,7 +49,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       if (!existingRaw) return { ok: false, effectAttempted: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
       const parsed = StoredApprovalRequestSchema.safeParse(existingRaw);
       if (!parsed.success) return { ok: false, effectAttempted: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
-      const request = parsed.data;
+      let request = parsed.data;
       if (isHistoricalPublishApprovalRequestV2(request)) {
         return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' };
       }
@@ -66,7 +68,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
         return { ok: false, effectAttempted: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
       if ((request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
-        && request.decision?.kind === 'approve') {
+        && (isApprovalRequestExecutionApproved(request) || request.v === 2 && request.automaticChecks?.phase === 'refused')) {
         const settlementFailure = await deps.settleApprovalExecutionPublication(artifactId, request, {
           ...(args.callerAuthority ? { authority: args.callerAuthority } : {}),
           ...(args.currentAccount ? { runtimeAccountId: args.currentAccount.accountId, serverId: args.currentAccount.serverId,
@@ -78,7 +80,17 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       if (request.v === 2 && request.status === 'executing') {
         return { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' };
       }
-      if (request.status !== 'approved' || request.decision?.kind !== 'approve' || request.execution !== undefined) {
+      if (request.v === 2 && request.status === 'open' && request.automaticChecks) {
+        const continued = await deps.resumeAutomaticApproval(artifactId, request, {
+          ...(args.signal ? { signal: args.signal } : {}),
+          ...(args.currentAccount ? { runtimeAccountId: args.currentAccount.accountId,
+            serverId: args.currentAccount.serverId, serverIdentityId: args.currentAccount.serverIdentityId } : {}),
+        });
+        if (!('v' in continued)) return continued;
+        request = continued;
+        if (request.status !== 'approved') return buildApprovalDecisionResult(request);
+      }
+      if (request.status !== 'approved' || !isApprovalRequestExecutionApproved(request) || request.execution !== undefined) {
         return { ok: false, effectAttempted: false, errorCode: 'approval_not_approved', error: 'approval_not_approved' };
       }
       const draftReviewFailure = await deps.requireDiscussionDraftReviewAuthority(request,

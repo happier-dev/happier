@@ -35,6 +35,47 @@ import { mapApprovalCreatedBySurface } from './executor/approvalPreparation.js';
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 
+it('retains qualified contributed identity when an approved automatic check settles', async () => {
+  const qualifiedId = 'example.fixture/actions/write';
+  const input = { action: { pluginId: 'example.fixture', localId: 'write' }, input: { value: 'accepted' } };
+  let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'action.invoke', actionArgs: input,
+    summary: 'Write fixture', decision: { kind: 'approve', decidedAtMs: 2 },
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      serverId: 'server-1', machineId: 'machine-1', actionId: 'action.invoke', requestId: 'qualified-request' },
+    automaticChecks: { phase: 'passed', humanApprovalRequired: false, selectionStatus: 'ready', subjects: [],
+      selected: [{ automationId: 'automation', triggerId: 'trigger', triggerRevision: 1, workflowId: 'workflow',
+        workflowRevision: 1, ownerAccountId: 'account', actionIds: [qualifiedId], phase: 'after' }],
+      consents: [], runs: [], results: [], notices: [] },
+  });
+  const settlements: string[] = [];
+  let effects = 0;
+  const executor = createExecutor({
+    approvalsGet: async () => stored,
+    approvalsUpdate: async ({ request }) => {
+      const transition = decideApprovalRequestTransition(stored, request);
+      if (!transition.ok) return transition;
+      stored = ApprovalRequestV2Schema.parse(request);
+      return { ok: true };
+    },
+    actionAutomations: {
+      select: async () => { throw new Error('An admitted selection must not be selected again'); },
+      settle: async ({ event }) => { settlements.push(event.actionId); },
+    },
+    // The contributed runtime is an external execution boundary. It consumes
+    // the retained token exactly as the committed contributed Action invoker does.
+    invokeContributedAction: async ({ context }) => {
+      effects += 1;
+      const result = { ok: true as const, result: { written: true } };
+      return context.actionAutomationAdmission?.settle(result, context) ?? result;
+    },
+  });
+  expect(await executor.replayApprovedApprovalRequest({ artifactId: 'qualified-approval', callerAuthority: 'present_user' }))
+    .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+  expect(effects).toBe(1);
+  expect(settlements).toEqual([qualifiedId]);
+});
+
 it.each(['approve', 'cancel', 'replay'] as const)('keeps retired Publish approval history readable without executing its %s decision', async decision => {
   // Historical PUBLISH-REMOVE-1106 V2 wire shape, before the combined Action and
   // its operation:publish admission were withdrawn. No current writer emits it.

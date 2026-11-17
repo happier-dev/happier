@@ -12,6 +12,7 @@ import { resolveWorkflowActionContext } from './callerContext.js';
 import { readActionFailureCauseV1, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { projectActionInputIssues } from './actionInputValidation.js';
+import type { ActionAutomationWaitV1, ActionAutomationCancelV1 } from './actionAutomationAdmission.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
   event: 'workflow_action_failure';
@@ -164,6 +165,8 @@ export type WorkflowStartApprovalPreparationV1 = (args: WorkflowActionExecuteArg
 
 export type WorkflowRunActionOwner = Readonly<{
   prepareStartApproval?: WorkflowStartApprovalPreparationV1;
+  waitAutomaticCheck?: ActionAutomationWaitV1;
+  cancelAutomaticCheck?: ActionAutomationCancelV1;
   waitCombinedAction?: (args: WorkflowActionExecuteArgs<'workflow.run.wait'>, context?: WorkflowIngressContextV1) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
   execute: (args: RunActionArgs, context?: WorkflowIngressContextV1) => Promise<WorkflowActionResult>;
 }>;
@@ -190,6 +193,8 @@ export function createWorkflowActionExecutor(deps: Readonly<{
   resolveTargetValidation?: (args: WorkflowActionExecuteArgs<'workflow.validate'>) => Promise<WorkflowTargetValidation>;
 }>): WorkflowActionExecute & Readonly<{
   prepareTriggerMutation: NonNullable<WorkflowActionExecute['prepareTriggerMutation']>;
+  waitAutomaticCheck?: ActionAutomationWaitV1;
+  cancelAutomaticCheck?: ActionAutomationCancelV1;
   waitCombined: (args: WorkflowActionExecuteArgs<'workflow.run.wait'>) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse> | WorkflowActionFailureV1>;
   prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>,
   presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>) => Promise<HostReviewedChildrenPreparationV1 | WorkflowActionFailureV1> }> {
@@ -363,6 +368,8 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         return normalizeWorkflowActionThrownError(error, undefined, true, args.actionId);
       }
     },
+    ...(deps.runs.waitAutomaticCheck ? { waitAutomaticCheck: deps.runs.waitAutomaticCheck } : {}),
+    ...(deps.runs.cancelAutomaticCheck ? { cancelAutomaticCheck: deps.runs.cancelAutomaticCheck } : {}),
     waitCombined: async (args: WorkflowActionExecuteArgs<'workflow.run.wait'>) => {
     const startedAtMs = Date.now();
     try {

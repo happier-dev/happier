@@ -34,6 +34,7 @@ import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugi
 import type { ManagedProviderOperationAuthority, ManagedProviderOperationAuthorityActivation } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import type { AdmittedManagedProviderOperationExecutionRequest } from './managedProviderCustody';
 import { projectContributedActionFailure } from './contributedActionFailure';
+import { withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 function projectDefinition(definition: ResolvedActionDefinition, identity: NonNullable<ResolvedActionContribution['identity']>,
   subjectKinds: readonly PluginAutomationSubjectKindDeclarationV1[]): ActionDefinitionV1 {
@@ -278,7 +279,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       // existing details field; private top-level transport data is stripped
       // by ordinary Action normalization.
       if (attempt.result.details !== undefined) return attempt.result;
-      return projectContributedActionFailure(attempt.result);
+      return withActionAutomationNoticesV1(projectContributedActionFailure(attempt.result), attempt.result.automationNotices);
     } finally {
       await purposeActivation?.cleanup();
       await lease.release();

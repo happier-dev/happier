@@ -1,5 +1,11 @@
+import { createAutomaticApprovalContinuation, createApprovalAutomaticChecksV1, answerApprovalAutomaticConsentV1, restoreApprovalAutomaticContextV1, canAuthorApprovalAutomaticConsentV1, hasApprovalAutomaticConsentPersonAuthorityV1 } from './executor/automaticApprovalContinuation.js';
+import { ApprovalRequestDecideInputSchema } from './specs/approvals.js';
+import type { StoredApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { isApprovalRequestExecutionApproved } from '../approvals/approvalAutomaticChecks.js';
 import { isMachineManagedInstallationActionIdV1 } from './specs/machineConnectionActionIdsV1.js';
 import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
+import { createActionAutomationInvocationV1 } from './executor/actionSettlement.js';
+import { isActionEffectHookableV1 } from './actionSpecs.js';
 import { prepareTeamGroupUpdateActionInput, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
 import { isTeamGroupUpdateActionIdV1 } from '../teams/actionIdsV1.js';
 import { prepareTeamCredentialCreateActionInput, type TeamCredentialCreateActionInputV1 } from '../teams/credentials/actionsV1.js';
@@ -86,13 +92,13 @@ import { isMachineSetupPlanOrApplyActionIdV1, MANAGED_ACQUIRE_ACTION_ID_V1 } fro
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { hasPendingDeploymentBindingSelectionV1 } from '../deployments/deploymentBindingSelectionNarrowing.js';
 import { withoutClientActionInput } from './clientActionInput.js';
-import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from './invocationAuthority.js';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, resolveHostStampedAuthority } from './invocationAuthority.js';
 import { ReviewFindingsApplyInputV1Schema } from '../reviews/reviewApplyV1.js';
 import type { ReviewCommentV1 } from '../reviews/comments/v1.js';
 import { buildAcceptedReviewFindingsForVerifyV1,
   REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '../reviews/reviewFindingsApplyInputV1.js';
 import { ReviewCommentGetResponseV1Schema } from '../reviews/comments/actions.js';
-import { isActionOutcomeUnknownErrorCodeV1, projectApprovalExecutionOutcomeUnknownV1, projectActionExecuteFailure } from './actionExecutionResult.js';
+import { isActionOutcomeUnknownErrorCodeV1, projectApprovalExecutionOutcomeUnknownV1, projectActionExecuteFailure, parseActionExecuteFailure } from './actionExecutionResult.js';
 import { createApprovalReplay } from './executor/approvalReplay.js';
 import { createBlockingApprovalDecisionResolver } from './executor/blockingApprovalDecision.js';
 import { approvalReadFailure as approvalContextUnavailable } from './executor/approvalRead.js';
@@ -667,6 +673,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 }> {
   const settleActionOutput: typeof projectTerminalActionOutput = (actionId, result, requestId, schema) =>
     projectTerminalActionOutput(actionId, result, requestId, schema, deps.recordActionOutputDiagnostic);
+  const observeTerminalAction = async (actionId: ActionId, input: unknown, context: ActionExecutorContext,
+    result: ActionExecuteResult, caller: NonNullable<ActionExecutorContext['actionCaller']>): Promise<void> => {
+    if (!deps.observeActionExecution || isDeferredApprovalResult(result)) return;
+    try {
+      await deps.observeActionExecution({ actionId, input: projectActionObservationInput(actionId, input),
+        context: projectActionObservationContext(actionId, context), caller,
+        result: projectActionExecutionObservation(actionId, result) });
+    } catch {
+      // Observers cannot replace an authoritative Action result.
+    }
+  };
 
   const startExecutionRunWithSelection = async (
     sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0],
@@ -752,23 +769,35 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   };
   const prepareApprovalExecutionOrigin = async (params: Parameters<typeof buildApprovalExecutionOriginV1>[0]) => {
     if (params.context.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-    const prepared = await deps.prepareApprovalExecutionOriginContext?.({
+    const prepared = await (params.context.prepareAdmittedExecutionOrigin?.() ?? deps.prepareApprovalExecutionOriginContext?.({
       targetSessionId: params.targetSessionId,
       ...(params.context.signal ? { signal: params.context.signal } : {}),
-    });
+    }));
     if (params.context.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
     return buildApprovalExecutionOriginV1({
       ...params,
       context: prepared ? { ...params.context, ...prepared } : params.context,
     });
   };
+  const automaticApproval = createAutomaticApprovalContinuation(deps);
+  const automaticContinuationContext = (request: StoredApprovalRequestV2, context: ActionExecutorContext): ActionExecutorContext => {
+    const invocation = request.actionId === 'action.invoke' ? ActionInvokeInputSchema.safeParse(request.actionArgs) : null;
+    const actionId = invocation?.success ? formatQualifiedPluginActionId(invocation.data.action) : request.actionId;
+    return restoreApprovalAutomaticContextV1(request, actionId, context, deps.actionAutomations);
+  };
+  const automaticChecksFor = (context: ActionExecutorContext, humanApprovalRequired: boolean) => {
+    const selection = context.actionAutomationAdmission?.selection;
+    if (!selection) return undefined;
+    return createApprovalAutomaticChecksV1(selection, humanApprovalRequired);
+  };
   async function createActionApprovalRequest(args: Readonly<{
     actionId: ActionId; input: unknown; actionArgs: unknown; preview: unknown; context: ActionExecutorContext;
     approval: NonNullable<ApprovalRequestV2['approval']>; sharedRequesterRequest: boolean;
     discussionDraftReview?: true;
+    humanApprovalRequired?: boolean;
     sessionCreationDirectoryApproval?: ApprovalRequestV2['sessionCreationDirectoryApproval'];
     handoffTargetReplacementApproval?: ApprovalRequestV2['handoffTargetReplacementApproval'];
-  }>): Promise<Readonly<{ ok: true; request: ApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
+  }>): Promise<Readonly<{ ok: true; request: StoredApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
     if (!deps.approvalsCreate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
     const { actionId, input, context: ctx } = args;
     const pluginCaller = projectApprovalRequestPluginCaller(ctx.actionCaller);
@@ -793,7 +822,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const requestingSessionId = resolveApprovalRequestingSessionId(ctx.approvalOrigin, ctx, targetSessionId);
     const approvalOrigin = projectActionApprovalOrigin(actionId,
       resolveApprovalOriginForRequest(ctx.approvalOrigin, requestingSessionId));
-    const proposedRequest: ApprovalRequestV2 = {
+    const automaticChecks = automaticChecksFor(ctx, args.humanApprovalRequired !== false);
+    let proposedRequest: ApprovalRequestV2 = {
       v: 2, status: 'open', createdAtMs: now, updatedAtMs: now,
       createdBy: { surface: mapApprovalCreatedBySurface(ctx.surface ?? null), ...(pluginCaller ?? {}),
         ...(requestingSessionId ? { sessionId: requestingSessionId } : {}) },
@@ -803,9 +833,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(args.discussionDraftReview ? { discussionDraftReview: true as const } : {}),
       ...(args.sessionCreationDirectoryApproval ? { sessionCreationDirectoryApproval: args.sessionCreationDirectoryApproval } : {}),
       ...(args.handoffTargetReplacementApproval ? { handoffTargetReplacementApproval: args.handoffTargetReplacementApproval } : {}),
+      ...(automaticChecks ? { automaticChecks } : {}),
       approval: args.approval, actionId, actionArgs: args.actionArgs,
       summary: buildApprovalSummary(getActionSpec(actionId), input, args.preview), preview: args.preview,
     };
+    if (proposedRequest.automaticChecks && !proposedRequest.automaticChecks.humanApprovalRequired) {
+      const admitted = await automaticApproval.admit('', proposedRequest, ctx);
+      if ('ok' in admitted) return admitted;
+      proposedRequest = admitted;
+    }
     const created = await deps.approvalsCreate({ request: proposedRequest, serverId: normalizeId(ctx.serverId) || null });
     const request = created.request ?? proposedRequest;
     if (request.v !== 2 || isHistoricalPublishApprovalRequestV2(request)) {
@@ -925,10 +961,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       error: 'action_disabled',
       ...(details ? { details } : {}),
     };
-  }
-
-  function resolveHostStampedAuthority(ctx: ActionExecutorContext): ActionRequiredAuthority {
-    return ctx.authority ?? 'account_automation';
   }
 
   async function readDiscussionPublicationPolicy(actionId: string, input: unknown, ctx: ActionExecutorContext,
@@ -1300,7 +1332,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   /** Terminal approvals publish through their originating input owner, including receipt replays. */
   async function settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest,
     context: ActionExecutorContext, replayAcknowledgement?: ActionExecuteResult): Promise<ActionExecuteFailure | null> {
-    if (request.v === 2 && request.approval?.flow === 'deferred' && request.decision?.kind === 'approve') {
+    if (request.v === 2 && request.approval?.flow === 'deferred' && isApprovalRequestExecutionApproved(request)) {
       const origin = request.executionOriginV1;
       if ((origin.surface === 'agent' || origin.surface === 'mcp') && origin.caller.kind === 'session'
         && !origin.discussionReplyReturn) {
@@ -1694,7 +1726,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             }
             return executionOutcomeUnknown();
           }
-          if (persisted.status === 'approved' && persisted.decision?.kind === 'approve' && !persisted.execution
+          if (persisted.status === 'approved' && isApprovalRequestExecutionApproved(persisted) && !persisted.execution
             && sameStrictJsonValue(persisted, JSON.parse(JSON.stringify(request)))) {
             // A returned HTTP failure and a thrown/lost acknowledgement have
             // the same pre-effect recovery only when the exact approved input
@@ -1974,7 +2006,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         } } : {}),
       bypassApprovals: true,
       ...(origin?.success && originIsCurrent && request.v === 2
-        && request.status === 'executing' && request.decision?.kind === 'approve'
+        && request.status === 'executing' && isApprovalRequestExecutionApproved(request)
         ? { approvedActionReplay: { artifactId: args.artifactId,
           ...(approvedPluginInstallReview ? { pluginInstallReview: approvedPluginInstallReview } : {}), origin: {
             surface: origin.data.surface, caller: origin.data.caller,
@@ -2000,6 +2032,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
         : {}),
     };
+    if (request.v === 2 && request.automaticChecks) executionContext = { ...executionContext,
+      actionAutomationAdmission: automaticContinuationContext(request, executionContext).actionAutomationAdmission };
     if (retainsHostOperation && retainedReadinessParent && originalAuthorization) {
       // This exact live child keeps its original requester's private carrier;
       // the approval Artifact cannot recreate the issuer's operand proof.
@@ -2150,23 +2184,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? projectApprovalExecutionOutcomeUnknownV1({ ok: false, ...failure })
         : { ok: false, ...failure, error: redactBugReportSensitiveText(failure.error) };
     });
-    if (
-      originIsCurrent
-      && actionId !== null
-      && args.observeExecution
-      && deps.observeActionExecution
-    ) {
-      try {
-        await deps.observeActionExecution({
-          actionId,
-          input: projectActionObservationInput(actionId, replayInput),
-          context: projectActionObservationContext(actionId, executionContext),
-          caller: executionContext.actionCaller ?? replayCaller,
-          result: projectActionExecutionObservation(actionId, exec),
-        });
-      } catch {
-        // Deferred approval execution is authoritative; after-hook observation is diagnostic only.
-      }
+    if (originIsCurrent && actionId !== null && args.observeExecution) {
+      await observeTerminalAction(actionId, replayInput, executionContext, exec,
+        executionContext.actionCaller ?? replayCaller);
     }
     const { request: nextExecuted, exec: settledExec } = projectSettledApprovalExecution({ request, actionId, exec,
       dispatchEffectAttempted: effectAttempted, executedAtMs: Date.now() });
@@ -2215,6 +2235,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   const replayApprovedApprovalRequest = createApprovalReplay({
     approvalsGet: deps.approvalsGet, approvalsUpdate: deps.approvalsUpdate,
     requireDiscussionDraftReviewAuthority, settleApprovalExecutionPublication,
+    resumeAutomaticApproval: async (artifactId, request, context) => {
+      if (request.v !== 2 || !request.automaticChecks) return request;
+      const continued = await automaticApproval.resume(artifactId, request, automaticContinuationContext(request, context));
+      return 'ok' in continued ? continued : continued.request;
+    },
     resolveBlockingDecisionIfClaimed, executeApprovedActionForRequest,
   });
 
@@ -2235,7 +2260,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     kind: 'ready',
     admission,
     invocation: createOneShotInvocation(async () => {
-      return runOnce
+      const result = runOnce
         ? settleActionOutput(admission.actionId, await runOnce())
         : await executeCoreTerminal(
           admission.actionId,
@@ -2245,6 +2270,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           admission.legacyMetadataLabel,
           admission,
         );
+      return admission.context.actionAutomationAdmission?.settle(result, admission.context) ?? result;
     }),
   });
 
@@ -2269,6 +2295,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       projectSetupSetRootInput: _parentSetupRoot,
       presentUserApproval: _parentApproval, approvedActionReplay: _parentReplay,
       hostReviewedChild: _parentReviewedChild, admittedHostReviewedChildren: _parentReviewedChildren,
+      actionAutomationAdmission: _parentAutomationAdmission,
+      prepareAdmittedExecutionOrigin: _parentExecutionOrigin,
       invocationServices: _parentServices, executeHostReviewedChildAction: _parentHostChildAction, ...caller } = context;
     return caller;
   };
@@ -2293,7 +2321,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // A child is a new authored invocation. Only transport of the same spawn
       // retains its captured creation context.
       const { sessionCreationDefaults: _parentCreationDefaults,
-        onSessionCreationPrepared: _parentCreationPresentation, ...caller } = inheritedCaller;
+        actionAutomationAdmission: _parentAutomationAdmission,
+        prepareAdmittedExecutionOrigin: _parentExecutionOrigin, ...caller } = inheritedCaller;
       const parentRequestId = normalizeId(caller.actionRequestId);
       const derivedContext = parentRequestId ? { ...caller,
         actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,
@@ -2371,7 +2400,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return { ok: false, errorCode, error: errorCode };
       }
     }
-    const liveEnvironmentScope = spec.approvalScope === 'environment';
+    const liveEnvironmentScope = existingAdmission?.approvalScope?.kind === 'environment' || spec.approvalScope === 'environment';
     const availability = options?.sessionTargetLeaf || existingAdmission && !liveEnvironmentScope || hostInternal
       ? null : resolveAvailabilityForContext(spec, ctx);
     const isApprovalAction = isApprovalActionId(actionId);
@@ -3214,12 +3243,56 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (prepared && 'ok' in prepared) return prepared;
       if (prepared) ctx = { ...ctx, ...prepared };
     }
-    const scopeAdmission = existingAdmission ? { approvalScope: existingAdmission.approvalScope }
+    const scopeAdmission = existingAdmission ? { approvalScope: existingAdmission.approvalScope,
+      automationSubjects: existingAdmission.automationSubjects }
       : await readActionApprovalScopeAdmissionV1({ actionId, spec, input: admittedInput,
         context: ctx, deps, phase: options?.approvalReplay ? 'replay' : 'prepare',
         isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in scopeAdmission) return scopeAdmission;
     const { approvalScope } = scopeAdmission;
+    // One admitted operand snapshot serves both phases, including approval continuation.
+    // Contributed invocations consume their declaration's input-sensitive effect fact at its owner.
+    if (deps.actionAutomations) {
+      ctx = { ...ctx, actionAutomationPort: deps.actionAutomations };
+      if (actionId !== 'action.invoke' && !isApprovalActionId(actionId)
+        && isActionEffectHookableV1(spec.sideEffectClass)
+        && !(sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf)
+        && ctx.actionAutomationAdmission?.actionId !== actionId && !options?.reviewOnly) {
+        if (!ctx.prepareAdmittedExecutionOrigin && deps.prepareApprovalExecutionOriginContext
+          && ctx.sessionTargetsV1?.targets.length === 1) {
+          const prepareOrigin = deps.prepareApprovalExecutionOriginContext;
+          const targetSessionId = ctx.sessionTargetsV1.targets[0]!.sessionId;
+          const signal = ctx.signal;
+          let preparedOrigin: ReturnType<typeof prepareOrigin> | undefined;
+          ctx = { ...ctx, prepareAdmittedExecutionOrigin: () => preparedOrigin ??= prepareOrigin({
+            targetSessionId, ...(signal ? { signal } : {}),
+          }) };
+        }
+        const prepareOrigin = ctx.prepareAdmittedExecutionOrigin;
+        let selection: import('./executor/actionAutomationAdmission.js').ActionAutomationSelectionV1;
+        try { selection = await deps.actionAutomations.select({ actionId, input: admittedInput, context: ctx,
+          ...(prepareOrigin ? { loadSubjectFacts: async () => {
+            const { automationSubjects, ...originContext } = await prepareOrigin();
+            // The same admitted host facts serve matching, consent and Run placement.
+            Object.assign(ctx, originContext);
+            return automationSubjects ?? [];
+          } } : {}),
+          ...(spec.completion ? { includeAfter: false as const } : {}),
+          ...(approvalScope ? { approvalScope } : {}),
+          ...('automationSubjects' in scopeAdmission && scopeAdmission.automationSubjects
+            ? { subjects: scopeAdmission.automationSubjects } : {}),
+          ...(ctx.signal ? { signal: ctx.signal } : {}) }); }
+        catch (error) {
+          if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+          throw error;
+        }
+        ctx = { ...ctx, actionRequestId: ctx.actionRequestId || bytesToHex(randomBytes(16)) };
+        ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({
+          actionId, context: ctx, selection, port: deps.actionAutomations,
+        }) };
+      }
+      options?.onAutomationAdmission?.(ctx);
+    }
     if (!existingAdmission && spec.hostReviewedChildren) {
       const children = typeof spec.hostReviewedChildren === 'function'
         ? spec.hostReviewedChildren(admittedInput)
@@ -3442,6 +3515,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(hostInternal ? { hostInternal: true } : {}),
       ...(workflowSessionScope === undefined ? {} : { workflowSessionScope }),
       ...(approvalScope ? { approvalScope } : {}),
+      ...('automationSubjects' in scopeAdmission && scopeAdmission.automationSubjects
+        ? { automationSubjects: scopeAdmission.automationSubjects } : {}),
       ...(discussionParticipantLaunch ? { discussionParticipantLaunch } : {}),
       ...(memoryAdmission ? { memoryAdmission } : {}),
       ...(visualAdmission ? { visualAdmission } : {}),
@@ -3470,6 +3545,70 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
 
     try {
+      if (!approvalRouting.required && !approvalRouting.uiConfirmationRequired && !isApprovalAction && !ctx.approvedActionReplay) {
+        const checks = automaticChecksFor(ctx, false);
+        if (checks && (checks.selected.some(row => row.phase === 'before')
+          || checks.consents.some(row => row.decision === 'pending'))) {
+          if (options?.prepareOnly) return ready(retainPreparedAdmission(admittedInput, ctx),
+            () => executeCoreTerminal(actionId, admittedInput, ctx, true, legacyMetadataLabel,
+              retainPreparedAdmission(admittedInput, ctx)));
+          const onlyNotify = checks.consents.every(row => row.decision !== 'pending')
+            && checks.selected.filter(row => row.phase === 'before').every(row => row.mode === 'notify');
+          if (onlyNotify) {
+            const started = await deps.actionAutomations?.start?.({ selected: checks.selected.filter(row => row.phase === 'before'),
+              actionId, input: admittedInput, context: ctx });
+            if (started?.notices.length && ctx.actionAutomationAdmission && deps.actionAutomations) {
+              ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({ actionId,
+                context: ctx, selection: ctx.actionAutomationAdmission.selection,
+                port: deps.actionAutomations, notices: started.notices }) };
+            }
+          } else {
+            const prepared = await prepareCurrentApproval();
+            if (!prepared) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+            if ('ok' in prepared) return prepared;
+            const retainsAutomaticInvocation = spec.approvalInputCustody === 'live_only'
+              || spec.approvalResultCustody === 'live_only' || retainHostOperationApproval;
+            const created = await createActionApprovalRequest({ actionId, input: admittedInput,
+              actionArgs: prepared.actionArgs, preview: prepared.preview, context: ctx, sharedRequesterRequest,
+              humanApprovalRequired: false, approval: { flow: retainsAutomaticInvocation ? 'blocking' : 'deferred', result: baseApprovalRouting.result } });
+            if (!created.ok) return created;
+            // Mount the incumbent pending card before a recorded Run can hold
+            // this invocation, so Checking and Cancel stay reachable.
+            const pendingDecision = retainsAutomaticInvocation && deps.approvalsWaitForDecision
+              ? deps.approvalsWaitForDecision({ artifactId: created.artifactId,
+                request: created.request, serverId: normalizeId(ctx.serverId) || null,
+                ...(ctx.signal ? { signal: ctx.signal } : {}) }) : undefined;
+            // The checks can settle without another decision; the observer's
+            // rejection is still consumed if that branch no longer awaits it.
+            void pendingDecision?.catch(() => undefined);
+            const continued = await automaticApproval.resume(created.artifactId, created.request, ctx);
+            if ('ok' in continued) return continued;
+            if (continued.kind === 'refused') return continued.failure;
+            let automaticRequest: ApprovalRequest = continued.request;
+            let automaticContext = ctx;
+            if (continued.kind === 'pending') {
+              if (!pendingDecision) return { ok: true,
+                result: { kind: 'approval_request_created', artifactId: created.artifactId, actionId } };
+              const decision = await pendingDecision;
+              if (decision.decision !== 'approve') {
+                const errorCode = decision.decision === 'reject' ? 'approval_rejected' : 'approval_canceled';
+                return { ok: false, errorCode, error: errorCode };
+              }
+              const recorded = buildActionExecuteResultFromRecordedApprovalExecution(decision.request);
+              if (recorded) return recorded;
+              automaticRequest = decision.request;
+              if (decision.decisionAuthority === 'present_user') automaticContext = { ...ctx, authority: 'present_user' };
+            }
+            const executed = await executeApprovedActionForRequest({ artifactId: created.artifactId,
+              request: automaticRequest, artifactServerId: normalizeId(ctx.serverId) || null, ctx: automaticContext,
+              ...(retainsAutomaticInvocation ? { liveOnlyActionArgs: admittedInput } : {}),
+              ...(ctx.widgetAreaContext ? { retainedWidgetAreaContext: ctx.widgetAreaContext } : {}),
+              ...(ctx.publicProfilePreparedAction ? { retainedPublicProfileAction: ctx.publicProfilePreparedAction } : {}),
+              ...(ctx.publicProfilePreviewResult ? { retainedPublicProfilePreview: ctx.publicProfilePreviewResult } : {}) });
+            return executed.ok ? executed.exec : executed;
+          }
+        }
+      }
       if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction) {
         if (actionId === 'session.spawn_new') {
           // Review only a Profile that exists after Role/target preparation.
@@ -3795,20 +3934,26 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ctx = retainHostReviewedChildAdmissionV1(ctx, actionId, parsed.data, admittedInput) ?? ctx;
       if (sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf) {
         const snapshot = ctx.sessionTargetsV1;
+        const { actionAutomationAdmission: _groupAutomationAdmission,
+          prepareAdmittedExecutionOrigin: _groupExecutionOrigin, ...materialContext } = ctx;
         const runTargets = async (): Promise<ActionExecuteResult> => {
           const results: Array<{ target: ActionSessionAddress; result: ActionExecuteResult }> = [];
-          for (const target of snapshot.targets) {
+          const parentRequestId = ctx.actionRequestId ?? bytesToHex(randomBytes(16));
+          for (const [position, target] of snapshot.targets.entries()) {
             // The group already admitted Account authority, the credential's
             // Action ceiling and enablement. Each new target retains its own
             // credential-target, caller-scope and domain admission.
             const result: ActionExecuteResult = ctx.signal?.aborted
               ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
               : await executeCoreTerminal(actionId, replaceActionSessionTargetField(readRecord(admittedInput), snapshot.field, target.sessionId),
-                  { ...ctx, serverId: target.serverId,
+                  { ...materialContext, serverId: target.serverId,
+                    actionRequestId: snapshot.targets.length === 1 ? parentRequestId
+                      : deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId, childActionId: actionId, position }),
                     // A reviewed/resolved host leaf remains this exact Session
                     // through fresh transport reads, including durable replay.
                     ...(actionId === 'action.invoke' ? {} : { expectedSessionAddress: target }),
-                    sessionTargetsV1: actionId === 'action.invoke' && sessionTarget.cardinality === 'one' ? snapshot : undefined,
+                    sessionTargetsV1: actionId === 'action.invoke' && sessionTarget.cardinality === 'one'
+                      ? snapshot : { ...snapshot, targets: [target], selector: false },
                     bypassApprovals: true }, true,
                   legacyMetadataLabel, undefined, options?.approvalReplay === true, undefined, true, undefined, hostInternal);
             results.push({ target, result });
@@ -6890,6 +7035,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       if (actionId === 'approval.request.decide') {
+        // The canonical Action input schema admitted this value before dispatch.
+        const triggerConsent = data.triggerConsent as z.infer<typeof ApprovalRequestDecideInputSchema>['triggerConsent'];
         const withdrawal = isApprovalWithdrawalDecisionV1(data.decision);
         const delegatedHostDecision = !withdrawal && resolveHostStampedAuthority(ctx) !== 'present_user'
           && (ctx.surface === 'agent' || ctx.surface === 'mcp' || ctx.surface === 'cli') && !ctx.externalActionCredential;
@@ -6907,15 +7054,31 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
 
+        // Consent authoring is a person's Account decision, checked before any replay forwarding.
+        let consentGuardRead: unknown;
+        if (triggerConsent?.decision === 'allow') {
+          if (!deps.approvalsGet || !hasApprovalAutomaticConsentPersonAuthorityV1(ctx)) {
+            return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+          }
+          try { consentGuardRead = await deps.approvalsGet({ artifactId, serverId: null }); }
+          catch (error) { return approvalContextUnavailable(error); }
+          const target = TargetActionApprovalRequestV1Schema.safeParse(consentGuardRead);
+          const builtIn = target.success ? null : StoredApprovalRequestSchema.safeParse(consentGuardRead);
+          const guarded = target.success ? target.data : builtIn?.success && builtIn.data.v === 2 ? builtIn.data : null;
+          if (!canAuthorApprovalAutomaticConsentV1(guarded, ctx, 'approval.request.decide')) {
+            return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+          }
+        }
+
         // A requester recipient has View, not lifecycle-write custody. A
         // Discussion Post must also reach its publication owner before CAS:
         // closing the reviewing client cannot strand browser-recorded consent.
-        let requesterPreviewRead: unknown;
-        let requesterPreviewWasRead = false;
+        let requesterPreviewRead: unknown = consentGuardRead;
+        let requesterPreviewWasRead = consentGuardRead !== undefined;
         if (!ctx.requesterApprovalDecision && resolveHostStampedAuthority(ctx) === 'present_user'
           && (deps.approvalRequestApprovedReplay || deps.executionRunHostActionApprovalReplay) && deps.approvalsGet) {
           try {
-            requesterPreviewRead = await deps.approvalsGet({ artifactId, serverId: null });
+            requesterPreviewRead = requesterPreviewWasRead ? requesterPreviewRead : await deps.approvalsGet({ artifactId, serverId: null });
             requesterPreviewWasRead = true;
           } catch (error) { return approvalContextUnavailable(error); }
           const builtInPreview = StoredApprovalRequestSchema.safeParse(requesterPreviewRead);
@@ -6930,7 +7093,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (preview && (requesterDecision || discussionPost) && deps.approvalRequestApprovedReplay) {
             if (data.narrowedInput !== undefined) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
             const forwarded = await deps.approvalRequestApprovedReplay({ artifactId, request: preview,
-              decision, context: ctx, ...(ctx.actionRequestId ? { requestId: ctx.actionRequestId } : {}),
+              decision, ...(triggerConsent ? { triggerConsent: triggerConsent } : {}), context: ctx, ...(ctx.actionRequestId ? { requestId: ctx.actionRequestId } : {}),
               ...(ctx.signal ? { signal: ctx.signal } : {}) });
             if (forwarded !== null) return forwarded;
             // The incumbent daemon keeps ordinary publication decisions in this
@@ -6950,6 +7113,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const replay = await deps.targetActionApprovalReplay({
             artifactId,
             decision,
+            ...(triggerConsent ? { triggerConsent } : {}),
             ...(requesterPreviewWasRead ? { initialRead: { request: requesterPreviewRead } } : {}),
             context: ctx,
             ...(ctx.externalActionCredential?.grant ? { callerGrant: ctx.externalActionCredential.grant } : {}),
@@ -6973,8 +7137,34 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!existingRaw) return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
 
         const existingParsed = StoredApprovalRequestSchema.safeParse(existingRaw);
-        if (!existingParsed.success) return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
-        const existing = existingParsed.data;
+        const targetParsed = !existingParsed.success && delegatedHostDecision && data.narrowedInput === undefined
+          && deps.targetActionApprovalReplay ? TargetActionApprovalRequestV1Schema.safeParse(existingRaw) : null;
+        const family = existingParsed.success ? { kind: 'builtin' as const, request: existingParsed.data }
+          : targetParsed?.success ? { kind: 'target' as const, request: targetParsed.data } : null;
+        if (!family) return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
+        if (delegatedHostDecision) {
+          const origin = family.kind === 'target' ? family.request.executionOriginV1
+            : family.request.v === 2 ? family.request.executionOriginV1 : null;
+          const personHostRequester = origin && isPresentUserHostInvocation({ surface: origin.surface,
+            authority: origin.authority, actionCaller: origin.caller });
+          const requestingSessionId = origin?.caller.kind === 'session' ? origin.caller.sessionId : origin?.sessionId;
+          const decidingSessionId = ctx.actionCaller?.kind === 'session' ? ctx.actionCaller.sessionId : ctx.defaultSessionId;
+          // Immutable execution provenance, rather than editable presentation
+          // provenance, identifies the requester. A person-host request has no
+          // requesting Session; automation still needs independent Session identity.
+          if (!origin || !decidingSessionId || (!personHostRequester && (!requestingSessionId || requestingSessionId === decidingSessionId))
+            || origin.requestId === ctx.actionRequestId) {
+            return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+          }
+        }
+        if (family.kind === 'target') {
+          const replay = await deps.targetActionApprovalReplay?.({ artifactId, decision,
+            ...(triggerConsent ? { triggerConsent } : {}), initialRead: { request: family.request }, context: ctx,
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          return replay ?? { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
+        }
+        let existing = family.request;
         const admission = await admitApprovalRequesterDecisionV1({ request: existing, context: ctx });
         if (!admission.ok) return admission;
         if (existing.v === 2) {
@@ -6992,20 +7182,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const requestedSpec = requestedActionId.success ? getActionSpec(requestedActionId.data) : null;
         const draftReviewFailure = withdrawal ? null : await requireDiscussionDraftReviewAuthority(existing, ctx);
         if (draftReviewFailure) return draftReviewFailure;
-        if (delegatedHostDecision) {
-          const origin = existing.v === 2 ? existing.executionOriginV1 : null;
-          const personHostRequester = origin && isPresentUserHostInvocation({ surface: origin.surface,
-            authority: origin.authority, actionCaller: origin.caller });
-          const requestingSessionId = origin?.caller.kind === 'session' ? origin.caller.sessionId : origin?.sessionId;
-          const decidingSessionId = ctx.actionCaller?.kind === 'session' ? ctx.actionCaller.sessionId : ctx.defaultSessionId;
-          // Immutable execution provenance, rather than editable presentation
-          // provenance, identifies the requester. A person-host request has no
-          // requesting Session; automation still needs independent Session identity.
-          if (!origin || !decidingSessionId || (!personHostRequester && (!requestingSessionId || requestingSessionId === decidingSessionId))
-            || origin.requestId === ctx.actionRequestId) {
-            return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
-          }
-        }
         if (narrowsInput && (decision !== 'approve' || !requestedSpec?.approvalNarrowing || existing.status !== 'open')) {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
@@ -7066,19 +7242,59 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const approveRefusal = decision === 'approve' && existing.v === 2 && existing.status === 'open'
           && !existing.requesterConfirmation ? deps.approvalRequestApproveRefusal?.({ request: existing }) : null;
         if (approveRefusal) return approveRefusal;
-        if (delegatedHostDecision && data.narrowedInput === undefined && deps.targetActionApprovalReplay) {
-          const replay = await deps.targetActionApprovalReplay({ artifactId, decision,
-            context: ctx,
-            ...(ctx.signal ? { signal: ctx.signal } : {}),
-          });
-          if (replay !== null) return replay;
+        if (decision === 'approve' && existing.v === 2 && existing.status === 'open' && existing.automaticChecks) {
+          const decidingActor = deriveActionActorV1(ctx, 'approval.request.decide');
+          const decidingAccountId = decidingActor?.actorKind === 'person' ? decidingActor.accountId : undefined;
+          let pending = existing;
+          const checks = existing.automaticChecks;
+          const now = Math.max(Date.now(), existing.updatedAtMs);
+          if (checks.phase === 'consent') {
+            let nextChecks = checks;
+            if (triggerConsent) {
+              const answered = await answerApprovalAutomaticConsentV1({ artifactId, checks, answer: triggerConsent,
+                context: ctx, executionContext: automaticContinuationContext(pending, ctx), port: deps.actionAutomations });
+              if ('ok' in answered) return answered;
+              nextChecks = answered;
+            } else if (checks.humanApprovalRequired && !checks.humanDecision) {
+              nextChecks = { ...checks, humanDecision: { kind: 'approve', decidedAtMs: now,
+                ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
+                  ...(decidingAccountId ? { decidingAccountId } : {}) } : {}),
+                ...(narrowsInput ? { narrowedInput: projectNativeJsonValueForTransport(narrowedActionArgs) } : {}) } };
+            } else return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            const admitted = await automaticApproval.admit(artifactId,
+              { ...pending, updatedAtMs: now, automaticChecks: nextChecks },
+              automaticContinuationContext({ ...pending, automaticChecks: nextChecks }, ctx));
+            if (!('v' in admitted)) return admitted;
+            const failure = await automaticApproval.write(artifactId, admitted, ctx);
+            if (failure) return failure;
+            pending = admitted;
+          } else if (checks.phase === 'override') {
+            if (triggerConsent) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            pending = { ...pending, status: 'approved', updatedAtMs: now,
+              decision: { kind: 'approve', decidedAtMs: now,
+                ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
+                  ...(decidingAccountId ? { decidingAccountId } : {}) } : {}) },
+              automaticChecks: { ...checks, phase: 'passed' } };
+            const failure = await automaticApproval.write(artifactId, pending, ctx);
+            if (failure) return failure;
+          }
+          if (pending.automaticChecks?.phase === 'checking') {
+            const continued = await automaticApproval.resume(artifactId, pending, automaticContinuationContext(pending, ctx));
+            if ('ok' in continued) return continued;
+            if (continued.kind === 'refused') return buildApprovalDecisionResult(continued.request);
+            pending = continued.request;
+          }
+          if (pending.status === 'open') return buildApprovalDecisionResult(pending);
+          existing = pending;
         }
+        if (triggerConsent && (existing.v !== 2 || !existing.automaticChecks)) return { ok: false,
+          errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         const isRecoverableApproved = decision === 'approve'
           && existing.status === 'approved'
-          && existing.decision?.kind === 'approve'
+          && isApprovalRequestExecutionApproved(existing)
           && !existing.execution;
         const isCancelableApproved = decision === 'cancel' && existing.v === 2
-          && existing.status === 'approved' && existing.decision?.kind === 'approve' && !existing.execution;
+          && existing.status === 'approved' && isApprovalRequestExecutionApproved(existing) && !existing.execution;
 
         let settleDiscussionReview: (() => Promise<ActionExecuteFailure | null>) | undefined;
         if (decision !== 'approve' && existing.v === 2 && existing.actionId === 'discussion.reply'
@@ -7154,7 +7370,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         if (decision === 'approve'
           && (existing.status === 'approved' || existing.status === 'executed' || existing.status === 'failed' || existing.status === 'outcome_unknown')
-          && existing.decision?.kind === 'approve'
+          && isApprovalRequestExecutionApproved(existing)
           && !isRecoverableApproved) {
           const settlementFailure = await settleApprovalExecutionPublication(artifactId, existing, ctx);
           return settlementFailure ?? buildApprovalDecisionResult(existing);
@@ -7192,6 +7408,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const updated = await deps.approvalsUpdate({ artifactId, request: nextCanceled, serverId: effectiveServerId, context: ctx });
           const updateFailure = readActionFailureEnvelope(updated);
           if (updateFailure) return updateFailure;
+          if (existing.v === 2 && existing.automaticChecks) await automaticApproval.cancel(existing, ctx);
           // Blocking waiters observe the persisted canceled Artifact through their
           // existing cancellation branch; no approval/rejection authority is minted.
           return buildApprovalDecisionResult(nextCanceled);
@@ -7219,6 +7436,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: effectiveServerId, context: ctx });
           const updateFailure = readActionFailureEnvelope(updated);
           if (updateFailure) return updateFailure;
+          if (existing.v === 2 && existing.automaticChecks?.phase === 'checking') await automaticApproval.cancel(existing, ctx);
           if (isBlockingApprovalRequest(nextRejected)) {
             await resolveBlockingDecisionIfClaimed({
               artifactId,
@@ -7470,6 +7688,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     hostInternal = false,
   ): Promise<ActionExecuteResult> {
     const operationCredentialUses: ActionOperationCredentialUseV1[] = [];
+    let settlementContext = context;
     let observing = true;
     const recordOperationCredentialUse = (use: ActionOperationCredentialUseV1) => {
       if (!observing) return;
@@ -7490,6 +7709,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(hostInternal || prepared?.hostInternal ? { hostInternal: true } : {}),
           ...(sessionTargetLeaf ? { sessionTargetLeaf: true } : {}),
           ...(approvedApiTokenExecution ? { approvedApiTokenExecution } : {}),
+          onAutomationAdmission: admitted => { settlementContext = admitted; },
           ...(sameHome ? { sameHome } : {}) },
       );
       if ('kind' in result) {
@@ -7498,7 +7718,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // Only this invocation's host observer may stamp the annotation. An
       // arbitrary dependency/plugin result cannot assert a credential identity.
       const { operationCredentialUses: _untrustedAnnotation, ...unannotated } = result;
-      const settled = settleActionOutput(actionId, carryActionFailureDiagnostic(unannotated, result), context?.actionRequestId ?? undefined);
+      const output = settleActionOutput(actionId, carryActionFailureDiagnostic(unannotated, result), context?.actionRequestId ?? undefined);
+      const settled = await (settlementContext?.actionAutomationAdmission?.settle(output, settlementContext) ?? output);
       return operationCredentialUses.length ? { ...settled, operationCredentialUses } : settled;
     } finally {
       observing = false;
@@ -7603,16 +7824,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     if (ctx.bypassActionInterception || (!deps.interceptActionExecution && !deps.observeActionExecution)
       || readMissingActionSecretInputPaths(spec, input).length > 0) {
-      return settlePrepareResult(actionId, await executeCore(
+      let settlementContext = ctx;
+      const prepared = settlePrepareResult(actionId, await executeCore(
         actionId,
         input,
         ctx,
         false,
         undefined,
         { prepareOnly: true, hostInternal, dispatchImmediately,
+          onAutomationAdmission: admitted => { settlementContext = admitted; },
           ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
           ...(preparedDiscussionPolicy !== undefined ? { discussionPublicationPolicy: preparedDiscussionPolicy } : {}) },
       ));
+      return prepared.kind === 'settled'
+        ? { ...prepared, result: await (settlementContext.actionAutomationAdmission?.settle(prepared.result, settlementContext) ?? prepared.result) }
+        : prepared;
     }
 
     const inputSchema = hostInternal ? spec.inputSchema : callerInputSchema(spec, ctx);
@@ -7707,6 +7933,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ));
     }
 
+    let settlementContext = ctx;
     const prepared = settlePrepareResult(actionId, await executeCore(
       actionId,
       parsedSemanticInput.data,
@@ -7714,6 +7941,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       true,
       undefined,
       { prepareOnly: true, hostInternal, dispatchImmediately, admittedInputSchema: spec.inputSchema,
+        onAutomationAdmission: admitted => { settlementContext = admitted; },
         ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
         ...(preparedDiscussionPolicy !== undefined && readRecord(parsedSemanticInput.data).discussionId === originalDiscussionId
           && (ctx.actionCaller?.kind === 'session' ? normalizeId(ctx.actionCaller.sessionId)
@@ -7722,26 +7950,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       },
     ));
     const observeResult = async (result: ActionExecuteResult): Promise<void> => {
-      try {
-        const observedInput = spec.projectObservationInput
-          ? spec.projectObservationInput(parsedSemanticInput.data)
-          : parsedSemanticInput.data;
-        await deps.observeActionExecution?.({
-          actionId,
-          input: observedInput,
-          context: projectActionObservationContext(actionId, ctx),
-          caller,
-          result: projectActionExecutionObservation(actionId, result),
-        });
-      } catch {
-        // The action effect/result is authoritative; after-hook observation is diagnostic only.
-      }
+      await observeTerminalAction(actionId, parsedSemanticInput.data, ctx, result, caller);
     };
     if (prepared.kind === 'settled') {
-      if (!isDeferredApprovalResult(prepared.result)) {
-        await observeResult(prepared.result);
-      }
-      return prepared;
+      const result = await (settlementContext.actionAutomationAdmission?.settle(prepared.result, settlementContext) ?? prepared.result);
+      await observeResult(result);
+      return { ...prepared, result };
     }
 
     return {
@@ -7749,7 +7963,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       admission: prepared.admission,
       invocation: createOneShotInvocation(async () => {
         const result = await prepared.invocation.run();
-        if (!isDeferredApprovalResult(result)) await observeResult(result);
+        await observeResult(result);
         return result;
       }),
     };
@@ -7795,7 +8009,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const admitted = prepared.admission;
       if (resolveActionExecutionPlacementForInput(spec, admitted.input, admitted.context.actionCaller, admitted.context.surface ?? 'ui') === 'machine') {
         const routed = await deps.routeHostChildAction({ actionId, input: admitted.input, context: admitted.context });
-        if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
+        if (routed) {
+          const output = settleActionOutput(actionId, routed, admitted.context.actionRequestId ?? undefined);
+          return await admitted.context.actionAutomationAdmission?.settle(output, admitted.context) ?? output;
+        }
       }
     }
     const result = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;

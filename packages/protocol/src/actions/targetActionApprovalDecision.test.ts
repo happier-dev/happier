@@ -7,6 +7,7 @@ import { admitTargetActionApprovalTransition } from '../approvals/targetActionAp
 import { projectApprovalRequestForPublicRead } from './actionApprovalPresentation';
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '../auth/apiTokenGrant';
 import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
+import { executeApprovalObservationAction } from './executor/approvalObservation';
 
 function accountApproval() {
   return TargetActionApprovalRequestV1Schema.parse({ v: 1, kind: 'plugin_target_action', status: 'open',
@@ -184,8 +185,12 @@ describe('target Action approval decision custody', () => {
     } });
     if (surface === 'ui') expect(request.decision).not.toHaveProperty('decidedVia');
     const observed = projectApprovalRequestForPublicRead(request);
-    expect(getActionSpec('approval.request.get').outputSchema.parse({ artifactId: 'voice-target', request: observed,
-      queryPlan: { kind: 'approval_artifact_id_lookup', backingStore: 'ArtifactStore', boundedBy: 'approval artifact id', hydratedTranscripts: false } }))
+    const read = await executeApprovalObservationAction({ actionId: 'approval.request.get',
+      input: { artifactId: 'voice-target' }, context: { surface, authority: 'present_user', runtimeAccountId: 'reviewer' },
+      deps: { approvalsGet: async () => request } });
+    expect(read.ok).toBe(true);
+    if (!read.ok) throw new Error(read.errorCode);
+    expect(getActionSpec('approval.request.get').outputSchema.parse(read.result))
       .toMatchObject({ request: { decision: { kind: decision, ...(surface === 'voice' ? { decidedVia: 'voice' } : {}) } } });
     expect(JSON.stringify(observed)).not.toContain('reviewer');
   });

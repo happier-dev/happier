@@ -3,6 +3,7 @@ import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type ApprovalRequestV2, type CurrentApprovalRequest, type StoredApprovalRequestV2 } from './approvalRequestV1.js';
+import { actionAutomationTriggerKeyV1, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from './creation.js';
 
 /**
@@ -86,7 +87,11 @@ export function settleApprovalRequestReplayInputs(request: ApprovalRequest): App
   const decision = settleApprovalRequestDecision(request);
   if (request.v !== 2) return { ...request, actionArgs, decision };
   const { originalActionEnvelope: _envelope, ...executionOriginV1 } = request.executionOriginV1;
-  return { ...request, actionArgs, decision, executionOriginV1 };
+  const automaticChecks = request.automaticChecks;
+  const humanDecision = automaticChecks?.humanDecision;
+  return { ...request, actionArgs, decision, executionOriginV1,
+    ...(automaticChecks ? { automaticChecks: { ...automaticChecks,
+      ...(humanDecision ? { humanDecision: settleApprovalRequestDecision({ ...request, decision: humanDecision }) } : {}) } } : {}) };
 }
 
 /** Input admission only, shared by the transition writer and the replay executor. */
@@ -118,9 +123,39 @@ function immutableSubject(request: ApprovalRequest, actionArgs: unknown): Readon
     execution: _execution,
     actionArgs: _actionArgs,
     storageRetryResults: _storageRetryResults,
+    automaticChecks: _automaticChecks,
     ...subject
   } = request;
-  return { ...subject, actionArgs };
+  const automatic = request.v === 2 ? request.automaticChecks : undefined;
+  return { ...subject, actionArgs, ...(automatic ? { automaticChecks: {
+    selected: automatic.selected, subjects: automatic.subjects, selectionStatus: automatic.selectionStatus,
+    humanApprovalRequired: automatic.humanApprovalRequired,
+  } } : {}) };
+}
+
+/** Admission facts and answered decisions survive every pending continuation. */
+function preservesAutomaticChecks(existing: ApprovalRequest, next: ApprovalRequest): boolean {
+  const prior = existing.v === 2 ? existing.automaticChecks : undefined;
+  const following = next.v === 2 ? next.automaticChecks : undefined;
+  return preservesApprovalAutomaticChecksV1(prior, following);
+}
+
+export function preservesApprovalAutomaticChecksV1(
+  prior: import('./approvalAutomaticChecks.js').ApprovalAutomaticChecksV1 | undefined,
+  following: import('./approvalAutomaticChecks.js').ApprovalAutomaticChecksV1 | undefined,
+): boolean {
+  if (!prior || !following) return prior === following;
+  if (prior.humanDecision && !durablyEqual(prior.humanDecision, following.humanDecision)) return false;
+  if (prior.results.length && !durablyEqual(prior.results, following.results)) return false;
+  if (prior.notices.some(notice => !following.notices.some(candidate => durablyEqual(candidate, notice)))) return false;
+  if (prior.runs.some(run => !following.runs.some(candidate => durablyEqual(candidate, run)))) return false;
+  if (prior.consents.length !== following.consents.length || prior.consents.some(consent => !following.consents.some(candidate =>
+    actionAutomationTriggerKeyV1(candidate) === actionAutomationTriggerKeyV1(consent)
+      && (consent.decision === 'pending' || durablyEqual(candidate, consent))))) return false;
+  if (prior.phase === 'passed' || prior.phase === 'refused') return durablyEqual(prior, following);
+  if (prior.phase === 'checking' && following.phase === 'consent') return false;
+  if (prior.phase === 'override' && following.phase !== 'override' && following.phase !== 'passed') return false;
+  return true;
 }
 
 export type ApprovalRequestTransitionDecision =
@@ -157,6 +192,7 @@ export function decideApprovalRequestTransition(
   if (!durablyEqual(immutableSubject(expected, expected.actionArgs), immutableSubject(next, next.actionArgs))) {
     return SUBJECT_MISMATCH;
   }
+  if (!preservesAutomaticChecks(expected, next)) return SUBJECT_MISMATCH;
   if (existing.status === 'open') {
     if (next.v === 2 && next.decision?.narrowedInput !== undefined
       && (next.status !== 'approved' || !resolveApprovalRequestExecutionInput(next).ok)) return SUBJECT_MISMATCH;
@@ -175,13 +211,20 @@ export function decideApprovalRequestTransition(
   }
   const isOpenDecision = existing.status === 'open'
     && (next.status === 'approved' || next.status === 'rejected' || next.status === 'canceled');
+  const isAutomaticPendingDecision = existing.v === 2 && next.v === 2
+    && existing.status === 'open' && next.status === 'open'
+    && existing.automaticChecks !== undefined && next.automaticChecks !== undefined
+    && ApprovalRequestV2Schema.safeParse(next).success;
+  const isAutomaticRefusal = existing.v === 2 && next.v === 2 && existing.status === 'open'
+    && next.status === 'failed' && next.automaticChecks?.phase === 'refused'
+    && next.execution?.ok === false && next.execution.effectAttempted === false;
   // Only current V2 carries the executing claim. Released ApprovalRequestV1
   // has terminal execution results, but no intermediate `executing` state.
   const isApprovedExecution = existing.v === 2
     && existing.status === 'approved'
     && next.v === 2
     && next.status === 'executing'
-    && next.decision?.kind === 'approve'
+    && isApprovalRequestExecutionApproved(next)
     && next.execution === undefined;
   // A definitive replay-currentness/context failure happens before an Action
   // effect starts, so it settles an approved V2 request directly.
@@ -189,7 +232,7 @@ export function decideApprovalRequestTransition(
     && existing.status === 'approved'
     && next.v === 2
     && (next.status === 'failed' || next.status === 'outcome_unknown')
-    && next.decision?.kind === 'approve'
+    && isApprovalRequestExecutionApproved(next)
     && next.execution?.ok === false;
   // Released V1 has no replay authority or executing claim; the decision owner
   // may only close an approved V1 request with the fixed non-effectful stale
@@ -206,7 +249,7 @@ export function decideApprovalRequestTransition(
     && existing.status === 'executing'
     && next.v === 2
     && (next.status === 'executed' || next.status === 'failed' || next.status === 'outcome_unknown')
-    && next.decision?.kind === 'approve'
+    && isApprovalRequestExecutionApproved(next)
     && next.execution !== undefined
     // Cancellation owns only unclaimed custody. The writer may have re-read
     // an execution claim after the canceling caller read `approved`.
@@ -223,6 +266,8 @@ export function decideApprovalRequestTransition(
       || next.status === 'failed' && next.execution.ok === false);
   if (
     (!isOpenDecision
+      && !isAutomaticPendingDecision
+      && !isAutomaticRefusal
       && !isApprovedExecution
       && !isApprovedPreExecutionFailure
       && !isLegacyApprovedStaleFailure

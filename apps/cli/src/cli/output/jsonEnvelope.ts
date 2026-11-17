@@ -1,6 +1,9 @@
-export type SessionControlJsonEnvelope =
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+
+export type SessionControlJsonEnvelope = (
   | Readonly<{ v: 1; ok: true; kind: string; data: unknown }>
-  | Readonly<{ v: 1; ok: false; kind: string; error: unknown }>;
+  | Readonly<{ v: 1; ok: false; kind: string; error: unknown }>
+) & Pick<ActionExecuteResult, 'automationNotices'>;
 
 export type SessionControlExitCode = 0 | 1 | 2 | 3 | 4 | 5;
 
@@ -47,9 +50,10 @@ export async function writeJsonStdout(
 }
 
 export async function printJsonEnvelope(
-  payload:
+  payload: (
     | Readonly<{ ok: true; kind: string; data: unknown }>
-    | Readonly<{ ok: false; kind: string; error: unknown }>,
+    | Readonly<{ ok: false; kind: string; error: unknown }>
+  ) & Pick<ActionExecuteResult, 'automationNotices'>,
   opts?: Readonly<{ exitCode?: SessionControlExitCode }>,
 ): Promise<void> {
   // Stable exit codes for automation:

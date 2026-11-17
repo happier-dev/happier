@@ -7,6 +7,7 @@ import { ActionIdSchema } from '../actionIds.js';
 import { PluginInvocableActionIdSchema } from '../pluginActionSurface.js';
 import { ApprovalRequestCreatedBySchema, ApprovalRequestOriginV1Schema, ApprovalRequestV2StatusSchema } from '../../approvals/approvalRequestV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { ActionAutomationConsentV1Schema } from '../../approvals/approvalAutomaticChecks.js';
 
 
 export const ApprovalRequestCreateInputSchema = lazyZodSchema(() => z.looseObject({
@@ -47,11 +48,19 @@ export const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.strictObje
   decision: z.enum(['approve', 'reject', 'cancel']),
   /** Reduced input admitted by the requested Action's narrowing declaration. */
   narrowedInput: z.optional(StrictJsonValueSchema),
+  /** Explicit answer for one selected trigger; approving the Action does not grant consent. */
+  triggerConsent: z.optional(z.strictObject({
+    ...z.pick(ActionAutomationConsentV1Schema, { automationId: true, triggerId: true }).shape,
+    decision: z.enum(['allow', 'skip']),
+  })),
   /** Immutable creator-local id from the persisted V2 origin; never a route selector. */
   originServerId: z.optional(z.string().check(z.minLength(1))),
   /** Stable Home identity selected by the current device before exact-daemon routing. */
   serverIdentityId: z.optional(z.string().check(z.minLength(1))),
-}));
+}).check(z.refine(value => value.triggerConsent === undefined
+  || value.decision === 'approve' && value.narrowedInput === undefined, {
+  message: 'Trigger consent requires an approve decision without narrowed input', path: ['triggerConsent'],
+})));
 
 function createApprovalRequestActionSpecs(): readonly [
   PreNormalizedActionSpec & { readonly id: 'approval.request.list'; readonly inputSchema: typeof ApprovalRequestListInputSchema; readonly outputSchema: typeof ApprovalQueueListResultV1Schema },

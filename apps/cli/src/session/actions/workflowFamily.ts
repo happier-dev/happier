@@ -38,6 +38,9 @@ import type { createSessionRunReportPolicyReader } from '@/api/sessionFollowCrea
 import type { createWorkflowActionExecutor, normalizeWorkflowActionThrownError } from './workflowActionExecutor';
 import type { createWorkflowRunActionOwner } from './workflowRunActions';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { createWorkflowActorConsentPortV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import type { ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from './workflowMaterializationHost';
 import { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
@@ -111,6 +114,7 @@ export type CliWorkflowFamilyHost = Readonly<{
   readExecutionRunTransportMachineId: (transport: ResolvedSessionTransport) => string | null;
 }>;
 export type CliWorkflowFamily = Readonly<{
+  actionAutomationChecks: (ReturnType<typeof createWorkflowActorConsentPortV1> & Pick<ActionAutomationPortV1, 'wait' | 'cancel'>) | null;
   workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null;
   prepareNativeGoalOwner: (signal?: AbortSignal) => Promise<void>;
   resolveWorkflowMaterializer: ReturnType<typeof createCredentialedWorkflowMaterializationHostV1> | null;
@@ -132,6 +136,31 @@ export function createCliWorkflowFamily(
 ): CliWorkflowFamily {
   const { roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId } = host;
   const { workflowRunServerHttpBaseUrl, createWorkflowRunStorage, workflowRunStorage } = runStorage;
+
+  const resolveTriggerSession: NonNullable<Parameters<typeof createCliWorkflowTriggerActions>[0]['resolveSession']> = async (sessionId, caller, options) => {
+    const transport = await resolveTransportForSession(sessionId, caller?.signal);
+    if (!transport.ok) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+    const metadata = readTransportSessionOwnerMetadata(transport);
+    const machineId = normalizeStringValue(transport.rawSession.machineId) ?? normalizeStringValue(metadata?.machineId);
+    const candidatePath = normalizeStringValue(metadata?.path) ?? normalizeStringValue(transport.rawSession.path) ?? '';
+    const directory = machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : null;
+    if (!machineId || !directory) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+    let nativeGoalOwner: boolean | null = transport.rawSession.active === true ? null : false;
+    if (options?.checkNativeGoalOwner === true && transport.rawSession.active === true) {
+      const result = await callSessionRpcForTransport(transport, SESSION_RPC_METHODS.SESSION_GOAL_GET,
+        { capabilitiesOnly: true }, caller?.signal, null);
+      if (result !== null && typeof result === 'object' && 'nativeGoalOwner' in result && typeof result.nativeGoalOwner === 'boolean') {
+        nativeGoalOwner = result.nativeGoalOwner;
+      }
+    }
+    const { resolveBackendTargetFromSessionMetadata } = await import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata");
+    const identity = await resolveSessionAgentIdentity(metadata, resolveBackendTargetFromSessionMetadata(metadata));
+    const selection = identity ? WorkflowStepExecutionSelectionSchema.safeParse({
+      agentTarget: { kind: 'agent', identity }, ...(metadata?.permissionMode ? { permissionMode: metadata.permissionMode } : {}),
+    }) : null;
+    return { project: { machineId, directory }, nativeGoalOwner,
+      ...(selection?.success ? { executionSelection: selection.data } : {}) };
+  };
 
   const workflowDefinitions: ReturnType<typeof createWorkflowDefinitionActions> | null = params.credentials
     ? createWorkflowDefinitionActions({ artifactStore: roleArtifactStore!,
@@ -199,30 +228,7 @@ export function createCliWorkflowFamily(
         if (!resolved) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
         return resolved;
       },
-      resolveSession: async (sessionId, caller, options) => {
-        const transport = await resolveTransportForSession(sessionId, caller?.signal);
-        if (!transport.ok) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-        const metadata = readTransportSessionOwnerMetadata(transport);
-        const machineId = normalizeStringValue(transport.rawSession.machineId) ?? normalizeStringValue(metadata?.machineId);
-        const candidatePath = normalizeStringValue(metadata?.path) ?? normalizeStringValue(transport.rawSession.path) ?? '';
-        const directory = machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : null;
-        if (!machineId || !directory) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-        let nativeGoalOwner: boolean | null = transport.rawSession.active === true ? null : false;
-        if (options?.checkNativeGoalOwner === true && transport.rawSession.active === true) {
-          const result = await callSessionRpcForTransport(transport, SESSION_RPC_METHODS.SESSION_GOAL_GET,
-            { capabilitiesOnly: true }, caller?.signal, null);
-          if (result !== null && typeof result === 'object' && 'nativeGoalOwner' in result && typeof result.nativeGoalOwner === 'boolean') {
-            nativeGoalOwner = result.nativeGoalOwner;
-          }
-        }
-        const { resolveBackendTargetFromSessionMetadata } = await import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata");
-        const identity = await resolveSessionAgentIdentity(metadata, resolveBackendTargetFromSessionMetadata(metadata));
-        const selection = identity ? WorkflowStepExecutionSelectionSchema.safeParse({
-          agentTarget: { kind: 'agent', identity }, ...(metadata?.permissionMode ? { permissionMode: metadata.permissionMode } : {}),
-        }) : null;
-        return { project: { machineId, directory }, nativeGoalOwner,
-          ...(selection?.success ? { executionSelection: selection.data } : {}) };
-      },
+      resolveSession: resolveTriggerSession,
       resolveMaterializer: async (target, caller) => {
         if (!resolveWorkflowMaterializer) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         return resolveWorkflowMaterializer({ ...target, signal: caller.signal });
@@ -374,7 +380,7 @@ export function createCliWorkflowFamily(
   };
 
   const createOwnedWorkflowExecutor = workflowDefinitions && params.credentials
-    ? async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], combined?: WorkflowCombinedRunStartV1) => {
+    ? async (args: Pick<Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], 'actionId' | 'context'>, combined?: WorkflowCombinedRunStartV1) => {
       // Each invocation retains its original proof; concurrent Session calls
       // must never spend another caller's authority through a shared closure.
       // A combined Run spends its retained parent's currentness purpose, not
@@ -742,6 +748,33 @@ export function createCliWorkflowFamily(
     }
   };
 
-  return { workflowTriggers, prepareNativeGoalOwner, resolveWorkflowMaterializer, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
+  const actorAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
+  const actionAutomationChecks: CliWorkflowFamily['actionAutomationChecks'] = workflowTriggers && actorAccountId
+    ? { ...createWorkflowActorConsentPortV1({ actions: workflowTriggers, accountId: actorAccountId,
+      resolveProject: async context => {
+        const machineId = readActionAutomationExecutionMachineV1(context);
+        const target = context.externalActionTarget;
+        const project = target?.kind === 'machine' && target.project ? target.project
+          : target?.kind === 'session' ? (await resolveTriggerSession(target.sessionId, context)).project
+          : (await resolveCliActionCallerWorkflowTarget(callerSessionResolution(context)))?.project;
+        if (!machineId || !project || project.machineId !== machineId) {
+          throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        }
+        return project;
+      } }),
+      wait: async args => {
+        if (!createOwnedWorkflowExecutor) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        const owner = await createOwnedWorkflowExecutor({ actionId: 'workflow.run.wait', context: args.context });
+        if (!owner.waitAutomaticCheck) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        return owner.waitAutomaticCheck(args);
+      },
+      cancel: async args => {
+        if (!createOwnedWorkflowExecutor) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        const owner = await createOwnedWorkflowExecutor({ actionId: 'workflow.run.cancel', context: args.context });
+        if (!owner.cancelAutomaticCheck) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        await owner.cancelAutomaticCheck(args);
+      },
+    } : null;
+  return { actionAutomationChecks, workflowTriggers, prepareNativeGoalOwner, resolveWorkflowMaterializer, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort, prepareWorkflowRunStartApproval,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations };
 }

@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { ActionExecutionPlacement } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 
@@ -23,6 +24,7 @@ export async function tryHandleApprovalRequestCreated(params: Readonly<{
   json: boolean;
   result: unknown;
   executionPlacement?: ActionExecutionPlacement;
+  automationNotices?: ActionExecuteResult['automationNotices'];
 }>): Promise<boolean> {
   if (!isApprovalRequestCreatedResult(params.result)) {
     return false;
@@ -36,7 +38,8 @@ export async function tryHandleApprovalRequestCreated(params: Readonly<{
   }
 
   if (params.json) {
-    await printJsonEnvelope({ ok: true, kind: params.envelopeKind, data: params.result });
+    await printJsonEnvelope({ ok: true, kind: params.envelopeKind, data: params.result,
+      ...(params.automationNotices ? { automationNotices: params.automationNotices } : {}) });
     return true;
   }
 

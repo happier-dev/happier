@@ -78,12 +78,13 @@ function readRetainedPluginObligationKey(actionId: string, input: unknown): stri
 }
 
 /** A retained plugin obligation belongs to its input key, not its executable generation or attempt. */
-export function readPluginPublicationApprovalSubject(request: CreationRequest): PluginPublicationApprovalSubject | null {
+export function readPluginPublicationApprovalSubject(request: ApprovalRequest | TargetActionApprovalRequestV1): PluginPublicationApprovalSubject | null {
   if (isTargetActionRequest(request) || request.v !== 2 || request.approval?.flow !== 'blocking') return null;
   return readRetainedPluginObligationSubject(request);
 }
 
-function readRetainedPluginObligationSubject(request: ApprovalRequestV2): PluginPublicationApprovalSubject | null {
+function readRetainedPluginObligationSubject(request: Pick<Extract<ApprovalRequest, { v: 2 }>,
+  'actionId' | 'executionOriginV1' | 'actionArgs' | 'requestInputDigest'>): PluginPublicationApprovalSubject | null {
   const actionId = request.actionId;
   if (!isRetainedPluginObligationActionId(actionId)) return null;
   const origin = request.executionOriginV1;

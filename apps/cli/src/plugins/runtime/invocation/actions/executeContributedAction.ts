@@ -54,7 +54,7 @@ import { checkManagedProviderOperationCustody, isAdmittedManagedProviderCustodyC
   type AdmittedConnectedAccountPurposeBindingExecutionRequest } from './managedProviderCustody';
 export type { AdmittedManagedProviderOperationExecutionRequest, AdmittedConnectedAccountPurposeBindingExecutionRequest } from './managedProviderCustody';
 
-export type PluginActionExecutorResult = Readonly<
+export type PluginActionExecutorResult = Pick<import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteResult, 'automationNotices'> & Readonly<
   | {
     ok: true;
     result: JsonValue | null;
@@ -621,6 +621,7 @@ export async function executeContributedAction(params: Readonly<{
     const request = UiContributedActionExecuteRequestV1Schema.safeParse({
       v: 1, action: { pluginId, localId: action.definition.id },
       input: params.input ?? null, surface: invocationSurface,
+      ...(params.context.actionRequestId ? { actionRequestId: params.context.actionRequestId } : {}),
       ...(params.messageActionReference ? { messageActionReference: params.messageActionReference } : {}),
       expectedContributorOccurrenceId: contributorOccurrenceId,
       ...(params.context.defaultSessionId === undefined ? {} : { defaultSessionId: params.context.defaultSessionId }),
@@ -1082,6 +1083,7 @@ export async function executeContributedAction(params: Readonly<{
         return {
           ok: true,
           result: validatedResult === null ? targetResult.value : validatedResult.value,
+          ...(targetResult.automationNotices ? { automationNotices: targetResult.automationNotices } : {}),
           ...(beforeExecutionOrigin?.status === 'resolved'
             ? { executionOrigin: beforeExecutionOrigin.origin }
             : {}),
@@ -1092,6 +1094,7 @@ export async function executeContributedAction(params: Readonly<{
       return {
         ok: false,
         errorCode: targetResult.code,
+        ...(targetResult.automationNotices ? { automationNotices: targetResult.automationNotices } : {}),
         error: inputFailure ? targetResult.code : targetResult.code === 'approval_requester_unavailable'
           ? APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 : targetResult.message,
         ...(inputFailure ? { details: inputFailure.details } : {}),

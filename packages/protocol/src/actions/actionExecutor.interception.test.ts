@@ -1,11 +1,13 @@
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecutor, buildActionExecuteResultFromRecordedApprovalExecution, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import * as authority from './decisionAuthority.js';
 import * as credentials from '../auth/apiTokenGrant.js';
 import * as callerContext from './executor/callerContext.js';
+import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+import type { ActionSettlementV1 } from './executor/actionSettlement.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -45,6 +47,111 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor execution interception', () => {
+  it.each(['after-only', 'known-empty', 'unavailable'] as const)('retains the admitted %s snapshot through an ordinary human approval', async mode => {
+    let storedRequest: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    const events: ActionSettlementV1[] = [];
+    const row = {
+      automationId: 'review', triggerId: 'after', triggerRevision: 1, workflowId: 'review-workflow', workflowRevision: 1,
+      ownerAccountId: 'actor', phase: 'after' as const, actionIds: ['account.name.set'],
+    };
+    const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => {
+      if (mode === 'unavailable') throw Object.assign(new Error('unavailable'), { code: 'seed_unavailable' });
+      return { v: 1, rows: mode === 'after-only' ? [row] : [] };
+    }, settle: async ({ event }) => { events.push(event); } });
+    let effects = 0;
+    const writes: string[] = [];
+    // Approval storage, Home HTTP and current host identity are external boundaries.
+    const executor = createActionExecutor({ actionAutomations: port,
+      approvalsCreate: async ({ request }) => { storedRequest = request; return { artifactId: 'approval' }; },
+      approvalsGet: async () => storedRequest,
+      approvalsUpdate: async ({ request }) => { storedRequest = request; writes.push(request.status); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      homeDomainAction: async () => { effects++; return { ok: false, errorCode: 'forbidden', error: 'forbidden' }; },
+    });
+    try {
+      const pending = await executor.execute('account.name.set', { name: 'private-name' }, {
+        surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', actionRequestId: 'original-request',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+          actions: { 'account.name.set': { approvalRequiredSurfaces: ['cli'] } } }),
+      });
+      expect(pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      if (mode === 'unavailable') expect(pending.automationNotices)
+        .toEqual([{ code: 'action_automations_not_checked', reason: 'seed_unavailable' }]);
+      expect(events).toEqual([]);
+      port.apply({ automationId: 'review', rows: mode === 'after-only' ? [] : [row] });
+      const decided = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor',
+      });
+      expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'forbidden' } } });
+      expect(effects).toBe(1);
+      if (mode === 'after-only') expect(events).toMatchObject([
+        { requestId: 'original-request', actionId: 'account.name.set', status: 'failed' },
+      ]);
+      expect(events).toHaveLength(mode === 'after-only' ? 1 : 0);
+      expect(writes).toEqual(['approved', 'executing', 'failed']);
+      if (mode === 'unavailable') {
+        const notices = [{ code: 'action_automations_not_checked', reason: 'seed_unavailable' }];
+        expect(decided.automationNotices).toEqual(notices);
+        if (!storedRequest) throw new Error('Missing approval execution receipt');
+        expect(buildActionExecuteResultFromRecordedApprovalExecution(storedRequest)?.automationNotices).toEqual(notices);
+      }
+    } finally { port.dispose(); }
+  });
+
+  it.each(['effect', 'pending approval'] as const)('retains the unavailable-check notice on the %s result', async mode => {
+    const port = createActionAutomationPortV1({ accountId: 'actor',
+      // Seed HTTP, approval storage and Home-domain HTTP are external boundaries.
+      seed: async () => { throw Object.assign(new Error('private-network-error'), { code: 'seed_unavailable' }); },
+      settle: async () => { throw new Error('An unavailable selection cannot publish'); } });
+    let effects = 0;
+    const executor = createActionExecutor({ actionAutomations: port,
+      approvalsCreate: async () => ({ artifactId: 'approval' }),
+      homeDomainAction: async () => { effects++; return { ok: false, errorCode: 'forbidden', error: 'forbidden' }; } });
+    try {
+      const result = await executor.execute('account.name.set', { name: 'private-name' }, {
+        surface: 'cli', authority: mode === 'effect' ? 'present_user' : 'account_automation',
+        actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor',
+        actionRequestId: 'notice-request',
+        ...(mode === 'effect' ? { bypassApprovals: true } : { actionsSettings: ActionsSettingsV1Schema.parse({
+          v: 1, actions: { 'account.name.set': { approvalRequiredSurfaces: ['cli'] } },
+        }) }),
+      });
+      expect(result.automationNotices).toEqual([{ code: 'action_automations_not_checked', reason: 'seed_unavailable' }]);
+      expect(JSON.stringify(result)).not.toContain('private-network-error');
+      expect(effects).toBe(mode === 'effect' ? 1 : 0);
+      expect(result).toMatchObject(mode === 'effect' ? { ok: false, errorCode: 'forbidden' }
+        : { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval', actionId: 'account.name.set' } });
+    } finally { port.dispose(); }
+  });
+
+  it('settles each material Session target with its own request and subject', async () => {
+    const events: ActionSettlementV1[] = [];
+    const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [{
+      automationId: 'auto', triggerId: 'trigger', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+      ownerAccountId: 'actor', actionIds: ['session.turn.cancel'], phase: 'after',
+    }] }), settle: async ({ event }) => { events.push(event); } });
+    let effects = 0;
+    // Session RPC transport is the external boundary; selector/admission/settlement remain real.
+    const executor = createActionExecutor({ actionAutomations: port,
+      sessionTurnCancel: async () => { effects++; return { requested: true }; } });
+    try {
+      const result = await executor.execute('session.turn.cancel', { sessionId: { selector: 'workers' } }, {
+        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', bypassApprovals: true,
+        actionRequestId: 'parent-request', sessionTargetsV1: { actionId: 'session.turn.cancel', field: 'sessionId',
+          targets: [{ serverId: 'home', sessionId: 's1' }, { serverId: 'home', sessionId: 's2' }], selector: true },
+      });
+      expect(result.ok).toBe(true);
+      expect(effects).toBe(2);
+      expect(events).toHaveLength(2);
+      expect(new Set(events.map(event => event.requestId)).size).toBe(2);
+      expect(events.map(event => event.subjects.filter(context => context.subject.kind === 'session')
+        .map(context => context.subject.kind === 'session' ? context.subject.sessionId : undefined))).toEqual([['s1'], ['s2']]);
+    } finally { port.dispose(); }
+  });
+
   it('observes an admitted pending deployment without evaluating its grant again', async () => {
     const grants = vi.spyOn(credentials, 'evaluateApiTokenGrantV1');
     const grant = { ...credentials.API_TOKEN_FULL_GRANT_V1 };

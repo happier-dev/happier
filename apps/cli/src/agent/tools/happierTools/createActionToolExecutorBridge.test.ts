@@ -46,8 +46,31 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
 import { projectAgentRuntimeDaemonServiceTurnWitnessV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 
 describe('createActionToolExecutorBridge', () => {
+  it('keeps the visible unavailable-check notice beside the native Action result', async () => {
+    const port = createActionAutomationPortV1({ accountId: 'actor',
+      // Home index HTTP and Session RPC are system boundaries; admission and execution stay real.
+      seed: async () => { throw Object.assign(new Error('private network details'), { code: 'seed_unavailable' }); },
+      settle: async () => { throw new Error('Unavailable selection cannot settle'); } });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), actionAutomations: port,
+      sessionTurnCancel: async () => ({ requested: true }) });
+    const bridge = createActionToolExecutorBridge({ surface: 'cli', executor: {
+      execute: (id, input, context) => executor.execute(id, input, { ...context, authority: 'present_user',
+        bypassApprovals: true, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor',
+        actionCaller: { kind: 'host' } }),
+    } });
+    try {
+      const result = await bridge.executeActionByToolName('action_execute', {
+        actionId: 'session.turn.cancel', input: { sessionId: 'session' },
+      }, 'session');
+      expect(result).toMatchObject({ ok: true, result: { requested: true },
+        automationNotices: [{ code: 'action_automations_not_checked', reason: 'seed_unavailable' }] });
+      expect(JSON.stringify(result)).not.toContain('private network details');
+    } finally { port.dispose(); }
+  });
+
   it.each(['agent', 'mcp'] as const)('keeps native Realtime %s decisions person-only despite a waiver and cancels ordinary local Actions at End', async surface => {
     const lifetime = new AbortController();
     const tool = new AbortController();

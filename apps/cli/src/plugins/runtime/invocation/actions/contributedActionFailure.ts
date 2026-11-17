@@ -22,6 +22,7 @@ export function projectContributedActionFailure(result: Readonly<{
   const error = result.actionHandlerInvocation === 'notStarted'
     ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
   return { ok: false, errorCode: result.errorCode, error: result.error,
+    ...(result.actionHandlerInvocation === 'notStarted' ? { effectAttempted: false } : {}),
     ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}),
     details: result.details === undefined ? error.data : result.details };
 }

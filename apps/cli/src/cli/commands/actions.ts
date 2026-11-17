@@ -11,6 +11,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActio
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionDefinitionV1, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
+import { withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
 import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
@@ -542,6 +543,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     ...(executionTarget ? { externalActionTarget: executionTarget } : {}),
   };
   let data: unknown;
+  let automationNotices: ActionExecuteResult['automationNotices'];
   if ((isUpload || isDownload) && machineId && fixedServer && credentials) {
     const transfer = await createCredentialedFilesystemTransferClient({ credentials, ...fixedServer,
       executeAction: async (actionId, input, context) => await executeAction(actionId, input, { ...invocationOptions, ...context }),
@@ -557,9 +559,11 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
         : { ok: false, error: outcome.error, errorCode: outcome.errorCode ?? 'filesystem_transfer_failed', details: outcome });
     } finally { await transfer.close(); }
   } else {
-    data = unwrapOuterActionResult(await executeAction(invocation.actionId, resolvedInput, invocationOptions));
+    const executed = await executeAction(invocation.actionId, resolvedInput, invocationOptions);
+    automationNotices = executed.automationNotices;
+    data = unwrapOuterActionResult(executed);
   }
-  if (sessionMcp && await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data })) return;
+  if (sessionMcp && await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data, automationNotices })) return;
   if (wait) {
     const address = invocation.actionId === 'action.operations.get' ? null : await readFiniteActionOperationAddress(resolvedInput, data);
     if (address) {
@@ -570,16 +574,19 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
         ? resolvedInput.environmentId : undefined;
       const observationInput = { ...address,
         ...(typeof environmentId === 'string' ? { environmentId } : {}), waitForTerminal: true };
-      const observed = unwrapOuterActionResult(await executeAction('action.operations.get', observationInput,
-        { ...invocationOptions, actionRequestId: randomUUID() }));
+      const observation = withActionAutomationNoticesV1(await executeAction('action.operations.get', observationInput,
+        { ...invocationOptions, actionRequestId: randomUUID() }), automationNotices);
+      automationNotices = observation.automationNotices;
+      const observed = unwrapOuterActionResult(observation);
       data = readFiniteActionOutcome({ actionId: 'action.operations.get', input: observationInput, result: observed });
     } else data = readFiniteActionOutcome({ actionId: invocation.actionId, input: resolvedInput, result: data });
   }
-  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data,
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data, automationNotices,
     executionPlacement: localInvocation ? resolveActionExecutionPlacementForInput(
       getActionSpec(localInvocation.actionId), resolvedInput, undefined, sessionMcp ? 'agent' : 'cli') : contributedExecutionPlacement,
   })) return;
-  if (json) await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data }); else await writeJsonStdout(data, { pretty: true });
+  if (json) await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data,
+    ...(automationNotices ? { automationNotices } : {}) }); else await writeJsonStdout(data, { pretty: true });
 }
 
 export async function handleActionsCommand(
@@ -616,7 +623,9 @@ export async function handleActionsCommand(
     const structured = projectCliActionFailure(mapped.failure, requestId);
     const exitCode = hasInvokeOption(args, INVOKE_WAIT_FLAG) && supportsFiniteActionOutcome(args[1] ?? '')
       ? finiteActionExitCode(mapped.failure.errorCode, mapped.unexpected) : mapped.unexpected ? 2 : 1;
-    if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind: `actions_${args[0] ?? 'help'}`, error: structured }, { exitCode });
+    if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind: `actions_${args[0] ?? 'help'}`, error: structured,
+      ...('automationNotices' in mapped.failure && mapped.failure.automationNotices
+        ? { automationNotices: mapped.failure.automationNotices } : {}) }, { exitCode });
     else {
       console.error(fail(mapped.failure.errorMessage ?? mapped.failure.errorCode));
       if ('candidates' in structured && Array.isArray(structured.candidates)) {

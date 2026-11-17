@@ -1,3 +1,4 @@
+import { isApprovalRequestExecutionApproved } from '../approvals/approvalAutomaticChecks.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
 import { ApprovalRequestConflict, decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -90,7 +91,12 @@ export function isArtifactReadUnavailable(error: unknown): boolean {
       && 'errorCode' in error && error.errorCode === 'artifact_read_unavailable';
 }
 
-function isTargetApproval(request: BlockingApprovalRequest): request is TargetActionApprovalRequestV1 {
+type TargetApprovalRead = TargetActionApprovalRequestV1
+  | Extract<ApprovalRequestPublicRead, { kind: 'plugin_target_action' }>;
+
+function isTargetApproval(request: BlockingApprovalRequest): request is TargetActionApprovalRequestV1;
+function isTargetApproval(request: BlockingApprovalRequest | ApprovalRequestPublicRead): request is TargetApprovalRead;
+function isTargetApproval(request: BlockingApprovalRequest | ApprovalRequestPublicRead): request is TargetApprovalRead {
   return 'kind' in request && request.kind === 'plugin_target_action';
 }
 
@@ -103,7 +109,7 @@ function readDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDec
     (request.status === 'approved'
       || request.status === 'executed'
       || ((request.status === 'failed' || request.status === 'outcome_unknown') && 'execution' in request && request.execution))
-    && request.decision?.kind === 'approve'
+    && isApprovalRequestExecutionApproved(request)
   ) {
     return { decision: 'approve', request };
   }
@@ -125,7 +131,8 @@ export function readRecordedApprovalDecision<Request extends BlockingApprovalReq
   // A persisted person label is history, never a live decision witness. The
   // original waiter must receive the authenticated ingress's currentness check.
   if ((request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
-    && request.decision?.kind === 'approve'
+    && (isApprovalRequestExecutionApproved(request)
+      || (request.v === 2 || isTargetApproval(request)) && request.automaticChecks?.phase === 'refused')
     && 'execution' in request
     && request.execution) {
     return { decision: 'approve', request };

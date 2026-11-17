@@ -181,10 +181,13 @@ describe('createPluginActionInvocation', () => {
 
   it('lets cancellation win for a matching input-sensitive read after input normalization', async () => {
     const caller = new AbortController();
-    const pending = createInvocation({
+    const prepared = createInvocation({
       declaration: { readOnly: { op: 'eq', path: 'mode', value: 'read' } },
       inputParser: () => ({ success: true, data: { mode: 'read' } }),
-    }).invoke({ mode: 'write' }, {
+    }).prepare({ mode: 'write' });
+    if (prepared.kind !== 'ready') throw new Error('Expected normalized read input');
+    expect(prepared.isReadOnly).toBe(true);
+    const pending = prepared.invoke({
       signal: caller.signal,
       handler: () => new Promise<never>(() => {}),
     });

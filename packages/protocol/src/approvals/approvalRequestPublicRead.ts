@@ -197,6 +197,7 @@ export function projectDeploymentApprovalReceiptV1(approvalId: string,
 export const ApprovalRequestGetResultV1Schema: z.ZodMiniObject<{
   artifactId: z.ZodMiniString;
   request: typeof ApprovalRequestPublicReadSchema;
+  canAllow: z.ZodMiniBoolean;
   deploymentReceipt: z.ZodMiniOptional<typeof DeploymentApprovalReceiptV1Schema>;
   queryPlan: z.ZodMiniObject<{
     kind: z.ZodMiniLiteral<'approval_artifact_id_lookup'>;
@@ -207,6 +208,7 @@ export const ApprovalRequestGetResultV1Schema: z.ZodMiniObject<{
 }, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   artifactId: z.string(),
   request: ApprovalRequestPublicReadSchema,
+  canAllow: z.boolean(),
   deploymentReceipt: z.optional(DeploymentApprovalReceiptV1Schema),
   queryPlan: z.strictObject({
     kind: z.literal('approval_artifact_id_lookup'),

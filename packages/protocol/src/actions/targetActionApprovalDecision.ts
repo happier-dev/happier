@@ -1,32 +1,61 @@
 import type { TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
-import { projectTargetActionApprovalInvocationV1 } from '../approvals/targetActionApprovalRequestV1.js';
+import { projectTargetActionApprovalInvocationV1, TargetActionApprovalRequestV1Schema } from '../approvals/targetActionApprovalRequestV1.js';
 import { admitApprovalRequesterDecisionV1 } from '../approvals/approvalRequestV1.js';
 import { isApiTokenGrantTargetMemberV1 } from '../auth/apiTokenGrant.js';
-import type { ActionExecuteResult } from './actionExecutionResult.js';
+import { withActionAutomationNoticesV1, type ActionExecuteResult } from './actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
-import { isPresentUserHostInvocation } from './invocationAuthority.js';
+import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { readRpcErrorCode } from '../rpc/errors.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { ApprovalStaleFailureDetailsSchema, buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
+import { createApprovalAutomaticContinuationV1, answerApprovalAutomaticConsentV1, restoreApprovalAutomaticContextV1 } from './executor/automaticApprovalContinuation.js';
+import type { ApprovalAutomaticContinuationV1 } from './executor/automaticApprovalContinuation.js';
+import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
+import type { ActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+import { isApprovalRequestExecutionApproved } from '../approvals/approvalAutomaticChecks.js';
+
+/** The existing target Artifact uses the same pending engine as built-in Actions. */
+export function createTargetActionAutomaticContinuationV1(deps: Readonly<{
+  actionAutomations?: ActionAutomationPortV1;
+  read(artifactId: string): Promise<TargetActionApprovalRequestV1 | null>;
+  update(args: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1; context?: ActionExecutorContext }>): Promise<TargetActionApprovalUpdateResult>;
+}>): ApprovalAutomaticContinuationV1<TargetActionApprovalRequestV1> {
+  return createApprovalAutomaticContinuationV1<TargetActionApprovalRequestV1, TargetActionApprovalRequestV1>({
+    actionAutomations: deps.actionAutomations,
+    parse: input => TargetActionApprovalRequestV1Schema.parse(input),
+    invocation: request => ({ actionId: request.qualifiedActionId, input: request.input }),
+    read: artifactId => deps.read(artifactId),
+    write: async (artifactId, request, context) => {
+      const updated = await deps.update({ artifactId, request, context });
+      return updated.ok ? null : { ok: false, errorCode: updated.errorCode, error: updated.error ?? updated.errorCode };
+    },
+    refusal: (request, updatedAtMs, automaticChecks, refused) => TargetActionApprovalRequestV1Schema.parse({
+      ...request, status: 'failed', updatedAtMs, automaticChecks,
+      execution: { executedAtMs: updatedAtMs, ...refused },
+    }),
+    readFailure: readApprovalExecutionFailure,
+  });
+}
 
 export type TargetActionApprovalUpdateResult = Readonly<
   { ok: true } | { ok: false; errorCode: string; error?: string }
 >;
 
 export function buildTargetActionApprovalDecisionResult(request: TargetActionApprovalRequestV1): ActionExecuteResult {
-  if (request.status === 'outcome_unknown') return failure('approval_execution_outcome_unknown');
+  const withNotices = (result: ActionExecuteResult) => withActionAutomationNoticesV1(result, request.automaticChecks?.notices);
+  if (request.status === 'outcome_unknown') return withNotices(failure('approval_execution_outcome_unknown'));
   if (resolveApprovalExecutor(request).kind === 'live_invocation' && request.execution?.effectAttempted === false
     && request.execution.errorCode === 'approval_origin_unavailable') {
     const details = ApprovalStaleFailureDetailsSchema.safeParse(request.execution.details);
     if (details.success && details.data.reason === 'live_invocation_unavailable') {
-      return buildApprovalOriginFailure(details.data.reason);
+      return withNotices(buildApprovalOriginFailure(details.data.reason));
     }
   }
-  return { ok: true, result: { ok: true, status: request.status,
-    ...(request.execution === undefined ? {} : { execution: request.execution }) } };
+  return withNotices({ ok: true, result: { ok: true, status: request.status,
+    ...(request.execution === undefined ? {} : { execution: request.execution }) } });
 }
 
 function failure(errorCode: string, error = errorCode): ActionExecuteResult {
@@ -35,6 +64,7 @@ function failure(errorCode: string, error = errorCode): ActionExecuteResult {
 
 /** One target-Action decision owner; host adapters supply Artifact custody and durable execution. */
 export function createTargetActionApprovalDecision(deps: Readonly<{
+  actionAutomations?: ActionAutomationPortV1;
   read: (artifactId: string, initialRead?: Readonly<{ request: unknown }>) => Promise<TargetActionApprovalRequestV1 | null>;
   update: (args: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1; context?: ActionExecutorContext }>) => Promise<TargetActionApprovalUpdateResult>;
   now?: () => number;
@@ -50,7 +80,9 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
     nextTimestamp: (request: TargetActionApprovalRequestV1) => number;
   }>) => Promise<ActionExecuteResult>;
 }>): NonNullable<ActionExecutorDeps['targetActionApprovalReplay']> {
-  return async ({ artifactId: rawArtifactId, decision, initialRead, context, callerGrant, signal }) => {
+  return async ({ artifactId: rawArtifactId, decision, triggerConsent, initialRead, context, callerGrant, signal }) => {
+    const actionAutomations = deps.actionAutomations ?? context?.actionAutomationPort;
+    const automatic = createTargetActionAutomaticContinuationV1({ ...deps, actionAutomations });
     const artifactId = rawArtifactId.trim();
     if (!artifactId) return null;
     signal?.throwIfAborted();
@@ -72,9 +104,10 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
         && await deps.isRequesterSourceCurrent(request, signal).catch(() => false);
     if (existing.requesterConfirmation && !['executed', 'failed', 'outcome_unknown', 'rejected', 'canceled'].includes(existing.status)
       && !await isRequesterSourceCurrent(existing)) return failure('approval_stale');
-    const decidingAccountId = context?.expectedAccountId ?? context?.runtimeAccountId;
+    const decidingActor = deriveActionActorV1(context ?? {}, 'approval.request.decide');
+    const decidingAccountId = decidingActor?.actorKind === 'person' ? decidingActor.accountId : undefined;
     const decisionAttribution = {
-      ...(context && isPresentUserHostInvocation(context) ? {
+      ...(context?.authority === 'present_user' && decidingActor?.actorKind === 'person' ? {
         authority: 'present_user' as const,
         ...(decidingAccountId ? { decidingAccountId } : {}),
         ...(context.surface === 'voice' ? { decidedVia: 'voice' as const } : {}),
@@ -109,11 +142,13 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
       }
     };
     const coordinator = getSharedBlockingApprovalCoordinator();
+    const executionContext = (request: TargetActionApprovalRequestV1) =>
+      restoreApprovalAutomaticContextV1(request, request.qualifiedActionId, context ?? {}, actionAutomations);
     if (decision === 'cancel') {
       if (existing.status === 'canceled') return buildTargetActionApprovalDecisionResult(existing);
       if (existing.status === 'failed' && existing.execution?.errorCode === 'approval_canceled'
         && existing.execution.effectAttempted === false) return buildTargetActionApprovalDecisionResult(existing);
-      if (existing.status === 'approved' && existing.decision?.kind === 'approve' && !existing.execution) {
+      if (existing.status === 'approved' && isApprovalRequestExecutionApproved(existing) && !existing.execution) {
         const canceledAtMs = nextTimestamp(existing);
         const failed: TargetActionApprovalRequestV1 = { ...existing, status: 'failed', updatedAtMs: canceledAtMs,
           execution: { executedAtMs: canceledAtMs, ok: false, effectAttempted: false,
@@ -125,6 +160,7 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
       if (existing.status !== 'open') return failure('approval_not_open');
       const canceled: TargetActionApprovalRequestV1 = { ...existing, status: 'canceled', updatedAtMs: nextTimestamp(existing) };
       const persistenceFailure = await persist(canceled, true);
+      if (!persistenceFailure) await automatic.cancel(canceled, executionContext(canceled));
       if (!persistenceFailure) coordinator.notifyApprovalUpdated({ artifactId, request: canceled });
       return persistenceFailure ?? buildTargetActionApprovalDecisionResult(canceled);
     }
@@ -134,16 +170,50 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
       const rejected: TargetActionApprovalRequestV1 = { ...existing, status: 'rejected', updatedAtMs: nextTimestamp(existing),
         decision: { kind: 'reject', decidedAtMs: nextTimestamp(existing), ...decisionAttribution } };
       const persistenceFailure = await persist(rejected, true);
+      if (!persistenceFailure) await automatic.cancel(rejected, executionContext(rejected));
       if (!persistenceFailure) coordinator.notifyApprovalUpdated({ artifactId, request: rejected });
       return persistenceFailure ?? buildTargetActionApprovalDecisionResult(rejected);
     }
-    if ((existing.status === 'executed' || existing.status === 'failed') && existing.decision?.kind === 'approve') {
+    if (existing.status === 'open' && existing.automaticChecks) {
+      const checks = existing.automaticChecks;
+      const now = nextTimestamp(existing);
+      if (checks.phase === 'consent') {
+        let nextChecks = checks;
+        if (triggerConsent) {
+          const answered = await answerApprovalAutomaticConsentV1({ artifactId, checks, answer: triggerConsent,
+            context: context ?? {}, executionContext: executionContext(existing), port: actionAutomations });
+          if ('ok' in answered) return answered;
+          nextChecks = answered;
+        } else if (checks.humanApprovalRequired && !checks.humanDecision) {
+          nextChecks = { ...checks, humanDecision: { kind: 'approve', decidedAtMs: now, ...decisionAttribution } };
+        } else return failure('invalid_parameters');
+        const admitted = await automatic.admit(artifactId, { ...existing, updatedAtMs: now, automaticChecks: nextChecks }, executionContext(existing));
+        if ('ok' in admitted) return admitted;
+        const writeFailure = await automatic.write(artifactId, admitted, context ?? {});
+        if (writeFailure) return writeFailure;
+        existing = admitted;
+      } else if (checks.phase === 'override') {
+        if (triggerConsent) return failure('invalid_parameters');
+        existing = TargetActionApprovalRequestV1Schema.parse({ ...existing, status: 'approved', updatedAtMs: now,
+          decision: { kind: 'approve', decidedAtMs: now, ...decisionAttribution }, automaticChecks: { ...checks, phase: 'passed' } });
+        const writeFailure = await automatic.write(artifactId, existing, context ?? {});
+        if (writeFailure) return writeFailure;
+      }
+      const resumed = await automatic.resume(artifactId, existing, executionContext(existing));
+      if ('ok' in resumed) return resumed;
+      if (resumed.kind === 'refused') return resumed.failure;
+      existing = resumed.request;
+      if (resumed.kind === 'pending') return buildTargetActionApprovalDecisionResult(existing);
+      coordinator.notifyApprovalUpdated({ artifactId, request: existing });
+    }
+    if (existing.status === 'failed' && existing.automaticChecks?.phase === 'refused') return readApprovalExecutionFailure(existing);
+    if ((existing.status === 'executed' || existing.status === 'failed') && isApprovalRequestExecutionApproved(existing)) {
       return buildTargetActionApprovalDecisionResult(existing);
     }
     const liveInputsUnavailable = executor.kind === 'live_invocation'
       && deps.hasLiveInvocation !== undefined && !deps.hasLiveInvocation(artifactId);
-    if (existing.status === 'executing' && existing.decision?.kind === 'approve') return failure('approval_execution_outcome_unknown');
-    if (existing.status !== 'open' && (existing.status !== 'approved' || existing.decision?.kind !== 'approve')) return failure('approval_not_open');
+    if (existing.status === 'executing' && isApprovalRequestExecutionApproved(existing)) return failure('approval_execution_outcome_unknown');
+    if (existing.status !== 'open' && (existing.status !== 'approved' || !isApprovalRequestExecutionApproved(existing))) return failure('approval_not_open');
     if (resolveApprovalRequestApproveAdmission(existing).status !== 'available') return failure('approval_context_unavailable');
     let approved = existing;
     if (existing.status === 'open') {

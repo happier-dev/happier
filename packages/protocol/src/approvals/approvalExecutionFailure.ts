@@ -1,3 +1,4 @@
+import { readActionFailurePresentationV1 } from '../actions/actionFailurePresentation.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ApprovalRequestConflictFailureDetailsV1Schema, ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from '../zodRuntimePolicy.js';
@@ -83,6 +84,9 @@ function parseStrictApprovalFailure(input: Readonly<{
   }>;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  const workflowRefusal = readActionFailurePresentationV1(input.failure.errorCode, input.failure.details);
+  if (workflowRefusal) return { ...input.failure,
+    details: workflowRefusal.message === null ? undefined : { message: workflowRefusal.message } };
   if (input.failure.errorCode === 'approval_request_conflict') {
     const details = (storedRead ? createStoredReadSchema(ApprovalRequestConflictFailureDetailsV1Schema)
       : ApprovalRequestConflictFailureDetailsV1Schema).safeParse(input.failure.details);
@@ -470,7 +474,7 @@ export function describePluginChangeBusyFailure(pluginId: string): ActionExecute
  * Interpret only exact family outputs; arbitrary Action data can also have a kind or status.
  * This is a read projection, not a rewrite of the durable execution receipt.
  */
-function readDomainExecutionFailure(request: ApprovalRequest): ActionExecuteFailure | null {
+function readDomainExecutionFailure(request: Pick<ApprovalRequest, 'actionId' | 'execution'>): ActionExecuteFailure | null {
   if (request.actionId === 'projects.open') {
     const result = createStoredReadSchema(OpenProjectRefusalV1Schema).safeParse(request.execution?.result);
     return result.success ? projectOpenProjectRefusalV1(result.data) : null;

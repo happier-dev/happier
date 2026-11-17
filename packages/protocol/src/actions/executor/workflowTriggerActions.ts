@@ -51,6 +51,7 @@ import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmis
 import type { AutomationTriggerDefinition, AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
+import type { AutomationActionConsentTrigger } from '../../automations/automationActionTriggerV1.js';
 import { AutomationPullRequestTriggerSchema, type AutomationPullRequestTrigger } from '../../automations/pullRequestTrigger.js';
 import { admitAgentStartV1, type AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
@@ -73,7 +74,7 @@ import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { readWorkflowTriggerConsentSteps, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
+import { readWorkflowTriggerConsentSteps, readWorkflowTriggerActorConsentSteps, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
 import type { WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
 import { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
@@ -82,7 +83,10 @@ import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '../../deployments/deployment
 import { readDeploymentBackupOccurrenceV1 } from '../../workflows/builtins/backupExamples.js';
 import { DeploymentEnvironmentGetInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import { WORKFLOW_TRIGGER_SET_STORAGE_NAME, workflowTriggerDisplayNameV1 } from '../../workflows/workflowStepLabel.js';
-
+import type { ApprovalRequestDecideInputSchema } from '../specs/approvals.js';
+import type { ActionAutomationAllowConsentV1, ActionAutomationSelectedTriggerV1,
+  ActionAutomationTriggerReferenceV1, ActionAutomationConsentResolutionV1 } from './actionAutomationAdmission.js';
+import type { ActionAutomationConsentReviewV1 } from '../../approvals/approvalAutomaticChecks.js';
 import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID, WORKFLOW_TRIGGER_REMOVE_ACTION_ID,
   type WorkflowTriggerMutationActionId } from '../workflowTriggerActionIds.js';
 
@@ -92,6 +96,28 @@ type AdmittedSessionWrite = Readonly<{
   onComplete?: WorkflowTriggerContextV1['onComplete'];
 }>;
 type WorkflowTriggerWriteResult = ReturnType<typeof WorkflowTriggerWriteResultV1Schema.parse>;
+
+export type WorkflowActorConsentSelection = Readonly<{
+  workflow: string;
+  workflowRevision: number;
+  matching: Omit<NonNullable<WorkflowTriggerContextV1['actorConsent']>, 'agentSteps'>;
+  project: WorkflowProjectTargetV1;
+  /** Own consent identity selected once by the host's consentFor index. */
+  saved?: Readonly<{ automationId: string; triggerId: string; workflowRevision: number }>;
+}>;
+export type WorkflowActorConsentReadSelection = Omit<WorkflowActorConsentSelection, 'project'> & Readonly<
+  { project: WorkflowProjectTargetV1 } | { resolveProject: () => Promise<WorkflowProjectTargetV1> }
+>;
+export type WorkflowActorConsentReference = Readonly<{
+  automationId: string;
+  triggerId: z.infer<typeof AutomationTriggerIdSchema>;
+  triggerRevision: number;
+  workflowRevision: number;
+}>;
+
+function actorConsentMatching(selection: Pick<WorkflowActorConsentSelection, 'matching'>) {
+  return { ...selection.matching, actionIds: [...new Set(selection.matching.actionIds)].sort() };
+}
 
 export type WorkflowTriggerAutomationOperations = Readonly<{
   list: (input: Readonly<Partial<AutomationDefinitionListRequest>>) => Promise<AutomationDefinitionListResponse>;
@@ -157,6 +183,14 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
 export interface WorkflowTriggerActions {
   prepareMutation: (args: WorkflowActionExecuteArgs<WorkflowTriggerMutationActionId>)
     => Promise<Pick<Caller, 'workflowTriggerMutationAdmission'>>;
+  readActorConsent: (input: WorkflowActorConsentReadSelection & Readonly<{
+    /** The canonical action-trigger owner supplies the revision update arm. */
+    consentTrigger: AutomationActionConsentTrigger & Readonly<{ enabled: boolean }>;
+  }>, caller: Caller) => Promise<Readonly<{ current: false; review?: ActionAutomationConsentReviewV1 }> | (WorkflowActorConsentReference & Readonly<{ current: true }>)>;
+  saveActorConsent: (input: WorkflowActorConsentSelection & Readonly<{
+    consentTrigger: AutomationActionConsentTrigger & Readonly<{ enabled: boolean }>;
+    decisionInput: z.infer<typeof ApprovalRequestDecideInputSchema>;
+  }>, caller: Caller) => Promise<WorkflowActorConsentReference>;
   readWorkflowTriggerEvents: (input: Readonly<{ workflow: string; intendedTriggers?: readonly WorkflowIntendedTriggerV1[] }>)
     => Promise<readonly WorkflowTriggerEventDeclarationV1[]>;
   readSavedConsent: (input: Readonly<{ automationId: string; triggerId: string; ownerAccountId: string;
@@ -181,6 +215,49 @@ export interface WorkflowTriggerActions {
   sessionRemove: (raw: SessionTriggerRemoveRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   /** Native Goal handoff uses the incumbent Session trigger writer. */
   removeSessionKeepGoingTriggers: (raw: SessionTriggerListRequestV1, caller?: Caller) => Promise<void>;
+}
+
+/** Both Account hosts bind their workspace reader to this one consent owner. */
+export function createWorkflowActorConsentPortV1(options: Readonly<{
+  actions: Pick<WorkflowTriggerActions, 'readActorConsent' | 'saveActorConsent'>;
+  accountId: string;
+  resolveProject(context: Caller): Promise<WorkflowProjectTargetV1>;
+}>): Readonly<{
+  resolveConsent(args: Readonly<{ selection: ActionAutomationSelectedTriggerV1; context: Caller }>): Promise<ActionAutomationConsentResolutionV1>;
+  allowConsent(args: Parameters<ActionAutomationAllowConsentV1>[0] & Readonly<{ executionContext: Caller }>): Promise<ActionAutomationTriggerReferenceV1>;
+}> {
+  const selectionInput = (selection: ActionAutomationSelectedTriggerV1) => {
+    const saved = selection.consent?.row;
+    return { workflow: selection.workflowId, workflowRevision: selection.workflowRevision,
+      matching: { actionIds: [...selection.actionIds], phase: selection.phase,
+        ...(selection.subject ? { subject: selection.subject } : {}) },
+      ...(saved ? { saved: { automationId: saved.automationId, triggerId: saved.triggerId,
+        workflowRevision: saved.consentedWorkflowRevision ?? saved.workflowRevision } } : {}),
+      consentTrigger: { kind: 'action' as const, enabled: true,
+        consentFor: { automationId: selection.automationId, triggerId: selection.triggerId },
+        consentedWorkflowRevision: selection.workflowRevision },
+    };
+  };
+  const reference = (selection: ActionAutomationSelectedTriggerV1, saved: WorkflowActorConsentReference): ActionAutomationTriggerReferenceV1 => {
+    const { consent: _consent, subject: _subject, ...matching } = selection;
+    return { ...matching, automationId: saved.automationId, triggerId: saved.triggerId,
+      triggerRevision: saved.triggerRevision, workflowRevision: saved.workflowRevision, ownerAccountId: options.accountId,
+      consentFor: { automationId: selection.automationId, triggerId: selection.triggerId },
+      consentedWorkflowRevision: saved.workflowRevision };
+  };
+  return {
+    async resolveConsent({ selection, context }) {
+      if (!selection.consent?.row) return { current: false };
+      const current = await options.actions.readActorConsent({ ...selectionInput(selection),
+        resolveProject: () => options.resolveProject(context) }, context);
+      return current.current ? { current: true, row: reference(selection, current) } : current;
+    },
+    async allowConsent({ selection, context, executionContext, decisionInput }) {
+      const saved = await options.actions.saveActorConsent({ ...selectionInput(selection),
+        project: await options.resolveProject(executionContext), decisionInput }, context);
+      return reference(selection, saved);
+    },
+  };
 }
 
 /** Inline managed scope effects are identified from the incumbent executable target, never extra scope metadata. */
@@ -755,11 +832,90 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       return { workflowTriggerMutationAdmission: { actionId: args.actionId, row, changesProfile: incumbentProfile
         || next !== undefined && 'subject' in next && next.subject?.kind === 'approvalProfile' } };
     },
+    readActorConsent: async (input: Parameters<WorkflowTriggerActions['readActorConsent']>[0], caller: Caller): ReturnType<WorkflowTriggerActions['readActorConsent']> => {
+      if (!input.saved) return { current: false };
+      const row = await read(input.saved.automationId);
+      const context = AutomationStoredWorkflowDefinitionV2Schema.parse(await deps.openContext(row));
+      const pinned = context.actorConsent;
+      const operation = context.actionApprovals?.find(item => item.triggerId === input.saved!.triggerId)?.operation;
+      const trigger = row.triggers.find(item => item.id === input.saved!.triggerId);
+      if (!row.enabled || !trigger?.enabled || !pinned || !operation
+        || operation.approvedBy.accountId !== caller.runtimeAccountId) return { current: false };
+      const { agentSteps, ...matching } = pinned;
+      if (!sameStrictJsonValue(matching, actorConsentMatching(input))) return { current: false, review: { reason: 'match' } };
+      if (input.saved.workflowRevision === input.workflowRevision) {
+        return { current: true, automationId: row.id, triggerId: trigger.id,
+          triggerRevision: trigger.revision, workflowRevision: input.workflowRevision };
+      }
+      // R16: exactly one authorized definition read only after revision differs.
+      const project = 'project' in input ? input.project : await input.resolveProject();
+      const source = await deps.resolveWorkflow(input.workflow);
+      const current = await readWorkflowTriggerActorConsentSteps({ definition: source.definition, context,
+        project, triggerId: input.saved.triggerId, resolveWorkflow: resolveDefinition,
+        materializer: await deps.resolveMaterializer?.(project, caller) });
+      const changedActions = current.steps.flatMap((step, index) => sameStrictJsonValue(step, operation.steps[index])
+        ? [] : [current.actionStepRefs[index]!]);
+      const changedAgents = current.agentSteps.filter((step, index) => !sameStrictJsonValue(step, agentSteps[index]));
+      if (current.steps.length !== operation.steps.length || current.agentSteps.length !== agentSteps.length
+        || changedActions.length > 0 || changedAgents.length > 0) return { current: false, review: { reason: 'steps',
+        changedSteps: [...changedActions, ...changedAgents.map(({ sourceKey, blockId }) => ({ sourceKey, blockId }))] } };
+      const { enabled, ...consentTrigger } = input.consentTrigger;
+      const saved = await deps.automations.reconcile(row.id, {
+        expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled: row.enabled,
+        assignments: [], triggers: [{ kind: 'existing', triggerId: trigger.id, expectedRevision: trigger.revision,
+          enabled, trigger: consentTrigger }], removedTriggers: [],
+      }, row, undefined, caller.signal);
+      const revised = saved.triggers.find(item => item.id === trigger.id);
+      if (!revised) refuse('content_unavailable');
+      return { current: true, automationId: saved.id, triggerId: revised.id,
+        triggerRevision: revised.revision, workflowRevision: input.workflowRevision };
+    },
+    saveActorConsent: async (input: Parameters<WorkflowTriggerActions['saveActorConsent']>[0], caller: Caller): ReturnType<WorkflowTriggerActions['saveActorConsent']> => {
+      // Only the decide owner admits Allow. This owner stamps the real deciding
+      // person through the incumbent operation producer, never another Account.
+      const source = await deps.resolveWorkflow(input.workflow);
+      const row = input.saved ? await read(input.saved.automationId) : undefined;
+      const automationId = row?.id ?? deps.newId('automation');
+      const triggerId = input.saved?.triggerId ?? AutomationTriggerIdSchema.parse(deps.newId('trigger'));
+      const context: WorkflowTriggerContextV1 = { workspace: { directory: input.project.directory },
+        executionTarget: { kind: 'detached_run' } };
+      const projected = await readWorkflowTriggerActorConsentSteps({ definition: source.definition, context,
+        project: input.project, triggerId, resolveWorkflow: resolveDefinition,
+        materializer: await deps.resolveMaterializer?.(input.project, caller) });
+      context.actorConsent = { ...actorConsentMatching(input), agentSteps: projected.agentSteps };
+      const { prepareWorkflowApprovedOperation } = await import('./workflowRunActions.js');
+      const operation = await prepareWorkflowApprovedOperation({ parent: { actionId: 'approval.request.decide',
+        input: Object.fromEntries(Object.entries(input.decisionInput).filter(([, value]) => value !== undefined)
+          .map(([key, value]) => [key, projectNativeJsonValueForTransport(value)])) },
+        steps: projected.steps, materializedLeaves: projected.materializedLeaves,
+        context: caller, ...(deps.nativeAccount ? { nativeAccount: deps.nativeAccount } : {}) });
+      context.actionApprovals = [{ triggerId: AutomationTriggerIdSchema.parse(triggerId), operation }];
+      const executionRecipe = await deps.sealContext({ automationId, templateVersion: (row?.templateVersion ?? 0) + 1, context });
+      let saved: AutomationDefinitionDetail;
+      if (row) {
+        const trigger = row.triggers.find(item => item.id === triggerId);
+        if (!trigger) refuse('content_unavailable');
+        const { enabled, ...consentTrigger } = input.consentTrigger;
+        saved = await deps.automations.reconcile(row.id, { expectedTemplateVersion: row.templateVersion, name: row.name,
+          description: row.description, enabled: true, executionRecipe, assignments: [],
+          triggers: [{ kind: 'existing', triggerId: trigger.id, expectedRevision: trigger.revision, enabled, trigger: consentTrigger }],
+          removedTriggers: [] }, row, undefined, caller.signal);
+      } else {
+        saved = await deps.automations.create({ automationId, name: WORKFLOW_TRIGGER_SET_STORAGE_NAME, description: null,
+          enabled: true, workflowDefinitionId: input.workflow, executionRecipe, assignments: [],
+          triggers: [{ triggerId: AutomationTriggerIdSchema.parse(triggerId), trigger: input.consentTrigger }] }, undefined, caller.signal);
+      }
+      const trigger = saved.triggers.find(item => item.id === triggerId);
+      if (!trigger) refuse('content_unavailable');
+      return { automationId: saved.id, triggerId: trigger.id,
+        triggerRevision: trigger.revision, workflowRevision: input.workflowRevision };
+    },
     readSavedConsent: async (input: Parameters<WorkflowTriggerActions['readSavedConsent']>[0], caller: Caller): Promise<WorkflowApprovedOperationV1 | null> => {
-      if (!['workflow.trigger.add', 'workflow.trigger.update'].includes(input.operation.parent.actionId)) return null;
       const row = await read(input.automationId);
       if (!row.enabled || row.executionRecipe?.v !== 2 || !row.triggers.some(item => item.id === input.triggerId && item.enabled)) return null;
       const value = await opened(row, false, caller);
+      if (input.operation.parent.actionId !== 'workflow.trigger.add' && input.operation.parent.actionId !== 'workflow.trigger.update'
+        && !(value.context.actorConsent && input.operation.parent.actionId === 'approval.request.decide')) return null;
       const approval = value.context.actionApprovals?.find(item => item.triggerId === input.triggerId);
       const operation = approval?.operation;
       if (!operation || operation.approvedBy.accountId !== input.ownerAccountId) return null;

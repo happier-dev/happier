@@ -13,13 +13,18 @@ import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/m
 import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { FileDownloadDestinationV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
-import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteResult, ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { createPluginActionInvocation, pluginActionRequiresPresentUserIntent, pluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
+import { projectPluginActionApprovalScopeV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
+import type { PluginAutomationSubjectKindDeclarationV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
+import { createActionAutomationInvocationV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import { isActionEffectHookableV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { createPluginActionInvocation, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginHostAccessRequestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { PluginActionPresentUserGatePolicy, PluginActionInputParser } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
@@ -146,7 +151,7 @@ export type TargetActionInvocationRegistration = Readonly<{
     observeRead?: PluginActionReadObserver;
 }>;
 
-export type TargetActionInvocationResult = TargetActionExecutionResult;
+export type TargetActionInvocationResult = TargetActionExecutionResult & Pick<ActionExecuteResult, 'automationNotices'>;
 
 type TargetActionPreDispatchResult = Readonly<{
     status: 'unavailable' | 'invalid';
@@ -340,6 +345,7 @@ function unavailable(code: string, message: string): TargetActionInvocationResul
 
 export function createTargetActionInvocationRegistry(params: Readonly<{
     actions: readonly TargetActionInvocationRegistration[];
+    subjectKinds?: readonly PluginAutomationSubjectKindDeclarationV1[];
     expectedActions?: readonly Readonly<{ pluginId: string; localId: string }>[];
     readActions?: () => readonly TargetActionInvocationRegistration[];
     resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
@@ -611,7 +617,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     },
                 }
                 : {}),
-            handler: async ({ input, qualifiedId, signal }) => {
+            handler: async ({ input, qualifiedId, signal, isReadOnly }) => {
                 const abortContext = () => {
                     lifetime.settleContext();
                 };
@@ -638,7 +644,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ? FileDownloadDestinationV1Schema.safeParse(input.destination) : null;
                 const fileDownload = invocation.approvalContext?.prepareFileDownload
                     && (registration.definition.dangerLevel === 'writesLocal' || registration.definition.dangerLevel === 'destructive')
-                    && !pluginActionDeclarationIsReadOnlyForInput(registration.definition, input)
+                    && !isReadOnly
                     && destination?.success ? Object.freeze({ destinationId: destination.data.destinationId,
                         retirementSignal: registryController.signal, operationAcceptance: invocation.operationAcceptance,
                         operationOwnerUpdate: invocation.operationOwnerUpdate,
@@ -1075,7 +1081,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 } });
             }
             if ((invocation.requiredReadOnly || invocation.readObservation)
-                && !pluginActionDeclarationIsReadOnlyForInput(indexed.registration.definition, preparedInput.input)) {
+                && !preparedInput.isReadOnly) {
                 await complete();
                 return Object.freeze({ kind: 'settled' as const,
                     result: { ...unavailable('plugin_action_read_only_required', 'This Resource requires an explicitly declared read operand'), actionHandlerInvocation: 'notStarted' as const } });
@@ -1139,6 +1145,45 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     diagnostic => logger.warnLocalFile('[Deployment] Unavailable', { ...diagnostic, requestId: invocation.requestId ?? correlationId })) });
                 }
             }
+            const qualifiedActionId = formatQualifiedPluginActionId({ pluginId: invocation.pluginId, localId: invocation.localId });
+            const automationPort = invocation.approvalContext?.actionAutomationPort;
+            const effectHookable = isActionEffectHookableV1(preparedInput.isReadOnly ? 'read' : 'external');
+            const context = { ...invocation.approvalContext,
+                actionRequestId: invocation.approvalContext?.actionRequestId || invocation.requestId || correlationId };
+            const projected = projectPluginActionApprovalScopeV1({
+                declaration: indexed.registration.definition.approvalScope, input: preparedInput.input,
+                pluginId: invocation.pluginId, subjectKinds: params.subjectKinds,
+                serverId: context.serverIdentityId ?? context.serverId,
+            });
+            if (!projected.ok) {
+                await complete();
+                return Object.freeze({ kind: 'settled' as const, result: Object.freeze({
+                    status: projected.code === 'subject_kind_unavailable' ? 'unavailable' as const : 'invalid' as const,
+                    code: projected.code === 'subject_kind_unavailable' ? 'plugin_action_generation_retired' : 'plugin_action_input_schema_invalid',
+                    message: projected.code, actionHandlerInvocation: 'notStarted' as const,
+                }) });
+            }
+            const subjects = projected.subjects;
+            if (automationPort && effectHookable && !invocation.readObservation
+                && invocation.approvalContext?.actionAutomationAdmission?.actionId !== qualifiedActionId) {
+                const selection = await automationPort.select({ actionId: qualifiedActionId, input: preparedInput.input, context,
+                    ...(environmentAdmission?.scope ? { approvalScope: environmentAdmission.scope } : {}),
+                    ...(subjects.length ? { subjects } : {}),
+                    signal: lifetime.signal });
+                invocation = { ...invocation, approvalContext: { ...context,
+                    actionAutomationAdmission: createActionAutomationInvocationV1({ actionId: qualifiedActionId,
+                        context, selection, port: automationPort }) } };
+            }
+            const settleAutomation = async (result: TargetActionInvocationResult) => {
+                const admission = invocation.approvalContext?.actionAutomationAdmission;
+                if (!effectHookable || invocation.readObservation || admission?.actionId !== qualifiedActionId
+                    || result.status === 'deferred') return result;
+                const settled = await admission.settle(withActionAutomationNoticesV1(
+                    result.status === 'executed' ? { ok: true, result: result.value }
+                        : { ok: false, errorCode: result.code, error: result.message }, result.automationNotices),
+                invocation.approvalContext);
+                return settled.automationNotices ? { ...result, automationNotices: settled.automationNotices } : result;
+            };
             const resolveCurrentAction = (): ResolvedTargetAction | null => {
                 const current = actionsByKey.get(key);
                 if (!current) return null;
@@ -1293,7 +1338,12 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),
                     signal: lifetime.signal,
                     ...(invocation.replayPlacement ? { replayPlacement: invocation.replayPlacement } : {}),
-                    ...(invocation.requireCurrentIntent === true || proposesSharedSave ? { requireCurrentIntent: true as const } : {}),
+                    ...(invocation.requireCurrentIntent === true || proposesSharedSave
+                        || invocation.approvalContext?.actionAutomationAdmission?.selection.before.length
+                        || [...(invocation.approvalContext?.actionAutomationAdmission?.selection.before ?? []),
+                            ...(invocation.approvalContext?.actionAutomationAdmission?.selection.after ?? [])]
+                            .some(row => row.consent && row.consent.status !== 'current')
+                        ? { requireCurrentIntent: true as const } : {}),
                     ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
                     ...(invocation.requestCurrentIntent ? {
                         requestCurrentIntent: async (request: TargetActionCurrentIntentRequest) => {
@@ -1322,8 +1372,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     } : {}),
             });
             if (prepared.kind === 'settled') {
+                const result = await settleAutomation(prepared.result);
                 await complete();
-                return prepared;
+                return { ...prepared, result };
             }
             let runPromise: Promise<TargetActionInvocationResult> | null = null;
             return Object.freeze({
@@ -1343,6 +1394,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     options?.signal?.addEventListener('abort', abortFromOperation, { once: true });
                     if (options?.signal?.aborted) abortFromOperation();
                     runPromise = prepared.run().then(async result => {
+                        result = await settleAutomation(result);
                         try {
                             if (invocation.readObservation && result.status === 'executed' && !lifetime.signal.aborted) {
                                 // A successful observation retains target-owned services until

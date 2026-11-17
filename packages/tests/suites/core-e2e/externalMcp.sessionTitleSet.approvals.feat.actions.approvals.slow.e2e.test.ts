@@ -2,79 +2,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { createSessionWithCiphertexts, fetchSessionV2 } from '../../src/testkit/sessions';
-import { repoRootDir } from '../../src/testkit/paths';
+import { connectExternalMcp, parseToolJson, type ExternalMcpClient, type ExternalMcpTransport } from '../../src/testkit/externalMcp';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 
 const run = createRunDirs({ runLabel: 'core' });
-
-type McpToolCallResult = {
-  content?: Array<{ text?: unknown }>;
-};
-
-type ExternalMcpTransport = {
-  stderr?: {
-    on(event: 'data', listener: (chunk: Buffer) => void): void;
-  };
-  close(): Promise<void>;
-};
-
-type ExternalMcpClient = {
-  connect(transport: ExternalMcpTransport): Promise<void>;
-  close(): Promise<void>;
-  listTools(): Promise<{ tools: Array<{ name: string }> }>;
-  callTool(request: { name: string; arguments?: Record<string, unknown> }): Promise<McpToolCallResult>;
-};
-
-async function connectExternalMcp(params: Readonly<{
-  cliEntrypoint: string;
-  sessionId: string;
-  cliHome: string;
-  serverBaseUrl: string;
-}>): Promise<{
-  client: ExternalMcpClient;
-  transport: ExternalMcpTransport;
-  stderrLines: string[];
-}> {
-  const sdkClientIndexPath = resolve(repoRootDir(), 'apps/cli/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
-  const sdkClientStdioPath = resolve(repoRootDir(), 'apps/cli/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js');
-  const { Client } = await import(pathToFileURL(sdkClientIndexPath).href);
-  const { StdioClientTransport } = await import(pathToFileURL(sdkClientStdioPath).href);
-
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [params.cliEntrypoint, 'mcp', 'serve', '--session', params.sessionId],
-    env: {
-      ...process.env,
-      CI: '1',
-      HAPPIER_HOME_DIR: params.cliHome,
-      HAPPIER_SERVER_URL: params.serverBaseUrl,
-    },
-    stderr: 'pipe',
-  }) as ExternalMcpTransport;
-
-  const stderrLines: string[] = [];
-  transport.stderr?.on('data', (chunk: Buffer) => {
-    stderrLines.push(chunk.toString('utf8'));
-  });
-
-  const client = new Client({ name: 'happier-e2e', version: '0.0.0' }) as ExternalMcpClient;
-  await client.connect(transport);
-  return { client, transport, stderrLines };
-}
-
-function parseToolJson<T = Record<string, unknown>>(call: McpToolCallResult): T {
-  return JSON.parse(String(call.content?.[0]?.text ?? '')) as T;
-}
 
 async function createScenario(): Promise<{
   authToken: string;

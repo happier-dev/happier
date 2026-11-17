@@ -431,12 +431,18 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const executionRunWorkflowRunId = readWorkflowRunId();
         const approvalProfileId = params.seed.readApprovalProfileId
             ? params.seed.readApprovalProfileId() : params.seed.approvalContext?.approvalProfileId;
-        return executionRunWorkflowRunId || approvalProfileId !== undefined || params.seed.finiteOperation
+        const context = executionRunWorkflowRunId || approvalProfileId !== undefined || params.seed.finiteOperation
             ? { ...params.seed.approvalContext,
                 ...params.seed.finiteOperation,
                 ...(executionRunWorkflowRunId ? { executionRunWorkflowRunId } : {}),
                 ...(approvalProfileId !== undefined ? { approvalProfileId } : {}) }
             : params.seed.approvalContext;
+        if (!context) return undefined;
+        // A child Action selects its own hooks; only retained approval replay
+        // carries the admitted invocation token. The host port remains inherited.
+        const { actionAutomationAdmission: _parentAdmission,
+            prepareAdmittedExecutionOrigin: _parentExecutionOrigin, ...childContext } = context;
+        return childContext;
     };
     const failWorkflowApproval = (error: PluginError): PluginError => {
         if (error.code === 'approval_requester_unavailable' && !params.seed.session && readWorkflowRunId()) {
@@ -767,6 +773,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             // Preserve original execution/signing custody without inheriting
             // present-person authority or a bypass from the initiating call.
             ...(source?.runtimeAccountId ? { runtimeAccountId: source.runtimeAccountId } : {}),
+            ...(source?.actionAutomationPort ? { actionAutomationPort: source.actionAutomationPort } : {}),
             ...(source?.expectedAccountId ? { expectedAccountId: source.expectedAccountId } : {}),
             ...(source?.serverId ? { serverId: source.serverId } : {}),
             ...(source?.serverIdentityId ? { serverIdentityId: source.serverIdentityId } : {}),

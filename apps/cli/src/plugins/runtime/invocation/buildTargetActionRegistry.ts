@@ -341,6 +341,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
 
     return createTargetActionInvocationRegistry({
         actions: readActions(),
+        subjectKinds: params.contributes.subjectKinds ?? [],
         expectedActions,
         readActions,
         ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),

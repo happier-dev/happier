@@ -1,6 +1,8 @@
 import { artifactSavedByFromActionContextV1 } from '../../artifacts/artifactBinaryV1.js';
 import { isConfirmedActionWriteRefusal } from './actionFailureEnvelope.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 import type { SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
+import type { ActionAutomationWaitV1, ActionAutomationCancelV1, ActionAutomationRunObservationV1 } from './actionAutomationAdmission.js';
 import { isTerminalAutomationRunStateV3 } from '../../automations/automationRunStateV3.js';
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
 export { DeploymentShaApprovalInputV1Schema, WorkflowApprovedOperationStepV1Schema,
@@ -563,7 +565,7 @@ export type WorkflowAccountRunActionDeps = Readonly<{
 }>;
 
 function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['steps'][number],
-  materializedLeaves: WorkflowAcceptedSnapshotV1['materializedLeaves'] = [],
+  materializedLeaves: Readonly<WorkflowAcceptedSnapshotV1['materializedLeaves']> = [],
   admittedStep: WorkflowApprovedOperationV1['steps'][number] = step): boolean {
   const actionId = ActionIdSchema.safeParse(step.actionId);
   if (!actionId.success || actionId.data === 'action.invoke') {
@@ -630,7 +632,7 @@ export async function prepareWorkflowApprovedOperation(params: Readonly<{
   context: ActionExecutorContext;
   nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
   /** The Run materializer's admitted declarations, never authored Action JSON. */
-  materializedLeaves?: WorkflowAcceptedSnapshotV1['materializedLeaves'];
+  materializedLeaves?: Readonly<WorkflowAcceptedSnapshotV1['materializedLeaves']>;
 }>): Promise<WorkflowApprovedOperationV1> {
   const { context, parent } = params;
   const proof = context.presentUserApproval;
@@ -673,9 +675,12 @@ export async function prepareWorkflowApprovedOperation(params: Readonly<{
   }
   const nativeAccount = params.nativeAccount;
   const savedBy = artifactSavedByFromActionContextV1(context);
+  const triggerConsent = readRecord(parent.input.triggerConsent);
+  const actorConsentDecision = parent.actionId === 'approval.request.decide' && parent.input.decision === 'approve'
+    && triggerConsent.decision === 'allow';
   if (!accountId && nativeAccount
     && (parent.actionId === 'workflow.trigger.add' || parent.actionId === 'workflow.trigger.update'
-      || parent.actionId === 'account.apiTokens.create' || parent.actionId === 'account.apiTokens.update')
+      || parent.actionId === 'account.apiTokens.create' || parent.actionId === 'account.apiTokens.update' || actorConsentDecision)
     && context.authority === 'present_user' && context.actionCaller?.kind === 'host'
     && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
     && typeof context.actionRequestId === 'string' && context.actionRequestId.length > 0
@@ -781,6 +786,8 @@ function summarizedStepContext(stepNames: WorkflowRunDisplaySummaryV1['stepNames
 }
 
 export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner & Readonly<{
+  waitAutomaticCheck: ActionAutomationWaitV1;
+  cancelAutomaticCheck: ActionAutomationCancelV1;
   prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>, presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>,
     ingressContext?: WorkflowIngressContextV1) => Promise<HostReviewedChildrenPreparationV1>;
   startCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
@@ -2639,15 +2646,20 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     ingressContext?: WorkflowIngressContextV1): ReturnType<WorkflowRunActionOwner['execute']>;
   function execute(args: WorkflowActionExecuteArgs<'workflow.run.wait'>,
     ingressContext: WorkflowIngressContextV1 | undefined, combined: WorkflowCombinedRunStartV1): Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
+  function execute(args: WorkflowActionExecuteArgs<'workflow.run.wait'>,
+    ingressContext: undefined, combined: undefined, automaticCheck: Parameters<ActionAutomationWaitV1>[0]['run']): Promise<ActionAutomationRunObservationV1>;
+  function execute(args: WorkflowActionExecuteArgs<'workflow.run.cancel'>,
+    ingressContext: undefined, combined: undefined, automaticCheck: Parameters<ActionAutomationWaitV1>[0]['run']): ReturnType<WorkflowRunActionOwner['execute']>;
   async function execute(args: Parameters<WorkflowRunActionOwner['execute']>[0],
-    ingressContext?: WorkflowIngressContextV1, combined?: WorkflowCombinedRunStartV1): Promise<Awaited<ReturnType<WorkflowRunActionOwner['execute']>> | ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>> {
+    ingressContext?: WorkflowIngressContextV1, combined?: WorkflowCombinedRunStartV1,
+    automaticCheck?: Parameters<ActionAutomationWaitV1>[0]['run']): Promise<Awaited<ReturnType<WorkflowRunActionOwner['execute']>> | ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse> | ActionAutomationRunObservationV1> {
     if (args.actionId === 'workflow.run.invocations.complete_review' || args.actionId === 'workflow.run.invocations.publish_draft') return await review(args, ingressContext);
     if (args.actionId === 'workflow.run.start') return await start(args, ingressContext);
     // The caller's resource restriction is not the transport relay. Check it
     // before scoped reads or durable intents; unqualified controls stay key-free.
     const target = args.context.externalActionTarget;
     const restrictedRunId = 'runId' in args.input ? args.input.runId : undefined;
-    if (target !== undefined && typeof restrictedRunId === 'string'
+    if (!automaticCheck && target !== undefined && typeof restrictedRunId === 'string'
       && args.actionId !== 'workflow.run.list'
       && args.actionId !== 'workflow.run.get'
       && args.actionId !== 'workflow.run.resume'
@@ -2991,7 +3003,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       const deadline = args.input.timeoutSeconds === undefined
         ? undefined
         : Date.now() + args.input.timeoutSeconds * 1_000;
-      const unboundedCallingSession = combined === undefined && deadline === undefined
+      const unboundedCallingSession = !automaticCheck && combined === undefined && deadline === undefined
         && (args.context.surface === 'agent' || args.context.surface === 'mcp')
         && Boolean(args.context.defaultSessionId);
       let stored: unknown;
@@ -3020,7 +3032,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         args.context.signal?.throwIfAborted();
         if (failure !== undefined) throw failure;
         const observedRevision = revision;
-        const afterRevision = unboundedCallingSession
+        const afterRevision = unboundedCallingSession || automaticCheck
           ? undefined
           : await assertWaitDoesNotOccupyTargetConversation(waitArgs);
         try {
@@ -3043,10 +3055,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             || (raw.observation !== 'terminal' && raw.observation !== 'not_matched_terminal')) {
             throw workflowError('invalid_input');
           }
-        } else await assertWaitDoesNotOccupyTargetConversation(waitArgs);
+        } else if (!automaticCheck) await assertWaitDoesNotOccupyTargetConversation(waitArgs);
         args.context.signal?.throwIfAborted();
         if (failure !== undefined) throw failure;
-        const onSnapshot = args.context.onWaitSnapshot;
+        const onSnapshot = automaticCheck ? undefined : args.context.onWaitSnapshot;
         if (onSnapshot) {
           const snapshot = WorkflowRunWaitSnapshotV1Schema.parse({ run: raw.run });
           if (!lastSnapshot || !sameStrictJsonValue(lastSnapshot, snapshot)) {
@@ -3079,7 +3091,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             || !(typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)));
         // A passive observer does not settle when a condition or terminal state
         // is seen. Keep the same feed until its cancellation/authored deadline.
-        if (!args.context.onWaitSnapshot && (combined !== undefined && run.state === 'interrupted'
+        if (!onSnapshot && (combined !== undefined && run.state === 'interrupted'
           || raw.observation !== 'waiting' && !pendingCombinedSettlement)) break;
         if (deadline !== undefined && Date.now() >= deadline) {
           stored = { observation: 'timeout', run: raw.run };
@@ -3109,7 +3121,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         return WorkflowRunWaitSnapshotV1Schema.parse({ run: raw.run });
       }
       const { resultEnvelope: _ignored, keyCensus: _keyCensus, ...base } = raw;
-      if (typeof raw.resultEnvelope !== 'string') return WorkflowActionOutputSchemasV1[args.actionId].parse(base);
+      const automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
+      const automaticObservation = automaticRun && { state: automaticRun.state,
+        ...(automaticRun.errorCode === undefined ? {} : { errorCode: automaticRun.errorCode }) };
+      if (typeof raw.resultEnvelope !== 'string') return automaticObservation ?? WorkflowActionOutputSchemasV1[args.actionId].parse(base);
       const census = WorkflowRunRecipientCensusResponseV1Schema.parse(raw.keyCensus);
       const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(args.context.signal), census });
       if (resolved.kind !== 'available') throw workflowError(resolved.reason);
@@ -3118,6 +3133,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       const opened = envelope && openWorkflowFinalResultStoredEnvelopeV1({ ...openMode(resolved.encryption), binding: { v: 1, purpose: 'final_result', accountId: census.ownerAccountId, runId: args.input.runId }, envelope });
       if (!opened) throw workflowError('content_unavailable');
       if (opened.kind !== 'available') throw workflowError(workflowStoredContentReadErrorCodeV1(opened));
+      if (automaticObservation) return { ...automaticObservation, finalResult: opened.content,
+        resultId: opened.content.producerInvocation.recordId };
       return WorkflowActionOutputSchemasV1[args.actionId].parse({ ...base, result: opened.content.result.value });
     }
     if (args.actionId === 'workflow.run.invocations.list') {
@@ -3194,7 +3211,22 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     throw workflowError('continuation_unavailable');
   }
-  return { startCombined: async (request, ingressContext) => {
+  return { waitAutomaticCheck: async ({ run, context }) => {
+    deps.assertCurrent?.();
+    try {
+      // The pending approval owns these exact recorded refs. Its operand scope
+      // and conversation sink belong to the parent Action, not its check Run.
+      return await execute({ actionId: 'workflow.run.wait', input: { runId: run.runId, conditions: ['terminal'] }, context },
+        undefined, undefined, run);
+    } finally { deps.assertCurrent?.(); }
+  }, cancelAutomaticCheck: async ({ run, context }) => {
+    deps.assertCurrent?.();
+    try {
+      const snapshot = await getSnapshot(run.runId, context.signal);
+      await execute({ actionId: 'workflow.run.cancel', input: { runId: run.runId, expectedRevision: snapshot.run.revision }, context },
+        undefined, undefined, run);
+    } finally { deps.assertCurrent?.(); }
+  }, startCombined: async (request, ingressContext) => {
     deps.assertCurrent?.();
     try {
       return await start({ actionId: 'workflow.run.start', input: request.start, context: request.context }, ingressContext, request);

@@ -343,7 +343,10 @@ export function registerHappierMcpBuiltInTools(
                             }
                         }
                         return {
-                            content: [{ type: 'text' as const, text: stringifyMcpToolTextPayload(result.result) }, ...images],
+                            content: [{ type: 'text' as const, text: stringifyMcpToolTextPayload(result.result) },
+                                ...(result.automationNotices?.length ? [{ type: 'text' as const,
+                                    text: stringifyMcpToolTextPayload({ automationNotices: result.automationNotices }) }] : []),
+                                ...images],
                             ...(tool.outputSchema === undefined ? {} : {
                                 // The MCP wire contract requires an object even though
                                 // Action dispatch can return arbitrary JSON values.

@@ -12,6 +12,7 @@ import type { DeploymentTransportActionIdV1, DeploymentActionInputV1, Deployment
   DeploymentDeployInputV1, DeploymentDeployActionInputV1, DeploymentRollbackInputV1, DeploymentRollbackActionInputV1, DeploymentPromoteInputV1, DeploymentPromoteActionInputV1 } from '../../deployments/deploymentActionsV1.js';
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
 import type { ApprovalQueueListResultV1 } from '../../approvals/approvalRequestPublicRead.js';
+import type { ApprovalRequestDecideInputSchema } from '../specs/approvals.js';
 import type { SessionPendingNextOutput } from '../specs/session/pendingNext.js';
 import type { DaemonLocalServiceLauncherStartRequestV1, LocalServiceStartApprovalReviewV1 } from '../../local/services/launcher/v1.js';
 import type { DaemonLspApplyRequest, DaemonLspApplyResponse, DaemonLspQueryRequest, DaemonLspQueryResponse, DaemonLspRestartRequest, DaemonLspRestartResponse } from '../../machines/languageIntelligence.js';
@@ -2153,6 +2154,7 @@ export type ActionExecutorDeps = Readonly<{
     artifactId: string;
     request: ApprovalRequestV2 | TargetActionApprovalRequestV1;
     decision?: 'approve' | 'reject' | 'cancel';
+    triggerConsent?: z.infer<typeof ApprovalRequestDecideInputSchema>['triggerConsent'];
     /** The current deciding invocation, not the immutable native effect's authority. */
     context: ActionExecutorContext;
     requestId?: string;
@@ -2174,6 +2176,7 @@ export type ActionExecutorDeps = Readonly<{
   targetActionApprovalReplay?: (args: Readonly<{
     artifactId: string;
     decision: 'approve' | 'reject' | 'cancel';
+    triggerConsent?: z.infer<typeof ApprovalRequestDecideInputSchema>['triggerConsent'];
     /** Host-read body for initial family routing only, never Action input or later authority. */
     initialRead?: Readonly<{ request: unknown }>;
     callerGrant?: ApiTokenGrantV1;
