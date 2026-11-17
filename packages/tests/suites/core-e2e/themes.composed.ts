@@ -555,6 +555,7 @@ export async function runF3() {
         expect(listed.devices).toHaveLength(3);
         expect(new Set(listed.devices.map(client => client.id)).size).toBe(3);
         const labels = listed.devices.map(client => client.deviceLabel ?? null);
+        console.info('THEMES F3: discovered three App receivers');
         expect(labels.filter(label => label !== null)).toHaveLength(2);
         expect(labels).toContain(null);
         expect(labels.filter((label): label is string => label !== null).map(label => label.replace(/\s/g, '')).sort())
@@ -566,7 +567,8 @@ export async function runF3() {
         expect(ambiguous).toMatchObject({ ok: false, errorCode: 'client_ambiguous',
             details: { clients: expect.arrayContaining(listed.devices.map(client => expect.objectContaining(client))) } });
         for (const client of listed.devices) {
-            expect(await daemonAction('apply', { ref: saved.entry.reference, mode: 'dark', clientId: client.id }))
+            const applied = await daemonAction('apply', { ref: saved.entry.reference, mode: 'dark', clientId: client.id });
+            expect(applied, JSON.stringify(applied))
                 .toMatchObject({ ok: true, result: { applied: { clientId: client.id, mode: 'dark' } } });
             const fromApp = await theme<Applied>('apply', {
                 ref: saved.entry.reference, mode: 'dark', clientId: client.id });
@@ -794,10 +796,14 @@ export async function runF6() {
     const pluginId = 'org.example.theme-composed';
     const pluginRoot = resolve(testDir, 'contributed-theme');
     await mkdir(resolve(pluginRoot, '.happier-plugin'), { recursive: true });
-    await writeFile(resolve(pluginRoot, 'package.json'), JSON.stringify({ name: pluginId, version: '1.0.0', private: true, type: 'module' }));
-    await writeFile(resolve(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify({ schemaVersion: 2,
+    await writeFile(resolve(pluginRoot, 'package.json'), JSON.stringify({ name: pluginId, version: '1.0.0', private: true,
+        type: 'module', main: './index.mjs' }));
+    const manifest = { schemaVersion: 2,
         id: pluginId, version: '1.0.0', displayName: 'Contributed theme', engines: { happier: '^0.2.0' },
-        runtime: { apiVersion: 1 }, contributes: { themes: [{ id: 'paper', theme: document('Plugin paper').profile }] } }));
+        runtime: { apiVersion: 1 }, entrypoints: { development: './index.mjs', daemon: './index.mjs' },
+        contributes: { themes: [{ id: 'paper', theme: document('Plugin paper').profile }] } };
+    await writeFile(resolve(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
+    await writeFile(resolve(pluginRoot, 'index.mjs'), `export const manifest = ${JSON.stringify(manifest)};\nexport async function activate() {}\n`);
     home!.clear();
     await applyTrustedLocalPluginFixture({ daemonPort: daemon!.state.httpPort, controlToken: daemon!.state.controlToken,
         pluginRoot, pluginId, interactionId: 'themes-composed-install' });
