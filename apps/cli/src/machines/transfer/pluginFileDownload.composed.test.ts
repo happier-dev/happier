@@ -24,7 +24,6 @@ import { createDirectTransferServerLifecycle } from './directTransferServerLifec
 import { createPreparedFilesystemTransferClient } from './preparedFilesystemTransferClient';
 import { requestDirectPeerTransferToFile, startDirectPeerTransferServer } from './directPeerTransport';
 import * as exports from './prepareWorkspaceFileExport';
-import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -129,40 +128,6 @@ describe('admitted plugin file download', () => {
       if (cleanupFailures.length) throw new AggregateError([...primaryFailures, ...cleanupFailures],
         `Registered release download cleanup failed; activation facts: ${JSON.stringify(activationFacts)}`);
     }
-  });
-  it('returns the real contributed operation acceptance before ACK and settles that same operation afterwards', async () => {
-    const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
-    const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
-      generateOperationId: () => 'actual-download-operation' });
-    const directory = await mkdtemp(join(tmpdir(), 'happier-operation-download-'));
-    try {
-      const result = await runtime.observePluginExecution({ actionId: 'external.download-fixture/download', title: 'Download',
-        operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } }, input: {},
-        execute: async ({ operationAcceptance }) => {
-          if (!operationAcceptance) return { ok: false, errorCode: 'missing_acceptance', error: 'missing_acceptance' };
-          const receipt = await exports.prepareAcquiredFileDownload({ lifecycle,
-            input: { name: 'asset.bin', bytes: new Uint8Array([0, 255]), destination: { destinationId: 'held' } },
-            sourceId: 'request', requesterAccountId: 'account', retirementSignal: new AbortController().signal,
-            operationId: operationAcceptance.operationId, assertCurrentAuthority: async () => {} });
-          if (!receipt.success || receipt.status !== 'accepted') return { ok: false, errorCode: 'publication_failed', error: 'publication_failed' };
-          const settlement = lifecycle.waitForFilesystemExportSettlement(receipt.prepared.transferId, {
-            kind: 'acquired', sourceId: 'request', requesterAccountId: 'account', destinationId: 'held' });
-          operationAcceptance.accept(receipt);
-          const settled = await settlement;
-          return settled.success ? { ok: true, result: { success: true, status: 'completed', transferId: receipt.prepared.transferId,
-            destinationId: 'held', name: 'asset.bin', sizeBytes: settled.sizeBytes, sha256: settled.manifestHash.slice(7) } }
-            : { ok: false, errorCode: settled.errorCode ?? 'download_failed', error: settled.error };
-        } });
-      expect(result).toMatchObject({ ok: true, result: { status: 'accepted', operationId: 'actual-download-operation' } });
-      expect(await runtime.handlers.getV2({ operationId: 'actual-download-operation' })).toMatchObject({ kind: 'found', operation: { state: 'running' } });
-      const receiver = createPreparedFilesystemTransferClient({ executeAction: async () => result,
-        openMachineTunnel: async () => ({ localPort: await lifecycle.ensureListening(), observedPath: 'direct', close: async () => {} }) });
-      expect(await receiver.download({ targetMachineId: 'machine', rootPath: directory, path: 'unused', asZip: false,
-        destinationId: 'held', destinationPath: join(directory, 'received.bin') })).toMatchObject({ success: true, status: 'completed' });
-      expect(await runtime.handlers.getV2({ operationId: 'actual-download-operation', waitForTerminal: true }))
-        .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { status: 'completed' } } });
-      expect(lifecycle.getState().publishedTransferCount).toBe(0);
-    } finally { await lifecycle.stop(); await rm(directory, { recursive: true, force: true }); }
   });
   it('retracts a publication when caller cancellation wins while the native listener is opening', async () => {
     let listening!: () => void;

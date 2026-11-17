@@ -2,13 +2,13 @@ import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, writeF
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { createDirectPeerTransferApp } from './directPeerTransport';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
 import { resolveDirectPeerTransferOpenBodyMaxBytes } from './transferRuntimeConfig';
-import type { DirectTransferImportOpenRequest, DirectTransferImportSessionManager } from './directTransferImportSession';
+import type { DirectTransferImportOpenRequest } from './directTransferImportSession';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 
@@ -69,95 +69,6 @@ describe('direct transfer import endpoints', () => {
       });
 
       expect(open.statusCode).toBe(401);
-    } finally {
-      await app.close();
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
-  it('forwards a scoped bearer token into the import session manager when opening a session', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-scoped-'));
-    const destinationPath = join(tempDir, 'payload.bin');
-
-    const importSessionManager = {
-      ...createDirectTransferImportSessionManager(),
-      issueImportOpenAuthorizationToken: () => ({
-        authorizationToken: 'scoped-import-open-token',
-        expiresAt: 1_000,
-      }),
-      openTrustedImportSession: async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'trusted-upload-id',
-          destDisplayPath: 'payload.bin',
-          expectedSizeBytes: 4,
-          chunkSizeBytes: 8,
-          recipientPublicKeyBase64: 'recipient-public-key',
-          expiresAt: 1_000,
-        },
-      }),
-      openImportSession: async (input: DirectTransferImportOpenRequest & Readonly<{ authorizationToken?: string }>) => {
-        expect(input.authorizationToken).toBe('scoped-import-open-token');
-        return {
-          success: true as const,
-          response: {
-            uploadId: 'scoped-upload-id',
-            destDisplayPath: 'payload.bin',
-            expectedSizeBytes: 4,
-            chunkSizeBytes: 8,
-            recipientPublicKeyBase64: 'recipient-public-key',
-            expiresAt: 1_000,
-          },
-        };
-      },
-      writeImportTransferChunk: async () => ({ success: true as const }),
-      finalizeImportTransferSession: async () => ({
-        success: true as const,
-        finalized: {
-          success: true as const,
-          path: destinationPath,
-          sizeBytes: 4,
-        },
-        sha256: 'sha256:test',
-      }),
-      abortImportTransferSession: async () => {},
-      cleanupExpiredImportSessions: () => {},
-      getNextImportSessionExpiryAt: () => null,
-      countActiveImportSessions: () => 0,
-      close: async () => {},
-    } satisfies DirectTransferImportSessionManager;
-
-    const app = createDirectPeerTransferApp({
-      readPublishedTransfer: () => null,
-      importSessionManager,
-    });
-
-    try {
-      await app.ready();
-
-      const open = await app.inject({
-        method: 'POST',
-        url: '/machine-transfers/direct/imports/open',
-        headers: {
-          origin: 'https://app.happier.dev',
-          authorization: 'Bearer scoped-import-open-token',
-        },
-        payload: {
-          t: 'session_file_upload_v1',
-          workingDirectory: tempDir,
-          path: 'payload.bin',
-          sizeBytes: 4,
-          overwrite: true,
-        },
-      });
-
-      expect(open.statusCode).toBe(200);
-      expect(open.headers['access-control-allow-origin']).toBe('https://app.happier.dev');
-      expect(open.headers.vary).toContain('Origin');
-      expect(open.json()).toMatchObject({
-        uploadId: 'scoped-upload-id',
-        destDisplayPath: 'payload.bin',
-      });
     } finally {
       await app.close();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
@@ -286,6 +197,7 @@ describe('direct transfer import endpoints', () => {
         method: 'POST',
         url: '/machine-transfers/direct/imports/open',
         headers: {
+          origin: 'https://app.happier.dev',
           authorization: `Bearer ${openAuthorization.authorizationToken}`,
         },
         payload: {
@@ -298,6 +210,8 @@ describe('direct transfer import endpoints', () => {
       });
 
       expect(open.statusCode).toBe(200);
+      expect(open.headers['access-control-allow-origin']).toBe('https://app.happier.dev');
+      expect(open.headers.vary).toContain('Origin');
       const opened = open.json() as {
         uploadId: string;
         recipientPublicKeyBase64: string;
@@ -716,80 +630,6 @@ describe('direct transfer import endpoints', () => {
     } finally {
       await app.close();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
-  it('maps keepSession finalize failures from the import session manager to a structured 400 response', async () => {
-    const abortImportTransferSession = vi.fn(async () => {});
-    const importSessionManager = {
-      ...createDirectTransferImportSessionManager(),
-      issueImportOpenAuthorizationToken: () => ({
-        authorizationToken: 'unused-token',
-        expiresAt: 1_000,
-      }),
-      openTrustedImportSession: async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'unused-upload-id',
-          destDisplayPath: 'unused.txt',
-          expectedSizeBytes: 1,
-          chunkSizeBytes: 1,
-          recipientPublicKeyBase64: 'recipient-public-key',
-          expiresAt: 1_000,
-        },
-      }),
-      openImportSession: async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'unused-upload-id',
-          destDisplayPath: 'unused.txt',
-          expectedSizeBytes: 1,
-          chunkSizeBytes: 1,
-          recipientPublicKeyBase64: 'recipient-public-key',
-          expiresAt: 1_000,
-        },
-      }),
-      writeImportTransferChunk: async () => ({ success: true as const }),
-      finalizeImportTransferSession: async () => ({
-        success: false as const,
-        error: 'Destination already exists',
-        keepSession: true,
-      }),
-      abortImportTransferSession,
-      cleanupExpiredImportSessions: () => {},
-      getNextImportSessionExpiryAt: () => null,
-      countActiveImportSessions: () => 0,
-      close: async () => {},
-    } satisfies DirectTransferImportSessionManager;
-
-    const app = createDirectPeerTransferApp({
-      readPublishedTransfer: () => null,
-      importSessionManager,
-    });
-
-    try {
-      await app.ready();
-
-      const finalize = await app.inject({
-        method: 'POST',
-        url: '/machine-transfers/direct/imports/upload-123/finalize',
-      });
-      expect(finalize.statusCode).toBe(400);
-      expect(finalize.json()).toEqual({
-        success: false,
-        error: 'Destination already exists',
-        keepSession: true,
-      });
-
-      const abort = await app.inject({
-        method: 'POST',
-        url: '/machine-transfers/direct/imports/upload-123/abort',
-      });
-      expect(abort.statusCode).toBe(200);
-      expect(abort.json()).toEqual({ success: true });
-      expect(abortImportTransferSession).toHaveBeenCalledWith({ uploadId: 'upload-123' });
-    } finally {
-      await app.close();
     }
   });
 

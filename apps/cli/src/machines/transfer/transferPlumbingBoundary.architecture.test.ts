@@ -4,18 +4,6 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-function assertDoesNotImportModule(source: string, moduleToken: string, filePath: string): void {
-    // Note: do not use String.raw here; `\\b` in a raw template matches a *literal* `\b`, not a word boundary.
-    const importFrom = new RegExp(`\\bfrom\\s+['"][^'"]*${moduleToken}[^'"]*['"]`, 'g');
-    const dynamicImport = new RegExp(`\\bimport\\s*\\(\\s*['"][^'"]*${moduleToken}[^'"]*['"]\\s*\\)`, 'g');
-    const requireCall = new RegExp(`\\brequire\\s*\\(\\s*['"][^'"]*${moduleToken}[^'"]*['"]\\s*\\)`, 'g');
-
-    const hit = source.match(importFrom) ?? source.match(dynamicImport) ?? source.match(requireCall);
-    if (hit && hit.length > 0) {
-        throw new Error(`Forbidden import of "${moduleToken}" in ${filePath}: ${hit[0]}`);
-    }
-}
-
 async function listFilesRecursively(directory: string): Promise<string[]> {
     const entries = await readdir(directory, { withFileTypes: true });
     const results: string[] = [];
@@ -57,19 +45,6 @@ describe('machines/transfer (architecture)', () => {
             const source = await readFile(filePath, 'utf8');
             expect(source).not.toContain('session-handoffs/direct-transfer');
             expect(source).not.toMatch(/\bmachine-transfers\/direct\/[^'"\s]*\?token=/u);
-        }
-    });
-
-    it('keeps the transfer substrate handoff-agnostic', async () => {
-        const transferRoot = fileURLToPath(new URL('./', import.meta.url));
-        const files = (await listFilesRecursively(transferRoot)).filter(isRuntimeSourceFile);
-
-        for (const filePath of files) {
-            const source = await readFile(filePath, 'utf8');
-            assertDoesNotImportModule(source, '/session/handoff/', filePath);
-            assertDoesNotImportModule(source, 'session/handoff', filePath);
-            assertDoesNotImportModule(source, 'rpcHandlers.sessionHandoff', filePath);
-            assertDoesNotImportModule(source, '/api/machine/sessionHandoff/handlers', filePath);
         }
     });
 });

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTailscaleTransferServeLifecycle } from './tailscaleTransferServeLifecycle';
 
 describe('createTailscaleTransferServeLifecycle', () => {
-  it('enables the owned serve mapping when the shared transfer server starts and disables it when it stops', async () => {
+  it.each(['listener_stopped', 'terminal_stop'] as const)('enables the owned serve mapping and disables it on %s', async ending => {
     const runTailscaleServeEnable = vi.fn(async () => ({
       approvalUrl: null,
       httpsUrl: 'https://machine.tailnet.ts.net:8443',
@@ -51,11 +51,15 @@ describe('createTailscaleTransferServeLifecycle', () => {
       available: true,
     });
 
-    await lifecycle.observeDirectTransferServerLifecycleState({
-      status: 'stopped',
-      listenerClasses: ['loopback_http'],
-      publishedTransferCount: 0,
-    });
+    if (ending === 'terminal_stop') {
+      await lifecycle.stop();
+    } else {
+      await lifecycle.observeDirectTransferServerLifecycleState({
+        status: 'stopped',
+        listenerClasses: ['loopback_http'],
+        publishedTransferCount: 0,
+      });
+    }
 
     expect(lifecycle.getHttpsBaseUrlWithServePath()).toBe(null);
 
@@ -242,37 +246,4 @@ describe('createTailscaleTransferServeLifecycle', () => {
     });
   });
 
-  it('disables the owned mapping when the runtime feature is turned off', async () => {
-    const runTailscaleServeEnable = vi.fn(async () => ({
-      approvalUrl: null,
-      httpsUrl: 'https://machine.tailnet.ts.net:8443',
-      rawStatus: 'https://machine.tailnet.ts.net:8443\n|-- /__happier/transfer proxy http://127.0.0.1:46001',
-    }));
-    const runTailscaleServeDisable = vi.fn(async () => undefined);
-
-    const lifecycle = createTailscaleTransferServeLifecycle({
-      enabled: true,
-      servePath: '/__happier/transfer',
-      httpsPort: 8443,
-      runTailscaleServeEnable,
-      runTailscaleServeDisable,
-    });
-
-    await lifecycle.observeDirectTransferServerLifecycleState({
-      status: 'running',
-      listenerClasses: ['loopback_http'],
-      port: 46001,
-      publishedTransferCount: 1,
-    });
-
-    await lifecycle.stop();
-
-    expect(runTailscaleServeDisable).toHaveBeenCalledTimes(1);
-    expect(runTailscaleServeDisable).toHaveBeenCalledWith({
-      env: process.env,
-      servePath: '/__happier/transfer',
-      httpsPort: 8443,
-    });
-    expect(lifecycle.getHttpsBaseUrlWithServePath()).toBe(null);
-  });
 });
