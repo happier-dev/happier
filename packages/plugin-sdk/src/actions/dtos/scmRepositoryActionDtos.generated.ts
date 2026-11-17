@@ -4,6 +4,14 @@
 import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js';
 
 export type ScmRepositoryActionInputById = {
+    readonly "scm.repository.discover": {
+        cwd: string;
+        repositories: {
+            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+            deployment: string;
+            repository: string;
+        }[];
+    };
     readonly "scm.repository.clone": {
         provider: unknown;
         repository: {
@@ -104,6 +112,58 @@ export type ScmRepositoryActionInputById = {
     };
 };
 export type ScmRepositoryActionResultById = {
+    readonly "scm.repository.discover": {
+        success: false;
+        errorCode: string;
+        error: string;
+    } | {
+        success: true;
+        matches: {
+            rootPath: string;
+            repositoryIdentity: {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                deployment: string;
+                repository: string;
+            };
+        }[];
+        skipped: ({
+            rootPath: string;
+            errorCode: string;
+            error: string;
+        } | {
+            rootPath: string;
+            origin: {
+                success: true;
+                kind: 'invalid';
+            } | {
+                success: true;
+                kind: 'resolved';
+                selector: {
+                    provider: {
+                        id: string;
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        displayName: string;
+                        baseUrl: string;
+                    };
+                    repository: {
+                        nameWithOwner: string;
+                        defaultBranch?: null | string | undefined;
+                        visibility?: 'internal' | 'private' | 'public' | undefined;
+                        webUrl?: string | undefined;
+                        cloneUrl?: string | undefined;
+                        sshUrl?: string | undefined;
+                    };
+                    protocol: 'auto' | 'https' | 'ssh';
+                };
+            } | {
+                success: true;
+                kind: 'unknown';
+            } | {
+                success: true;
+                kind: 'unsupported';
+            };
+        })[];
+    };
     readonly "scm.repository.clone": {
         [x: string]: unknown;
         success: false;

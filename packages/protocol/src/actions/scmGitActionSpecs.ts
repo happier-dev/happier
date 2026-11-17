@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
+import { ScmRepositoryDiscoverRequestSchema, ScmRepositoryDiscoverResponseSchema } from '../scm/repositoryDiscovery.js';
 
 import {
   ScmPullRequestCheckoutRequestSchema,
@@ -85,6 +86,7 @@ import {
 /** Machine-wide SCM reads have no repository scope and cannot inherit a Session target. */
 export function requiresExplicitScmMachineTarget(actionId: string): boolean {
   return actionId === 'scm.diffSummary.result.list' || actionId === 'scm.diffSummary.result.clear'
+    || actionId === 'scm.repository.discover'
     || actionId === 'scm.hostingRepository.resolveAddress' || actionId === 'scm.hostingRepository.get';
 }
 
@@ -1478,6 +1480,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
 ] as const);
 
 const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
+  ScmActionSpecDefinition<'scm.repository.discover', typeof ScmRepositoryDiscoverRequestSchema, typeof ScmRepositoryDiscoverResponseSchema>,
   ScmActionSpecDefinition<'scm.repository.clone', typeof ScmRepositoryCloneInputSchema, typeof ScmRepositoryCloneOutputSchema>,
   ScmActionSpecDefinition<'scm.repository.init', typeof ScmRepositoryInitRequestSchema, typeof ScmRepositoryInitResponseSchema>,
   ScmActionSpecDefinition<'scm.repository.removeIndexLock', typeof ScmRepositoryRemoveIndexLockRequestSchema, typeof ScmRepositoryRemoveIndexLockResponseSchema>,
@@ -1489,6 +1492,21 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
   ScmActionSpecDefinition<'scm.diffSummary.draftPullRequest', typeof ScmDiffSummaryGenerateInputSchema, typeof ScmDiffSummaryGenerateOutputSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.generate', typeof ScmDiffSummaryGenerateInputSchema, typeof ScmDiffSummaryGenerateOutputSchema>,
 ] = lazyActionSpecArray(() => [
+  defineScmActionSpec({
+    id: 'scm.repository.discover', approval: { result: 'required' },
+    localRepository: 'read',
+    title: 'Find existing clones',
+    description: 'Find matching repository origins in the immediate child folders of a selected directory.',
+    safety: 'safe', placements: [], sideEffectClass: 'read',
+    bindings: { rpcMethod: 'scm.repository.discover', sdkMethod: 'scm.repository.discover' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmRepositoryDiscoverRequestSchema,
+    outputSchema: ScmRepositoryDiscoverResponseSchema,
+    inputHints: { title: 'Find existing clones', fields: [
+      { path: 'cwd', title: 'Folder to search', widget: 'text', required: true },
+      { path: 'repositories', title: 'Repository identities', widget: 'json', required: true },
+    ] },
+  }),
   defineScmActionSpec({
     id: 'scm.repository.clone', approval: {result: 'optional',flow: 'deferred'},
     workspaceWrite: true,

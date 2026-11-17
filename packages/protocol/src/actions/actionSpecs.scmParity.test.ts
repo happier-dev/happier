@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ActionIdSchema } from './actionIds.js';
-import { isScmRunStartRpcPurpose, SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
+import { isScmLocalRepositoryReadRpcMethod, isScmRunStartRpcPurpose, requiresExplicitScmMachineTarget, SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
 import { SESSION_RPC_METHODS } from '../rpc/methods.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 
@@ -20,6 +20,7 @@ const reads = [
   'scm.file.read', 'scm.diff.file', 'scm.diff.commit', 'scm.log.list', 'scm.history.entries', 'scm.branch.list',
   'scm.stash.list', 'scm.stash.show', 'scm.pullRequest.list', 'scm.pullRequest.get',
   'scm.pullRequest.openCompose', 'scm.hostingRepository.describePublishTargets', 'scm.hostingRepository.get',
+  'scm.repository.discover',
 ] as const;
 const mutations = [
   'scm.change.include', 'scm.change.exclude', 'scm.change.discard',
@@ -38,6 +39,13 @@ const mutations = [
 ] as const;
 
 describe('SCM Action parity', () => {
+  it('admits clone discovery as a local repository read on the explicitly selected Machine', () => {
+    const spec = getActionSpec('scm.repository.discover');
+    expect(isScmLocalRepositoryReadRpcMethod(spec.bindings!.rpcMethod!)).toBe(true);
+    expect(requiresExplicitScmMachineTarget(spec.id)).toBe(true);
+    expect(spec.inputSchema.parse({ cwd: '/selected', repositories: [] })).toEqual({ cwd: '/selected', repositories: [] });
+    expect(spec.outputSchema?.safeParse({ success: false, errorCode: 'ENOENT', error: 'Missing folder' }).success).toBe(true);
+  });
   it.each(['scm.diffSummary.generate', 'scm.diffSummary.draftPullRequest', 'scm.diffSummary.refine',
     'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'])('binds the nested Run Start purpose for %s', actionId => {
     const method = `session:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`;

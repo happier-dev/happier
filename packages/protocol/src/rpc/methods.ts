@@ -580,6 +580,7 @@ export const RPC_METHODS = {
   SCM_PULL_REQUEST_PREPARE_WORKTREE: 'scm.pullRequest.prepareWorktree',
   SCM_PULL_REQUEST_RUN_STACKED: 'scm.pullRequest.runStacked',
   SCM_REPOSITORY_CLONE: 'scm.repository.clone',
+  SCM_REPOSITORY_DISCOVER: 'scm.repository.discover',
   SCM_REPOSITORY_INIT: 'scm.repository.init',
   SCM_REPOSITORY_REMOVE_INDEX_LOCK: 'scm.repository.removeIndexLock',
   SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS: 'scm.hostingRepository.resolveAddress',

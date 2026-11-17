@@ -41,6 +41,7 @@ export * from './diffSummaryResult.js';
 export { executeScmDiffSummaryClear } from './clearSavedResults.js';
 export * from './diffSummaryCommitPlan.js';
 export * from './repositoryProvisioning.js';
+export * from './repositoryDiscovery.js';
 export * from './repositoryClone.js';
 export * from './worktrees.js';
 export * from './fileChangesScope.js';

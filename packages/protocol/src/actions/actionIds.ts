@@ -972,6 +972,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'scm.pullRequest.runStacked',
   ],
   scm_repository: [
+    'scm.repository.discover',
     'scm.repository.clone',
     'scm.repository.init',
     'scm.repository.removeIndexLock',
