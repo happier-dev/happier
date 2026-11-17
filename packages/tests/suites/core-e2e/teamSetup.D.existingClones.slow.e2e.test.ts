@@ -134,7 +134,7 @@ it('TS.D.existingClones finds only immediate-child origin matches and opens a di
   expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft).toMatchObject({
     input: 'Review my unfinished clone before proposing a change.', selectedMachineId: machineId, selectedPath: matching,
   });
-  const composer = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', draftId } });
+  const composer = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
   composer.apply(composer.read().revision, { text: 'My edited clone task', references: [], attachments: [] });
   expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft.input).toBe('My edited clone task');
   expect(await readFile(join(matching, 'unfinished.bin'))).toEqual(sentinel);

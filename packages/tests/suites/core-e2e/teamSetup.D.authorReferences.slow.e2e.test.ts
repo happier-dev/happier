@@ -149,7 +149,7 @@ describe('Team setup author references', () => {
       if (!draftId) throw new Error('Normal task composer was not opened');
       expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft).toMatchObject({
         input: task.markdown, selectedMachineId: machine.target.machineId, selectedPath: opened.directory });
-      const composer = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', draftId } });
+      const composer = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
       composer.apply(composer.read().revision, { text: 'My edited task', references: [], attachments: [] });
       expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft.input).toBe('My edited task');
     } finally { await ui.close(); }

@@ -353,7 +353,7 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
     expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft).toMatchObject({
       input: 'Review the project and propose the first change.', selectedMachineId: machineId, selectedPath: directory,
     });
-    const composer = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', draftId } });
+    const composer = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
     const current = composer.read();
     composer.apply(current.revision, { text: 'My edited first task', references: [], attachments: [] });
     expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft.input).toBe('My edited first task');
