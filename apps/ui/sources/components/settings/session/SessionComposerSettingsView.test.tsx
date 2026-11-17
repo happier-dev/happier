@@ -14,6 +14,14 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
 const { loadLocalSettings } = await import('@/sync/domains/state/settingsPersistence');
 const { createPersistentUiState } = await import('@/sync/domains/state/persistentUiState');
+const { readComposerBannerCollapse, writeComposerBannerCollapse } = await import('@/sync/domains/state/composerBannerUiState');
+const { ComposerBannerCollapseProvider, useComposerBannerCollapse } = await import('@/components/sessions/composerBanners/ComposerBannerCollapseProvider');
+
+function BannerCollapseProbe() {
+    const cli = useComposerBannerCollapse('cliVersionOutdated');
+    const usage = useComposerBannerCollapse('usageLimitRecovery');
+    return React.createElement('banner-collapse-probe', { cli, usage });
+}
 
 function findChoice(screen: Awaited<ReturnType<typeof renderSettingsView>>, testIDPrefix: string) {
     return screen.findAll((node) => node.props?.testIDPrefix === testIDPrefix)[0] ?? null;
@@ -40,6 +48,30 @@ describe('SessionComposerSettingsView', () => {
             expect(write.mock.calls.filter(([key]) => key === 'local-settings' || key === 'settings' || key.startsWith('account-settings:'))).toHaveLength(0);
             expect(createPersistentUiState('composer-banner-collapse-v1', value => value).read('collapsed')).toEqual({});
         } finally { write.mockRestore(); }
+    });
+    it('counts remembered hides and clears them without closing an explicitly opened default-closed banner', async () => {
+        storage.getState().applySettingsLocal({ sessionComposerRememberBannerVisibility: true });
+        writeComposerBannerCollapse({});
+        const { SessionComposerSettingsView } = await import('./SessionComposerSettingsView');
+        const screen = await renderSettingsView(React.createElement(ComposerBannerCollapseProvider, null,
+            React.createElement(BannerCollapseProbe), React.createElement(SessionComposerSettingsView)));
+        const probe = () => screen.findAll(node => node.type === 'banner-collapse-probe')[0]!;
+        expect(probe().props.cli.collapsed).toBe(true);
+        act(() => probe().props.cli.toggle());
+        expect(probe().props.cli.collapsed).toBe(false);
+        expect(readComposerBannerCollapse()).toEqual({ cliVersionOutdated: true });
+        expect.soft(screen.findAllHostsByTestId('settings-composer-resetHiddenBanners')).toHaveLength(0);
+
+        act(() => probe().props.usage.toggle());
+        expect(probe().props.usage.collapsed).toBe(true);
+        const reset = screen.findAll(node => node.props.testID === 'settings-composer-resetHiddenBanners'
+            && node.props.detail !== undefined)[0]!;
+        expect.soft(reset.props.detail).toBe('1');
+        await screen.pressByTestIdAsync('settings-composer-resetHiddenBanners');
+        expect(probe().props.usage.collapsed).toBe(false);
+        expect(probe().props.cli.collapsed).toBe(false);
+        expect(readComposerBannerCollapse()).toEqual({ cliVersionOutdated: true });
+        expect(screen.findAllHostsByTestId('settings-composer-resetHiddenBanners')).toHaveLength(0);
     });
     it('shows explicit resume and fresh ordinary-entry choices and persists the selection', async () => {
         const { SessionComposerSettingsView } = await import('./SessionComposerSettingsView');

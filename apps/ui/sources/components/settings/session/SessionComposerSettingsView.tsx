@@ -14,8 +14,8 @@ import { t, type TranslationKeyNoParams } from '@/text';
 import { useLocalSettingMutable, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useComposerKeepsFocusAfterSend } from '@/components/sessions/agentInput/hooks/useComposerKeepsFocusAfterSend';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
-import { useComposerBannerCollapseRecord, writeComposerBannerCollapse } from '@/sync/domains/state/composerBannerUiState';
-import { normalizeComposerBannerCollapseRecord } from '@/components/sessions/composerBanners/composerBannerCollapse';
+import { readComposerBannerCollapse, useComposerBannerCollapseRecord, writeComposerBannerCollapse } from '@/sync/domains/state/composerBannerUiState';
+import { clearExplicitlyCollapsedComposerBanners, getExplicitlyCollapsedComposerBannerKinds } from '@/components/sessions/composerBanners/composerBannerCollapse';
 import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import type { NewSessionAfterSendMode, NewSessionPresentationModeV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import {
@@ -69,7 +69,7 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
     const [rememberBannerVisibility, setRememberBannerVisibility] = useSettingMutable('sessionComposerRememberBannerVisibility');
     const collapsedBannerKinds = useComposerBannerCollapseRecord();
-    const hiddenBannerCount = Object.keys(normalizeComposerBannerCollapseRecord(collapsedBannerKinds)).length;
+    const hiddenBannerCount = getExplicitlyCollapsedComposerBannerKinds(collapsedBannerKinds).length;
     const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
     const setEnterToSendEnabled = React.useCallback((value: boolean) => {
         void setSetting(SESSION_COMPOSER_SETTINGS.settings.enterToSend, value);
@@ -398,7 +398,7 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                         title={t('settingsSession.banners.resetHiddenTitle')}
                         subtitle={t('settingsSession.banners.resetHiddenSubtitle')}
                         detail={String(hiddenBannerCount)}
-                        onPress={() => writeComposerBannerCollapse({})}
+                        onPress={() => writeComposerBannerCollapse(clearExplicitlyCollapsedComposerBanners(readComposerBannerCollapse()))}
                         showChevron={false}
                     />
                 ) : null}

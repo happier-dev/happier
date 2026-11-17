@@ -1,7 +1,7 @@
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { t } from '@/text';
 
-import { isSessionComposerBannerKind, isSessionComposerBannerKindCollapsedByDefault, type SessionComposerBannerKind } from './composerBannerKinds';
+import { SESSION_COMPOSER_BANNER_KINDS, isSessionComposerBannerKind, isSessionComposerBannerKindCollapsedByDefault, type SessionComposerBannerKind } from './composerBannerKinds';
 
 /**
  * Persisted collapse state. Only kinds toggled away from their default are stored, so an absent key
@@ -28,6 +28,23 @@ export function normalizeComposerBannerCollapseRecord(
         normalized[kind] = true;
     }
     return normalized;
+}
+
+/** Remembered hides exclude default-closed banners and stored choices to open them. */
+export function getExplicitlyCollapsedComposerBannerKinds(
+    record: ComposerBannerCollapseRecord | null | undefined,
+): ReadonlyArray<SessionComposerBannerKind> {
+    return SESSION_COMPOSER_BANNER_KINDS.filter(kind => record?.[kind] === true
+        && isComposerBannerCollapsedInRecord(record, kind));
+}
+
+/** Show remembered hides without discarding explicit choices to open default-closed banners. */
+export function clearExplicitlyCollapsedComposerBanners(
+    record: ComposerBannerCollapseRecord | null | undefined,
+): Record<string, boolean> {
+    const next = normalizeComposerBannerCollapseRecord(record);
+    for (const kind of getExplicitlyCollapsedComposerBannerKinds(next)) delete next[kind];
+    return next;
 }
 
 export function toggleComposerBannerCollapsedInRecord(
