@@ -23,6 +23,7 @@ import {
 import {
   Collection,
   useHappierCollection,
+  useListMultiSelectionController,
 } from '@happier-dev/plugin-ui/components';
 import {
   useRelationPage,
@@ -403,6 +404,11 @@ export function RelationData(
     openKey,
     onOpenChange: setOpenKey,
   });
+  // D27 #8: rows chosen for export; the List owns which loaded rows can be chosen.
+  const selection = useListMultiSelectionController({
+    scopeKey: `${props.relation.schema}.${props.relation.name}:${location.page.offset}`,
+    rows: 'collection',
+  });
   const sortKey = location.sort[0];
   const sort = React.useMemo(
     () => ({
@@ -515,6 +521,7 @@ export function RelationData(
       detail="auto"
       detailOpenIntent="explicit"
       sort={sort}
+      selection={{ multiple: { store: selection } }}
       collapsedGroups={EMPTY_SET}
       loading={page.status === 'loading' && page.rows.length === 0}
       empty={
@@ -533,7 +540,7 @@ export function RelationData(
               void location.navigate({ conditions, page: { rows: location.page.rows, offset: 0 } });
             }}
           />
-          <RowsExport page={page} />
+          <RowsExport page={page} selection={selection} />
         </Row>
       }
       footer={footer}

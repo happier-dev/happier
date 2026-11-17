@@ -249,12 +249,13 @@ export function StagedReview(
         />
       ))}
       {engineIsMysql ? (
+        // D22: one transaction on MySQL too; only trigger writes to MyISAM tables escape the rollback.
         <Text
           tone="secondary"
           variant="meta"
           value={translate(
             'plugins.database.review.mysqlNote',
-            'MySQL applies schema changes immediately. If a later change fails, earlier ones stay.',
+            'These changes apply together, but changes that triggers make to non-transactional (MyISAM) tables can’t be rolled back.',
           )}
         />
       ) : null}
