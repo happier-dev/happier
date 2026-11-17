@@ -244,7 +244,9 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
       <Text
         numberOfLines={1}
         style={[styles.name, { color: theme.colors.text.primary }]}
+        // The project's name is its page's level-one heading.
         accessibilityRole="header"
+        aria-level={1}
       >
         {props.projectName}
       </Text>

@@ -194,6 +194,8 @@ function ColumnReleaseToHide() {
 // landmark navigation reaches the page directly. The column names its own navigation landmark.
 const WEB_MAIN_LANDMARK = Platform.OS === 'web' ? { role: 'main' as const } : null;
 const WEB_BANNER_LANDMARK = Platform.OS === 'web' ? { role: 'banner' as const } : null;
+// The tail beside the page (its side panel and pane rail) is the page's complementary landmark.
+const WEB_COMPLEMENTARY_LANDMARK = Platform.OS === 'web' ? { role: 'complementary' as const } : null;
 
 /** Paint and geometry for the real shell, independent of navigation/settings subscriptions. */
 export function AppShellMaterialFrame(props: Readonly<{
@@ -320,7 +322,7 @@ export function AppShellMaterialFrame(props: Readonly<{
                 </View>
                 {/* The tail paints nothing itself: a canvas panel is its own sheet with its own coats (no canvas
                     behind its translucent page coat), the rail coats the canvas around its tab, and the window inset its strip. */}
-                {props.showChrome ? <View key="tail" testID="app-shell-tail" style={styles.tail}>
+                {props.showChrome ? <View key="tail" testID="app-shell-tail" style={styles.tail} {...WEB_COMPLEMENTARY_LANDMARK}>
                     <View ref={attachRightHost} testID="app-shell-tail-right" style={styles.tailHost} />
                     <View ref={attachRailHost} testID="app-shell-tail-rail" style={styles.tailHost} />
                     <AppShellMaterialPlane testID="app-shell-tail-inset" group={chromeCoat.group} color={chromeCoat.color}

@@ -72,6 +72,14 @@ describe('SessionPaneHeader inline title (DOM keyboard)', () => {
         expect(part('facts')?.textContent).toContain('app · Development machine');
     });
 
+    it('names the Session page with a level-one heading that holds the rename control (C77)', () => {
+        // Session at 1440 (11-17): the title was a heading inside its rename button, whose children a screen reader
+        // flattens, and it read as level 2, so the page had no level-one heading (axe page-has-heading-one).
+        const title = trigger()!;
+        expect(title.closest('[role="heading"]')?.getAttribute('aria-level')).toBe('1');
+        expect(title.querySelector('[role="heading"]')).toBeNull();
+    });
+
     it('returns keyboard focus to the title after Escape, Cancel and an unchanged save', async () => {
         await beginEditing();
         await act(async () => {

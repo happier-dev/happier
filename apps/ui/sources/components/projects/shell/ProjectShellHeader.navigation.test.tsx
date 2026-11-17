@@ -34,6 +34,17 @@ describe('Project header page descriptors', () => {
         await screen.unmount();
     });
 
+    it('names the project page with a level-one heading (C77)', async () => {
+        // Project Dev servers at 1440 (11-17): the project's name read as level 2, so the page had no level-one heading.
+        const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });
+        const screen = await renderScreen(<ProjectShellHeader projectName="Project" checkout={null}
+            pages={pages.slice(0, 1)} activePage="overview" onSelectPage={() => {}} onNewSession={null} menuActions={[]} />);
+        const heading = screen.root.findAll(node => typeof node.type === 'string' && node.props?.accessibilityRole === 'header')
+            .map(node => [node.props.children, node.props['aria-level']]);
+        expect(heading).toEqual([['Project', 1]]);
+        await screen.unmount();
+    });
+
     it('rests the checkout chip on its containing material, so over glass it is the glass tint and hover only adds a step (owner 11-11 #11/#12)', async () => {
         const glass = 'rgba(235, 230, 225, 0.1)';
         const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });

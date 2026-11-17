@@ -223,7 +223,7 @@ function SessionHeaderTitle(props: Readonly<{
     };
     const titleText = (hovered: boolean) => (
         <Text dataSet={themeSurfaceDataSet('chat-header', 'title', 'default')}
-            numberOfLines={1} ellipsizeMode="tail" accessibilityRole="header"
+            numberOfLines={1} ellipsizeMode="tail"
             style={[styles.title, hovered ? styles.titleHovered : null,
                 themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'title' } : undefined)]}>{props.title}</Text>
     );
@@ -234,15 +234,19 @@ function SessionHeaderTitle(props: Readonly<{
                     importantForAccessibility="no-hide-descendants" onLayout={measure(setTitleWidth)}
                     style={[styles.title, styles.titleMeasure]}>{props.title}</Text>
             ) : null}
-            {props.onBeginRename ? (
-                <HappierPressable testID="session-header-title" accessibilityRole="button"
-                    accessibilityLabel={props.title} accessibilityHint={t('sessionInfo.renameSession')}
-                    onPress={props.onBeginRename} controlRef={props.triggerRef}
-                    hitReach={props.lineageBelow ? LINEAGE_SEAM_HIT_REACH : undefined} style={(state) => [styles.titlePress,
-                        focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
-                    {(state) => titleText(state.hovered)}
-                </HappierPressable>
-            ) : <View testID="session-header-title" style={styles.titlePress}>{titleText(false)}</View>}
+            {/* The Session's name is the page's level-one heading; it holds the rename control rather than sitting
+                inside it, where a screen reader flattens a button's children. */}
+            <View role="heading" aria-level={1} style={styles.titleHeading}>
+                {props.onBeginRename ? (
+                    <HappierPressable testID="session-header-title" accessibilityRole="button"
+                        accessibilityLabel={props.title} accessibilityHint={t('sessionInfo.renameSession')}
+                        onPress={props.onBeginRename} controlRef={props.triggerRef}
+                        hitReach={props.lineageBelow ? LINEAGE_SEAM_HIT_REACH : undefined} style={(state) => [styles.titlePress,
+                            focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
+                        {(state) => titleText(state.hovered)}
+                    </HappierPressable>
+                ) : <View testID="session-header-title" style={styles.titlePress}>{titleText(false)}</View>}
+            </View>
             {props.accessory ? (
                 <View testID="session-header-title-accessory" style={styles.titleAccessory}
                     onLayout={compactAccessory ? undefined : measure(setAccessoryWidth)}>
@@ -364,6 +368,10 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
         flexShrink: 1,
         flexGrow: 1,
+    },
+    titleHeading: {
+        flexShrink: 1,
+        minWidth: 0,
     },
     titlePress: {
         flexShrink: 1,

@@ -43,7 +43,7 @@ async function crumbShown(
     screen.root.findAll(
       (node) => node.props?.testID === 'machine-sub-page-back-sharing',
     ).length > 0;
-  screen.unmount();
+  await screen.unmount();
   return found;
 }
 
@@ -54,4 +54,19 @@ it('leaves the way back to a phone bar that already draws one: one Back per page
 it('keeps its crumb where nothing else leads back (wide layouts, a phone deep link without history)', async () => {
   expect(await crumbShown({ showsTitle: false, showsBack: false })).toBe(true);
   expect(await crumbShown({ showsTitle: true, showsBack: false })).toBe(true);
+});
+
+it('names a page it heads with a level-one heading, and stays a level-two heading under the machine header (C77)', async () => {
+  // Computer control at 1440 (11-17): the page's only title read as level 2, so the page had no level-one heading.
+  const screen = await renderScreen(
+    <NavigationTitleChromeProvider showsTitle={false} showsBack={false}>
+      <MachineTabSubHead placement="page" title="Computer control" back={null} />
+      <MachineTabSubHead placement="tab" title="Worktrees" back={null} />
+    </NavigationTitleChromeProvider>,
+  );
+  const levels = screen.root
+    .findAll((node) => typeof node.type === 'string' && node.props?.accessibilityRole === 'header')
+    .map((node) => [node.props.children, node.props['aria-level']]);
+  expect(levels).toEqual([['Computer control', 1], ['Worktrees', 2]]);
+  await screen.unmount();
 });

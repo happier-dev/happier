@@ -70,10 +70,11 @@ export function MachineTabSubHead(props: Readonly<{
                     )}
                 </HappierPressable>
             ) : null}
+            {/* A page's own head names the page (level 1); under the machine's header and tabs it heads a section. */}
             {props.title === null ? null : (
                 <View style={[styles.titleLine, back ? null : styles.titleLineAlone]}>
                     {props.mark ? <View style={styles.mark}>{props.mark}</View> : null}
-                    <Text accessibilityRole="header" style={styles.title}>{props.title}</Text>
+                    <Text accessibilityRole="header" aria-level={props.placement === 'page' ? 1 : 2} style={styles.title}>{props.title}</Text>
                     {props.aside ? <Text style={styles.aside}>{props.aside}</Text> : null}
                 </View>
             )}

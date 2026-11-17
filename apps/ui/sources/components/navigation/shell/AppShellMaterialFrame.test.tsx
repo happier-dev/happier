@@ -83,6 +83,9 @@ describe('real shell material planes', () => {
             const landmarks = () => screen.root.findAll(node => typeof node.type === 'string' && (node.props.role === 'main' || node.props.role === 'banner'))
                 .map(node => [node.props.role, node.findAll(child => child.props.testID === 'route' || child.props.testID === 'strip').map(child => child.props.testID)[0]]);
             expect(landmarks()).toEqual([['banner', 'strip'], ['main', 'route']]);
+            // C77 (Session at 1440, 11-17): the tail beside the page (a page's side panel and its pane rail) is the
+            // page's complementary landmark, so its controls are not content outside every landmark (axe region).
+            expect(screen.findHostByTestId('app-shell-tail')?.props.role).toBe('complementary');
             await screen.update(frame(false));
             expect(landmarks()).toEqual([['banner', 'strip'], ['main', 'route']]);
         } finally {
