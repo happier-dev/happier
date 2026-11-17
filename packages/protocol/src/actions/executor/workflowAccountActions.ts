@@ -307,7 +307,10 @@ export function createWorkflowActionExecutor(deps: Readonly<{
           ...(rawArgs.signal ? { signal: rawArgs.signal } : {}),
         }, context);
         const failure = readActionFailureEnvelope(retained);
-        return failure ?? { retained, live: { kind: 'unavailable', reason: 'ui_local_only' } };
+        if (failure) return normalizeWorkflowActionThrownError(failure, undefined, true, actionId);
+        // The Run owner validates this literal Action's output; its family interface returns a union.
+        const listed = retained as ReturnType<(typeof WorkflowActionOutputSchemasV1)['workflow.run.list']['parse']>;
+        return { retained: listed, live: { kind: 'unavailable', reason: 'ui_local_only' } };
       }
       if (!isWorkflowRunActionArgs(rawArgs)) {
         return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };

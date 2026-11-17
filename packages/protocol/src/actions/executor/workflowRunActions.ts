@@ -2410,10 +2410,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       });
       if (closure.kind !== 'available') throw workflowError('ineligible_state');
       const explicit = new Map(continuing.map(item => [item.prior.index.id, item]));
+      const explicitInvocationCount = args.input.invocations.length;
       const ordered = closure.causalInvocationIds.map((id, index) => {
         const existing = explicit.get(id);
         explicit.delete(id);
-        return existing ?? { prior: graph.get(id)!, choiceIndex: args.input.invocations.length + index, choice: {
+        return existing ?? { prior: graph.get(id)!, choiceIndex: explicitInvocationCount + index, choice: {
           kind: 'restore_workspace' as const, invocation: { recordId: id }, conversation: first.choice.conversation,
           input: { kind: 'original' as const },
         } };
