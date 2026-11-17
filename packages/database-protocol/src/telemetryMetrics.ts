@@ -17,6 +17,8 @@ export const TelemetryKeyFlowMeasureV1Schema = z.union([
     z.strictObject({ kind: z.literal('route'), routes: z.array(route).check(z.minLength(1)), statistic: routeStatistic }), runtime,
     z.strictObject({ kind: z.literal('spend'), costMode: z.literal('api_equivalent') }),
 ]);
+/** The saved Key flow health-check kind (D32): one named flow, its routes and threshold, checked on the collector. */
+export const TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 = { pluginId: 'happier.telemetry', localId: 'key-flow' } as const;
 const selection = { environmentId: text, serviceName: text, serviceVersion: z.optional(text) };
 export const TelemetryKeyFlowConfigV1Schema = z.strictObject({ ...selection, measure: TelemetryKeyFlowMeasureV1Schema,
     windowMs: z.number().check(z.int(), z.positive()),

@@ -1,7 +1,8 @@
 import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES, LOCAL_CAPTURE_ENVIRONMENT_NAMES } from './contribution.js';
 import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-sdk/protocol';
-import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1,
+    TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
@@ -76,7 +77,7 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
    key: 'plugins.telemetry.exceptions.detail.fallback', fallback: 'Exception details are unavailable on this surface.' } } },
  ] },
  contributesTo: telemetryExceptionSourceContribution({ renderer: EXCEPTION_DETAIL_RENDERER_ID, fallbackRenderers: [EXCEPTION_DETAIL_FALLBACK_RENDERER_ID] }),
- healthCheckKinds: { 'key-flow': { title: 'Key flow', configSchema: keyFlowConfigSchema.jsonSchema,
+ healthCheckKinds: { [TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.localId]: { title: 'Key flow', configSchema: keyFlowConfigSchema.jsonSchema,
   action: databaseActionLocalIdV1(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1) } },
  backgroundServices: [
   { declaration: { id: 'local-capture', title: 'Local database capture', placement: 'daemon', activation: 'continuous' }, runner: localCaptureBackground.run },

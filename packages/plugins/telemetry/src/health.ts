@@ -5,7 +5,8 @@ import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1,
     databaseActionLocalIdV1, databaseActionMetadata, projectDatabaseCaptureUsageV1, projectDatabaseAppCostMetricSeriesV1,
-    projectUsagePageCost, TelemetryMetricsReadResultV1Schema, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+    projectUsagePageCost, TelemetryMetricsReadResultV1Schema, type TelemetryMetricsReadResultV1,
+    TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import type { CaptureRuntime } from './runtime.js';
 import type { CaptureSummary } from './store/capture.js';
@@ -189,7 +190,7 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
             const selector = SavedHealthCheckSelectorV1ProtocolSchema.parse(value);
             const source = await context.services.healthChecks.readSource({ sourceInstanceId: selector.sourceInstanceId }, { signal: context.signal });
             const check = source.checks.find(item => item.checkId === selector.checkId);
-            if (!check || check.kind.pluginId !== context.plugin.id || check.kind.localId !== 'key-flow') {
+            if (!check || check.kind.pluginId !== context.plugin.id || check.kind.localId !== TELEMETRY_KEY_FLOW_HEALTH_KIND_V1.localId) {
                 throw new PluginError({ code: 'health_check_kind_unavailable' });
             }
             const config = keyFlowConfigSchema.parse(check.config);
