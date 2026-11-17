@@ -117,6 +117,8 @@ export function SessionAttentionReminderRuntime(): React.ReactElement | null {
 
     useSessionAttentionReminderRefresh({
         connectedByServerId,
+        // Sync's changes catch-up follows every lost connection of the active Home.
+        catchUpServerId: activeServerId || null,
         invalidateSessionListQueryHome,
         refreshReminderInventory,
         refreshSession,

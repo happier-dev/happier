@@ -276,6 +276,34 @@ describe('SessionAttentionReminderRuntime', () => {
         }
     });
 
+    it('does not re-read the inventory of the Home whose changes catch-up covers a lost connection', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(2_000);
+        const refreshReminderInventory = vi.fn(async (_serverId: string) => ({ kind: 'loaded' as const }));
+        let connectedByServerId: Readonly<Record<string, boolean>> = { 'home-a': true, 'home-b': true };
+        const hook = await renderHook(() => useSessionAttentionReminderRefresh({
+            connectedByServerId,
+            catchUpServerId: 'home-a',
+            invalidateSessionListQueryHome: async () => undefined,
+            refreshReminderInventory,
+            refreshSession: async (address) => ({ kind: 'available', ...address }),
+            reminders: [],
+        }));
+        await act(async () => Promise.resolve());
+        expect(refreshReminderInventory).toHaveBeenCalledTimes(2);
+
+        // A web tab hide/show (or a network drop) loses and regains both connections. Home A's
+        // changes catch-up delivers what changed meanwhile; Home B has no catch-up and re-reads.
+        connectedByServerId = { 'home-a': false, 'home-b': false };
+        await hook.rerender();
+        await act(async () => Promise.resolve());
+        connectedByServerId = { 'home-a': true, 'home-b': true };
+        await hook.rerender();
+        await act(async () => Promise.resolve());
+        expect(refreshReminderInventory.mock.calls.filter(([serverId]) => serverId === 'home-a')).toHaveLength(1);
+        expect(refreshReminderInventory.mock.calls.filter(([serverId]) => serverId === 'home-b').length).toBeGreaterThan(1);
+    });
+
     it('does not mark an inventory refresh loaded when the credential is unavailable', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(2_000);

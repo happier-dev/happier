@@ -78,6 +78,12 @@ function removeServerTokens(
 export function useSessionAttentionReminderRefresh(params: Readonly<{
     connectedByServerId: Readonly<Record<string, boolean>>;
     /**
+     * The Home whose changes catch-up runs after every lost connection (the active Home). Its
+     * organization changes made while the connection was down arrive through that catch-up, so a
+     * lost or regained connection does not re-read its whole inventory.
+     */
+    catchUpServerId?: string | null;
+    /**
      * The exact-Home invalidation leaf's own contract: its promise covers the
      * replacement the controller queues behind an in-flight request. Inventory
      * refreshes return an explicit loaded/retryable settlement; due reminders
@@ -94,16 +100,18 @@ export function useSessionAttentionReminderRefresh(params: Readonly<{
     const refreshedInventoryServerIdsRef = React.useRef(new Set<string>());
     const inventoryRefreshInFlightServerIdsRef = React.useRef(new Set<string>());
     const previousConnectivityRef = React.useRef<Readonly<Record<string, boolean>>>({});
+    const catchUpServerIdRef = React.useRef(params.catchUpServerId);
+    catchUpServerIdRef.current = params.catchUpServerId;
 
     React.useEffect(() => {
         const subscription = AppState.addEventListener('change', (nextState) => {
             if (nextState !== 'active') return;
             completedTokensRef.current.clear();
-            // A connected Home pushed its organization changes while the app was away, and a
-            // connection lost meanwhile re-reads on reconnect; only Homes with no live
-            // connection have nothing but foreground to refresh them.
+            // A connected Home pushed its organization changes while the app was away, a connection
+            // lost meanwhile re-reads on reconnect, and the catch-up Home's changes feed covers its
+            // gap; only other Homes with no live connection have nothing but foreground to refresh them.
             for (const [serverId, connected] of Object.entries(previousConnectivityRef.current)) {
-                if (!connected) refreshedInventoryServerIdsRef.current.delete(serverId);
+                if (!connected && serverId !== catchUpServerIdRef.current) refreshedInventoryServerIdsRef.current.delete(serverId);
             }
             setWakeRevision((value) => value + 1);
         });
@@ -118,11 +126,12 @@ export function useSessionAttentionReminderRefresh(params: Readonly<{
 
         const previousConnectivity = previousConnectivityRef.current;
         for (const [serverId, connected] of Object.entries(params.connectedByServerId)) {
+            const coveredByCatchUp = serverId === params.catchUpServerId;
             if (!connected && previousConnectivity[serverId] === true) {
                 removeServerTokens(completedTokensRef.current, params.reminders, serverId);
-                refreshedInventoryServerIdsRef.current.delete(serverId);
+                if (!coveredByCatchUp) refreshedInventoryServerIdsRef.current.delete(serverId);
             }
-            if (connected && previousConnectivity[serverId] === false) {
+            if (connected && previousConnectivity[serverId] === false && !coveredByCatchUp) {
                 refreshedInventoryServerIdsRef.current.delete(serverId);
             }
         }
@@ -181,5 +190,5 @@ export function useSessionAttentionReminderRefresh(params: Readonly<{
             Math.min(MAX_TIMER_DELAY_MS, Math.max(1, plan.nextDeadlineAt - nowMs)),
         );
         return () => clearTimeout(timeout);
-    }, [params.connectedByServerId, params.invalidateSessionListQueryHome, params.refreshReminderInventory, params.refreshSession, params.reminders, wakeRevision]);
+    }, [params.catchUpServerId, params.connectedByServerId, params.invalidateSessionListQueryHome, params.refreshReminderInventory, params.refreshSession, params.reminders, wakeRevision]);
 }
