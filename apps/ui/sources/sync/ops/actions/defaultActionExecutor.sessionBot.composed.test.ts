@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionOwnerMetadataEnvelopeV1, SessionMetadataOwnerPatchV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -12,6 +12,7 @@ import { SecretBoxEncryption } from '@/sync/encryption/encryptor';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { V2SessionRecordSchema, type V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { generateBotFaceShape } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 // Only Home HTTP, credentials and the disconnected socket are replaced. The
 // Action registration, field binding and the owner-envelope CAS remain real.
@@ -21,8 +22,66 @@ installDisconnectedServerSocketBoundary();
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
 const initialStorage = getStorage().getState();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 beforeEach(async () => { await homes.reset(); await loadSyncSingletonForTests(); });
-afterEach(async () => { getStorage().setState(initialStorage, true); await homes.reset(); });
+afterEach(async () => { await connection?.dispose(); connection = undefined; getStorage().setState(initialStorage, true); await homes.reset(); });
+
+it.each([['plain', true], ['plain', false], ['e2ee', true], ['e2ee', false]] as const)(
+    'publishes an ordinary Session promotion to its existing list row before rail pinning, mode=%s, detail loaded=%s', async (mode, loaded) => {
+    const secret = new Uint8Array(32).fill(17);
+    const credentials = { token: createAccountTokenForTests('bot-owner', { currentAccount: true }),
+        ...(mode === 'e2ee' ? { secret: encodeBase64(secret, 'base64') } : {}) };
+    const serverId = await homes.addHome({ name: 'Bot promotion Home', serverUrl: 'https://bot-promotion.test',
+        accountId: 'bot-owner', currentAccount: true, accountEncryptionMode: mode, credentials });
+    const features = createRootLayoutFeaturesResponse({ features: { bots: { enabled: true } } });
+    for (const path of ['/v1/features', '/v1/features/authenticated']) homes.answer(serverId, path, { body: features });
+    const sessionId = 'c123456789012345678901234';
+    const metadata = { path: '/repo', host: 'host' };
+    let row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, metadata, metadataVersion: 4 });
+    if (mode === 'e2ee') {
+        if (row.ownerMetadata?.t !== 'plain') throw new Error('Expected canonical plain fixture');
+        const [ciphertext] = await new SecretBoxEncryption(secret).encrypt([JSON.parse(row.metadata)]);
+        row = { ...row, encryptionMode: 'e2ee', dataEncryptionKey: null, metadata: encodeBase64(ciphertext!, 'base64'),
+            ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret }, ownerMetadata: row.ownerMetadata.v,
+                randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }) };
+    }
+    homes.answer(serverId, '/v1/account/encryption/currentness', { body: mode === 'e2ee'
+        ? createLegacyAccountEncryptionCurrentnessFixture({ secret })
+        : { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } });
+    for (const suffix of ['', '?accessProjectionVersion=1']) homes.answer(serverId, `GET /v2/sessions/${sessionId}${suffix}`,
+        { select: () => ({ body: { session: row } }) });
+    let metadataWrites = 0;
+    homes.answer(serverId, `PATCH /v2/sessions/${sessionId}`, { select: input => {
+        metadataWrites++;
+        const patch = SessionMetadataOwnerPatchV1Schema.parse(input);
+        row = { ...row, metadata: patch.sharedMetadata.ciphertext, metadataVersion: row.metadataVersion + 1,
+            ownerMetadata: patch.ownerMetadata, agentState: patch.agentState.ciphertext };
+        return { body: { success: true, metadataLayoutVersion: 1,
+            sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } } };
+    } });
+    homes.answer(serverId, `PUT /v2/session-organization/pins/${sessionId}`, { body: {
+        pin: { sessionId, sortKey: null, pinnedAt: 1, listPinned: false, railPinned: true },
+    } });
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://bot-promotion.test',
+        accountId: 'bot-owner', credentials, request: homes.request });
+    getStorage().getState().activateProfileScope({ serverId, accountId: 'bot-owner' });
+    const session = createSessionFixture({ id: sessionId, serverId, metadata, metadataVersion: 4 });
+    const unrelated = buildSessionListRenderableFromSession(createSessionFixture({ id: 'unrelated-session', serverId, metadata }));
+    getStorage().setState({ sessions: loaded ? { [sessionId]: session } : {},
+        sessionLocalStateScope: { serverId, accountId: 'bot-owner' } });
+    getStorage().getState().applyServerScopedSessionListRows(serverId, [buildSessionListRenderableFromSession(session), unrelated],
+        { source: 'ordinary', mode: 'replace' });
+    const unrelatedBefore = getStorage().getState().sessionListRowsByServerId[serverId]?.[unrelated.id];
+    const executor = createDefaultActionExecutor();
+    const context = { surface: 'ui', authority: 'present_user', serverId } as const;
+    expect(await executor.execute('session.bot.set', { sessionId, bot: { kind: 'bot' } }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('session.organization.pin.set', { sessionId, pinned: true, surface: 'rail' }, context))
+        .toMatchObject({ ok: true, result: { pin: { railPinned: true, listPinned: false } } });
+    expect(getStorage().getState().sessionListRowsByServerId[serverId]?.[sessionId]?.metadata?.bot).toEqual({ kind: 'bot' });
+    expect(getStorage().getState().sessionListRowsByServerId[serverId]?.[unrelated.id]).toBe(unrelatedBefore);
+    expect(metadataWrites).toBe(1);
+    if (!loaded) expect(getStorage().getState().sessions[sessionId]).toBeUndefined();
+});
 
 it.each([
     ['plain', 0, true, 1, false], ['plain', 1, true, 1, false], ['e2ee', 0, true, 1, false], ['e2ee', 1, true, 1, false],

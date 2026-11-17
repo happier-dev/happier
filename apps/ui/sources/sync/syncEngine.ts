@@ -5962,20 +5962,28 @@ class Sync {
             assertCurrent();
             return exactAuthority ? mutationSession : storage.getState().sessions[sessionId] ?? mutationSession;
         };
-        const ownsActiveProjection = (): boolean => Boolean(
-            exactAccountLifetime
-            && exactAuthority
-            && isCurrent()
-            && exactAccountLifetime.isCurrent()
-            && areServerAccountScopesEqual(getActiveServerAccountScope(), exactAccountLifetime.scope)
-            && (() => {
-                const projected = storage.getState().sessions[sessionId];
-                return Boolean(projected && (!projected.serverId || areServerProfileIdentifiersEquivalent(
-                    projected.serverId,
-                    exactAuthority.scope.serverId,
-                )));
-            })()
-        );
+        const publishMutationSession = (session: Session): void => {
+            if (!exactAuthority) {
+                this.applySessions([session], 'projection');
+                return;
+            }
+            if (!exactAccountLifetime || !isCurrent() || !exactAccountLifetime.isCurrent()
+                || !areServerAccountScopesEqual(getActiveServerAccountScope(), exactAccountLifetime.scope)) return;
+            const state = storage.getState();
+            const projected = state.sessions[sessionId];
+            if (projected && (!projected.serverId || areServerProfileIdentifiersEquivalent(
+                projected.serverId, exactAuthority.scope.serverId,
+            ))) {
+                this.applySessions([session], 'projection');
+                return;
+            }
+            // Metadata Actions hydrate privately. Publish their accepted facts to
+            // a retained list row without making its detail body resident.
+            const previousRow = readSessionListRowForServerId(state.sessionListRowsByServerId,
+                exactAuthority.scope.serverId, sessionId);
+            if (previousRow) state.applyServerScopedSessionListRows(exactAuthority.scope.serverId,
+                [buildSessionListRenderableFromSession(session, previousRow)], { source: 'rowOnly', mode: 'append' });
+        };
 
         try {
         await updateSessionMetadataWithRetryRpc<Metadata, AgentState>({
@@ -6092,7 +6100,7 @@ class Sync {
                 if (admission) nextSession[SESSION_LIST_DOCUMENT_ADMISSION] = admitOpenedSessionListDisplayMetadata(
                     { ...admission, metadataLayoutVersion: 0 }, nextSession);
                 mutationSession = nextSession;
-                if (!exactAuthority || ownsActiveProjection()) this.applySessions([nextSession], 'projection');
+                publishMutationSession(nextSession);
             },
             acquireTupleSnapshot,
             tupleCrypto: {
@@ -6180,7 +6188,7 @@ class Sync {
                 const nextSession = next.mode === 'owner' && ownerProjection?.kind !== 'owner'
                     ? buildSessionOwnerMetadataUnavailableShell(committedSession) : committedSession;
                 mutationSession = nextSession;
-                if (!exactAuthority || ownsActiveProjection()) this.applySessions([nextSession], 'projection');
+                publishMutationSession(nextSession);
             },
             updater,
             sessionExpectation: options?.sessionExpectation,
@@ -6193,7 +6201,7 @@ class Sync {
         } catch (error) {
             // A refused CAS can still have read the winner's canonical tuple.
             // Publish that read to its current mounted Home before its control settles.
-            if (mutationSession && ownsActiveProjection()) this.applySessions([mutationSession], 'projection');
+            if (mutationSession && exactAuthority) publishMutationSession(mutationSession);
             throw error;
         }
         } finally {
