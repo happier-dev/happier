@@ -3,6 +3,9 @@ import { BotFaceSetInputSchema, SessionBotFaceV1Schema, readSessionBotFaceV1, ar
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '../metadata/sessionMetadataSchemasV1.js';
 import { projectSessionDisplayV1 } from '../metadata/sessionDisplayProjectionV1.js';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
+import { AccountPetLibraryEntryV1Schema } from '../../pets/accountLibrary.js';
+import { createAccountPetReferenceV1 } from '../../pets/selection.js';
+import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '../../pets/constants.js';
 
 describe('shared Bot face', () => {
   it('retains built-in and account pets alongside the saved fallback face across shared metadata', () => {
@@ -16,6 +19,16 @@ describe('shared Bot face', () => {
       expect(areSessionBotFacesEqual(face, { ...face, pet: { kind: 'accountPet', accountPetId: 'other-pet' } })).toBe(false);
       expect(areSessionBotFacesEqual(face, { style: 'solid', body: 'cat', palette: 'lagoon', seed: 'saved' })).toBe(false);
     }
+    const entry = AccountPetLibraryEntryV1Schema.parse({ accountPetId: 'shared', packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
+      manifest: { id: 'capy', displayName: 'Capy', description: 'A companion', spritesheetPath: 'spritesheet.webp' },
+      spritesheetAssetRef: { assetId: 'sheet', digest: 'sha256:a', sizeBytes: 3, mediaType: 'image/webp' },
+      digest: 'sha256:package', sizeBytes: 3, createdAt: 1, updatedAt: 1,
+      origin: { kind: 'registry', sourceId: 'codex-pets', itemId: 'capy', localMetadata: 'Account-only' } });
+    const registryFace = { pet: createAccountPetReferenceV1(entry) };
+    expect(registryFace.pet.origin).toEqual({ kind: 'registry', sourceId: 'codex-pets', itemId: 'capy' });
+    expect(BotFaceSetInputSchema.parse({ sessionId: 'bot-pet', face: registryFace }).face).toEqual(registryFace);
+    expect(areSessionBotFacesEqual(registryFace, { pet: { ...registryFace.pet,
+      origin: { ...registryFace.pet.origin, itemId: 'other' } } })).toBe(false);
     expect(BotFaceSetInputSchema.safeParse({ sessionId: 'bot-pet', face: { pet: { kind: 'happierManagedLocal', sourceKey: 'local' } } }).success).toBe(false);
   });
 

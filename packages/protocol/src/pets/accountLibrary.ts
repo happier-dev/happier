@@ -75,7 +75,7 @@ export const AccountPetCreateRequestV1Schema = lazyZodSchema(() => z.looseObject
 export type AccountPetCreateRequestV1 = z.infer<typeof AccountPetCreateRequestV1Schema>;
 
 export const AccountPetCreateResponseV1Schema = lazyZodSchema(() => z.union([
-  z.looseObject({ ok: z.literal(true), pet: AccountPetLibraryEntryV1Schema }),
+  z.looseObject({ ok: z.literal(true), pet: AccountPetLibraryEntryV1Schema, reused: z.optional(z.literal(true)) }),
   z.looseObject({
       ok: z.literal(false),
       errorCode: z.enum([

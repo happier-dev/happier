@@ -1,6 +1,8 @@
 import * as React from 'react';
 import type { PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
 import type { PetCellBoundsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
+import { findMatchingAccountPetV1 } from '@happier-dev/protocol/pets/portablePetV1';
+import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import { BUILT_IN_PET_IDS, resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
 import type { SelectedPetPackageSource } from './resolveSelectedPetPackage';
 import { resolvePetPackage } from './resolvePetPackage';
@@ -22,7 +24,24 @@ export function usePetReferencePackage(
     const companionDecision = useFeatureDecision('pets.companion');
     const syncDecision = useFeatureDecision('pets.sync');
     const accountPetId = enabled && ref?.kind === 'accountPet' ? ref.accountPetId : null;
-    const accountPet = storage(state => accountPetId ? state.accountPetsById[accountPetId] : undefined);
+    const origin = enabled && ref?.kind === 'accountPet' ? ref.origin : undefined;
+    const sourceId = origin?.sourceId;
+    const itemId = origin?.itemId;
+    const selectAccountPet = React.useMemo(() => {
+        let previousLibrary: Record<string, AccountPetLibraryEntryV1> | undefined;
+        let matched: AccountPetLibraryEntryV1 | undefined;
+        return (state: Readonly<{ accountPetsById: Record<string, AccountPetLibraryEntryV1> }>) => {
+            if (!accountPetId) return undefined;
+            if (!sourceId || !itemId) return state.accountPetsById[accountPetId];
+            // Other store domains never repeat a registry lookup; unchanged entries retain their reference.
+            if (state.accountPetsById !== previousLibrary) {
+                previousLibrary = state.accountPetsById;
+                matched = findMatchingAccountPetV1(Object.values(previousLibrary), { kind: 'registry', sourceId, itemId });
+            }
+            return matched;
+        };
+    }, [accountPetId, sourceId, itemId]);
+    const accountPet = storage(selectAccountPet);
     const accountPetsStatus = storage(state => accountPetId ? state.accountPetsStatus : 'pending');
     usePeripheralFeedDemand('accountPets', Boolean(accountPetId) && companionDecision?.state === 'enabled' && syncDecision?.state === 'enabled');
     const kind = ref?.kind;

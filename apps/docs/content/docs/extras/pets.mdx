@@ -65,6 +65,12 @@ Detected pets can be:
 
 Local pets stay on the current machine unless you explicitly import them into the account library.
 
+## Pets on shared Bots and templates
+
+In 0.3 development, templates can carry a custom pet. Registry pets travel as a registry reference; created and imported pets travel as a package inside the template. Copy includes the pet by default and lets you deselect it. An existing matching pet is reused. If adding the pet fails, Copy still creates the Bot with its fallback face and reports the reason.
+
+For a shared Bot, a registry pet appears when you already have it in your library. Otherwise, the large Bot face offers to add it. Created pets use the fallback face for other viewers; their image bytes are not sent with the shared session. Adding a custom pet requires pet sync to be available for your Account.
+
 ## Package format
 
 A pet package is a directory with this shape:

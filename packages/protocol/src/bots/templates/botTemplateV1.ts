@@ -1,3 +1,4 @@
+import { PetPortableImportSourceV1Schema } from '../../pets/importActionV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { BotTemplateVersionV1Schema } from './templateVersionV1.js';
 export { BotTemplateVersionV1Schema, type BotTemplateVersionV1 } from './templateVersionV1.js';
@@ -35,7 +36,7 @@ const identity = lazyZodSchema(() => z.strictObject({ name: text(), description:
   face: z.optional(SessionBotFaceV1Schema), madeFromName: z.optional(z.string()) }));
 const uniqueKeys = (items: readonly { key: string }[]) => new Set(items.map(item => item.key)).size === items.length;
 export const BotTemplateContentV1Schema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(1), identity, instructions: z.strictObject({ markdown: z.string() }),
+  v: z.literal(1), identity, pet: z.optional(z.strictObject({ name: text(), source: PetPortableImportSourceV1Schema })), instructions: z.strictObject({ markdown: z.string() }),
   memoryRules: z.array(BotTemplateMemoryRuleV1Schema), skills: z.array(BotTemplateSkillV1Schema),
   needs: z.strictObject({ software: z.array(BotTemplateSoftwareNeedV1Schema),
     connectedAccounts: z.array(BotTemplateAccountNeedV1Schema), mcpServers: z.array(BotTemplateMcpNeedV1Schema) }),
@@ -45,7 +46,7 @@ export const BotTemplateContentV1Schema = lazyZodSchema(() => z.strictObject({
 export type BotTemplateContentV1 = z.infer<typeof BotTemplateContentV1Schema>;
 /** Admission for draft/release authors; Artifact and preview reads remain structural. */
 const BotTemplateFaceV1AuthoringSchema = lazyZodSchema(() => SessionBotFaceV1AuthoringSchema.check(z.refine(
-  face => face.pet?.kind !== 'accountPet', 'Templates use built-in pets only')));
+  face => face.pet?.kind !== 'accountPet', 'Account pets use the portable template pet field')));
 export const BotTemplateContentV1AuthoringSchema = lazyZodSchema(() => z.safeExtend(BotTemplateContentV1Schema, {
   identity: z.safeExtend(identity, { face: z.optional(BotTemplateFaceV1AuthoringSchema) }),
 }));

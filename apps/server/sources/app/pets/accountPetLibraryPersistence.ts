@@ -48,6 +48,7 @@ export type AccountPetLibraryPersistence = Readonly<{
     persistAccountPet(params: PersistAccountPetParams & { quotaLimits: AccountPetQuotaLimits }): Promise<PersistAccountPetResult>;
     listAccountPets(accountId: string): Promise<PersistedAccountPet[]>;
     readAccountPet(accountId: string, petId: string): Promise<PersistedAccountPet | null>;
+    readAccountPetByDigest(accountId: string, digest: string): Promise<PersistedAccountPet | null>;
     deleteAccountPet(accountId: string, petId: string): Promise<DeletePersistedAccountPetResult>;
 }>;
 
@@ -291,6 +292,15 @@ export function createPrismaAccountPetLibraryPersistence(
                         orderBy: { createdAt: "asc" },
                         take: 1,
                     },
+                },
+            }), { readOnly: true });
+            return row ? mapAccountPetRow(row) : null;
+        },
+        async readAccountPetByDigest(accountId, digest) {
+            const row = await inTx(tx => tx.accountPetPackage.findFirst({
+                where: { accountId, digest, deletedAt: null },
+                include: {
+                    assets: { orderBy: { createdAt: "asc" }, take: 1 },
                 },
             }), { readOnly: true });
             return row ? mapAccountPetRow(row) : null;

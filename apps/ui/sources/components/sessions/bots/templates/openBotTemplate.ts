@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { readSessionStateFieldFromMetadata, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { BotTemplateActionOutputSchemasV1, type BotTemplateOpenInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
-import type { BotTemplateSourceSessionRefV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { projectBotTemplateFaceV1, type BotTemplateSourceSessionRefV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { PromptDocReadResultV1Schema } from '@happier-dev/protocol/prompts/library/promptDocV2';
 import { readSessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotFaceV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation,
@@ -20,6 +21,7 @@ import { useDestinationPaneScopeId } from '@/components/appShell/workspace/Desti
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { selectSessionInstructionsRef } from '@/components/sessions/work/useSessionInstructionsSource';
+import { readUiBotTemplatePet } from '@/sync/ops/actions/botTemplateActionDeps';
 export { buildBotTemplateEditorRoute, createBotTemplateEditorDetailsTab, readBotTemplateEditorResource } from './botTemplateEditorDestination';
 export type SessionBotTemplateSource = Pick<Session, 'id' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'access'>;
 
@@ -44,8 +46,15 @@ export async function requestBotTemplateDraft(execute: ReturnType<typeof useMoun
     const instructions = instructionsRef ? await execute('prompt_doc.get', { artifactId: instructionsRef.artifactId }) : null;
     const document = instructions?.ok ? PromptDocReadResultV1Schema.safeParse(instructions.result) : null;
     const face = readSessionBotFaceV1(session.metadata?.botFace);
+    const pet = face?.pet?.kind === 'accountPet'
+        ? await readUiBotTemplatePet(serverId, face.pet.accountPetId).catch((error: unknown) => {
+            const errorCode = readActionErrorCodeV1(error) ?? 'action_failed';
+            return { ok: false as const, errorCode, error: errorCode };
+        }) : null;
+    if (pet && !pet.ok) return pet;
     const drafted = await execute('template.draft', { sourceSessionRef, content: {
-        v: 1, identity: { name: getSessionName(session, sourceSessionRef.serverId), description: '', ...(face ? { face } : {}) },
+        v: 1, identity: { name: getSessionName(session, sourceSessionRef.serverId), description: '', ...(face ? { face: projectBotTemplateFaceV1(face) } : {}) },
+        ...(pet?.ok ? { pet: pet.pet } : {}),
         instructions: { markdown: document?.success ? document.data.markdown : '' },
         memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] },
         ...(agentId ? { suggestedAgent: { agentId } } : {}),

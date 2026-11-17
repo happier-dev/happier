@@ -1,6 +1,8 @@
 import { createBotTemplateActionExecuteV1, readBotTemplateAuthorDraftV1, listSharedBotTemplateSummariesV1, type BotTemplateOperationPortV1 } from '@happier-dev/protocol/bots/templates/botTemplateOperations';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { BotTemplateArtifactHeaderV1Schema, type BotTemplateDraftV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { BotTemplateArtifactHeaderV1Schema, type BotTemplateDraftV1, type BotTemplateContentV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { buildAccountPetCreateRequestV1 } from '@happier-dev/protocol/pets/importActionV1';
+import { listAccountPets, readAccountPetSpritesheet } from '@/sync/api/pets/apiAccountPets';
 import type { BotTemplateOpenInputV1, BotTemplateDraftResultV1, BotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
@@ -17,6 +19,28 @@ import { createArtifactAccessApi } from '@/sync/api/artifacts/apiArtifacts';
 import { readSessionStateFieldFromMetadata, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 const unavailable = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+
+/** An author's Account id becomes a registry identity or a package inside the template's existing envelope. */
+export async function readUiBotTemplatePet(serverId: string, accountPetId: string): Promise<
+    | Readonly<{ ok: true; pet: NonNullable<BotTemplateContentV1['pet']> }>
+    | Readonly<{ ok: false; errorCode: string; error: string }>
+> {
+    const account = await captureLazyActionAccountContext(serverId);
+    try {
+        const library = await listAccountPets(account.credentials, { request: account.request });
+        if (!library.ok) return library;
+        const pet = library.pets.find(entry => entry.accountPetId === accountPetId);
+        if (!pet) return { ok: false, errorCode: 'pet_not_found', error: 'pet_not_found' };
+        if (pet.origin.kind === 'registry') return { ok: true, pet: { name: pet.manifest.displayName, source: {
+            kind: 'registry', sourceId: pet.origin.sourceId, itemId: pet.origin.itemId,
+        } } };
+        const asset = await readAccountPetSpritesheet(account.credentials, accountPetId, { request: account.request });
+        if (!asset.ok) return asset;
+        return { ok: true, pet: { name: pet.manifest.displayName, source: { kind: 'package', package: buildAccountPetCreateRequestV1({
+            manifest: pet.manifest, mediaType: asset.mediaType, spritesheetBytes: asset.bytes, origin: pet.origin,
+        }) } } };
+    } finally { account.dispose(); }
+}
 
 /** Follow offers need only the addressed released header, through the existing Account codec. */
 export async function readUiBotTemplateReleaseHeader(input: Readonly<{

@@ -79,6 +79,19 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         await competitor;
     }
 
+    it("finds only the Account's active package for a digest", async () => {
+        const account = await fixture();
+        const otherAccount = await fixture();
+        const params = petParams(account.id);
+        const persistence = createPrismaAccountPetLibraryPersistence();
+        await expect(persistence.persistAccountPet(params)).resolves.toEqual({ ok: true });
+        await expect(persistence.readAccountPetByDigest(otherAccount.id, params.entry.digest)).resolves.toBeNull();
+        await expect(persistence.readAccountPetByDigest(account.id, params.entry.digest))
+            .resolves.toMatchObject({ accountId: account.id, entry: params.entry });
+        await expect(persistence.deleteAccountPet(account.id, params.entry.accountPetId)).resolves.toMatchObject({ ok: true });
+        await expect(persistence.readAccountPetByDigest(account.id, params.entry.digest)).resolves.toBeNull();
+    });
+
     it.each(["persist", "delete"] as const)("%s completes while an unrelated content writer holds admission", async operation => {
         const account = await fixture();
         const params = petParams(account.id);

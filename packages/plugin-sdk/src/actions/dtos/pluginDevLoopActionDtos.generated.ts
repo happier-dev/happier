@@ -436,10 +436,61 @@ export type PluginDevLoopActionInputById = {
                             pet?: undefined | {
                                 kind: 'accountPet';
                                 accountPetId: string;
+                                origin?: undefined | {
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                                displayName?: string | undefined;
                             } | {
                                 kind: 'builtIn';
                                 petId: string;
                             };
+                        };
+                    };
+                    pet?: undefined | {
+                        name: string;
+                        source: {
+                            kind: 'package';
+                            package: {
+                                [x: string]: unknown;
+                                manifest: {
+                                    [x: string]: unknown;
+                                    id: string;
+                                    displayName: string;
+                                    description: string;
+                                    spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                                    spriteVersionNumber?: 1 | 2 | undefined;
+                                };
+                                spritesheet: {
+                                    mediaType: 'image/png' | 'image/webp';
+                                    encoding: 'base64';
+                                    data: string;
+                                    sizeBytes: number;
+                                    digest: string;
+                                };
+                                origin: {
+                                    [x: string]: unknown;
+                                    kind: 'builtInImport';
+                                    petId: string;
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'detectedCodexHome';
+                                    homeKind: 'connectedService' | 'user';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'manualImport';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                            };
+                        } | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
                         };
                     };
                     suggestedAgent?: undefined | {
@@ -640,10 +691,61 @@ export type PluginDevLoopActionInputById = {
                             pet?: undefined | {
                                 kind: 'accountPet';
                                 accountPetId: string;
+                                origin?: undefined | {
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                                displayName?: string | undefined;
                             } | {
                                 kind: 'builtIn';
                                 petId: string;
                             };
+                        };
+                    };
+                    pet?: undefined | {
+                        name: string;
+                        source: {
+                            kind: 'package';
+                            package: {
+                                [x: string]: unknown;
+                                manifest: {
+                                    [x: string]: unknown;
+                                    id: string;
+                                    displayName: string;
+                                    description: string;
+                                    spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                                    spriteVersionNumber?: 1 | 2 | undefined;
+                                };
+                                spritesheet: {
+                                    mediaType: 'image/png' | 'image/webp';
+                                    encoding: 'base64';
+                                    data: string;
+                                    sizeBytes: number;
+                                    digest: string;
+                                };
+                                origin: {
+                                    [x: string]: unknown;
+                                    kind: 'builtInImport';
+                                    petId: string;
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'detectedCodexHome';
+                                    homeKind: 'connectedService' | 'user';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'manualImport';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                            };
+                        } | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
                         };
                     };
                     suggestedAgent?: undefined | {
@@ -893,10 +995,61 @@ export type PluginDevLoopActionInputById = {
                             pet?: undefined | {
                                 kind: 'accountPet';
                                 accountPetId: string;
+                                origin?: undefined | {
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                                displayName?: string | undefined;
                             } | {
                                 kind: 'builtIn';
                                 petId: string;
                             };
+                        };
+                    };
+                    pet?: undefined | {
+                        name: string;
+                        source: {
+                            kind: 'package';
+                            package: {
+                                [x: string]: unknown;
+                                manifest: {
+                                    [x: string]: unknown;
+                                    id: string;
+                                    displayName: string;
+                                    description: string;
+                                    spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                                    spriteVersionNumber?: 1 | 2 | undefined;
+                                };
+                                spritesheet: {
+                                    mediaType: 'image/png' | 'image/webp';
+                                    encoding: 'base64';
+                                    data: string;
+                                    sizeBytes: number;
+                                    digest: string;
+                                };
+                                origin: {
+                                    [x: string]: unknown;
+                                    kind: 'builtInImport';
+                                    petId: string;
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'detectedCodexHome';
+                                    homeKind: 'connectedService' | 'user';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'manualImport';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                            };
+                        } | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
                         };
                     };
                     suggestedAgent?: undefined | {

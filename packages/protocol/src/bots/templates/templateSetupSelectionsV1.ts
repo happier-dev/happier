@@ -6,6 +6,7 @@ import { ValueRefV1Schema } from '../../valueRefs/valueRefV1.js';
 const key = () => z.string().check(z.minLength(1));
 const skip = lazyZodSchema(() => z.strictObject({ action: z.literal('skip') }));
 export const BotTemplateSetupSelectionsV1Schema = lazyZodSchema(() => z.strictObject({
+  pet: z.optional(z.boolean()),
   software: z.array(z.strictObject({ key: key(), selection: z.discriminatedUnion('action', [skip,
     z.strictObject({ action: z.literal('install'), inputs: PluginJsonValueV2Schema })]) })),
   accounts: z.array(z.strictObject({ key: key(), selection: z.discriminatedUnion('action', [skip,

@@ -1,3 +1,4 @@
+import { PetImportOutcomeV1Schema } from '../../pets/importActionV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ArtifactCreateIdV1Schema } from '../../artifacts/artifactIdV1.js';
@@ -97,13 +98,20 @@ export const BotTemplateActionInputSchemasV1 = {
   'template.updates.skip': BotTemplateUpdateSkipInputV1Schema,
   'template.follow.stop': BotTemplateFollowStopInputV1Schema,
 } as const;
+/** Copy reports optional pet import failure without changing ordinary creation outcomes. */
+export const BotTemplatePetOutcomeV1Schema = PetImportOutcomeV1Schema;
+export type BotTemplatePetOutcomeV1 = z.infer<typeof BotTemplatePetOutcomeV1Schema>;
+export const BotTemplateInstantiateResultV1Schema = lazyZodSchema(() => z.union([
+  z.extend(SessionSpawnNewActionResultV1Schema.def.options[0], { petOutcome: z.optional(BotTemplatePetOutcomeV1Schema) }),
+  ...SessionSpawnNewActionResultV1Schema.def.options.slice(1),
+]));
 export const BotTemplateActionOutputSchemasV1 = {
   'template.draft': BotTemplateDraftResultV1Schema,
   'template.release': BotTemplateReleaseResultV1Schema,
   'template.open': lazyZodSchema(() => z.strictObject({ opened: z.literal(true) })),
   'template.preview': BotTemplatePreviewResultV1Schema,
   'template.export_file': BotTemplateExportFileResultV1Schema,
-  'template.instantiate': SessionSpawnNewActionResultV1Schema,
+  'template.instantiate': BotTemplateInstantiateResultV1Schema,
   'template.updates.diff': BotTemplateUpdateDiffResultV1Schema,
   'template.updates.apply': BotTemplateUpdateApplyResultV1Schema,
   'template.updates.skip': BotTemplateFollowResultV1Schema,

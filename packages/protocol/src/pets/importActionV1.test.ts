@@ -12,10 +12,21 @@ const pet: AccountPetLibraryEntryV1 = { accountPetId: 'account-capy', packageFor
   digest: 'sha256:a', sizeBytes: 3, createdAt: 1, updatedAt: 1, origin: { kind: 'manualImport' } };
 
 describe('pet import confirmation projection', () => {
+  it('accepts bundled packages through the import Action and keeps registry identities closed', async () => {
+    const { PetImportInputV1Schema } = await import('./importActionV1.js');
+    const source = { kind: 'package', package: { manifest, origin: { kind: 'manualImport' },
+      spritesheet: { mediaType: 'image/webp', encoding: 'base64', data: 'AQID', sizeBytes: 3, digest: 'sha256:a' } } };
+    expect(PetImportInputV1Schema.parse({ source })).toEqual({ source });
+    expect(PetImportInputV1Schema.safeParse({ source: { kind: 'registry', sourceId: 'catalog', itemId: 'capy',
+      spritesheetUrl: 'https://unexpected.test/pet' } }).success).toBe(false);
+  });
+
   it('projects one set of import outcomes and derives Undo from the Account identity', async () => {
     const api = await import('./importActionV1.js');
     expect(api.readPetImportOutcomeV1({ ok: true, result: { pet } })).toEqual({ kind: 'added', pet,
       undo: { actionId: PET_DELETE_ACTION_ID_V1, input: { accountPetId: pet.accountPetId } } });
+    expect(api.readPetImportOutcomeV1({ ok: true, result: { pet, reused: true } }))
+      .toEqual({ kind: 'added', pet, reused: true });
     for (const [errorCode, kind] of [['quota_exceeded', 'library_full'], ['feature_disabled', 'pet_sync_off'],
       ['custom_pet_sync_requires_plaintext', 'pet_sync_off'], ['custom_pet_sync_unavailable', 'pet_sync_off'],
       ['invalid_request', 'could_not_add'], ['validation_failed', 'could_not_add']] as const) {

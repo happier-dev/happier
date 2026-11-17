@@ -1,12 +1,21 @@
 import { z } from '../zodRuntimePolicy.js';
+import { PetRegistryOriginV1Schema } from './portablePetV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import type { AccountPetLibraryEntryV1 } from './accountLibrary.js';
 
 /** The Account preference keeps an unavailable package reference for later recovery. */
 export const PetAccountReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('builtIn'), petId: z.string().check(z.minLength(1), z.maxLength(256)) }),
-  z.strictObject({ kind: z.literal('accountPet'), accountPetId: z.string().check(z.minLength(1), z.maxLength(256)) }),
+  z.strictObject({ kind: z.literal('accountPet'), accountPetId: z.string().check(z.minLength(1), z.maxLength(256)),
+    origin: z.optional(PetRegistryOriginV1Schema), displayName: z.optional(z.string()) }),
 ]));
 export type PetAccountReferenceV1 = z.infer<typeof PetAccountReferenceV1Schema>;
+
+/** Carry portable registry identity without sharing Account package bytes. */
+export function createAccountPetReferenceV1(pet: AccountPetLibraryEntryV1): Extract<PetAccountReferenceV1, { kind: 'accountPet' }> {
+  return { kind: 'accountPet', accountPetId: pet.accountPetId, displayName: pet.manifest.displayName,
+    ...(pet.origin.kind === 'registry' ? { origin: { kind: 'registry', sourceId: pet.origin.sourceId, itemId: pet.origin.itemId } } : {}) };
+}
 
 export const PetDeviceOverrideV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('inherit') }),

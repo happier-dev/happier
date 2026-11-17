@@ -2,10 +2,18 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { encodeBase64 } from '../crypto/base64.js';
 import { computeSha256HexDigest } from '../crypto/canonicalDigest.js';
-import { AccountPetLibraryEntryV1Schema, type AccountPetCreateRequestV1, type AccountPetLibraryEntryV1 } from './accountLibrary.js';
+import { AccountPetCreateRequestV1Schema, AccountPetDeleteRequestV1Schema, AccountPetLibraryEntryV1Schema, type AccountPetCreateRequestV1 } from './accountLibrary.js';
+import { PetRegistryOriginV1Schema } from './portablePetV1.js';
 import { DaemonPetImportAccountPackageRequestV1Schema, DaemonPetValidatePackageResponseV1Schema, PetPackageValidationResultV1Schema, hasPetPackageLocatorV1 } from './daemonRpc.js';
 import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '../actions/actionIdsPetsV1.js';
 import type { ApprovalExecutionV2 } from '../approvals/approvalRequestV1.js';
+
+/** Portable sources carry either registry identity or the Account create owner's package envelope. */
+export const PetPortableImportSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  PetRegistryOriginV1Schema,
+  z.strictObject({ kind: z.literal('package'), package: AccountPetCreateRequestV1Schema }),
+]));
+export type PetPortableImportSourceV1 = z.infer<typeof PetPortableImportSourceV1Schema>;
 
 /** Retain source identity, never registry-supplied download URLs, in an invocation. */
 export const PetImportInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -14,12 +22,14 @@ export const PetImportInputV1Schema = lazyZodSchema(() => z.strictObject({
       packagePath: DaemonPetImportAccountPackageRequestV1Schema.def.shape.packagePath,
       sourceKey: DaemonPetImportAccountPackageRequestV1Schema.def.shape.sourceKey,
     }).check(z.refine(hasPetPackageLocatorV1, { message: 'packagePath or sourceKey is required' })),
-    z.strictObject({ kind: z.literal('registry'), sourceId: z.string().check(z.minLength(1)),
-      itemId: z.string().check(z.minLength(1)) }),
+    ...PetPortableImportSourceV1Schema.def.options,
   ]),
 }));
 export type PetImportInputV1 = z.infer<typeof PetImportInputV1Schema>;
-export const PetImportResultV1Schema = lazyZodSchema(() => z.strictObject({ pet: AccountPetLibraryEntryV1Schema }));
+export const PetImportResultV1Schema = lazyZodSchema(() => z.strictObject({
+  pet: AccountPetLibraryEntryV1Schema,
+  reused: z.optional(z.literal(true)),
+}));
 export type PetImportResultV1 = z.infer<typeof PetImportResultV1Schema>;
 
 /** Typed contents of the existing approval preview carrier, produced by daemon validation. */
@@ -29,12 +39,15 @@ export const PetImportPreviewV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type PetImportPreviewV1 = z.infer<typeof PetImportPreviewV1Schema>;
 
-export type PetImportOutcomeV1 = Readonly<{
-  kind: 'added'; pet: AccountPetLibraryEntryV1;
-  undo: Readonly<{ actionId: typeof PET_DELETE_ACTION_ID_V1; input: Readonly<{ accountPetId: string }> }>;
-}> | Readonly<{
-  kind: 'could_not_add' | 'library_full' | 'pet_sync_off'; errorCode: string; details?: unknown;
-}>;
+export const PetImportOutcomeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('added'), pet: AccountPetLibraryEntryV1Schema, reused: z.optional(z.literal(true)),
+    undo: z.optional(z.strictObject({ actionId: z.literal(PET_DELETE_ACTION_ID_V1), input: AccountPetDeleteRequestV1Schema })),
+  }),
+  z.strictObject({ kind: z.enum(['could_not_add', 'library_full', 'pet_sync_off']),
+    errorCode: z.string().check(z.minLength(1)), details: z.optional(z.unknown()) }),
+]));
+export type PetImportOutcomeV1 = Readonly<z.infer<typeof PetImportOutcomeV1Schema>>;
 export type PetImportExecutionV1 = Pick<ApprovalExecutionV2, 'ok' | 'result' | 'errorCode' | 'details'>;
 
 /** Presentation only: Account and daemon owners still decide validation, quota and feature availability. */
@@ -42,7 +55,8 @@ export function readPetImportOutcomeV1(execution: PetImportExecutionV1): PetImpo
   if (execution.ok) {
     const parsed = PetImportResultV1Schema.safeParse(execution.result);
     return parsed.success ? { kind: 'added', pet: parsed.data.pet,
-      undo: { actionId: PET_DELETE_ACTION_ID_V1, input: { accountPetId: parsed.data.pet.accountPetId } } } : null;
+      ...(parsed.data.reused ? { reused: true as const }
+        : { undo: { actionId: PET_DELETE_ACTION_ID_V1, input: { accountPetId: parsed.data.pet.accountPetId } } }) } : null;
   }
   if (!execution.errorCode) return null;
   const kind = execution.errorCode === 'quota_exceeded' ? 'library_full'

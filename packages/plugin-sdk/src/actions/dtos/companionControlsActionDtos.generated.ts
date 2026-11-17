@@ -11,6 +11,43 @@ export type CompanionControlsActionInputById = {
             packagePath?: string | undefined;
             sourceKey?: string | undefined;
         } | {
+            kind: 'package';
+            package: {
+                [x: string]: unknown;
+                manifest: {
+                    [x: string]: unknown;
+                    id: string;
+                    displayName: string;
+                    description: string;
+                    spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                    spriteVersionNumber?: 1 | 2 | undefined;
+                };
+                spritesheet: {
+                    mediaType: 'image/png' | 'image/webp';
+                    encoding: 'base64';
+                    data: string;
+                    sizeBytes: number;
+                    digest: string;
+                };
+                origin: {
+                    [x: string]: unknown;
+                    kind: 'builtInImport';
+                    petId: string;
+                } | {
+                    [x: string]: unknown;
+                    kind: 'detectedCodexHome';
+                    homeKind: 'connectedService' | 'user';
+                } | {
+                    [x: string]: unknown;
+                    kind: 'manualImport';
+                } | {
+                    [x: string]: unknown;
+                    kind: 'registry';
+                    sourceId: string;
+                    itemId: string;
+                };
+            };
+        } | {
             kind: 'registry';
             sourceId: string;
             itemId: string;
@@ -37,6 +74,12 @@ export type CompanionControlsActionInputById = {
         petRef: {
             kind: 'accountPet';
             accountPetId: string;
+            origin?: undefined | {
+                kind: 'registry';
+                sourceId: string;
+                itemId: string;
+            };
+            displayName?: string | undefined;
         } | {
             kind: 'builtIn';
             petId: string;
@@ -95,6 +138,7 @@ export type CompanionControlsActionResultById = {
             };
             hasNeutralLookCell?: boolean | undefined;
         };
+        reused?: true | undefined;
     };
     readonly "pet.delete": {
         [x: string]: unknown;

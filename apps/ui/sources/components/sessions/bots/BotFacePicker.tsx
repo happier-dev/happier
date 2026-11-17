@@ -8,7 +8,7 @@ import type {
   BotFaceStyle,
   SessionBotFaceV1,
 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
-import type { PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
+import { createAccountPetReferenceV1, type PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
 
 import { BUILT_IN_PET_IDS, DEFAULT_BUILT_IN_PET_ID, resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
 import { usePetReferencePackage } from '@/components/pets/source/usePetReferencePackage';
@@ -451,7 +451,7 @@ function usePetChoices(): Readonly<{ enabled: boolean; choices: readonly PetChoi
     const own: PetChoice[] = accountPets
       ? Object.values(library).map((pet) => ({
         id: petChoiceId({ kind: 'accountPet', accountPetId: pet.accountPetId }),
-        ref: { kind: 'accountPet', accountPetId: pet.accountPetId },
+        ref: createAccountPetReferenceV1(pet),
         name: pet.manifest.displayName,
       }))
       : [];

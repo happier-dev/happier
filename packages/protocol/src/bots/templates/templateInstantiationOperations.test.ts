@@ -1,3 +1,5 @@
+import { PET_IMPORT_ACTION_ID_V1 } from '../../actions/actionIdsPetsV1.js';
+import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '../../pets/constants.js';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '../../actions/actionExecutor.js';
 import { createWorkBoardArtifactBoundary } from '../../boards/workBoardArtifactV1.testkit.js';
@@ -35,7 +37,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   executionContext: Partial<ActionExecutorContext> = {},
   copy?: { catalog: { value: McpServerCatalogV1; revision: number }; baseId: string; sessionId: string },
   softwareAuthorizationUnavailable = false,
-  softwareBoundary: Pick<ActionExecutorDeps, 'machineSetupApply' | 'actionOperationAction' | 'presentUserActionConfirmation'> = {}) {
+  softwareBoundary: Pick<ActionExecutorDeps, 'machineSetupApply' | 'actionOperationAction' | 'presentUserActionConfirmation' | 'clientActionExecute'> = {}) {
   const instanceBaseId = copy?.baseId ?? baseId;
   const instanceSessionId = copy?.sessionId ?? sessionId;
   let selectedRelease: BotTemplateReleaseV1 = carried ? { ...release, content: { ...release.content,
@@ -374,6 +376,58 @@ describe('template instantiation through ordinary creation', () => {
     f.boundary.rows.set(releaseId, { ...row, header: projectBotTemplateArtifactHeaderV1(artifact), body: JSON.stringify(artifact) });
     expect(await f.run()).toMatchObject({ ok: true });
     expect(f.metadata().botFace).toEqual(face);
+    expect(f.counts()).toEqual({ births: 1, launches: 1 });
+  });
+
+  it('rewrites the birth face to the recipient pet returned by the import Action', async () => {
+    let imports = 0;
+    const pet = { accountPetId: 'recipient-capy', packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
+      manifest: { id: 'capy', displayName: 'Capy', description: 'A companion', spritesheetPath: 'spritesheet.webp' },
+      spritesheetAssetRef: { assetId: 'sheet', digest: 'sha256:a', sizeBytes: 3, mediaType: 'image/webp' as const },
+      digest: 'sha256:a', sizeBytes: 3, createdAt: 1, updatedAt: 1,
+      origin: { kind: 'registry' as const, sourceId: 'codex-pets', itemId: 'capy' } };
+    const f = fixture(false, false, false, false, false, false, false, {}, undefined, false, {
+      // The import executes in a client process; stub its delivery, keeping Action admission real.
+      clientActionExecute: async request => {
+        if (request.actionId !== PET_IMPORT_ACTION_ID_V1) return request.execute();
+        imports++; return { ok: true, result: { pet } };
+      },
+    });
+    const row = f.boundary.rows.get(releaseId)!;
+    const artifact = { v: 1 as const, state: 'released' as const, release: { ...release, content: {
+      ...release.content, identity: { ...release.content.identity, face: { seed: 'fallback' } },
+      pet: { name: 'Capy', source: pet.origin },
+    } } };
+    f.boundary.rows.set(releaseId, { ...row, header: projectBotTemplateArtifactHeaderV1(artifact), body: JSON.stringify(artifact) });
+    const result = await f.run();
+    expect(result).toMatchObject({ ok: true, result: { petOutcome: { kind: 'added', pet } } });
+    expect(f.metadata().botFace).toEqual({ seed: 'fallback', pet: {
+      kind: 'accountPet', accountPetId: pet.accountPetId, origin: pet.origin, displayName: 'Capy',
+    } });
+    expect(imports).toBe(1);
+  });
+
+  it.each([true, false])('imports the selected template pet once and uses fallback on refusal (selected=%s)', async selected => {
+    let imports = 0;
+    const f = fixture(false, false, false, false, false, false, false, {}, undefined, false, {
+      // The client delivery boundary returns the Account service's typed refusal.
+      clientActionExecute: async request => {
+        if (request.actionId !== PET_IMPORT_ACTION_ID_V1) return request.execute();
+        imports++; return { ok: false, errorCode: 'quota_exceeded', error: 'Full' };
+      },
+    });
+    const row = f.boundary.rows.get(releaseId)!;
+    const artifact = { v: 1 as const, state: 'released' as const, release: { ...release, content: {
+      ...release.content, identity: { ...release.content.identity, face: { seed: 'fallback' } },
+      pet: { name: 'Capy', source: { kind: 'registry', sourceId: 'codex-pets', itemId: 'capy' } },
+    } } };
+    f.boundary.rows.set(releaseId, { ...row, header: projectBotTemplateArtifactHeaderV1(artifact), body: JSON.stringify(artifact) });
+    Object.assign(f.input, { setup: { software: [], accounts: [], mcpServers: [], pet: selected } });
+    expect(await f.run()).toMatchObject(selected
+      ? { ok: true, result: { petOutcome: { kind: 'library_full', errorCode: 'quota_exceeded' } } }
+      : { ok: true });
+    expect(f.metadata().botFace).toEqual({ seed: 'fallback' });
+    expect(imports).toBe(selected ? 1 : 0);
     expect(f.counts()).toEqual({ births: 1, launches: 1 });
   });
 

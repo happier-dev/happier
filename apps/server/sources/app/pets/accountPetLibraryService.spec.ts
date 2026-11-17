@@ -29,10 +29,10 @@ function digest(bytes: Uint8Array): string {
     return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-function requestFor(bytes: Uint8Array) {
+function requestFor(bytes: Uint8Array, id = "blink") {
     return {
         manifest: {
-            id: "blink",
+            id,
             displayName: "Blink",
             description: "Happier companion pet",
             spritesheetPath: "spritesheet.webp" as const,
@@ -186,6 +186,9 @@ function createPersistenceThatPausesFirstPersist(): {
                 }
                 return record;
             },
+            async readAccountPetByDigest(accountId, digest) {
+                return listAccountPets(accountId).find(record => record.entry?.digest === digest) ?? null;
+            },
             async deleteAccountPet(accountId, petId) {
                 const record = recordsByPetId.get(petId);
                 if (!record || record.accountId !== accountId) {
@@ -324,6 +327,9 @@ describe("account pet library services", () => {
                 async readAccountPet() {
                     return record;
                 },
+                async readAccountPetByDigest() {
+                    return record;
+                },
                 async deleteAccountPet() {
                     return { ok: false, error: "not-found" };
                 },
@@ -396,6 +402,9 @@ describe("account pet library services", () => {
                 async readAccountPet() {
                     return record as unknown as PersistedAccountPet;
                 },
+                async readAccountPetByDigest() {
+                    return record as unknown as PersistedAccountPet;
+                },
                 async deleteAccountPet() {
                     return { ok: false, error: "not-found" };
                 },
@@ -441,6 +450,8 @@ describe("account pet library services", () => {
 
         expect(created.ok).toBe(true);
         if (!created.ok) throw new Error("expected account pet creation to succeed");
+        expect(created.pet.digest).toBe(`sha256:${createHash('sha256')
+            .update(stableManifestJson(requestFor(WEBP_BYTES).manifest)).update('\n').update(WEBP_BYTES).digest('hex')}`);
         expect(JSON.stringify(created.pet)).not.toContain("spritesheetBytes");
 
         const listedForOwner = await services.listAccountPetsForAccount({
@@ -533,6 +544,9 @@ describe("account pet library services", () => {
                     return [];
                 },
                 async readAccountPet() {
+                    return null;
+                },
+                async readAccountPetByDigest() {
                     return null;
                 },
                 async deleteAccountPet() {
@@ -659,12 +673,13 @@ describe("account pet library services", () => {
             .resolves.toMatchObject({ ok: true });
     });
 
-    it("persists account pet metadata across service recreation", async () => {
+    it("reuses a normalized package across service recreation before quota admission or another asset write", async () => {
         const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
         tempDirs.push(rootDir);
         await createAccount("account-1");
         const privateFiles = createLocalPrivateFilesBackend({ rootDir });
         await privateFiles.init();
+        const privateWrites = vi.spyOn(privateFiles, "writePrivateFile");
         const firstServices = createAccountPetLibraryServices({
             privateFiles,
             persistence: createPrismaAccountPetLibraryPersistence(),
@@ -691,12 +706,24 @@ describe("account pet library services", () => {
         const secondServices = createAccountPetLibraryServices({
             privateFiles,
             persistence: createPrismaAccountPetLibraryPersistence(),
+            maxImportedPetsPerAccount: 1,
             inspectAtlas: async () => ({
                 width: 1536,
-                height: 1872,
+                height: 2288,
                 hasAlpha: true,
             }),
         });
+
+        await expect(secondServices.createAccountPetForAccount({ accountId: "account-1", request: requestFor(WEBP_BYTES) }))
+            .resolves.toEqual({ ok: true, pet: created.pet, reused: true });
+        expect(privateWrites).toHaveBeenCalledTimes(1);
+        await createAccount("account-2");
+        const other = await secondServices.createAccountPetForAccount({ accountId: "account-2", request: requestFor(WEBP_BYTES) });
+        expect(other.ok).toBe(true);
+        if (!other.ok) throw new Error("expected the other Account to create its own pet");
+        expect(other.pet.accountPetId).not.toBe(created.pet.accountPetId);
+        expect(other.pet.digest).toBe(created.pet.digest);
+        expect(privateWrites).toHaveBeenCalledTimes(2);
 
         await expect(secondServices.listAccountPetsForAccount({
             accountId: "account-1",
@@ -739,9 +766,10 @@ describe("account pet library services", () => {
             createId: () => ids.shift() ?? "unexpected-id",
             inspectAtlas: async () => ({ width: 1536, height: 1872, hasAlpha: true }),
         });
+        let createdPackages = 0;
         const create = () => services.createAccountPetForAccount({
             accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
+            request: requestFor(WEBP_BYTES, `pet-${createdPackages++}`),
         });
 
         expect((await create()).ok).toBe(true);
@@ -784,7 +812,7 @@ describe("account pet library services", () => {
         });
         const second = await services.createAccountPetForAccount({
             accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
+            request: requestFor(WEBP_BYTES, "other"),
         });
 
         expect(first.ok).toBe(true);
@@ -799,11 +827,12 @@ describe("account pet library services", () => {
         })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
     });
 
-    it("serializes concurrent account pet creation against the per-account count quota", async () => {
+    it("reuses a normalized package admitted concurrently before the per-account count quota", async () => {
         const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
         tempDirs.push(rootDir);
         const privateFiles = createLocalPrivateFilesBackend({ rootDir });
         await privateFiles.init();
+        const privateWrites = vi.spyOn(privateFiles, "writePrivateFile");
         const pausedPersistence = createPersistenceThatPausesFirstPersist();
         const ids = ["pet-1", "asset-1", "pet-2", "asset-2"];
         const services = createAccountPetLibraryServices({
@@ -813,7 +842,7 @@ describe("account pet library services", () => {
             createId: () => ids.shift() ?? "unexpected-id",
             inspectAtlas: async () => ({
                 width: 1536,
-                height: 1872,
+                height: 2288,
                 hasAlpha: true,
             }),
         });
@@ -832,11 +861,9 @@ describe("account pet library services", () => {
         const [first, second] = await Promise.all([firstCreate, secondCreate]);
 
         expect(first.ok).toBe(true);
-        expect(second).toEqual({
-            ok: false,
-            errorCode: "quota_exceeded",
-            error: "quota_exceeded",
-        });
+        if (!first.ok) throw new Error("expected the first normalized package import to succeed");
+        expect(second).toEqual({ ok: true, pet: first.pet, reused: true });
+        expect(privateWrites).toHaveBeenCalledTimes(1);
         await expect(services.listAccountPetsForAccount({
             accountId: "account-1",
             accountEncryptionMode: "plain",
@@ -902,7 +929,7 @@ describe("account pet library services", () => {
             await quotaHooks.waitForFirstQuotaRead;
             secondCreate = secondServices.createAccountPetForAccount({
                 accountId: "account-1",
-                request: requestFor(WEBP_BYTES),
+                request: requestFor(WEBP_BYTES, "other"),
             });
             await secondAdmissionAttempt.promise;
             quotaHooks.releaseQuotaReads();
@@ -1047,7 +1074,7 @@ describe("account pet library services", () => {
         await pausedPersistence.waitForFirstPersistStart;
         const secondCreate = services.createAccountPetForAccount({
             accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
+            request: requestFor(WEBP_BYTES, "other"),
         });
         pausedPersistence.releaseFirstPersist();
 

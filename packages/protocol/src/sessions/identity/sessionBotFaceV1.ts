@@ -57,7 +57,9 @@ export function areSessionBotFacesEqual(left: SessionBotFaceV1 | null | undefine
 function areBotFacePetsEqual(left: PetAccountReferenceV1 | undefined, right: PetAccountReferenceV1 | undefined): boolean {
   return left === right || Boolean(left && right && (left.kind === 'builtIn'
     ? right.kind === 'builtIn' && left.petId === right.petId
-    : right.kind === 'accountPet' && left.accountPetId === right.accountPetId));
+    : right.kind === 'accountPet' && left.accountPetId === right.accountPetId
+      && left.displayName === right.displayName
+      && left.origin?.sourceId === right.origin?.sourceId && left.origin?.itemId === right.origin?.itemId));
 }
 function areBotFaceShapesEqual(left: BotFaceShapeV1 | undefined, right: BotFaceShapeV1 | undefined): boolean {
   return left === right || Boolean(left && right && left.v === right.v && left.origin === right.origin

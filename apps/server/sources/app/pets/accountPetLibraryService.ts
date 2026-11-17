@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
-import { type AccountPetCreateRequestV1, type AccountPetCreateResponseV1, type AccountPetDeleteResponseV1, type AccountPetLibraryEntryV1, type AccountPetListResponseV1, type AccountPetSyncUnavailableResponseV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { type AccountPetCreateResponseV1, type AccountPetDeleteResponseV1, type AccountPetLibraryEntryV1, type AccountPetListResponseV1, type AccountPetSyncUnavailableResponseV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { computeAccountPetPackageDigestV1 } from '@happier-dev/protocol/pets/portablePetV1';
 
 import type { PrivateFilesBackend } from "@/storage/privateFiles/privateFiles";
 
@@ -82,6 +83,11 @@ type AccountMutationLockState = {
     tail: Promise<void>;
 };
 
+function isReadableAccountPet(record: PersistedAccountPet): record is StoredAccountPet {
+    return Boolean(record.entry && record.asset
+        && record.contentMode === "plain" && record.asset.contentMode === "plain");
+}
+
 async function deletePrivateFileOrThrow(privateFiles: PrivateFilesBackend, objectKey: string): Promise<void> {
     const deletePrivateFile = privateFiles.deletePrivateFile;
     if (!deletePrivateFile) {
@@ -92,14 +98,6 @@ async function deletePrivateFileOrThrow(privateFiles: PrivateFilesBackend, objec
 
 function stableJson(value: unknown): string {
     return JSON.stringify(value, Object.keys(value as Record<string, unknown>).sort());
-}
-
-function calculatePackageDigest(request: AccountPetCreateRequestV1, spritesheetBytes: Uint8Array): string {
-    const hash = createHash("sha256");
-    hash.update(stableJson(request.manifest));
-    hash.update("\n");
-    hash.update(spritesheetBytes);
-    return `sha256:${hash.digest("hex")}`;
 }
 
 function digestHex(digest: string): string {
@@ -230,6 +228,9 @@ function createInMemoryAccountPetLibraryPersistence(): AccountPetLibraryPersiste
             }
             return record;
         },
+        async readAccountPetByDigest(accountId, digest): Promise<PersistedAccountPet | null> {
+            return accountRecords(accountId).find(record => record.entry.digest === digest) ?? null;
+        },
         async deleteAccountPet(accountId, petId) {
             const record = recordsByPetId.get(petId);
             if (!record || record.accountId !== accountId) {
@@ -309,7 +310,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
                 assetDigest: spritesheet.digest,
                 mediaType: spritesheet.mediaType,
             });
-            const packageDigest = calculatePackageDigest(validated.request, validated.spritesheetBytes);
+            const packageDigest = computeAccountPetPackageDigestV1(validated.request.manifest, validated.spritesheetBytes);
             const entry: AccountPetLibraryEntryV1 = {
                 accountPetId: petId,
                 packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
@@ -330,6 +331,12 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             };
 
             return await withCreateLock(params.accountId, async () => {
+                const existing = await persistence.readAccountPetByDigest(params.accountId, packageDigest);
+                if (existing) {
+                    return isReadableAccountPet(existing)
+                        ? { ok: true, pet: existing.entry, reused: true }
+                        : { ok: false, errorCode: "internal_error", error: "internal_error" };
+                }
                 const maxImportedPetsPerAccount = options.maxImportedPetsPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount;
                 const maxImportedPetBytesPerAccount = options.maxImportedPetBytesPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount;
 
@@ -393,12 +400,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             const records = await persistence.listAccountPets(params.accountId);
             const pets: AccountPetLibraryEntryV1[] = [];
             for (const record of records) {
-                if (
-                    !record.entry
-                    || !record.asset
-                    || record.contentMode !== "plain"
-                    || record.asset.contentMode !== "plain"
-                ) {
+                if (!isReadableAccountPet(record)) {
                     return customPetSyncUnavailableResponse();
                 }
                 pets.push(record.entry);
@@ -416,12 +418,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             if (!record) {
                 return null;
             }
-            if (
-                !record.entry
-                || !record.asset
-                || record.contentMode !== "plain"
-                || record.asset.contentMode !== "plain"
-            ) {
+            if (!isReadableAccountPet(record)) {
                 return customPetSyncUnavailableResponse();
             }
             const assetRef = record.entry.spritesheetAssetRef;

@@ -21,7 +21,7 @@ const draft = () => BotTemplateArtifactV1Schema.parse({ v: 1, state: 'draft',
 const metadata = { version: '1.0.0', releasedAtMs: 100, changelog: 'First release' };
 
 describe('Bot template release boundary', () => {
-  it('admits built-in pet faces but removes private account pets when projecting a reusable copy', () => {
+  it('keeps built-ins and carries a custom pet separately from its private Account identity', () => {
     const source = draft();
     if (source.state !== 'draft') throw new Error('fixture must be a draft');
     const fallback = { style: 'solid', body: 'cat', palette: 'lagoon', seed: 'source-face' } as const;
@@ -30,6 +30,10 @@ describe('Bot template release boundary', () => {
     expect(projectBotTemplateReleaseV1(source, metadata).content.identity.face).toEqual(source.content.identity.face);
     source.content.identity.face = { ...fallback, pet: { kind: 'accountPet', accountPetId: 'private-pet' } };
     expect(BotTemplateContentV1AuthoringSchema.safeParse(source.content).success).toBe(false);
+    source.content = BotTemplateContentV1Schema.parse({ ...source.content, pet: { name: 'Capy', source: { kind: 'registry', sourceId: 'codex-pets', itemId: 'capy' } } });
+    const released = projectBotTemplateReleaseV1(source, metadata);
+    expect(BotTemplateContentV1AuthoringSchema.safeParse(released.content).success).toBe(true);
+    expect(projectBotTemplateReleaseV1(source, metadata).content.pet).toEqual(source.content.pet);
     expect(projectBotTemplateReleaseV1(source, metadata).content.identity.face).toEqual(fallback);
     expect(source.content.identity.face.pet).toEqual({ kind: 'accountPet', accountPetId: 'private-pet' });
   });

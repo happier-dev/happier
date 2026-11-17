@@ -3,12 +3,13 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createRegistryHostV1 } from '@happier-dev/protocol/registries/registryHostV1';
 import { BUILT_IN_REGISTRY_SOURCES_V1 } from '@happier-dev/protocol/registries/registrySourcesV1';
 import type { RegistryHttpV1 } from '@happier-dev/protocol/registries/formats/registryFormatAdapterV1';
-import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import type { AccountPetCreateRequestV1, AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
 import type { ServerFetch } from '@/sync/http/client';
 import { createUiPetActionExecute } from './petActionDeps';
 import { prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
+import { readPetImportOutcomeV1 } from '@happier-dev/protocol/pets/importActionV1';
 
 // Machine RPC is the external daemon transport; the Action and Account request path stay real.
 const boundary = vi.hoisted(() => ({ machineRpc: vi.fn() }));
@@ -54,6 +55,7 @@ describe('pet Actions through their import and Account boundaries', () => {
         };
         const registry = createRegistryHostV1({ host: 'native', http, readSources: async () => BUILT_IN_REGISTRY_SOURCES_V1 });
         const request: ServerFetch = async (path, init) => {
+            if (!init?.method) return new Response(JSON.stringify({ ok: true, pets: [] }));
             effects.push({ path, method: init?.method, ...(typeof init?.body === 'string' ? { body: JSON.parse(init.body) } : {}) });
             return new Response(JSON.stringify(init?.method === 'DELETE'
                 ? { ok: true, accountPetId: pet.accountPetId, deletedAt: 2 } : { ok: true, pet }));
@@ -75,6 +77,7 @@ describe('pet Actions through their import and Account boundaries', () => {
     it('imports browser registry bytes through a Machine carrier and preserves needs_machine without an Account write', async () => {
         const writes: unknown[] = [];
         const request: ServerFetch = async (_path, init) => {
+            if (!init?.method) return new Response(JSON.stringify({ ok: true, pets: [] }));
             writes.push(JSON.parse(String(init?.body)));
             return new Response(JSON.stringify({ ok: true, pet }));
         };
@@ -110,6 +113,86 @@ describe('pet Actions through their import and Account boundaries', () => {
             origin: { kind: 'registry', sourceId: 'builtin:codex-pets', itemId: 'winter' },
             spritesheet: expect.objectContaining({ encoding: 'base64', data: 'AID/', sizeBytes: 3, mediaType: 'image/webp' }),
         })]);
+    });
+
+    it('reuses an authenticated registry-origin match before acquiring bytes or creating another pet', async () => {
+        let creates = 0;
+        let reads = 0;
+        const request: ServerFetch = async (_path, init) => {
+            expect(init?.headers).toMatchObject({ Authorization: 'Bearer token' });
+            if (init?.method === 'POST') { creates++; return new Response(JSON.stringify({ ok: true, pet })); }
+            reads++;
+            return new Response(JSON.stringify({ ok: true, pets: [pet] }));
+        };
+        const execute = createActionExecutor({ petAction: createUiPetActionExecute(account(request), unused) });
+        expect(await execute.execute(PET_IMPORT_ACTION_ID_V1,
+            { source: { kind: 'registry', sourceId: 'builtin:codex-pets', itemId: 'winter' } }, context))
+            .toMatchObject({ ok: true, result: { pet, reused: true } });
+        expect(creates).toBe(0);
+        expect(reads).toBe(1);
+    });
+
+    it('lets Account admission reuse bundled packages without a library preflight', async () => {
+        const bundled: AccountPetCreateRequestV1 = { manifest: pet.manifest, origin: { kind: 'manualImport' },
+            spritesheet: { mediaType: 'image/webp', encoding: 'base64', data: 'AQID', sizeBytes: 3, digest: pet.digest } };
+        let creates = 0;
+        let reads = 0;
+        const request: ServerFetch = async (path, init) => {
+            expect(path).toBe('/v1/account/pets');
+            expect(init?.headers).toMatchObject({ Authorization: 'Bearer token' });
+            if (init?.method === 'POST') {
+                creates++;
+                expect(JSON.parse(String(init.body))).toEqual(bundled);
+                return new Response(JSON.stringify({ ok: true, pet, ...(creates > 1 ? { reused: true } : {}) }));
+            }
+            reads++;
+            return new Response(JSON.stringify({ ok: true, pets: [] }));
+        };
+        const execute = createActionExecutor({ petAction: createUiPetActionExecute(account(request), unused) });
+        const input = { source: { kind: 'package', package: bundled } };
+        expect(await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context))
+            .toMatchObject({ ok: true, result: { pet: { accountPetId: pet.accountPetId } } });
+        expect(creates).toBe(1);
+        expect(reads).toBe(0);
+        const reused = await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context);
+        expect(readPetImportOutcomeV1(reused)).toEqual({ kind: 'added', pet, reused: true });
+        expect(creates).toBe(2);
+        expect(reads).toBe(0);
+    });
+
+    it('preserves package quota and feature refusals from Account admission', async () => {
+        const bundled: AccountPetCreateRequestV1 = { manifest: pet.manifest, origin: { kind: 'manualImport' },
+            spritesheet: { mediaType: 'image/webp', encoding: 'base64', data: 'AQID', sizeBytes: 3, digest: pet.digest } };
+        let creates = 0;
+        let unavailable = false;
+        const request: ServerFetch = async () => {
+            creates++;
+            return new Response(JSON.stringify(unavailable
+                ? { ok: false, errorCode: 'feature_disabled', error: 'Pet sync disabled' }
+                : { ok: false, errorCode: 'quota_exceeded', error: 'Library full' }));
+        };
+        const execute = createActionExecutor({ petAction: createUiPetActionExecute(account(request), unused) });
+        const input = { source: { kind: 'package', package: bundled } };
+        expect(await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context))
+            .toMatchObject({ ok: false, errorCode: 'quota_exceeded' });
+        unavailable = true;
+        expect(await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context))
+            .toMatchObject({ ok: false, errorCode: 'feature_disabled' });
+        expect(creates).toBe(2);
+    });
+
+    it.each(['package', 'machine'] as const)('forwards validated server reuse without an Undo deletion for %s', async sourceKind => {
+        const normalized = { ...pet, manifest: { ...pet.manifest, spriteVersionNumber: 2 as const } };
+        const bundled: AccountPetCreateRequestV1 = { manifest: pet.manifest, origin: { kind: 'manualImport' },
+            spritesheet: { mediaType: 'image/webp', encoding: 'base64', data: 'AQID', sizeBytes: 3, digest: pet.digest } };
+        const request: ServerFetch = async (_path, init) => new Response(JSON.stringify(init?.method === 'POST'
+            ? { ok: true, pet: normalized, reused: true } : { ok: true, pets: [] }));
+        const execute = createActionExecutor({ petAction: createUiPetActionExecute(account(request), unused) });
+        if (sourceKind === 'machine') boundary.machineRpc.mockResolvedValueOnce({ ok: true, target: 'account', account: { ok: true, pet: normalized, reused: true } });
+        const source = sourceKind === 'package' ? { kind: 'package' as const, package: bundled }
+            : { kind: 'machine' as const, machineId: 'machine', packagePath: '/pets/winter' };
+        const result = await execute.execute(PET_IMPORT_ACTION_ID_V1, { source }, context);
+        expect(readPetImportOutcomeV1(result)).toEqual({ kind: 'added', pet: normalized, reused: true });
     });
 
     it('imports a Machine package through the existing daemon importer and preserves server refusals', async () => {

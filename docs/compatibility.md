@@ -38,10 +38,16 @@ without a Machine still requires upstream CORS support or an approved server
 transport; the adapters alone do not establish that availability.
 
 Bot faces accept an optional Account pet reference while retaining their seeded
-style. Template authoring permits built-in references only; the template owner
-projects Account pets to the seeded face when creating a shareable template.
-Matching development writers and strict face readers reload together for this
-optional field. Existing faces without a pet remain unchanged.
+style. Registry references additionally carry portable origin and display name;
+shared viewers match that origin against their own library rather than another
+Account's pet id. Template `content.pet` carries a registry reference or the
+existing Account create package envelope, while `identity.face` carries the
+seeded fallback. Copy optionally imports through `pet.import`, deduplicates by
+registry origin or package digest, and rewrites the newborn face to the recipient
+entry. Typed import failure preserves Copy with the fallback face. Reused entries
+have no delete Undo. Created pets on shared sessions retain the seeded fallback
+without session-wide bytes. Matching development writers and strict readers
+reload together; existing faces and templates without pets remain unchanged.
 
 The Account pet library optionally carries cell-local `opaqueBounds` computed
 by the existing server admission scan and retained in its stored manifest

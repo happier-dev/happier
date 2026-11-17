@@ -44,6 +44,12 @@ export type SessionAuthoringActionInputById = {
                     pet?: undefined | {
                         kind: 'accountPet';
                         accountPetId: string;
+                        origin?: undefined | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
+                        };
+                        displayName?: string | undefined;
                     } | {
                         kind: 'builtIn';
                         petId: string;
@@ -361,6 +367,12 @@ export type SessionAuthoringActionInputById = {
                     pet?: undefined | {
                         kind: 'accountPet';
                         accountPetId: string;
+                        origin?: undefined | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
+                        };
+                        displayName?: string | undefined;
                     } | {
                         kind: 'builtIn';
                         petId: string;
@@ -753,6 +765,12 @@ export type SessionAuthoringActionInputById = {
                             pet?: undefined | {
                                 kind: 'accountPet';
                                 accountPetId: string;
+                                origin?: undefined | {
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                                displayName?: string | undefined;
                             } | {
                                 kind: 'builtIn';
                                 petId: string;
@@ -1518,6 +1536,12 @@ export type SessionAuthoringActionInputById = {
                             pet?: undefined | {
                                 kind: 'accountPet';
                                 accountPetId: string;
+                                origin?: undefined | {
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                                displayName?: string | undefined;
                             } | {
                                 kind: 'builtIn';
                                 petId: string;
@@ -3458,6 +3482,12 @@ export type SessionAuthoringActionInputById = {
                         pet?: undefined | {
                             kind: 'accountPet';
                             accountPetId: string;
+                            origin?: undefined | {
+                                kind: 'registry';
+                                sourceId: string;
+                                itemId: string;
+                            };
+                            displayName?: string | undefined;
                         } | {
                             kind: 'builtIn';
                             petId: string;
@@ -4223,6 +4253,12 @@ export type SessionAuthoringActionInputById = {
                         pet?: undefined | {
                             kind: 'accountPet';
                             accountPetId: string;
+                            origin?: undefined | {
+                                kind: 'registry';
+                                sourceId: string;
+                                itemId: string;
+                            };
+                            displayName?: string | undefined;
                         } | {
                             kind: 'builtIn';
                             petId: string;

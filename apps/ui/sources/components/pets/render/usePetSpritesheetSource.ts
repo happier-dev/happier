@@ -10,7 +10,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import type { LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
-import { resolveAccountPetReadAdmission } from '@/sync/domains/pets/resolveAccountPetReadAdmission';
+import { readAccountPetSpritesheet } from '@/sync/api/pets/apiAccountPets';
 import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
@@ -53,34 +53,9 @@ function toDataUri(mediaType: PetAssetMediaTypeV1, dataBase64: string): string {
     return `data:${mediaType};base64,${dataBase64}`;
 }
 
-function readContentType(headers: Headers): PetAssetMediaTypeV1 | null {
-    const mediaType = String(headers.get('Content-Type') ?? '').split(';')[0]?.trim().toLowerCase();
-    return isAllowedPetAssetMediaType(mediaType) ? mediaType : null;
-}
-
 async function readAccountPetSpritesheetSource(accountPetId: string, credentials: AuthCredentials, request: ServerFetch, signal: AbortSignal): Promise<ImageProps['source'] | null> {
-    const admission = await resolveAccountPetReadAdmission(credentials, {
-        request: (path, init, options) => request(path, { ...init, signal }, options),
-    });
-    if (admission.status === 'unavailable' || signal.aborted) return null;
-
-    const response = await request(
-        `/v1/account/pets/${accountPetId}/spritesheet`,
-        {
-            signal,
-            headers: {
-                Authorization: `Bearer ${credentials.token}`,
-            },
-        },
-        { includeAuth: false, retry: 'none' },
-    );
-    if (!response.ok) return null;
-
-    const mediaType = readContentType(response.headers);
-    if (!mediaType) return null;
-
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return toDataUri(mediaType, encodeBase64(bytes, 'base64'));
+    const asset = await readAccountPetSpritesheet(credentials, accountPetId, { request, signal });
+    return asset.ok ? toDataUri(asset.mediaType, encodeBase64(asset.bytes, 'base64')) : null;
 }
 
 async function readDaemonPetPreviewSource(source: Extract<SelectedPetPackageSource, { kind: 'detectedCodexHome' | 'happierManagedLocal' }>, credentials: AuthCredentials, cacheScope: string, signal: AbortSignal): Promise<ImageProps['source'] | null> {

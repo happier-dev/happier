@@ -350,7 +350,7 @@ describe('BotFacePicker', () => {
 });
 
 describe('BotFacePicker pets (R11)', () => {
-  async function enablePets(accountPets: readonly { accountPetId: string; displayName: string }[]) {
+  async function enablePets(accountPets: readonly { accountPetId: string; displayName: string; origin?: AccountPetLibraryEntryV1['origin'] }[]) {
     const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit');
     const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
@@ -363,13 +363,13 @@ describe('BotFacePicker pets (R11)', () => {
       storage.getState().applyAccountPets(accountPets.map((pet): AccountPetLibraryEntryV1 => ({
         accountPetId: pet.accountPetId,
         packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
-        manifest: { id: pet.accountPetId, displayName: pet.displayName, spritesheetPath: 'spritesheet.webp' },
+        manifest: { id: pet.accountPetId, displayName: pet.displayName, description: pet.displayName, spritesheetPath: 'spritesheet.webp' },
         spritesheetAssetRef: { assetId: `asset-${pet.accountPetId}`, mediaType: 'image/webp', digest: `digest-${pet.accountPetId}`, sizeBytes: 1024 },
         digest: `digest-${pet.accountPetId}`,
         sizeBytes: 1024,
         createdAt: 1,
         updatedAt: 1,
-        origin: { kind: 'manualImport' },
+        origin: pet.origin ?? { kind: 'manualImport' },
       })));
     });
   }
@@ -386,6 +386,16 @@ describe('BotFacePicker pets (R11)', () => {
     expect(tileIds(screen.root, 'bot-face-style')).toEqual(['account-default', ...BotFaceStyleSchema.options, 'pet']);
     await press(screen.root, 'bot-face-style:pet');
     expect(onChange.mock.calls).toEqual([[{ ...own, pet: { kind: 'builtIn', petId: 'blink' } }]]);
+  });
+
+  it('carries the registry origin and name when choosing an Account pet for a shared Bot face', async () => {
+    const origin = { kind: 'registry', sourceId: 'petdex', itemId: 'moss' } as const;
+    await enablePets([{ accountPetId: 'my-moss', displayName: 'Moss', origin }]);
+    const onChange = vi.fn();
+    const face = { style: 'pixel' as const, seed: 'bot-a', pet: { kind: 'builtIn' as const, petId: 'milo' } };
+    const screen = await renderScreen(<BotFacePickerPanel seed="bot-a" face={face} onChange={onChange} />);
+    await press(screen.root, 'bot-face-pet:accountPet:my-moss');
+    expect(onChange).toHaveBeenCalledWith({ ...face, pet: { kind: 'accountPet', accountPetId: 'my-moss', displayName: 'Moss', origin } });
   });
 
   it('wearing a pet: built-ins, then Account pets, then Add a pet; body, colour and Surprise me step aside; a style takes it off', async () => {

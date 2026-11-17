@@ -167,10 +167,61 @@ export type BotTemplatesActionInputById = {
                     pet?: undefined | {
                         kind: 'accountPet';
                         accountPetId: string;
+                        origin?: undefined | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
+                        };
+                        displayName?: string | undefined;
                     } | {
                         kind: 'builtIn';
                         petId: string;
                     };
+                };
+            };
+            pet?: undefined | {
+                name: string;
+                source: {
+                    kind: 'package';
+                    package: {
+                        [x: string]: unknown;
+                        manifest: {
+                            [x: string]: unknown;
+                            id: string;
+                            displayName: string;
+                            description: string;
+                            spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                            spriteVersionNumber?: 1 | 2 | undefined;
+                        };
+                        spritesheet: {
+                            mediaType: 'image/png' | 'image/webp';
+                            encoding: 'base64';
+                            data: string;
+                            sizeBytes: number;
+                            digest: string;
+                        };
+                        origin: {
+                            [x: string]: unknown;
+                            kind: 'builtInImport';
+                            petId: string;
+                        } | {
+                            [x: string]: unknown;
+                            kind: 'detectedCodexHome';
+                            homeKind: 'connectedService' | 'user';
+                        } | {
+                            [x: string]: unknown;
+                            kind: 'manualImport';
+                        } | {
+                            [x: string]: unknown;
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
+                        };
+                    };
+                } | {
+                    kind: 'registry';
+                    sourceId: string;
+                    itemId: string;
                 };
             };
             suggestedAgent?: undefined | {
@@ -728,6 +779,12 @@ export type BotTemplatesActionInputById = {
                     pet?: undefined | {
                         kind: 'accountPet';
                         accountPetId: string;
+                        origin?: undefined | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
+                        };
+                        displayName?: string | undefined;
                     } | {
                         kind: 'builtIn';
                         petId: string;
@@ -3463,6 +3520,12 @@ export type BotTemplatesActionInputById = {
             pet?: undefined | {
                 kind: 'accountPet';
                 accountPetId: string;
+                origin?: undefined | {
+                    kind: 'registry';
+                    sourceId: string;
+                    itemId: string;
+                };
+                displayName?: string | undefined;
             } | {
                 kind: 'builtIn';
                 petId: string;
@@ -3542,6 +3605,7 @@ export type BotTemplatesActionInputById = {
                     action: 'skip';
                 };
             }[];
+            pet?: boolean | undefined;
         };
     };
     readonly "template.updates.diff": {
@@ -3649,6 +3713,7 @@ export type BotTemplatesActionInputById = {
                     action: 'skip';
                 };
             }[];
+            pet?: boolean | undefined;
         };
         recovery?: undefined | {
             skillIds: Record<string, string>;
@@ -3711,6 +3776,12 @@ export type BotTemplatesActionResultById = {
                     pet?: undefined | {
                         kind: 'accountPet';
                         accountPetId: string;
+                        origin?: undefined | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
+                        };
+                        displayName?: string | undefined;
                     } | {
                         kind: 'builtIn';
                         petId: string;
@@ -3773,6 +3844,12 @@ export type BotTemplatesActionResultById = {
                         pet?: undefined | {
                             kind: 'accountPet';
                             accountPetId: string;
+                            origin?: undefined | {
+                                kind: 'registry';
+                                sourceId: string;
+                                itemId: string;
+                            };
+                            displayName?: string | undefined;
                         } | {
                             kind: 'builtIn';
                             petId: string;
@@ -3904,6 +3981,51 @@ export type BotTemplatesActionResultById = {
                         purpose: string;
                         skipConsequence: string;
                     }[];
+                };
+                pet?: undefined | {
+                    name: string;
+                    source: {
+                        kind: 'package';
+                        package: {
+                            [x: string]: unknown;
+                            manifest: {
+                                [x: string]: unknown;
+                                id: string;
+                                displayName: string;
+                                description: string;
+                                spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                                spriteVersionNumber?: 1 | 2 | undefined;
+                            };
+                            spritesheet: {
+                                mediaType: 'image/png' | 'image/webp';
+                                encoding: 'base64';
+                                data: string;
+                                sizeBytes: number;
+                                digest: string;
+                            };
+                            origin: {
+                                [x: string]: unknown;
+                                kind: 'builtInImport';
+                                petId: string;
+                            } | {
+                                [x: string]: unknown;
+                                kind: 'detectedCodexHome';
+                                homeKind: 'connectedService' | 'user';
+                            } | {
+                                [x: string]: unknown;
+                                kind: 'manualImport';
+                            } | {
+                                [x: string]: unknown;
+                                kind: 'registry';
+                                sourceId: string;
+                                itemId: string;
+                            };
+                        };
+                    } | {
+                        kind: 'registry';
+                        sourceId: string;
+                        itemId: string;
+                    };
                 };
                 suggestedAgent?: undefined | {
                     agentId: string;
@@ -3967,6 +4089,12 @@ export type BotTemplatesActionResultById = {
                         pet?: undefined | {
                             kind: 'accountPet';
                             accountPetId: string;
+                            origin?: undefined | {
+                                kind: 'registry';
+                                sourceId: string;
+                                itemId: string;
+                            };
+                            displayName?: string | undefined;
                         } | {
                             kind: 'builtIn';
                             petId: string;
@@ -4098,6 +4226,51 @@ export type BotTemplatesActionResultById = {
                         purpose: string;
                         skipConsequence: string;
                     }[];
+                };
+                pet?: undefined | {
+                    name: string;
+                    source: {
+                        kind: 'package';
+                        package: {
+                            [x: string]: unknown;
+                            manifest: {
+                                [x: string]: unknown;
+                                id: string;
+                                displayName: string;
+                                description: string;
+                                spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                                spriteVersionNumber?: 1 | 2 | undefined;
+                            };
+                            spritesheet: {
+                                mediaType: 'image/png' | 'image/webp';
+                                encoding: 'base64';
+                                data: string;
+                                sizeBytes: number;
+                                digest: string;
+                            };
+                            origin: {
+                                [x: string]: unknown;
+                                kind: 'builtInImport';
+                                petId: string;
+                            } | {
+                                [x: string]: unknown;
+                                kind: 'detectedCodexHome';
+                                homeKind: 'connectedService' | 'user';
+                            } | {
+                                [x: string]: unknown;
+                                kind: 'manualImport';
+                            } | {
+                                [x: string]: unknown;
+                                kind: 'registry';
+                                sourceId: string;
+                                itemId: string;
+                            };
+                        };
+                    } | {
+                        kind: 'registry';
+                        sourceId: string;
+                        itemId: string;
+                    };
                 };
                 suggestedAgent?: undefined | {
                     agentId: string;
@@ -4168,6 +4341,68 @@ export type BotTemplatesActionResultById = {
             agentId: string;
             status: 'failed' | 'pending';
             requestId?: string | undefined;
+        };
+        petOutcome?: undefined | {
+            kind: 'added';
+            pet: {
+                [x: string]: unknown;
+                accountPetId: string;
+                packageFormat: 'codex-compatible-atlas-v1';
+                manifest: {
+                    [x: string]: unknown;
+                    id: string;
+                    displayName: string;
+                    description: string;
+                    spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                    spriteVersionNumber?: 1 | 2 | undefined;
+                };
+                spritesheetAssetRef: {
+                    [x: string]: unknown;
+                    assetId: string;
+                    mediaType: 'image/png' | 'image/webp';
+                    digest: string;
+                    sizeBytes: number;
+                };
+                digest: string;
+                sizeBytes: number;
+                createdAt: number;
+                updatedAt: number;
+                origin: {
+                    [x: string]: unknown;
+                    kind: 'builtInImport';
+                    petId: string;
+                } | {
+                    [x: string]: unknown;
+                    kind: 'detectedCodexHome';
+                    homeKind: 'connectedService' | 'user';
+                } | {
+                    [x: string]: unknown;
+                    kind: 'manualImport';
+                } | {
+                    [x: string]: unknown;
+                    kind: 'registry';
+                    sourceId: string;
+                    itemId: string;
+                };
+                opaqueBounds?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                hasNeutralLookCell?: boolean | undefined;
+            };
+            reused?: true | undefined;
+            undo?: undefined | {
+                actionId: 'pet.delete';
+                input: {
+                    accountPetId: string;
+                };
+            };
+        } | {
+            kind: 'could_not_add' | 'library_full' | 'pet_sync_off';
+            errorCode: string;
+            details?: unknown;
         };
     } | {
         type: 'error';
@@ -4457,6 +4692,12 @@ export type BotTemplatesActionResultById = {
                             pet?: undefined | {
                                 kind: 'accountPet';
                                 accountPetId: string;
+                                origin?: undefined | {
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                                displayName?: string | undefined;
                             } | {
                                 kind: 'builtIn';
                                 petId: string;
@@ -4588,6 +4829,51 @@ export type BotTemplatesActionResultById = {
                             purpose: string;
                             skipConsequence: string;
                         }[];
+                    };
+                    pet?: undefined | {
+                        name: string;
+                        source: {
+                            kind: 'package';
+                            package: {
+                                [x: string]: unknown;
+                                manifest: {
+                                    [x: string]: unknown;
+                                    id: string;
+                                    displayName: string;
+                                    description: string;
+                                    spritesheetPath: 'spritesheet.png' | 'spritesheet.webp';
+                                    spriteVersionNumber?: 1 | 2 | undefined;
+                                };
+                                spritesheet: {
+                                    mediaType: 'image/png' | 'image/webp';
+                                    encoding: 'base64';
+                                    data: string;
+                                    sizeBytes: number;
+                                    digest: string;
+                                };
+                                origin: {
+                                    [x: string]: unknown;
+                                    kind: 'builtInImport';
+                                    petId: string;
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'detectedCodexHome';
+                                    homeKind: 'connectedService' | 'user';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'manualImport';
+                                } | {
+                                    [x: string]: unknown;
+                                    kind: 'registry';
+                                    sourceId: string;
+                                    itemId: string;
+                                };
+                            };
+                        } | {
+                            kind: 'registry';
+                            sourceId: string;
+                            itemId: string;
+                        };
                     };
                     suggestedAgent?: undefined | {
                         agentId: string;

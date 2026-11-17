@@ -1,3 +1,7 @@
+import { PET_IMPORT_ACTION_ID_V1 } from '../../actions/actionIdsPetsV1.js';
+import { readPetImportOutcomeV1 } from '../../pets/importActionV1.js';
+import { createAccountPetReferenceV1 } from '../../pets/selection.js';
+import { projectBotTemplateFaceV1 } from './botTemplateV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1, HostReviewedChildrenPreparationRequestV1 } from '../../actions/executor/types.js';
 import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '../../actions/executor/resultProjection.js';
@@ -11,7 +15,7 @@ import { decodeBase64 } from '../../crypto/base64.js';
 import { admitSessionSpawnNewTargetedAuthoringInputV2, SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { readBotTemplateInstanceV1, type BotTemplateInstanceV1 } from './templateInstanceV1.js';
 import { projectBotTemplateArtifactHeaderV1 } from './botTemplateV1.js';
-import { BotTemplateInstantiateInputV1Schema, type BotTemplatePreviewResultV1 } from './botTemplateActionsV1.js';
+import { BotTemplateInstantiateInputV1Schema, type BotTemplatePreviewResultV1, type BotTemplatePetOutcomeV1 } from './botTemplateActionsV1.js';
 import type { BotTemplateOperationPortV1 } from './botTemplateOperations.js';
 import { prepareBotTemplateSetupV1, applyBotTemplateMcpSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
 import { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
@@ -76,12 +80,15 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
       { homeId: machineSetupPlanInput.homeId, machineId: machineSetupPlanInput.machineId }, softwarePlan)) : undefined;
     // The parent settles after content and launch; a child-only early receipt cannot settle it.
     const { observeSessionCommit: _observeSessionCommit, ...creationSelection } = creation;
+    const selectedPet = content.pet && input.setup?.pet !== false ? content.pet : undefined;
+    const selectedFace = input.face ?? (content.identity.face ? projectBotTemplateFaceV1(content.identity.face) : undefined);
     const spawnInput = SessionSpawnNewActionInputV2Schema.parse({ ...creationSelection,
       ...(setup.connectedServices ? { connectedServices: setup.connectedServices } : {}),
       title: input.name ?? content.identity.name,
-      identity: { bot: { kind: 'bot' }, createdAsBot: true, ...(input.face ?? content.identity.face ? { botFace: input.face ?? content.identity.face } : {}) } });
+      identity: { bot: { kind: 'bot' }, createdAsBot: true, ...(selectedFace ? { botFace: selectedFace } : {}) } });
     const children: HostReviewedChildrenPreparationV1['children'] = [
-      { action: 'session.spawn_new', role: 'create_bot', input: projectNativeJsonValueForTransport(spawnInput) },
+      { action: 'session.spawn_new', role: 'create_bot', ...(!selectedPet ? { input: projectNativeJsonValueForTransport(spawnInput) } : {}) },
+      ...(selectedPet ? [{ action: PET_IMPORT_ACTION_ID_V1, role: 'template_pet', input: projectNativeJsonValueForTransport({ source: selectedPet.source }) }] : []),
       { action: 'prompt_doc.create', role: 'create_instructions' },
       { action: 'session.instructions.set', role: 'attach_instructions' },
       ...content.memoryRules.map(rule => ({ action: 'memory.remember' as const, role: `memory:${rule.key}` })),
@@ -116,7 +123,24 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
             if (failed) throw failed;
             return result.result;
           };
-          const result = await invoke('session.spawn_new', 'create_bot', spawnInput, { sessionCreation: {
+          let petOutcome: BotTemplatePetOutcomeV1 | undefined;
+          let birthInput = spawnInput;
+          if (selectedPet) {
+            let execution;
+            try {
+              if (!context.hostReviewedChild) return fail('admission_unavailable');
+              execution = await context.hostReviewedChild.invoke({ action: PET_IMPORT_ACTION_ID_V1, role: 'template_pet',
+                input: projectNativeJsonValueForTransport({ source: selectedPet.source }) });
+            } catch (error) { context.signal?.throwIfAborted(); execution = failure(error); }
+            const outcome = readPetImportOutcomeV1(execution);
+            if (outcome?.kind === 'added') {
+              const { pet } = outcome;
+              petOutcome = outcome;
+              birthInput = { ...spawnInput, identity: { ...spawnInput.identity, botFace: { ...selectedFace,
+                pet: createAccountPetReferenceV1(pet) } } };
+            } else petOutcome = outcome ?? { kind: 'could_not_add', errorCode: 'invalid_action_output' };
+          }
+          const result = await invoke('session.spawn_new', 'create_bot', birthInput, { sessionCreation: {
             hostOnboarding: { templateName: content.identity.name, templateVersion: resolved.release.version,
               ...(resolved.presentation?.ownerDisplayName ? { authorDisplayName: resolved.presentation.ownerDisplayName } : {}),
               ...(content.firstTask === undefined ? {} : { firstTask: content.firstTask }) },
@@ -192,7 +216,7 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
           if (readRecord(result).type === 'success' && readRecord(readRecord(result).initialInput).status === 'notRequested'
             && knownSessionId && acceptedInstance)
             await bestEffortReportBotTemplateAcceptedVersionV1(recipient, { instance: acceptedInstance, copyId: knownSessionId }, context);
-          return { ok: true, result };
+          return { ok: true, result: petOutcome && readRecord(result).type === 'success' ? { ...readRecord(result), petOutcome } : result };
         } catch (error) {
           const refused = failure(contentFailure?.error ?? error);
           return { ...refused, ...(knownSessionId ? { details: { sessionId: knownSessionId, resourceIds } } : {}) };

@@ -2,8 +2,9 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/pro
 import { PET_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
 import { DaemonPetImportResponseV1Schema, DaemonPetValidatePackageResponseV1Schema, PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
 import { buildAccountPetCreateRequestV1, PetImportPreviewV1Schema } from '@happier-dev/protocol/pets/importActionV1';
+import { findMatchingAccountPetV1 } from '@happier-dev/protocol/pets/portablePetV1';
 import type { RegistryPetAcquisitionV1 } from '@happier-dev/protocol/registries/registryPetV1';
-import { createAccountPet, deleteAccountPet } from '@/sync/api/pets/apiAccountPets';
+import { createAccountPet, deleteAccountPet, listAccountPets } from '@/sync/api/pets/apiAccountPets';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
@@ -53,12 +54,21 @@ export function createUiPetActionExecute(account: PetActionAccount | null,
             account.assertCurrent(); args.context.signal?.throwIfAborted();
             if (!result.ok) return { ...result, ...('validation' in result && result.validation ? { details: { validation: result.validation } } : {}) };
             if (result.target !== 'account') return { ok: false, errorCode: 'invalid_response', error: 'Unexpected pet import target.' };
-            return result.account.ok ? { ok: true, result: { pet: result.account.pet } } : result.account;
+            return result.account.ok ? { ok: true, result: { pet: result.account.pet,
+                ...(result.account.reused ? { reused: true } : {}) } } : result.account;
         }
-        const acquired = await (await registry(args.context)).readRegistryPet(source);
-        const result = await createAccountPet(account.credentials, buildAccountPetCreateRequestV1(acquired),
+        if (source.kind === 'registry') {
+            const library = await listAccountPets(account.credentials, { request: account.request });
+            account.assertCurrent(); args.context.signal?.throwIfAborted();
+            if (!library.ok) return library;
+            const existing = findMatchingAccountPetV1(library.pets, source);
+            if (existing) return { ok: true, result: { pet: existing, reused: true } };
+        }
+        const request = source.kind === 'package' ? source.package
+            : buildAccountPetCreateRequestV1(await (await registry(args.context)).readRegistryPet(source));
+        const result = await createAccountPet(account.credentials, request,
             { request: account.request, signal: args.context.signal });
         account.assertCurrent(); args.context.signal?.throwIfAborted();
-        return result.ok ? { ok: true, result: { pet: result.pet } } : result;
+        return result.ok ? { ok: true, result: { pet: result.pet, ...(result.reused ? { reused: true } : {}) } } : result;
     };
 }
