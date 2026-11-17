@@ -171,7 +171,14 @@ describe('Home Discussion Action identity', () => {
       participant: { kind: 'session', sessionId: 'resolved-reviewer' } })).toEqual({ method: 'POST',
       path: '/v1/discussions/question/participants/invite', body: { participant: { kind: 'session', sessionId: 'resolved-reviewer' } } });
     expect(getActionSpec('discussion.participant.remove').inputSchema.safeParse(selected).success).toBe(false);
-    expect(getActionSpec('discussion.participant.policy.set').inputSchema.safeParse({ ...selected, answerPolicy: 'reads_only' }).success).toBe(false);
+    const policySelection = { ...selected, answerPolicy: 'reads_only' };
+    expect(getActionSpec('discussion.participant.policy.set').inputSchema.safeParse(policySelection).success).toBe(true);
+    expect(discussionFamily.discussionActionHttpWireInputSchemaV1('discussion.participant.policy.set').safeParse(policySelection).success).toBe(false);
+    expect(() => bindDiscussionActionHttpRequestV1('discussion.participant.policy.set', policySelection)).toThrow();
+    expect(bindDiscussionActionHttpRequestV1('discussion.participant.policy.set', { ...policySelection,
+      participant: { kind: 'session', sessionId: 'resolved-reviewer' } })).toEqual({ method: 'PUT',
+      path: '/v1/discussions/question/participants/policy', body: {
+        participant: { kind: 'session', sessionId: 'resolved-reviewer' }, answerPolicy: 'reads_only' } });
   });
 
   it('accepts committed reference producer output and keeps identical raw IDs in different Homes distinct', () => {
