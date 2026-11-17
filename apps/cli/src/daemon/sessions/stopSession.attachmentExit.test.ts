@@ -112,9 +112,11 @@ describe('Stop attachment retirement after real runner exit', () => {
         },
       });
       await expect(stop(sessionId)).resolves.toEqual(descriptor === 'unreadable'
-        ? { status: 'incomplete', reason: 'missing_topology_proof' }
+        ? { status: 'incomplete', reason: 'missing_topology_proof',
+            failureCause: expect.objectContaining({ phase: 'terminal_host.disposition.read', errorClass: 'Error' }) }
         : descriptor === 'present-readonly'
-          ? { status: 'incomplete', reason: 'terminal_attachment_descriptor_retirement_failed' }
+          ? { status: 'incomplete', reason: 'terminal_attachment_descriptor_retirement_failed',
+              failureCause: expect.objectContaining({ phase: 'terminal_host.disposition.descriptor_retirement', errorClass: 'Error' }) }
         : { status: 'stopped' });
       expect(events).toEqual(lifecycle === 'owned' ? ['exited', 'dispose'] : ['exited']);
       await expect(readTerminalHostAttachmentState({ happyHomeDir: home, sessionId })).resolves.toMatchObject({
