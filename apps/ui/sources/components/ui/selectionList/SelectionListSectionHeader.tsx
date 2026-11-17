@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { SelectionListThemeSurfaceContext } from './SelectionListThemeSurfaceContext';
 import { View, Platform, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -137,6 +140,8 @@ export function SelectionListSectionHeader(
 ): React.ReactElement | null {
     const styles = stylesheet;
     const presentation = React.useContext(SelectionListOptionPresentationContext);
+    const surface = React.useContext(SelectionListThemeSurfaceContext)?.sectionTitle;
+    const themeSurfaceEnabled = useHappierThemeSurfaceOverridesEnabled();
     const isCard = presentation === 'card';
     if (props.title === undefined || props.title.length === 0) return null;
     const title = props.title;
@@ -157,7 +162,10 @@ export function SelectionListSectionHeader(
             style={[styles.container, isCard ? styles.cardContainer : null, presentation === 'menu' ? styles.menuContainer : null, presentation === 'section' ? styles.sectionContainer : null, props.containerStyle]}
             {...(gridAria === null ? {} : (gridAria.cell as unknown as Record<string, never>))}
         >
-            <Text style={[styles.label, presentation === 'section' ? styles.sectionLabel : null, props.monoTitle ? styles.monoLabel : null]}>{title}</Text>
+            <Text
+                {...(surface ? { dataSet: { ...surface, state: surface.state ?? 'default' } } : {})}
+                style={[styles.label, presentation === 'section' ? styles.sectionLabel : null, props.monoTitle ? styles.monoLabel : null, themeSurfaceStyles.surface(themeSurfaceEnabled ? surface : undefined)]}
+            >{title}</Text>
             {typeof props.count === 'number' ? (
                 <Text style={[styles.count, Typography.tabular()]}>{String(props.count)}</Text>
             ) : null}

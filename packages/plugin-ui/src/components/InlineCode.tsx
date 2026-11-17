@@ -39,6 +39,7 @@ export function InlineCode(props: InlineCodeProps): ReactElement {
 function InlineCodeText(props: HappierInlineCodeTextProps): ReactElement {
   return (
     <HappierText
+      {...{ dataSet: props.dataSet }}
       style={props.style}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
     >

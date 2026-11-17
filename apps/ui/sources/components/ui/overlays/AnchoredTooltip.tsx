@@ -1,3 +1,6 @@
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -58,8 +61,10 @@ export default function AnchoredTooltip(props: Readonly<{
 
 /** The bubble's semantic body, independent of the Popover's placement lifecycle. */
 export function AnchoredTooltipBubble(props: Readonly<{ label: string; content?: React.ReactNode; testID?: string }>) {
-    return <GlassSurface surfaceGroup="floating" role="tooltip" testID={props.testID} style={styles.bubble}>
-        {props.content ?? <Text style={styles.label}>{props.label}</Text>}
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+    const textSurface = { dataSet: themeSurfaceDataSet('tooltip', 'text', 'default'), style: themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tooltip', part: 'text' } : undefined) };
+    return <GlassSurface themeSurface={{ surface: 'tooltip', part: 'root' }} surfaceGroup="floating" role="tooltip" testID={props.testID} style={styles.bubble}>
+        {props.content ?? <Text {...{ dataSet: textSurface.dataSet }} style={[styles.label, textSurface.style]}>{props.label}</Text>}
         <SurfaceRim role="floating" radius={TOOLTIP_RADIUS_PX} border={null} />
     </GlassSurface>;
 }

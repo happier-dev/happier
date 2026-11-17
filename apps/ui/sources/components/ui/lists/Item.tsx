@@ -147,6 +147,8 @@ export interface ItemProps {
     pressableRef?: React.Ref<React.ComponentRef<typeof Pressable>>;
     /** Where a string title is drawn, for a caller that measures it (the row a page header grows from). */
     titleRef?: React.Ref<React.ComponentRef<typeof Text>>;
+    /** Semantic metadata on the title's existing text owner, including highlighted titles. */
+    titleDataSet?: Readonly<Record<string, unknown>>;
     title: React.ReactNode;
     subtitle?: React.ReactNode;
     subtitleTestID?: string;
@@ -824,6 +826,7 @@ export const Item = React.memo<ItemProps>((props) => {
         dataSet,
         pressableRef,
         titleRef,
+        titleDataSet,
         title,
         subtitle,
         subtitleTestID,
@@ -1653,6 +1656,7 @@ export const Item = React.memo<ItemProps>((props) => {
         ellipsizeMode?: ItemTextEllipsizeMode;
         testID?: string;
         highlightQuery?: string;
+        dataSet?: ItemProps['titleDataSet'];
         ref?: React.Ref<React.ComponentRef<typeof Text>>;
         /** Inline text that flows after the value's last word (a wrapping title's qualifier). */
         trailing?: React.ReactNode;
@@ -1665,7 +1669,7 @@ export const Item = React.memo<ItemProps>((props) => {
         const webMiddle = isWeb && params.ellipsizeMode === 'middle' && params.numberOfLines === 1
             ? splitForWebMiddleEllipsis(value)
             : null;
-        if (webMiddle) return <MiddleEllipsisText testID={params.testID} style={params.style} value={value} />;
+        if (webMiddle) return <MiddleEllipsisText testID={params.testID} dataSet={params.dataSet} style={params.style} value={value} />;
         const content = highlightRanges?.length ? <FindHighlightedText text={value} ranges={highlightRanges} /> : useWebStartEllipsis ? (
             <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>{value}</Text>
         ) : value;
@@ -1673,6 +1677,7 @@ export const Item = React.memo<ItemProps>((props) => {
             <Text
                 ref={params.ref}
                 testID={params.testID}
+                {...{ dataSet: params.dataSet }}
                 style={[
                     params.style,
                     useWebStartEllipsis ? WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE : null,
@@ -1737,6 +1742,7 @@ export const Item = React.memo<ItemProps>((props) => {
                                 {renderPrimitiveText({
                                     value: title,
                                     ref: titleRef,
+                                    dataSet: titleDataSet,
                                     style: [styles.title, titleSizeStyle, titleColor, titleStyle],
                                     // A title that may wrap (`titleLines` 0) wraps beside its meta, as a catalog row's does,
                                     // instead of being cut to the readable minimum the meta leaves it.
@@ -1768,6 +1774,7 @@ export const Item = React.memo<ItemProps>((props) => {
                             {renderPrimitiveText({
                                 value: title,
                                 ref: titleRef,
+                                dataSet: titleDataSet,
                                 style: [styles.title, titleSizeStyle, titleColor, titleStyle],
                                 // A qualified title (a same-named machine's telling suffix) is one line in every row role: the
                                 // name shortens and the qualifier stays whole beside it, never beside half a wrapped name.
@@ -1783,6 +1790,7 @@ export const Item = React.memo<ItemProps>((props) => {
                     renderPrimitiveText({
                         value: title,
                         ref: titleRef,
+                        dataSet: titleDataSet,
                         style: [styles.title, titleSizeStyle, titleColor, titleStyle],
                         numberOfLines: titleLines ?? (catalogGeometry ? undefined : columnDescribedRow ? 1 : titleHighlightQuery ? HIGHLIGHTED_TITLE_MAX_LINES : resolveItemTitleMaxLines(Boolean(subtitle), { page: isPageRow, menu: isMenuRow })) ?? undefined,
                         ellipsizeMode: titleEllipsizeMode,
@@ -2023,6 +2031,7 @@ export const Item = React.memo<ItemProps>((props) => {
         style,
         title,
         titleColor,
+        titleDataSet,
         titleEllipsizeMode,
         titleHighlightQuery,
         titleLines,

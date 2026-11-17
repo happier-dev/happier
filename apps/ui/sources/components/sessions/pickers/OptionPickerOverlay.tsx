@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { SurfaceAddress } from '@happier-dev/plugin-ui';
+import type { ThemeSelectionSurfaceBinding } from '@happier-dev/plugin-ui/presentation';
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS, HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
@@ -120,6 +122,8 @@ export type OptionPickerOption<TValue = string> = Readonly<{
     /** Informational content beside the title, through SelectionList's measured title slot. */
     titleAccessory?: React.ReactNode;
     trailingStatusIcon?: React.ReactNode;
+    /** Where a default came from ("Team default"), quiet text in the trailing slot; picker rows only, never chips. */
+    attribution?: string | null;
     description?: string;
     /** Item's existing text allowance; 0 shows the complete description. */
     descriptionLines?: number;
@@ -181,6 +185,8 @@ type CustomValueCompatibility<TValue> = TValue extends string
         | CustomValueEnabled<TValue>;
 
 export type OptionPickerOverlayProps<TValue = string> = Readonly<{
+    themeSurface?: ThemeSelectionSurfaceBinding;
+    selectedOptionControlsSurface?: SurfaceAddress;
     title: string;
     /** Before the title (the way back while one source is browsed). */
     titleLeading?: React.ReactNode;
@@ -271,6 +277,10 @@ function OptionTrailingAccessory<TValue>(props: Readonly<{
             pointerEvents="box-none"
             style={props.card ? styles.optionCardIndicatorStacked : styles.optionCardIndicator}
         >
+            {props.option.attribution ? (
+                <Text testID={`${props.optionTestIDPrefix}-attribution:${props.valueKey}`} numberOfLines={1}
+                    style={styles.optionAttribution}>{props.option.attribution}</Text>
+            ) : null}
             {(props.selected && props.drawsSelectionMark) || props.option.trailingStatusIcon ? (
                 <View
                     testID={`model-picker-overlay-option-selection-status:${props.valueKey}`}
@@ -477,7 +487,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         const rightAccessory: SelectionListOption['rightAccessory'] = row => {
             const selected = row?.selected === true;
             const canToggle = canToggleFavorite(selected);
-            if (!selected && !option.trailingStatusIcon && !canToggle) return null;
+            if (!selected && !option.trailingStatusIcon && !option.attribution && !canToggle) return null;
             return <OptionTrailingAccessory option={option} valueKey={valueKey} selected={selected}
                 drawsSelectionMark={multiColumn} favorite={favorite} canToggleFavorite={canToggle}
                 optionTestIDPrefix={optionTestIDPrefix} favoriteOptions={props.favoriteOptions} card={multiColumn} />;
@@ -525,9 +535,10 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     });
     const controlsContextValue = React.useMemo(() => ({
         controls: props.selectedOptionControls,
+        effortSurface: props.selectedOptionControlsSurface,
         onSelect: props.onSelectOptionControlValue,
         multiColumn,
-    }), [multiColumn, props.onSelectOptionControlValue, props.selectedOptionControls]);
+    }), [multiColumn, props.onSelectOptionControlValue, props.selectedOptionControls, props.selectedOptionControlsSurface]);
 
     const probe = props.probe;
     const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;
@@ -729,6 +740,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
             {totalOptionCount > 0 && !wholePaneScrolls ? headerNode : null}
             {totalOptionCount > 0 ? (
                 <SelectionList
+                    themeSurface={props.themeSurface}
                     testID="model-picker-overlay-selection-list"
                     bodyHeader={paneHeader}
                     bodyFooter={wholePaneScrolls
@@ -855,6 +867,7 @@ const styles = StyleSheet.create((theme) => ({
     noteText: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
     optionCardIconSlot: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
     optionSelectionStatus: { alignItems: 'center', justifyContent: 'flex-start', gap: theme.space.s2 },
+    optionAttribution: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
     optionSelectionMark: { width: 20, height: 14, alignItems: 'center', justifyContent: 'center' },
     optionCardStatusIcon: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
     optionCardIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s6, zIndex: 2, elevation: 2 },

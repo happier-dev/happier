@@ -21,6 +21,9 @@ import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
+import type { ThemeSelectionSurfaceBinding } from '../themeSurface.js';
+import { resolveThemeSurfaceAddress, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import type {
   CollectionConditionEdit,
   CollectionConditionField,
@@ -69,6 +72,7 @@ export type HappierCollectionConditionEditorHost = Readonly<{
   Text: ComponentType<
     Readonly<{
       role: HappierCollectionConditionTextRole;
+      surface?: SurfaceAddress;
       numberOfLines?: number;
       accessibilityRole?: 'header';
       testID?: string;
@@ -172,6 +176,8 @@ export type HappierCollectionConditionEditorProps = Readonly<{
   /** Words for a whole condition when its values read as fewer choices (a status group stored as its states). */
   summarizeValues?: (field: CollectionConditionField, values: readonly JsonValue[]) => readonly string[] | null;
   renderValuePicker?: HappierCollectionConditionValuePicker;
+  /** Explicit semantic bindings for fields whose choices have a public theme surface. */
+  valueSurfaceByField?: Readonly<Record<string, ThemeSelectionSurfaceBinding>>;
   /** Demand only while a value list is presented; null on Back/dismissal/unmount. Never asks for a read. */
   onValuePickerChange?: (request: CollectionConditionValueCountRequest | null) => void;
   maxHeight?: number;
@@ -547,6 +553,7 @@ export const HappierCollectionConditionEditor = memo(
       ) : (
         <ValueList
           field={field}
+          themeSurface={props.valueSurfaceByField?.[field.id]}
           row={rowForField(field.id)}
           host={host}
           labels={labels}
@@ -838,6 +845,7 @@ type PressStyle = (
 /** A field's values, open in place under it. The popover's own body scrolls them with everything else. */
 function ValueList(
   props: Readonly<{
+    themeSurface?: ThemeSelectionSurfaceBinding;
     field: CollectionConditionField;
     row: CollectionConditionRow | null;
     host: HappierCollectionConditionEditorHost;
@@ -851,6 +859,7 @@ function ValueList(
   }>,
 ): ReactElement {
   const { field, host, labels } = props;
+  const rootSurface = useThemeSurfaceBinding(props.themeSurface?.root);
   const [query, setQuery] = useState('');
   const needle = query.trim().toLocaleLowerCase();
   const options = needle
@@ -863,7 +872,7 @@ function ValueList(
   const multi = isMultiValue(field);
   const { Text, Icon, SearchField } = host;
   return (
-    <View testID={`collection-filter-values:${field.id}`}>
+    <View testID={`collection-filter-values:${field.id}`} {...{ dataSet: rootSurface.dataSet }} style={rootSurface.style as ViewStyle}>
       {field.valueOptions.length > M.searchThreshold ? (
         <SearchField
           value={query}
@@ -881,6 +890,9 @@ function ValueList(
       {options.map((option) => {
         const selected =
           props.row !== null && optionPicked(props.row.values, option);
+        const surfaceFacts = { selected, disabled: option.disabled === true };
+        const rowSurface = props.themeSurface ? resolveThemeSurfaceAddress(props.themeSurface.row, surfaceFacts) : undefined;
+        const labelSurface = props.themeSurface?.label ? resolveThemeSurfaceAddress(props.themeSurface.label, surfaceFacts) : undefined;
         const label =
           option.label ??
           (typeof option.value === 'string'
@@ -890,6 +902,7 @@ function ValueList(
         return (
           <HappierPressable
             key={JSON.stringify(option.value)}
+            themeSurface={rowSurface}
             testID={`collection-filter-value:${field.id}:${valueKey}`}
             accessibilityRole={multi ? 'checkbox' : 'radio'}
             accessibilityLabel={label}
@@ -899,7 +912,7 @@ function ValueList(
             style={(state) => props.press(state, styles.valueOption, 'transparent')}
           >
             <View style={styles.grow}>
-              <Text role="option" numberOfLines={1}>
+              <Text role="option" numberOfLines={1} surface={labelSurface}>
                 {label}
               </Text>
             </View>

@@ -404,6 +404,7 @@ const WEB_CORNER_RADII = ['borderRadius', 'borderTopLeftRadius', 'borderTopRight
 /** Core shared frames and sheets bind the same material owner as mounted plugin surfaces. */
 function renderGlassMaterialSurface(input: Parameters<HappierMaterialSurfaceRender>[0], floatingRole?: FloatingSurfaceRole): React.ReactElement {
     return <GlassSurface
+        themeSurface={input.themeSurface}
         surfaceGroup={input.role} finishRole={input.finishRole ?? 'card'} nested={input.role === 'floating' ? input.nested : true}
         noCoat={input.noCoat}
         floatingRole={floatingRole ?? input.floatingRole}

@@ -1,3 +1,4 @@
+import { resolveThemeSurfaceState, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import {
   createContext,
   useCallback,
@@ -10,6 +11,7 @@ import {
 } from 'react';
 import {
   Platform,
+  Pressable,
   TextInput as ReactNativeTextInput,
   View,
 } from 'react-native';
@@ -491,6 +493,10 @@ export function resolveHappierFieldTextColors(palette: HappierUiPalette, theme: 
 const SEARCH_FIELD_END_STYLE = { flexDirection: 'row', alignItems: 'center', gap: 6 } as const;
 
 export function HappierTextField(props: HappierTextFieldProps) {
+  const surfaceState = resolveThemeSurfaceState('input', { disabled: props.disabled });
+  const rootAddress = { surface: 'input', part: 'root', state: surfaceState } as const;
+  const rootSurface = useThemeSurfaceBinding(rootAddress);
+  const textSurface = useThemeSurfaceBinding({ surface: 'input', part: 'text', state: surfaceState });
   const paintColor = useHappierMaterialColorResolver();
   const palette = useOptionalHappierUiPalette(props.theme);
   const searchInputRef = useRef<HappierFocusable | null>(null);
@@ -642,6 +648,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
         onCompositionStart: handleCompositionStart,
         onCompositionEnd: handleCompositionEnd,
         ...HAPPIER_TEXT_INPUT_WEB_MARKER,
+        dataSet: { ...HAPPIER_TEXT_INPUT_WEB_MARKER.dataSet, ...textSurface.dataSet },
       } as Record<string, unknown>)}
       style={[props.appearance === 'search' ? {
           ...textStyle, flex: 1, minWidth: 0,
@@ -674,8 +681,11 @@ export function HappierTextField(props: HappierTextFieldProps) {
           }
         : props.leading === undefined && props.trailing === undefined
         ? {
-            ...wellStyle,
             ...textStyle,
+            flexGrow: 1,
+            padding: 0,
+            borderWidth: 0,
+            backgroundColor: 'transparent',
             textAlignVertical: props.multiline ? 'top' : 'center',
           }
         : {
@@ -686,11 +696,12 @@ export function HappierTextField(props: HappierTextFieldProps) {
             ...textStyle,
             backgroundColor: 'transparent',
             textAlignVertical: 'center',
-          }, HAPPIER_TEXT_INPUT_FOCUS_RESET_STYLE]}
+          }, HAPPIER_TEXT_INPUT_FOCUS_RESET_STYLE, textSurface.style]}
     />
   );
   if (props.appearance === 'search') return (
     <HappierSearchFieldBox
+      themeSurface={rootAddress}
       testID={props.testID}
       radius={palette?.searchFieldRadiusPx ?? props.theme.radii.control}
       minimumTargetSize={props.minimumTouchTarget}
@@ -718,6 +729,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
   if (fieldAppearance !== null) {
     return (
       <HappierFieldTextBox
+        themeSurface={rootAddress}
         multiline={props.multiline}
         // The marks are decoration around the value; the field's name stays its `label`.
         leading={props.leading === undefined ? undefined : (
@@ -750,16 +762,22 @@ export function HappierTextField(props: HappierTextFieldProps) {
       </HappierFieldTextBox>
     );
   }
-  if (props.leading === undefined && props.trailing === undefined) return input;
+  if (documentTextStyle !== null) return <View {...{ dataSet: rootSurface.dataSet }} style={rootSurface.style}>{input}</View>;
+  if (props.leading === undefined && props.trailing === undefined) return (
+    <Pressable {...{ dataSet: rootSurface.dataSet }} accessible={false} focusable={false} tabIndex={-1} onPress={() => searchInputRef.current?.focus()} style={[wellStyle, { backgroundColor: paintColor(props.theme.colors.control) }, rootSurface.style]}>
+      {input}
+    </Pressable>
+  );
   return (
     <View
-      style={{
+      {...{ dataSet: rootSurface.dataSet }}
+      style={[{
         ...wellStyle,
         flexDirection: 'row',
         alignItems: 'center',
         gap: props.theme.spacing.small,
         backgroundColor: paintColor(props.theme.colors.control),
-      }}
+      }, rootSurface.style]}
     >
       {props.leading === undefined ? null : (
         <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
@@ -784,6 +802,8 @@ export function HappierTextField(props: HappierTextFieldProps) {
  */
 export function HappierToggle(props: Readonly<{
   label: string;
+  /** Accessible switch name when its surrounding field uses a different label. */
+  accessibilityLabel?: string;
   value: boolean;
   onChange: (value: boolean) => void;
   disabled?: boolean;
@@ -816,7 +836,7 @@ export function HappierToggle(props: Readonly<{
         thumb: palette.switchThumb,
         focusRing: props.theme.colors.focus,
       }}
-      accessibilityLabel={props.label}
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityHint={combineAccessibilityHints(fieldIssue.descriptionHint, fieldIssue.issueHint)}
       describedById={fieldIssue.descriptionId}
       invalid={fieldIssue.invalid}

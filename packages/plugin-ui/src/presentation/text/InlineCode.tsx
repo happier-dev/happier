@@ -1,3 +1,4 @@
+import { useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import {
   memo,
   type ComponentType,
@@ -21,6 +22,7 @@ export const HAPPIER_INLINE_CODE_METRICS = Object.freeze({
 
 export type HappierInlineCodeTextProps = Readonly<{
   style: HappierStyleProp;
+  dataSet?: Readonly<Record<string, string>>;
   testID?: string;
   children: ReactNode;
 }>;
@@ -57,14 +59,18 @@ export const HappierInlineCode = memo(function HappierInlineCode(
   props: HappierInlineCodeProps,
 ): ReactElement {
   const { Text } = props;
+  const typeStyle = {
+    ...(props.fontFamily === undefined ? {} : { fontFamily: props.fontFamily }),
+    fontSize: HAPPIER_INLINE_CODE_METRICS.fontSizePx,
+  };
+  const rootSurface = useThemeSurfaceBinding({ surface: 'inline-code', part: 'root' });
+  const textSurface = useThemeSurfaceBinding({ surface: 'inline-code', part: 'text' });
   return (
     <Text
+      dataSet={rootSurface.dataSet}
       style={[
         {
-          ...(props.fontFamily === undefined
-            ? {}
-            : { fontFamily: props.fontFamily }),
-          fontSize: HAPPIER_INLINE_CODE_METRICS.fontSizePx,
+          ...typeStyle,
           color: props.ink,
           backgroundColor: props.fill,
           borderRadius: HAPPIER_INLINE_CODE_METRICS.radiusPx,
@@ -74,10 +80,11 @@ export const HappierInlineCode = memo(function HappierInlineCode(
         },
         WEB_NO_WRAP_STYLE,
         props.style,
+        rootSurface.style,
       ]}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
     >
-      {props.children}
+      <Text dataSet={textSurface.dataSet} style={[typeStyle, textSurface.style]}>{props.children}</Text>
     </Text>
   );
 });

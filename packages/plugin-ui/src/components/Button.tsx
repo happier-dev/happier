@@ -1,3 +1,4 @@
+import { resolveThemeSurfaceState, useThemeSurfaceBinder } from '../presentation/themeSurfaceBinding.js';
 import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { createContext, useContext, type ReactElement, type ReactNode } from 'react';
@@ -152,6 +153,7 @@ export function Button({
 
   return (
     <HappierPressable
+      themeSurface={{ surface: 'button', part: 'root' }}
       testID={testID}
       accessibilityLabel={accessibleName}
       disabled={disabled}
@@ -201,6 +203,7 @@ Button.happierPageOperation = (
  * button as one that acts — one face, never a second button style.
  */
 export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled: boolean, joinedEdge?: 'start' | 'end') {
+  const bindSurface = useThemeSurfaceBinder();
   const theme = usePluginTheme();
   const material = useHappierButtonMaterial(theme);
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? false;
@@ -243,9 +246,13 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
   const renderContent = (
     state: HappierPressableStyleState,
     content: Readonly<{ icon?: ReactNode; children: ReactNode; spinnerTestID?: string; singleLine?: boolean }>,
-  ): ReactElement => (
-    <>
-      <HappierSurfaceGradientLayer gradient={resolveHappierButtonChrome({ theme, variant, disabled: state.disabled, focused: state.focused, pressed: state.pressed }).gradient} borderRadius={theme.radii.control} />
+  ): ReactElement => {
+    const surfaceState = resolveThemeSurfaceState('button', state);
+    const rootSurface = bindSurface({ surface: 'button', part: 'root', state: surfaceState });
+    const labelSurface = bindSurface({ surface: 'button', part: 'label', state: surfaceState });
+    const iconSurface = bindSurface({ surface: 'button', part: 'icon', state: surfaceState });
+    return <>
+      <HappierSurfaceGradientLayer overrideBackgroundColor={rootSurface.style?.backgroundColor} gradient={resolveHappierButtonChrome({ theme, variant, disabled: state.disabled, focused: state.focused, pressed: state.pressed }).gradient} borderRadius={theme.radii.control} />
       {state.busy ? (
         <HappierSpinner
           size={iconMatchedSpinnerSize(theme.typography.label.fontSize)}
@@ -253,7 +260,7 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
           testID={content.spinnerTestID}
         />
       ) : content.icon === undefined ? null : (
-        <PluginUiLeadingGlyphInkContext.Provider value={foreground}>{content.icon}</PluginUiLeadingGlyphInkContext.Provider>
+        <View {...{ dataSet: iconSurface.dataSet }} style={iconSurface.style}><PluginUiLeadingGlyphInkContext.Provider value={foreground}>{content.icon}</PluginUiLeadingGlyphInkContext.Provider></View>
       )}
       {/*
         The label keeps its box while busy instead of being replaced, so the
@@ -263,13 +270,13 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
       */}
       <View style={state.busy ? { opacity: 0, flexShrink: 1 } : { flexShrink: 1 }}>
         {typeof content.children === 'string' || content.children === undefined ? (
-          <HappierText variant="label" {...(content.singleLine === true ? { numberOfLines: 1 } : {})} style={{ color: foreground, textAlign: 'center' }}>
+          <HappierText {...{ dataSet: labelSurface.dataSet }} variant="label" {...(content.singleLine === true ? { numberOfLines: 1 } : {})} style={[{ color: foreground, textAlign: 'center' }, labelSurface.style]}>
             {content.children}
           </HappierText>
         ) : content.children}
       </View>
-    </>
-  );
+    </>;
+  };
   return { foreground, style, renderContent };
 }
 
@@ -325,6 +332,7 @@ function IconButtonLocal({
   testID,
   onPress,
 }: Omit<IconButtonProps, 'action' | 'onPress'> & Readonly<{ onPress: () => unknown }>): ReactElement {
+  const bindSurface = useThemeSurfaceBinder();
   const theme = usePluginTheme();
   const accessibleName = requireAccessibleButtonName(
     resolveAuthorText(usePluginTranslation(), accessibilityLabel, accessibilityLabelKey),
@@ -350,9 +358,14 @@ function IconButtonLocal({
       style={(state) => ({ ...chrome(state).frame, width: size, height: size })}
     >
       {/* The frame is the drawn square's box; a finger's hit area reaches past it (HappierPressable). */}
-      {(state) => <View style={chrome(state).surface}>
-        {state.busy ? <HappierSpinner size="small" color={theme.colors.secondaryText} /> : icon}
-      </View>}
+      {(state) => {
+        const surfaceState = resolveThemeSurfaceState('button', state);
+        const rootSurface = bindSurface({ surface: 'button', part: 'root', state: surfaceState });
+        const iconSurface = bindSurface({ surface: 'button', part: 'icon', state: surfaceState });
+        return <View {...{ dataSet: rootSurface.dataSet }} style={[chrome(state).surface, rootSurface.style]}>
+          <View {...{ dataSet: iconSurface.dataSet }} style={iconSurface.style}>{state.busy ? <HappierSpinner size="small" color={theme.colors.secondaryText} /> : icon}</View>
+        </View>;
+      }}
     </HappierPressable>
   );
 }

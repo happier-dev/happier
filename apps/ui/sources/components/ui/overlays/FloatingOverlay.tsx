@@ -1,3 +1,4 @@
+import type { SurfaceAddress } from '@happier-dev/plugin-ui';
 import * as React from 'react';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { PopoverScrollSourceProvider } from '@/components/ui/popover/PopoverScrollSource';
@@ -166,6 +167,7 @@ export type FloatingOverlayScrollProps = Pick<ScrollViewProps,
     | 'onLayout' | 'onContentSizeChange' | 'onScroll' | 'onMomentumScrollEnd'>;
 
 interface FloatingOverlayProps {
+    themeSurface?: SurfaceAddress;
     children: React.ReactNode;
     renderScrollContent?: (scroll: FloatingOverlayScrollProps) => React.ReactNode;
     /** Fixed menu chrome; only the results between these slots scroll. */
@@ -387,7 +389,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
             containerPaint,
         ]}>
             {arrowNode}
-            <GlassSurface surfaceGroup="floating" noCoat={insideSheet} finishRole={insideSheet ? null : undefined}
+            <GlassSurface themeSurface={props.themeSurface} surfaceGroup="floating" noCoat={insideSheet} finishRole={insideSheet ? null : undefined}
                 style={insideSheet ? { maxHeight, flexShrink: 1, minHeight: 0 } : [
                     surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
                     { maxHeight },

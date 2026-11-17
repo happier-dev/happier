@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 
+import { SelectionList } from '../SelectionList';
 import type { SelectionListProps, SelectionListStep } from '../_types';
 
 vi.mock('react-native', async () => {
@@ -42,7 +43,6 @@ function defaultProps(overrides: Partial<SelectionListProps> = {}): SelectionLis
 
 describe('SelectionList accessibility contract (Phase 2.10)', () => {
     it('keeps a non-filtering scope step labelled but read-only', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const rootStep: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -92,7 +92,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
                 options: [option],
             }],
         };
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList
                 {...defaultProps({
@@ -117,7 +116,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
     });
 
     it('keeps an empty result message inside the listbox group structure', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps({
             rootStep: {
                 id: 'root',
@@ -131,7 +129,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
     });
 
     it('exposes role=combobox + aria-controls + aria-expanded on the focused input element, controlling the listbox body (web)', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps()} />);
         // Per Phase 2.10: the combobox role MUST live on the input, not the wrapper,
         // so that aria-activedescendant updates are announced by screen readers.
@@ -151,7 +148,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
     });
 
     it('puts option identity, selection, and position on the one actionable row node', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps({ selectedOptionId: 'opt-b' })} />,
         );
@@ -177,7 +173,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
     });
 
     it('applies option accessibility labels to plain actionable option rows', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList
                 {...defaultProps({
@@ -205,7 +200,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
     });
 
     it('announces disabled state and positions disabled options in the full visible set', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps({
             rootStep: {
                 id: 'root',
@@ -232,7 +226,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
     });
 
     it('uses the custom-content pressable itself as the single option activation owner', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps({
             rootStep: {
                 id: 'root',
@@ -257,7 +250,6 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
     });
 
     it('keeps exactly the roving focused option in the Tab order for a headerless list', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps({
             rootStep: {
                 id: 'root',

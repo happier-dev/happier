@@ -1,4 +1,6 @@
 import type { ReactElement, ReactNode } from 'react';
+import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
+import { useThemeSurfaceBinding } from '../presentation/themeSurfaceBinding.js';
 import { View } from 'react-native';
 
 import {
@@ -47,6 +49,7 @@ const ICONS: Readonly<Record<HappierCollectionConditionIcon, IconName>> = {
 function PluginConditionText(
   props: Readonly<{
     role: HappierCollectionConditionTextRole;
+    surface?: SurfaceAddress;
     numberOfLines?: number;
     accessibilityRole?: 'header';
     testID?: string;
@@ -54,15 +57,17 @@ function PluginConditionText(
   }>,
 ): ReactElement {
   const theme = usePluginTheme();
+  const surface = useThemeSurfaceBinding(props.surface);
   const spec = TEXT[props.role];
   const style = useHappierTypeRoleStyle(spec.role, theme);
   return (
     <HappierText
+      {...{ dataSet: surface.dataSet }}
       numberOfLines={props.numberOfLines}
       accessibilityRole={props.accessibilityRole}
       tabularNumbers={props.role === 'count' || props.role === 'optionCount'}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
-      style={{ ...style, color: theme.colors[spec.ink], flexShrink: 1 }}
+      style={[{ ...style, color: theme.colors[spec.ink], flexShrink: 1 }, surface.style]}
     >
       {props.children}
     </HappierText>

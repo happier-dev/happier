@@ -105,6 +105,44 @@ const press = (container: HTMLElement, testID: string) =>
   });
 
 describe('HappierCollectionConditionEditor', () => {
+  it('emits the supplied Project surface on the real opened project choices without binding other fields', async () => {
+    const project = { serverId: 'home', projectKey: 'project' };
+    let filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
+    const view = () => (
+      <HappierCollectionConditionEditor host={host} labels={labels}
+        model={conditionModelFromFilter(sessionWorkFilterFields, filter, { fields: {
+          projects: { label: 'Project', valueOptions: [
+            { value: project, label: 'Workspace' },
+            { value: { serverId: 'home', projectKey: 'unavailable' }, label: 'Unavailable workspace', disabled: true },
+          ] },
+        } })}
+        valueSurfaceByField={{ projects: {
+          root: { surface: 'project-picker', part: 'root', state: 'default' },
+          row: { surface: 'project-picker', part: 'row', state: 'default' },
+        } }}
+        onChange={edit => { filter = applyCollectionConditionEdit(sessionWorkFilterFields, filter, edit); }} />
+    );
+    const mount = mountThroughReactNativeWeb(view());
+    try {
+      await press(mount.container, 'collection-filter-field:projects');
+      const choices = mount.container.querySelector('[data-testid="collection-filter-values:projects"]');
+      expect(choices?.textContent).toContain('Workspace');
+      expect(choices?.getAttribute('data-surface')).toBe('project-picker');
+      expect(choices?.getAttribute('data-part')).toBe('root');
+      expect(choices?.getAttribute('data-state')).toBe('default');
+      expect(choices?.querySelector('[data-surface="project-picker"][data-part="row"][data-state="default"]')?.textContent).toContain('Workspace');
+      expect(choices?.querySelector('[data-surface="project-picker"][data-part="row"][data-state="disabled"]')?.textContent).toContain('Unavailable workspace');
+      await act(() => choices?.querySelector<HTMLElement>('[data-part="row"][data-state="default"]')?.click());
+      await mount.render(view());
+      expect(mount.container.querySelector('[data-surface="project-picker"][data-part="row"][data-state="selected"]')?.textContent).toContain('Workspace');
+      expect(mount.container.querySelector('[data-surface="project-picker"][data-part="root"]')?.getAttribute('data-state')).toBe('default');
+      await press(mount.container, 'collection-filter-field:statuses');
+      expect(mount.container.querySelector('[data-testid="collection-filter-values:statuses"]')?.getAttribute('data-surface')).toBeNull();
+    } finally {
+      mount.unmount();
+    }
+  });
+
   it('demands value counts only for an open value list, keeps demand stable on count arrivals and releases it on collapse/unmount', async () => {
     const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
     const demands: (CollectionConditionValueCountRequest | null)[] = [];

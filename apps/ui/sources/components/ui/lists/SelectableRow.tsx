@@ -1,3 +1,4 @@
+import { resolveThemeSurfaceAddress } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, Pressable, StyleProp, ViewStyle, TextStyle, StyleSheet as RNStyleSheet } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -338,6 +339,7 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
     };
 
     return <HappierOptionRow
+        themeSurface={isMenu ? resolveThemeSurfaceAddress({ surface: 'menu', part: 'row' }, { disabled, selected }) : undefined}
         ref={ref as React.Ref<HappierFocusable>}
         title={props.title}
         subtitle={props.subtitle}

@@ -658,7 +658,7 @@ export function HappierFindBar(props: HappierFindBarProps) {
         )}
         // A narrow pane shrinks the field first; the count and controls never clip.
         style={[{ minHeight: barHeight, paddingRight: inline.paddingRightPx, borderWidth: StyleSheet.hairlineWidth, maxWidth: '100%' }, props.elevation ?? null] as HappierStyleProp}
-        renderSurface={body => <HappierMaterialSurface materialRole="floating" finishRole="floating" gradient={props.gradient}
+        renderSurface={body => <HappierMaterialSurface themeSurface={body.themeSurface} materialRole="floating" finishRole="floating" gradient={props.gradient}
           renderMaterialSurface={props.renderMaterialSurface} testID={props.testID ? `${props.testID}.capsule` : undefined}
           style={body.style}>{body.children}</HappierMaterialSurface>}
       >

@@ -18,18 +18,19 @@ export function MiddleEllipsisText(props: Readonly<{
     value: string;
     style?: StyleProp<TextStyle>;
     testID?: string;
+    dataSet?: Readonly<Record<string, unknown>>;
     accessibilityRole?: 'header';
 }>): React.ReactElement {
     const split = Platform.OS === 'web' ? splitForWebMiddleEllipsis(props.value) : null;
     if (!split) {
         return (
-            <Text testID={props.testID} style={props.style} numberOfLines={1} ellipsizeMode="middle" accessibilityRole={props.accessibilityRole}>
+            <Text testID={props.testID} {...{ dataSet: props.dataSet }} style={props.style} numberOfLines={1} ellipsizeMode="middle" accessibilityRole={props.accessibilityRole}>
                 {props.value}
             </Text>
         );
     }
     return (
-        <Text testID={props.testID} style={[props.style, ROW_STYLE]} accessibilityRole={props.accessibilityRole}>
+        <Text testID={props.testID} {...{ dataSet: props.dataSet }} style={[props.style, ROW_STYLE]} accessibilityRole={props.accessibilityRole}>
             <Text style={split.headStyle} numberOfLines={1} ellipsizeMode="tail">{split.head}</Text>
             <Text style={split.tailStyle} numberOfLines={1}>{split.tail}</Text>
         </Text>

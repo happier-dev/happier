@@ -17,6 +17,14 @@ export const THEME_SURFACE_REGISTRY = {
   'chat-header': { parts: { root: view, title: text, facts: view }, states: ['default'] },
   'tab-bar': { parts: { root: view, tab: view, label: text, icon: view }, states: ['default', 'disabled', 'selected'] },
   button: { parts: { root: view, label: text, icon: view }, states: ['default', 'disabled', 'selected'] },
+  'model-picker': { parts: { root: view, provider: text, row: view, effort: view }, states: ['default', 'selected', 'disabled'] },
+  'project-picker': { parts: { root: view, row: view, label: text }, states: ['default', 'selected', 'disabled'] },
+  menu: { parts: { root: view, row: view, separator: view }, states: ['default', 'disabled', 'selected', 'checked', 'expanded'] },
+  input: { parts: { root: view, text: text }, states: ['default', 'disabled'] },
+  dialog: { parts: { root: view, header: view, body: view, footer: view }, states: ['default'] },
+  switch: { parts: { root: view, track: view, thumb: view }, states: ['default', 'disabled', 'checked'] },
+  tooltip: { parts: { root: view, text: text }, states: ['default'] },
+  'inline-code': { parts: { root: text, text: text }, states: ['default'] },
 } as const satisfies Record<string, Readonly<{ parts: Readonly<Record<string, Part>>; states: readonly string[] }>>;
 
 export type SurfaceId = keyof typeof THEME_SURFACE_REGISTRY;
@@ -29,6 +37,21 @@ export type ThemeSurfacePaintDescriptor = Readonly<{
   label: string;
   paintRoles: readonly ThemeSurfacePaintRole[];
 }>;
+
+export type ThemeSurfaceReference = Readonly<{
+  id: SurfaceId;
+  parts: readonly string[];
+  states: readonly string[];
+}>;
+
+/** The guide and surface reference project the same emitted address authority. */
+export function getThemeSurfaceReference(): readonly ThemeSurfaceReference[] {
+  return (Object.keys(THEME_SURFACE_REGISTRY) as SurfaceId[]).map(id => ({
+    id,
+    parts: Object.keys(THEME_SURFACE_REGISTRY[id].parts),
+    states: THEME_SURFACE_REGISTRY[id].states,
+  }));
+}
 
 export function themeSurfaceDataSet<S extends SurfaceId>(surface: S, part: SurfacePart<S>, state: ThemeSurfaceState<S>) {
   return { surface, part, state } as const;

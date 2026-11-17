@@ -1,4 +1,5 @@
-import { Pressable as ReactNativePressable, Switch as ReactNativeSwitch, View, type ViewStyle } from 'react-native';
+import { resolveThemeSurfaceState, useThemeSurfaceBinder, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
+import { Pressable as ReactNativePressable, Switch as ReactNativeSwitch, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { HappierPressable } from '../interaction/Pressable.js';
 import { useHappierHitArea } from '../interaction/hitArea.js';
@@ -112,6 +113,7 @@ function isToggleKey(key: string): boolean {
  */
 export function HappierSwitchNative(props: HappierSwitchProps) {
   const { colors } = props;
+  const rootSurface = useThemeSurfaceBinding({ surface: 'switch', part: 'root', state: resolveThemeSurfaceState('switch', { disabled: props.disabled, checked: props.value }) });
   const hitArea = useHappierHitArea({ restingStyle: () => null, hitTarget: props.minimumTouchTarget, hitReach: props.hitReach });
   const toggle = props.onValueChange;
   const control = (
@@ -125,7 +127,8 @@ export function HappierSwitchNative(props: HappierSwitchProps) {
       accessibilityRole="switch"
       accessibilityLabel={props.accessibilityLabel}
       accessibilityHint={props.accessibilityHint}
-      style={props.style as ViewStyle | undefined}
+      {...{ dataSet: rootSurface.dataSet }}
+      style={[props.style, rootSurface.style] as StyleProp<ViewStyle>}
       onLayout={hitArea.onLayout}
       trackColor={{ false: colors.trackOff, true: colors.trackOn }}
       ios_backgroundColor={colors.trackOff}
@@ -157,12 +160,18 @@ export function HappierSwitchNative(props: HappierSwitchProps) {
 /** The drawn switch: the web control (see the module note). */
 export function HappierSwitch(props: HappierSwitchProps) {
   const { value, onValueChange, disabled, colors } = props;
+  const rootSurface = useThemeSurfaceBinding({ surface: 'switch', part: 'root', state: resolveThemeSurfaceState('switch', { disabled: props.disabled, checked: props.value }) });
+  const bindSurface = useThemeSurfaceBinder();
   const metrics = HAPPIER_SWITCH_METRICS[props.size ?? 'default'];
   const thumbTravel = (thumbWidth: number) => (value ? metrics.trackWidth - thumbWidth - metrics.padding * 2 : 0);
   const toggle = () => { onValueChange?.(!value); };
   const renderTrack = (pressed: boolean, focused: boolean) => {
+    const surfaceState = resolveThemeSurfaceState('switch', { disabled, checked: value });
+    const trackSurface = bindSurface({ surface: 'switch', part: 'track', state: surfaceState });
+    const thumbSurface = bindSurface({ surface: 'switch', part: 'thumb', state: surfaceState });
     const thumbWidth = metrics.thumbSize + (pressed && disabled !== true ? HAPPIER_SWITCH_METRICS.pressStretchPx : 0);
     return <View
+      {...{ dataSet: trackSurface.dataSet }}
       style={[
         {
           width: metrics.trackWidth,
@@ -175,9 +184,11 @@ export function HappierSwitch(props: HappierSwitchProps) {
         // The ring follows the drawn track, not the larger hit box around it.
         happierFocusRingStyle({ visible: focused, color: colors.focusRing }),
         props.reducedMotion ? null : TRACK_TRANSITION,
+        trackSurface.style,
       ]}
     >
       <View
+        {...{ dataSet: thumbSurface.dataSet }}
         style={[
           {
             width: thumbWidth,
@@ -190,6 +201,7 @@ export function HappierSwitch(props: HappierSwitchProps) {
             transform: [{ translateX: thumbTravel(thumbWidth) }],
           },
           props.reducedMotion ? null : THUMB_TRANSITION,
+          thumbSurface.style,
         ]}
       />
     </View>;
@@ -198,12 +210,13 @@ export function HappierSwitch(props: HappierSwitchProps) {
     // The enclosing row is the control; this is only its picture (no role, focus or press).
     return (
       <View
+        {...{ dataSet: rootSurface.dataSet }}
         pointerEvents="none"
         aria-hidden
         importantForAccessibility="no-hide-descendants"
         accessibilityElementsHidden
         testID={props.testID}
-        style={[props.style as ViewStyle | undefined, { opacity: disabled ? HAPPIER_SWITCH_METRICS.disabledOpacity : 1, alignSelf: 'flex-start' }]}
+        style={[props.style as ViewStyle | undefined, { opacity: disabled ? HAPPIER_SWITCH_METRICS.disabledOpacity : 1, alignSelf: 'flex-start' }, rootSurface.style]}
       >
         {renderTrack(false, false)}
       </View>
@@ -211,6 +224,7 @@ export function HappierSwitch(props: HappierSwitchProps) {
   }
   return (
     <HappierPressable
+      themeSurface={{ surface: 'switch', part: 'root' }}
       accessibilityRole="switch"
       accessibilityLabel={props.accessibilityLabel}
       accessibilityHint={props.accessibilityHint}

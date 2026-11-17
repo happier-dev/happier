@@ -266,7 +266,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
             ]}
         >
             <GlassLivePictureBackdropContext.Provider value={overLivePicture || props.material === 'overContent'}>
-            <GlassSurface surfaceGroup="floating" floatingRole="panel" enabled={framed && !fullscreen && props.material !== 'solid'}
+            <GlassSurface themeSurface={{ surface: 'dialog', part: 'root' }} surfaceGroup="floating" floatingRole="panel" enabled={framed && !fullscreen && props.material !== 'solid'}
                 finishRole={framed ? undefined : null}
                 solidColor={!framed ? 'transparent' : fullscreen ? theme.colors.surface.base : undefined} style={[
                 framed ? (fullscreen ? styles.fullscreenSurface : styles.clipSurface) : null,

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { resolveThemeSurfaceAddress, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -22,6 +24,7 @@ const NO_CONTROLS: readonly SessionConfigOptionControl[] = [];
  */
 export function OptionPickerSelectedControls() {
     const context = React.useContext(OptionPickerSelectedControlsContext);
+    const themeSurfaceEnabled = useHappierThemeSurfaceOverridesEnabled();
     const segmentedOverflow = React.useMemo(() => ({ label: t('common.more') }), []);
     const { multiColumn, onSelect } = context;
     const controls = context.controls ?? NO_CONTROLS;
@@ -64,11 +67,16 @@ export function OptionPickerSelectedControls() {
                     // Low · Medium · High · XHigh · Max stays one segmented row (owner ruling 2026-11-04).
                     const groups = option.groups?.length ? option.groups : [{ id: null, name: null, options: option.options ?? [] }];
                     const ordinal = option.id === PROVIDER_REASONING_EFFORT_OPTION_ID;
+                    const surface = ordinal && context.effortSurface
+                        ? resolveThemeSurfaceAddress(context.effortSurface, { disabled: control.disabled === true })
+                        : undefined;
                     const asSelect = resolveHappierChoiceControl({ kind: 'select', value: highlightedValue, multiple: false },
                         groups.flatMap(group => group.options.map(choice => ({ label: choice.name }))),
                         { ordinal }) === 'list';
                     return (
-                        <View key={option.id} testID={`${idBase}:${option.id}`} style={styles.group}>
+                        <View key={option.id} testID={`${idBase}:${option.id}`}
+                            {...(surface ? { dataSet: { ...surface, state: surface.state ?? 'default' } } : {})}
+                            style={[styles.group, themeSurfaceStyles.surface(themeSurfaceEnabled ? surface : undefined)]}>
                             <Text style={styles.title}>{option.name}</Text>
                             {secondary}
                             {groups.map(group => {

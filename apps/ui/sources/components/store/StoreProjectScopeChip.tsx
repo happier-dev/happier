@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
+import { PROJECT_PICKER_THEME_SURFACE } from '@/components/projects/projectPickerThemeSurface';
 import { storeProjectRouteParams } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
 import { SelectionList, SelectionListFilterChip } from '@/components/ui/selectionList';
@@ -22,6 +23,7 @@ function StoreProjectPicker(props: Readonly<{ project: QualifiedProjectKeyV1 | n
     const projects = useProjectPickerOptions();
     const options = projects.map(project => ({ id: storeProjectRouteParams(project).project!, label: project.label }));
     return <SelectionList
+        themeSurface={PROJECT_PICKER_THEME_SURFACE}
         testID="store.projectPicker"
         listAccessibilityLabel={t('storeInstalled.groupProject')}
         onRequestClose={props.onClose}

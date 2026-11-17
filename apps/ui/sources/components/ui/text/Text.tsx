@@ -139,6 +139,7 @@ export const Text = React.memo(
 );
 
 export type AppTextInputProps = RNTextInputProps & Readonly<{
+    dataSet?: Readonly<Record<string, string>>;
     variant?: HappierTypeRole;
     emphasis?: HappierTypeEmphasis;
     useDefaultTypography?: boolean;
@@ -192,7 +193,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
         }, [defaultStyle, scaledStyle, uiFontScale, paintColor, metricScale, placeholderInk, themeFontFamily]);
 
         const webAccessibilityProps = Platform.OS === 'web'
-            ? { ...HAPPIER_TEXT_INPUT_WEB_MARKER, ...(disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null) }
+            ? { ...HAPPIER_TEXT_INPUT_WEB_MARKER, dataSet: { ...HAPPIER_TEXT_INPUT_WEB_MARKER.dataSet, ...props.dataSet }, ...(disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null) }
             : {};
 
         return (

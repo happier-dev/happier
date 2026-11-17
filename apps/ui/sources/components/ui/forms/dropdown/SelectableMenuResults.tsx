@@ -1,3 +1,6 @@
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import * as React from 'react';
 import { Platform, Pressable, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -549,6 +552,8 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+    const separatorSurfaceStyle = themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'menu', part: 'separator' } : undefined);
     // A choice row (radio) shows which one is current; the mark yields to a row's own trailing content.
     const checkMark = <Icon name="check" size={ICON_SIZE.sm} color={theme.colors.text.primary} />;
     const rowAnchorRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
@@ -1004,7 +1009,7 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                 renderedCategories++;
                 return (
                     <View key={category.id}>
-                        {separated ? <View style={styles.categorySeparator} onLayout={chromeLayout(`${category.id}:separator`, MENU_ROW_METRICS.sectionPaddingVerticalPx * 2)} /> : null}
+                        {separated ? <View {...{ dataSet: themeSurfaceDataSet('menu', 'separator', 'default') }} style={[styles.categorySeparator, separatorSurfaceStyle]} onLayout={chromeLayout(`${category.id}:separator`, MENU_ROW_METRICS.sectionPaddingVerticalPx * 2)} /> : null}
                         {showCategoryTitles && category.title.trim().length > 0 ? (
                             decoration?.icon ? (
                                 <View style={styles.categoryHeader} accessibilityRole="header" onLayout={chromeLayout(`${category.id}:title`)}>

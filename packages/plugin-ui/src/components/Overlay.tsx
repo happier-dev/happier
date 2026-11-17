@@ -314,6 +314,7 @@ function PopoverPresentation({
   return (
     <View ref={anchorRef} collapsable={false}>
       <HappierPressable
+        themeSurface={buttonFace ? { surface: 'button', part: 'root' } : undefined}
         controlRef={(node) => {
           if (requestedFocusReturnRef === undefined) ownedFocusReturnRef.current = node as View | null;
         }}
@@ -702,6 +703,7 @@ function MenuRows({
     return (
       <HappierPressable
         key={item.id}
+        themeSurface={{ surface: 'menu', part: 'row' }}
         controlRef={(node) => registerItemRef(item.id, node as View | null)}
         accessibilityRole={item.kind === 'checkbox'
           ? 'checkbox'
@@ -965,7 +967,7 @@ function FloatingScrollSurface(props: Readonly<{ maxHeight: number; menu?: boole
   return (
     <HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider value={null}>
       <View style={[{ borderRadius: theme.radii.panel }, lift ?? null]}>
-        <Surface padding="none" materialRole="floating">
+        <Surface padding="none" materialRole="floating" themeSurface={props.menu ? { surface: 'menu', part: 'root' } : undefined}>
           <HappierScrollArea style={{ maxHeight: scrollMaxHeight }} contentContainerStyle={props.menu ? FLOATING_MENU_SCROLL_INSET : FLOATING_SURFACE_SCROLL_INSET}>
             <HappierStack gap={4}>{props.children}</HappierStack>
           </HappierScrollArea>

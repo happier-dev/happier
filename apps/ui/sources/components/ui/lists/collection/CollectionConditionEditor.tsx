@@ -1,4 +1,7 @@
 import * as React from 'react';
+import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -65,14 +68,17 @@ function conditionTextStyle(role: HappierCollectionConditionTextRole) {
 
 function ConditionText(props: Readonly<{
   role: HappierCollectionConditionTextRole;
+  surface?: SurfaceAddress;
   numberOfLines?: number;
   accessibilityRole?: 'header';
   testID?: string;
   children: React.ReactNode;
 }>) {
+  const enabled = useHappierThemeSurfaceOverridesEnabled();
   return (
     <Text
-      style={conditionTextStyle(props.role)}
+      {...(props.surface ? { dataSet: { ...props.surface, state: props.surface.state ?? 'default' } } : {})}
+      style={[conditionTextStyle(props.role), themeSurfaceStyles.surface(enabled ? props.surface : undefined)]}
       numberOfLines={props.numberOfLines}
       accessibilityRole={props.accessibilityRole}
       accessibilityLiveRegion={props.role === 'count' ? 'polite' : undefined}

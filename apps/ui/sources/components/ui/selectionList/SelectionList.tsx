@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { SelectionListThemeSurfaceContext } from './SelectionListThemeSurfaceContext';
 import {
     Platform,
     type LayoutChangeEvent,
@@ -308,6 +311,7 @@ function sectionPlanRendersOptions(sectionPlan: SectionRenderPlan): boolean {
  * own unit tests.
  */
 export function SelectionList(props: SelectionListProps): React.ReactElement {
+    const themeSurfaceEnabled = useHappierThemeSurfaceOverridesEnabled();
     const selection = props.selection ?? {
         kind: 'single' as const,
         selectedId: props.selectedOptionId ?? null,
@@ -1529,6 +1533,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         // A picker keeps its own look wherever it is placed: inline under a page list it resets to the
         // grouped anatomy exactly as `FloatingOverlay` does for popovers (I1).
         <SelectionListDetailPaneContext.Provider value={detailPaneActive}>
+        <SelectionListThemeSurfaceContext.Provider value={props.themeSurface}>
         <SelectionListActivationCommandContext.Provider value={commandScope ? handleUiActivate : null}>
         {commandScope ? <SelectionListCommandHost commands={localCommands} contextKey={`${commandScope}:${currentStep.id}`}
             foregroundOverlay={props.currentUiContextForegroundOverlay} invokeRef={commandInvokeRef} /> : null}
@@ -1539,7 +1544,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         <SelectionListOptionTabBehaviorContext.Provider value={showSearchHeader ? 'input-owned' : 'roving'}>
         <View
             testID={resolvedTestId}
-            style={containerStyle}
+            {...(props.themeSurface ? { dataSet: { ...props.themeSurface.root, state: props.themeSurface.root.state ?? 'default' } } : {})}
+            style={[containerStyle, themeSurfaceStyles.surface(themeSurfaceEnabled ? props.themeSurface?.root : undefined)]}
             pointerEvents={measuredPopoverHeight.hidden ? 'none' : undefined}
             onLayout={handleContainerLayout}
             {...headerlessKeyHandler}
@@ -1580,6 +1586,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         </SelectionListInputAttentionContext.Provider>
         </ListPresentationProvider>
         </SelectionListActivationCommandContext.Provider>
+        </SelectionListThemeSurfaceContext.Provider>
         </SelectionListDetailPaneContext.Provider>
     );
 }

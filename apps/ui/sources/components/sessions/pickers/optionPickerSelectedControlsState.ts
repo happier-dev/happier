@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SurfaceAddress } from '@happier-dev/plugin-ui';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import type {
   SessionConfigOptionControl,
@@ -11,6 +12,7 @@ export const OPTION_PICKER_LIST_TEXT_INSET_PX = MENU_ROW_METRICS.paddingHorizont
 export const OptionPickerSelectedControlsContext = React.createContext<
   Readonly<{
     controls?: readonly SessionConfigOptionControl[];
+    effortSurface?: SurfaceAddress;
     onSelect?: (configId: string, valueId: SessionConfigOptionValueId) => void;
     multiColumn?: boolean;
   }>

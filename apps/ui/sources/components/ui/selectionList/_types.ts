@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import type { ThemeSelectionSurfaceBinding } from '@happier-dev/plugin-ui/presentation';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { GestureResponderEvent } from 'react-native';
@@ -856,6 +857,8 @@ export type SelectionListFilter = Readonly<{
 }>;
 
 export type SelectionListProps = Readonly<{
+    /** Addresses supplied by the picker owner; ordinary lists retain their existing presentation. */
+    themeSurface?: ThemeSelectionSurfaceBinding;
     /** Opt this mounted chooser into the current page's shared UI/agent command path. */
     currentUiContextCommandScope?: string;
     /** The containing overlay opts in; inline lists keep the page's command projection. */

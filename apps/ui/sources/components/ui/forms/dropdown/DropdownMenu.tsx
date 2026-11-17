@@ -931,6 +931,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                             } : undefined}
                         >
                         <FloatingOverlay
+                            themeSurface={{ surface: 'menu', part: 'root' }}
                             // The search field stays pinned above the scrolling results, so a long list scrolled to
                             // its current choice never carries the field out of view.
                             header={props.header || props.search ? <>{props.header}{searchField}</> : undefined}

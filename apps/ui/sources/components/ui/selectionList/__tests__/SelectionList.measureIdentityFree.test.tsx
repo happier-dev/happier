@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
+import { SelectionList } from '../SelectionList';
 import type { SelectionListProps, SelectionListStep } from '../_types';
 
 vi.mock('react-native', async () => {
@@ -62,7 +63,6 @@ function defaultProps(overrides: Partial<SelectionListProps> = {}): SelectionLis
 
 describe('SelectionList identity-free measure path (FR3-1 / FR3-8)', () => {
     it('renders the listbox, body and option identities exactly once across the visible body and hidden measure host', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps()} />);
         // Precondition: the orchestrator's one measure host is mounted, so every
         // "exactly once" below is a real claim about its mirror.

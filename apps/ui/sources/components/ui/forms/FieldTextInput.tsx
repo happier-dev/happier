@@ -1,3 +1,7 @@
+import { resolveThemeSurfaceState } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import * as React from 'react';
 import {
     HAPPIER_FIELD_TEXT_METRICS,
@@ -83,6 +87,9 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
     function FieldTextInput(props, ref) {
         const { theme } = useUnistyles();
         const styles = stylesheet;
+        const surfaceState = resolveThemeSurfaceState('input', { disabled: props.editable === false });
+        const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+        const textSurfaceStyle = themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'input', part: 'text', state: surfaceState } : undefined);
         const invalid = Boolean(props.error) || props.invalid === true;
         const presentation = props.presentation ?? 'field';
         const inputMetrics = resolveHappierFieldTextInputMetrics({
@@ -101,6 +108,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
         }, []);
         return (
             <HappierFieldTextBox
+                themeSurface={{ surface: 'input', part: 'root', state: surfaceState }}
                 presentation={presentation}
                 multiline={props.multiline}
                 colors={colors}
@@ -120,6 +128,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                 ) : undefined}
             >
                 <TextInput
+                    {...{ dataSet: themeSurfaceDataSet('input', 'text', surfaceState) }}
                     ref={ref}
                     testID={props.testID}
                     value={props.value}
@@ -164,6 +173,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         // A right-aligned value keeps a word space before its trailing unit.
                         props.textAlign === 'right' && props.trailing ? { paddingRight: theme.space.s4 } : null,
                         { color: colors.valueColor },
+                        textSurfaceStyle,
                     ]}
                 />
             </HappierFieldTextBox>

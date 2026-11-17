@@ -12,6 +12,31 @@ const { IconButton } = await import('./IconButton');
 const { Tooltip } = await import('../overlays/Tooltip');
 await import('../overlays/AnchoredTooltip');
 
+it('addresses the painted icon button and glyph with the effective disabled state', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+        await act(async () => {
+            root.render(<IconButton testID="surface-action" icon={<span>+</span>} accessibilityLabel="Add"
+                selected disabled onPress={() => {}} />);
+        });
+        const frame = container.querySelector('[data-testid="surface-action"]');
+        const surface = container.querySelector('[data-testid="surface-action-surface"]');
+        const icon = container.querySelector('[data-testid="surface-action-icon"]');
+        expect(frame?.getAttribute('data-surface')).toBeNull();
+        expect(surface?.getAttribute('data-surface')).toBe('button');
+        expect(surface?.getAttribute('data-part')).toBe('root');
+        expect(surface?.getAttribute('data-state')).toBe('disabled');
+        expect(icon?.getAttribute('data-surface')).toBe('button');
+        expect(icon?.getAttribute('data-part')).toBe('icon');
+        expect(icon?.getAttribute('data-state')).toBe('disabled');
+    } finally {
+        await act(async () => { root.unmount(); });
+        container.remove();
+    }
+});
+
 it.each(['action', 'help'] as const)('keeps a focused %s tooltip outside a clipping toolbar without moving focus', async (kind) => {
     vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
     vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);

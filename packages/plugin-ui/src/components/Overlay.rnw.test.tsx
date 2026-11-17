@@ -683,6 +683,11 @@ describe('controlled overlay presentation', () => {
     const input = renderPopover.mock.calls[0]?.[0];
     expect(input?.autoFocusOnOpen).toBe(true);
     expect(mount.container.querySelector('[role="menu"]')).not.toBeNull();
+    const menuRoot = mount.container.querySelector<HTMLElement>('[data-surface="menu"][data-part="root"]');
+    expect(menuRoot).toBe(findRimmedAncestor(mount.container.querySelector('[role="menu"]')));
+    expect(menuRoot?.getAttribute('data-state')).toBe('default');
+    expect(mount.container.querySelector('[role="menuitem"]')?.getAttribute('data-state')).toBe('disabled');
+    expect(mount.container.querySelector('[role="menuitemcheckbox"]')?.getAttribute('data-state')).toBe('checked');
     expect(mount.container.querySelector('[role="menuitemcheckbox"]')?.getAttribute('aria-checked')).toBe('true');
     expect(mount.container.querySelector('[role="menuitemradio"]')?.getAttribute('aria-checked')).toBe('false');
 

@@ -1,3 +1,4 @@
+import { resolveThemeSurfaceAddress, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Platform,
@@ -186,6 +187,9 @@ export type HappierPressableProps = Readonly<{
    */
   hitReach?: HappierHitReach;
   testID?: string;
+  themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
+  /** Stable host data attributes, including the public theme surface address. */
+  dataSet?: Readonly<Record<string, string>>;
   /** Internal composite-widget focus registration; disabled controls report no target. */
   controlRef?: (instance: HappierFocusable | null) => void;
   /** Web roving-tabindex projection for composite widgets. */
@@ -295,6 +299,8 @@ export function HappierPressable({
   hitTarget,
   hitReach,
   testID,
+  dataSet,
+  themeSurface,
   controlRef,
   tabIndex,
   nativeID,
@@ -435,6 +441,7 @@ export function HappierPressable({
     disabled: isDisabled,
   };
 
+  const surfaceBinding = useThemeSurfaceBinding(themeSurface === undefined ? undefined : resolveThemeSurfaceAddress(themeSurface, { ...state, checked: checked === true, expanded }));
   const renderedContent = typeof children === 'function' ? children(state) : children;
   const hitArea = useHappierHitArea({
     restingStyle: () => (typeof style === 'function' ? style({ ...state, pressed: false }) : style),
@@ -506,6 +513,7 @@ export function HappierPressable({
       ref={setControlRef}
       nativeID={nativeID}
       testID={testID}
+      {...{ dataSet: surfaceBinding.dataSet ?? dataSet }}
       {...platformRoleProps}
       accessibilityLabel={accessibilityLabel}
       accessible={accessible}
@@ -582,7 +590,7 @@ export function HappierPressable({
         }
         onFocusChange?.(false);
       }}
-      style={pressableStyle}
+      style={typeof pressableStyle === 'function' ? (state) => [pressableStyle(state), surfaceBinding.style] as StyleProp<ViewStyle> : [pressableStyle, surfaceBinding.style] as StyleProp<ViewStyle>}
     >
       {content}
     </ReactNativePressable>

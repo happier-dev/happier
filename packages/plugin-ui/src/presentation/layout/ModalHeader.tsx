@@ -1,3 +1,4 @@
+import { useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import type { ReactNode } from 'react';
 import { Platform, View } from 'react-native';
 
@@ -138,6 +139,7 @@ function renderSlot(
  * under it. On a compact (phone) card with actions it recomposes rather than squeezing the title.
  */
 export function HappierModalHeader(props: HappierModalHeaderProps) {
+  const surfaceBinding = useThemeSurfaceBinding({ surface: 'dialog', part: 'header' });
   const defaultRenderText = useDefaultModalHeaderText();
   const renderText = props.renderText ?? defaultRenderText;
   const space = props.space ?? HAPPIER_MODAL_HEADER_METRICS.space;
@@ -162,6 +164,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
     return (
       <View
         testID={testID}
+        {...{ dataSet: surfaceBinding.dataSet }}
         style={[
           {
             paddingHorizontal: space.s16,
@@ -170,6 +173,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
             gap: space.s2,
           },
           props.style,
+          surfaceBinding.style,
         ]}
       >
         <View
@@ -214,6 +218,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
     return (
       <View
         testID={testID}
+        {...{ dataSet: surfaceBinding.dataSet }}
         style={[
           {
             paddingHorizontal: space.s16,
@@ -222,6 +227,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
             gap: space.s8,
           },
           props.style,
+          surfaceBinding.style,
         ]}
       >
         <View
@@ -259,6 +265,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
     return (
       <View
         testID={testID}
+        {...{ dataSet: surfaceBinding.dataSet }}
         style={[
           {
             paddingHorizontal: space.s16,
@@ -267,6 +274,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
             gap: space.s2,
           },
           props.style,
+          surfaceBinding.style,
         ]}
       >
         <View
@@ -296,6 +304,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
   return (
     <View
       testID={testID}
+        {...{ dataSet: surfaceBinding.dataSet }}
       style={[
         {
           minHeight: HAPPIER_MODAL_HEADER_METRICS.minHeightPx,
@@ -313,6 +322,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
             }
           : null,
         props.style,
+        surfaceBinding.style,
       ]}
     >
       <View style={leadingWrap}>

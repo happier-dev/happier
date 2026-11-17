@@ -46,8 +46,12 @@ import {
 } from './sessionListConditionFields';
 import { createSessionListViewFilterDefaults } from './sessionListViewFilters';
 import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
+import { PROJECT_PICKER_THEME_SURFACE } from '@/components/projects/projectPickerThemeSurface';
+
 import { useSessionListFilterLocalOptions } from './useSessionListFilterLocalOptions';
 import { t } from '@/text';
+
+const PROJECT_VALUE_SURFACES = { projects: PROJECT_PICKER_THEME_SURFACE };
 /*
  * Audience identity belongs to the filter state owner. This component consumes its
  * qualified JSON key rather than maintaining a parallel Team-only syntax.
@@ -595,6 +599,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
     return (
         <View testID="session-list-filter-editor-surface" style={styles.root}>
             <CollectionConditionEditor
+                valueSurfaceByField={PROJECT_VALUE_SURFACES}
                 testID="session-list-filter-conditions"
                 model={conditionModel}
                 onValuePickerChange={handleValuePickerChange}

@@ -2,11 +2,14 @@ import {
     HappierPressable,
     HAPPIER_ICON_BUTTON_SIZE,
     resolveHappierIconButtonChrome,
+    resolveThemeSurfaceState,
+    useHappierThemeSurfaceOverridesEnabled,
     type HappierPressableProps,
     type HappierPressableRole,
     useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -20,6 +23,7 @@ import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyp
 import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 
 import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 
 const DEFAULT_SIZE = HAPPIER_ICON_BUTTON_SIZE;
 
@@ -200,6 +204,7 @@ export function IconButton(props: Readonly<{
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
 
     const tone = props.tone ?? 'default';
     const tint = props.fill === 'primary'
@@ -348,8 +353,8 @@ export function IconButton(props: Readonly<{
                     </>
                 ) : (
                     <View style={styles.tooltipWrap}>
-                        <View testID={props.testID ? `${props.testID}-tooltip` : undefined} style={styles.tooltip}>
-                            {richTooltipContent ?? <Text style={styles.tooltipText} numberOfLines={3}>
+                        <View {...{ dataSet: themeSurfaceDataSet('tooltip', 'root') }} testID={props.testID ? `${props.testID}-tooltip` : undefined} style={[styles.tooltip, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tooltip', part: 'root' } : undefined)]}>
+                            {richTooltipContent ?? <Text {...{ dataSet: themeSurfaceDataSet('tooltip', 'text') }} style={[styles.tooltipText, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tooltip', part: 'text' } : undefined)]} numberOfLines={3}>
                                 {tooltipContent}
                             </Text>}
                         </View>
@@ -357,20 +362,25 @@ export function IconButton(props: Readonly<{
                 )) : null
             ) : undefined}
         >
-            {(state) => (
+            {(state) => {
+                const surfaceState = resolveThemeSurfaceState('button', state);
+                return (
                 <View
+                    {...{ dataSet: themeSurfaceDataSet('button', 'root', surfaceState) }}
                     testID={props.testID ? `${props.testID}-surface` : undefined}
                     style={[
                         chrome(state).surface,
+                        themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'button', part: 'root', state: surfaceState } : undefined),
                     ]}
                 >
                     {disabledReason ? <Text nativeID={descriptionId} style={visuallyHiddenStyle}
                         accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{disabledReason}</Text> : null}
                     <View
+                        {...{ dataSet: themeSurfaceDataSet('button', 'icon', surfaceState) }}
                         testID={props.testID ? `${props.testID}-icon` : undefined}
                         accessibilityElementsHidden
                         importantForAccessibility="no-hide-descendants"
-                        style={styles.iconWrap}
+                        style={[styles.iconWrap, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'button', part: 'icon', state: surfaceState } : undefined)]}
                     >
                         {/* A chrome glyph (`useChromeGlyphInk`) comes up to full ink while its control is engaged. A toggle
                             that is on says so with its selection, not with a glyph left bright (owner, 2026-11-11). */}
@@ -388,7 +398,8 @@ export function IconButton(props: Readonly<{
                         </ChromeGlyphEmphasisContext.Provider>
                     </View>
                 </View>
-            )}
+                );
+            }}
         </HappierPressable>
     );
 }

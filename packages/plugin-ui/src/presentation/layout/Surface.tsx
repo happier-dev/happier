@@ -1,3 +1,5 @@
+import { resolveThemeSurfaceAddress, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
+import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
@@ -72,6 +74,7 @@ export function useHappierMaterialColorResolver() {
 export type HappierFloatingRole = 'menu' | 'panel';
 
 export type HappierMaterialSurfaceRender = (input: Readonly<{
+  themeSurface?: SurfaceAddress;
   role: HappierMaterialRole;
   /** Keep the material host and its children mounted, without painting a coat or establishing a new plane. */
   noCoat?: boolean;
@@ -88,6 +91,8 @@ export type HappierMaterialSurfaceRender = (input: Readonly<{
 
 /** The material body shared by frames, sheets and actionable surfaces; it keeps their original root. */
 export function HappierMaterialSurface(props: Omit<HappierSurfaceProps, 'onPress' | 'pressableStyle' | 'frameStyle' | 'pressedStyle'>) {
+  const surfaceAddress = props.themeSurface === undefined ? undefined : resolveThemeSurfaceAddress(props.themeSurface, { ...props.state, disabled: props.disabled || props.state?.disabled });
+  const surfaceBinding = useThemeSurfaceBinding(surfaceAddress);
   const host = useOptionalPluginUiPresentationHost();
   const renderMaterial = props.renderMaterialSurface ?? host?.renderMaterialSurface;
   const parent = useContext(MaterialRoleContext);
@@ -103,9 +108,9 @@ export function HappierMaterialSurface(props: Omit<HappierSurfaceProps, 'onPress
     ? { backgroundColor: happierMaterialBackgroundColor(flat.backgroundColor, props.materialRole, Platform.OS === 'web', nested) }
     : undefined;
   const body = renderMaterial
-    ? renderMaterial({ role: props.materialRole ?? 'card', ...(props.materialRole === undefined ? { noCoat: true } : {}), finishRole, floatingRole: props.floatingRole, gradient, nested, children: props.children, style: props.style, testID: props.testID, onLayout: props.onLayout, accessibilityLabel: props.accessibilityLabel })
-    : <View testID={props.testID} onLayout={props.onLayout} accessibilityLabel={props.accessibilityLabel} style={[props.style, materialStyle, happierSurfaceFinishLift(gradient, finishRole, dark, Platform.OS === 'web'), Platform.OS === 'web' ? happierSurfaceGradientWebStyle(gradient, !dark) : null]}>
-        <HappierSurfaceGradientLayer gradient={gradient} borderRadius={typeof flat?.borderRadius === 'number' ? flat.borderRadius : undefined} />
+    ? renderMaterial({ themeSurface: surfaceAddress, role: props.materialRole ?? 'card', ...(props.materialRole === undefined ? { noCoat: true } : {}), finishRole, floatingRole: props.floatingRole, gradient, nested, children: props.children, style: props.style, testID: props.testID, onLayout: props.onLayout, accessibilityLabel: props.accessibilityLabel })
+    : <View {...{ dataSet: surfaceBinding.dataSet }} testID={props.testID} onLayout={props.onLayout} accessibilityLabel={props.accessibilityLabel} style={[props.style, materialStyle, happierSurfaceFinishLift(gradient, finishRole, dark, Platform.OS === 'web'), Platform.OS === 'web' ? happierSurfaceGradientWebStyle(gradient, !dark) : null, surfaceBinding.style]}>
+        <HappierSurfaceGradientLayer overrideBackgroundColor={surfaceBinding.style?.backgroundColor} gradient={gradient} borderRadius={typeof flat?.borderRadius === 'number' ? flat.borderRadius : undefined} />
         {props.children}
       </View>;
   const role = props.materialRole ?? parent?.role;
@@ -127,6 +132,7 @@ export function HappierMaterialSurface(props: Omit<HappierSurfaceProps, 'onPress
  * second card/action wrapper.
  */
 export type HappierSurfaceProps = Readonly<{
+  themeSurface?: SurfaceAddress;
   children?: ReactNode;
   testID?: string;
   onPress?: () => unknown;
@@ -155,6 +161,7 @@ export type HappierSurfaceProps = Readonly<{
 }>;
 
 export function HappierSurface({
+  themeSurface,
   children,
   testID,
   onPress,
@@ -172,7 +179,7 @@ export function HappierSurface({
   pressedStyle,
   frameStyle,
 }: HappierSurfaceProps) {
-  const content = <HappierMaterialSurface materialRole={materialRole} nested={nested} finishRole={finishRole} floatingRole={floatingRole} gradient={suppliedGradient} renderMaterialSurface={renderMaterialSurface} disabled={disabled} style={style}>{children}</HappierMaterialSurface>;
+  const content = <HappierMaterialSurface themeSurface={themeSurface} materialRole={materialRole} nested={nested} finishRole={finishRole} floatingRole={floatingRole} gradient={suppliedGradient} renderMaterialSurface={renderMaterialSurface} disabled={disabled} style={style}>{children}</HappierMaterialSurface>;
 
   if (!onPress) {
     return <View testID={testID} onLayout={onLayout} accessibilityLabel={accessibilityLabel} style={frameStyle}>{content}</View>;
@@ -186,7 +193,7 @@ export function HappierSurface({
       onPress={onPress}
       style={({ pressed }) => [frameStyle, pressableStyle, pressed ? pressedStyle : undefined]}
     >
-      {state => <HappierMaterialSurface materialRole={materialRole} nested={nested} finishRole={finishRole} floatingRole={floatingRole} gradient={suppliedGradient} renderMaterialSurface={renderMaterialSurface} state={state} style={style}>{children}</HappierMaterialSurface>}
+      {state => <HappierMaterialSurface themeSurface={themeSurface} materialRole={materialRole} nested={nested} finishRole={finishRole} floatingRole={floatingRole} gradient={suppliedGradient} renderMaterialSurface={renderMaterialSurface} state={state} style={style}>{children}</HappierMaterialSurface>}
     </HappierPressable>
   );
 }

@@ -1,6 +1,7 @@
 import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import type { ReactNode } from 'react';
 import { act, useState } from 'react';
+import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
@@ -8,7 +9,12 @@ import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { resolveThemeSurfaceState } from '../presentation/themeSurfaceBinding.js';
 import { Button, IconButton } from './Button.js';
+import { InlineCode } from './InlineCode.js';
+import { TextField, Toggle } from './Form.js';
+import { HappierModalHeader } from '../presentation/layout/ModalHeader.js';
+import { HappierModalCardFooterActions } from '../presentation/interaction/ModalCardFooterActions.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 
 /**
@@ -82,6 +88,99 @@ async function activateWithEnter(button: HTMLElement): Promise<void> {
 }
 
 describe('plugin-ui Button renders real React Native pressable semantics', () => {
+  it('keeps interaction feedback out of button semantic state and emits switch checked state', async () => {
+    expect(resolveThemeSurfaceState('button', { disabled: true, selected: true })).toBe('disabled');
+    const render = (disabled: boolean) => <>
+      <Button title="Stateful action" disabled={disabled} onPress={() => {}} />
+      <Toggle label="Enabled state" value onChange={() => {}} />
+    </>;
+    const mount = mountSurface(render(false));
+    try {
+      const button = findButton(mount.container);
+      await act(async () => {
+        button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, buttons: 1 }));
+        await new Promise(resolve => setTimeout(resolve, 80));
+      });
+      expect(button.getAttribute('data-state')).toBe('default');
+      expect(button.querySelector('[data-part="label"]')?.getAttribute('data-state')).toBe('default');
+      const context = createSurfaceContext();
+      await mount.render(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>{render(true)}</PluginUiProvider>);
+      expect(button.getAttribute('data-state')).toBe('disabled');
+      expect(button.querySelector('[data-part="label"]')?.getAttribute('data-state')).toBe('disabled');
+      for (const part of ['root', 'track', 'thumb']) {
+        expect(mount.container.querySelector(`[data-surface="switch"][data-part="${part}"]`)?.getAttribute('data-state')).toBe('checked');
+      }
+    } finally {
+      await act(async () => { document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 })); });
+      mount.unmount();
+    }
+  });
+
+  it('emits addressable theme parts from the shared painted controls', () => {
+    const mount = mountSurface(<>
+      <Button title="Save" icon={<View />} onPress={() => {}} />
+      <InlineCode>git status</InlineCode>
+      <TextField label="Name" value="Draft" onChange={() => {}} />
+      <Toggle label="Enabled" value={false} onChange={() => {}} />
+      <HappierModalHeader title="Edit draft" />
+      <HappierModalCardFooterActions gap={8}><View /></HappierModalCardFooterActions>
+    </>);
+    try {
+      for (const [surface, parts] of [
+        ['button', ['root', 'label', 'icon']],
+        ['inline-code', ['root', 'text']],
+        ['input', ['root', 'text']],
+        ['switch', ['root', 'track', 'thumb']],
+        ['dialog', ['header', 'footer']],
+      ] as const) {
+        for (const part of parts) {
+          expect(mount.container.querySelector(`[data-surface="${surface}"][data-part="${part}"][data-state="default"]`), `${surface}/${part}`).not.toBeNull();
+        }
+      }
+    } finally {
+      mount.unmount();
+    }
+  });
+
+  it('keeps focus out of input semantic state and emits disabled on the well and text', async () => {
+    const mount = mountSurface(<TextField label="Theme field" value="Draft" onChange={() => {}} />);
+    try {
+      const input = mount.container.querySelector<HTMLInputElement>('input')!;
+      expect(input.getAttribute('data-happier-text-input')).toBe('true');
+      await act(async () => input.focus());
+      for (const part of ['root', 'text']) {
+        expect(mount.container.querySelector(`[data-surface="input"][data-part="${part}"]`)?.getAttribute('data-state')).toBe('default');
+      }
+      const context = createSurfaceContext();
+      await mount.render(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}><TextField label="Theme field" value="Draft" disabled onChange={() => {}} /></PluginUiProvider>);
+      for (const part of ['root', 'text']) {
+        expect(mount.container.querySelector(`[data-surface="input"][data-part="${part}"]`)?.getAttribute('data-state')).toBe('disabled');
+      }
+    } finally { mount.unmount(); }
+  });
+
+  it('binds the projected native state paint at the actual button root and label', () => {
+    const original = createSurfaceContext();
+    const theme = { ...original.theme, surfaces: { button: {
+      root: { base: { backgroundColor: 'rgb(1, 2, 3)' }, states: { disabled: { backgroundColor: 'rgb(12, 34, 56)' } } },
+      label: { base: { color: 'rgb(4, 5, 6)' }, states: { disabled: { color: 'rgb(65, 43, 21)' } } },
+    } } };
+    for (const platform of ['ios', 'web'] as const) {
+      const mount = mountSurface(<Button title="Painted action" disabled onPress={() => {}} />, createSurfaceContext({ platform, theme }));
+      try {
+        const button = findButton(mount.container);
+        const label = button.querySelector<HTMLElement>('[data-part="label"]')!;
+        if (platform === 'ios') {
+          expect(button.style.backgroundColor).toBe('rgb(12, 34, 56)');
+          expect(label.style.color).toBe('rgb(65, 43, 21)');
+        } else {
+          expect(button.style.backgroundColor).not.toBe('rgb(12, 34, 56)');
+          expect(label.style.color).not.toBe('rgb(65, 43, 21)');
+        }
+      } finally { mount.unmount(); }
+    }
+  });
+
   it('announces the pressable value on the real web element and updates it', async () => {
     const mount = mountThroughReactNativeWeb(<HappierPressable testID="scope" onPress={() => {}}
       accessibilityLabel="Comparison scope" accessibilityValue={{ min: 0, max: 5, now: 0, text: 'All changes' }} />);

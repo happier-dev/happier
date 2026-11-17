@@ -20,6 +20,7 @@ export {
   type ThemeMiniatureForm,
 } from './form/ThemePalettePreview.js';
 export { HappierDecorativeSvg } from './content/DecorativeSvg.js';
+export type { ThemeSelectionSurfaceBinding } from './themeSurface.js';
 export { ChartDatum, ChartMark, ChartInteractionProvider, type HappierChartDatum, type HappierChartDatumRenderer, type HappierChartDatumInteraction, type HappierChartDatumTrigger } from './data/ChartDatum.js';
 export type {
   HappierFocusable,

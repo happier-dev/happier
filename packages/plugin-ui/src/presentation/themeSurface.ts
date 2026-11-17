@@ -1,5 +1,13 @@
 import type { PluginUiThemeV1, SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 
+/** Explicit addresses for the existing selection anatomy; callers choose its semantic surface. */
+export type ThemeSelectionSurfaceBinding = Readonly<{
+  root: SurfaceAddress;
+  row: SurfaceAddress;
+  label?: SurfaceAddress;
+  sectionTitle?: SurfaceAddress;
+}>;
+
 /** Read the host compiler's mode-resolved table; web keeps its CSS cascade. */
 export function resolveHappierThemeSurfaceStyle(
   theme: Pick<PluginUiThemeV1, 'surfaces'> | null,

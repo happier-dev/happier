@@ -13,6 +13,9 @@
  */
 
 import * as React from 'react';
+import { resolveThemeSurfaceAddress, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { SelectionListThemeSurfaceContext } from './SelectionListThemeSurfaceContext';
 import { Platform, View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
@@ -214,6 +217,13 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   const { theme } = useUnistyles();
   const paintColor = useHappierMaterialColorResolver();
   const optionLabel = props.option.renderLabel?.() ?? props.option.label;
+  const themeSurface = React.useContext(SelectionListThemeSurfaceContext);
+  const themeSurfaceEnabled = useHappierThemeSurfaceOverridesEnabled();
+  const surfaceFacts = { selected: isSelected, disabled: props.option.disabled === true };
+  const rowSurface = themeSurface ? resolveThemeSurfaceAddress(themeSurface.row, surfaceFacts) : undefined;
+  const labelSurface = themeSurface?.label ? resolveThemeSurfaceAddress(themeSurface.label, surfaceFacts) : undefined;
+  const rowSurfaceDataSet = rowSurface ? { ...rowSurface, state: rowSurface.state ?? 'default' } : undefined;
+  const labelSurfaceDataSet = labelSurface ? { ...labelSurface, state: labelSurface.state ?? 'default' } : undefined;
   const labelContent = renderSelectionListAccessory(props.option.labelContent);
   const optionAccessibilityLabel =
     props.measureMode === true
@@ -573,6 +583,10 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
       <View {...cardWrapperProps}>
         <Item
           rowRole={rowRole}
+          dataSet={rowSurfaceDataSet}
+          titleDataSet={labelSurfaceDataSet}
+          titleStyle={themeSurfaceStyles.surface(themeSurfaceEnabled ? labelSurface : undefined)}
+          pressableStyle={[isCard && isSelected ? cardStyles.selectedRowFill : null, themeSurfaceStyles.surface(themeSurfaceEnabled ? rowSurface : undefined)]}
           title={labelContent ?? optionLabel}
           titleAccessory={titleAccessory}
           titleQualifier={props.option.titleQualifier}
@@ -616,6 +630,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   const row =
     props.option.content !== undefined ? (
       <ListOptionPressable
+        {...{ dataSet: rowSurfaceDataSet }}
         readsListOptionSetSize={listPublishesSetSize}
         readsListOptionPosition={listPublishesPosition}
         testID={optionTestId}
@@ -639,7 +654,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         disabled={props.option.disabled === true}
         {...customContentAccessibilityProps}
         style={(state) => {
-          return {
+          return [{
             // In card mode the card owns the selected fill and wraps the
             // expanded content with it. Painting it here too would put a
             // SQUARE-cornered surface behind the rounded card — the exact
@@ -655,7 +670,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
                   ? paintColor(theme.colors.surface.selected)
                   : undefined,
             opacity: props.option.disabled === true && !staticContent ? 0.5 : 1,
-          };
+          }, themeSurfaceStyles.surface(themeSurfaceEnabled ? rowSurface : undefined)];
         }}
       >
         {props.option.content}
@@ -664,6 +679,9 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
       <Item
         rowRole={rowRole}
         testID={optionTestId}
+        dataSet={rowSurfaceDataSet}
+        titleDataSet={labelSurfaceDataSet}
+        titleStyle={themeSurfaceStyles.surface(themeSurfaceEnabled ? labelSurface : undefined)}
         title={labelContent ?? optionLabel}
         titleAccessory={titleAccessory}
         titleQualifier={props.option.titleQualifier}
@@ -693,7 +711,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         selected={isSelected}
         // A selected card owns the fill over its row AND its expanded controls; the row's own selected fill on top
         // stacked a darker band over the title (owner 11-15 C6), so inside a selected card the row paints none.
-        {...(isCard && isSelected ? { pressableStyle: cardStyles.selectedRowFill } : {})}
+        pressableStyle={[isCard && isSelected ? cardStyles.selectedRowFill : null, themeSurfaceStyles.surface(themeSurfaceEnabled ? rowSurface : undefined)]}
         focused={paintsFocus}
         // The list has one highlight and the pointer moves it; a hover fill of its own would show a second row selected.
         hoverFill={false}

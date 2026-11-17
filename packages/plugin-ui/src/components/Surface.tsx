@@ -1,3 +1,4 @@
+import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 import type { ReactElement, ReactNode } from 'react';
 
 import { HappierSurface, type HappierFloatingRole } from '../presentation/layout/Surface.js';
@@ -10,6 +11,7 @@ export type SurfaceTone = 'surface' | 'muted';
 export type SurfacePadding = 'none' | 'small' | 'medium' | 'large';
 
 export type SurfaceProps = Readonly<{
+  themeSurface?: SurfaceAddress;
   children?: ReactNode;
   tone?: SurfaceTone;
   padding?: SurfacePadding;
@@ -28,6 +30,7 @@ export type CardProps = SurfaceProps;
 
 
 function SurfaceChrome({
+  themeSurface,
   children,
   tone = 'surface',
   padding = 'none',
@@ -53,6 +56,7 @@ function SurfaceChrome({
 
   return (
     <HappierSurface
+      themeSurface={themeSurface}
       testID={testID}
       onPress={onPress}
       disabled={disabled}

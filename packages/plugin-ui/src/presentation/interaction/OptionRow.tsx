@@ -1,3 +1,4 @@
+import { useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import * as React from 'react';
 import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { HappierText } from '../text/Text.js';
@@ -60,12 +61,14 @@ export type HappierOptionRowProps = Readonly<{
     /** The incumbent adapter supplies exact themed styles; this anatomy does not choose another density. */
     styles: HappierOptionRowStyles;
     rowStyle: (pressed: boolean) => HappierStyleProp;
+    themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
     splitPressOpacity: number;
     /** A host can retain its text binding; unhosted presentation uses the public text owner. */
     textComponent?: React.ComponentType<Pick<HappierTextHostProps, 'children' | 'style' | 'numberOfLines'>>;
 }>;
 
 export const HappierOptionRow = React.forwardRef<HappierFocusable, HappierOptionRowProps>(function HappierOptionRow(props, ref) {
+    const surfaceBinding = useThemeSurfaceBinding(props.themeSurface);
     const Text = props.textComponent ?? HappierText;
     const { styles } = props;
     const bindRef = React.useCallback((node: React.ElementRef<typeof Pressable> | null) => {
@@ -92,9 +95,9 @@ export const HappierOptionRow = React.forwardRef<HappierFocusable, HappierOption
         ? { role: role as React.ComponentProps<typeof Pressable>['role'] }
         : undefined;
     const control = { ...controlProps, ...platformRoleProps, ref: bindRef, disabled: props.disabled, onPress: props.disabled ? undefined : props.onSelect };
-    if (props.rightElementOutsidePressable && props.right) return <View style={props.rowStyle(false) as StyleProp<ViewStyle>}>
+    if (props.rightElementOutsidePressable && props.right) return <View {...{ dataSet: surfaceBinding.dataSet }} style={[props.rowStyle(false), surfaceBinding.style] as StyleProp<ViewStyle>}>
         <OptionRowPressable {...control} style={({ pressed }) => [styles.splitPressable, pressed && !props.disabled ? { opacity: props.splitPressOpacity } : null]}>{content(false)}</OptionRowPressable>
         <View style={styles.right}>{props.right}</View>
     </View>;
-    return <OptionRowPressable {...control} style={({ pressed }) => props.rowStyle(pressed) as StyleProp<ViewStyle>}>{content(true)}</OptionRowPressable>;
+    return <OptionRowPressable {...control} {...{ dataSet: surfaceBinding.dataSet }} style={({ pressed }) => [props.rowStyle(pressed), surfaceBinding.style] as StyleProp<ViewStyle>}>{content(true)}</OptionRowPressable>;
 });

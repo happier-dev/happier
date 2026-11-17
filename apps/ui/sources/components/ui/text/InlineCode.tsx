@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 
 /** Core's text owner, so the chip follows the user's font scale. */
 function InlineCodeText(props: HappierInlineCodeTextProps) {
-    return <Text testID={props.testID} style={props.style as StyleProp<TextStyle>}>{props.children}</Text>;
+    return <Text {...{ dataSet: props.dataSet }} testID={props.testID} style={props.style as StyleProp<TextStyle>}>{props.children}</Text>;
 }
 
 /**

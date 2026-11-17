@@ -2,6 +2,9 @@ import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/c
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
+import type { SurfaceAddress } from '@happier-dev/plugin-ui';
+import type { ThemeSelectionSurfaceBinding } from '@happier-dev/plugin-ui/presentation';
+
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
@@ -80,6 +83,13 @@ import {
     reportedModelSummary,
     type ReportedModelStatus,
 } from './reportedModelPresentation';
+
+const MODEL_PICKER_THEME_SURFACE = {
+    root: { surface: 'model-picker', part: 'root', state: 'default' },
+    row: { surface: 'model-picker', part: 'row', state: 'default' },
+    sectionTitle: { surface: 'model-picker', part: 'provider', state: 'default' },
+} as const satisfies ThemeSelectionSurfaceBinding;
+const MODEL_PICKER_EFFORT_SURFACE = { surface: 'model-picker', part: 'effort', state: 'default' } as const satisfies SurfaceAddress;
 
 export type SessionModelPickerExperimentalConfirmation = Readonly<{
     kind: 'confirm-experimental';
@@ -188,7 +198,9 @@ export type SessionModelPickerProps = Readonly<{
     hiddenNativeModelKeys?: ReadonlySet<string>;
     /** Default `true`; `false` drops the automatic option (a model-restricted embed). */
     allowAutomatic?: boolean;
-    selected: SessionModelPickerValue;
+    selected: SessionModelPickerOptionValue;
+    /** Where the selected model came from when it is an inherited default ("Team default"); shown on that row only. */
+    selectedAttribution?: string | null;
     reportedModel?: Readonly<{
         ref: NonNullable<SessionModelPickerOptionValue>;
         label?: string;
@@ -240,7 +252,16 @@ export type SessionModelPickerProps = Readonly<{
  * options). It also owns the one piece of local navigation Design A adds: browsing a single source
  * that is hidden from the main list. The scope is forgotten when the pane closes.
  */
-export function SessionModelPicker(props: SessionModelPickerProps) {
+type SessionModelPickerRenderProps = Omit<SessionModelPickerProps, 'selected'> & Readonly<{
+    selected: SessionModelPickerValue;
+}>;
+
+export function SessionModelPicker(input: SessionModelPickerProps) {
+    const selectedTeam = isTeamCredentialProviderModelPickerValue(input.selected) ? input.selected : null;
+    const props: SessionModelPickerRenderProps = { ...input,
+        selected: isTeamCredentialProviderModelPickerValue(input.selected) ? null : input.selected,
+        selectedTeamCredentialModel: selectedTeam ?? input.selectedTeamCredentialModel,
+    };
     return props.connectedServices && props.sourceBrowse
         ? <SessionAccountModelPicker picker={props} connectedServices={props.connectedServices} sourceBrowse={props.sourceBrowse} />
         : <SessionModelPickerContent {...props} />;
@@ -248,7 +269,7 @@ export function SessionModelPicker(props: SessionModelPickerProps) {
 
 /** Selected Account catalogs use the shared Provider projection and picker presentation. */
 function SessionAccountModelPicker({ picker, connectedServices, sourceBrowse }: Readonly<{
-    picker: SessionModelPickerProps;
+    picker: SessionModelPickerRenderProps;
     connectedServices: ConnectedServiceBindingsV2;
     sourceBrowse: NonNullable<SessionModelPickerProps['sourceBrowse']>;
 }>) {
@@ -273,7 +294,7 @@ function SessionAccountModelPicker({ picker, connectedServices, sourceBrowse }: 
             onRefresh: () => { void projection.refresh(); } }])} />;
 }
 
-function SessionModelPickerContent(props: SessionModelPickerProps) {
+function SessionModelPickerContent(props: SessionModelPickerRenderProps) {
     // "Runs through" can ask the pane to open on one source; the request names the Agent it was made for.
     const handoff = React.useContext(SessionModelSourceBrowseHandoffContext);
     const requested = handoff?.request?.agentTargetKey === props.agentTargetKey
@@ -325,7 +346,7 @@ function SessionModelPickerContent(props: SessionModelPickerProps) {
 
 /** One source, in the same pane: its models, the scope bar, nothing committed until a card is picked. */
 function SessionModelSourceBrowse(props: Readonly<{
-    picker: SessionModelPickerProps;
+    picker: SessionModelPickerRenderProps;
     sourceBrowse: NonNullable<SessionModelPickerProps['sourceBrowse']>;
     scope: SessionModelBrowseScope & Readonly<{ connectionId: string }>;
     onExit: () => void;
@@ -390,7 +411,7 @@ function SessionModelSourceBrowse(props: Readonly<{
     );
 }
 
-function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
+function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<{
     sourceUsage?: ReturnType<typeof useProviderConnectionUsageForSource>;
     onBrowseSource?: (scope: SessionModelBrowseScope) => void;
     /** While one Gateway is browsed: names the subscription behind each vendor slot so models group by it. */
@@ -598,15 +619,19 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     }, [browsing, nativeSourceLabel, sections]);
     // The pane's failure line says why the current selection could not be listed; its row does not repeat it.
     const paneSaysUnavailable = props.probe?.failed === true || (props.notes ?? []).includes(t('agentInput.model.unavailable'));
+    const selectedKey = sessionModelSelectionKey(props.selectedTeamCredentialModel ?? props.selected);
+    const selectedAttribution = props.selectedAttribution ?? null;
     const presentedSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
-        if (!paneSaysUnavailable) return labeledSections;
         const unavailable = t('agentInput.model.unavailable');
-        return labeledSections.map((section) => section.id === 'current-selection-recovery'
-            ? { ...section, options: section.options.map((option) => option.description === unavailable
-                ? { ...option, description: undefined }
-                : option) }
-            : section);
-    }, [labeledSections, paneSaysUnavailable]);
+        if (!paneSaysUnavailable && selectedAttribution === null) return labeledSections;
+        return labeledSections.map((section) => ({ ...section, options: section.options.map((option) => {
+            const quiet = paneSaysUnavailable && section.id === 'current-selection-recovery' && option.description === unavailable
+                ? { ...option, description: undefined } : option;
+            // Provenance lives on the selected picker row only (owner ruling 2026-11-16), never on the chip.
+            return selectedAttribution !== null && sessionModelSelectionKey(option.value) === selectedKey
+                ? { ...quiet, attribution: selectedAttribution } : quiet;
+        }) }));
+    }, [labeledSections, paneSaysUnavailable, selectedAttribution, selectedKey]);
     const hiddenSources = props.hiddenSources ?? [];
     const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions<SessionModelPickerOptionValue> | undefined>(() => {
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
@@ -761,6 +786,8 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
 
     return (
         <OptionPickerOverlay<SessionModelPickerOptionValue>
+            themeSurface={MODEL_PICKER_THEME_SURFACE}
+            selectedOptionControlsSurface={MODEL_PICKER_EFFORT_SURFACE}
             fillAvailableSpace={props.fillAvailableSpace}
             showTitle={props.showTitle}
             maxHeight={props.maxHeight}

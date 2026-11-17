@@ -50,9 +50,11 @@ const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMe
 function picker(
   values: readonly string[],
   onChange: (configId: string, value: string) => void = () => {},
+  nativeSourceLabel?: string,
 ) {
   return (
     <SessionModelPicker
+      nativeSourceLabel={nativeSourceLabel}
       agentTargetKey={selection.agentTargetKey}
       nativeModels={[
         { value: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
@@ -73,6 +75,23 @@ const OPTION =
   'model-picker-overlay-selected-option-control-option:reasoning_effort';
 
 describe('SessionModelPicker header and selected-model choices', () => {
+  it('emits model, provider, row and thinking surfaces from their existing owners', async () => {
+    const screen = await renderScreen(picker(['low', 'medium'], undefined, 'Codex'));
+    try {
+      const surfaces = screen.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'model-picker')
+        .map(node => node.props.dataSet);
+      expect(surfaces).toEqual(expect.arrayContaining([
+        { surface: 'model-picker', part: 'root', state: 'default' },
+        { surface: 'model-picker', part: 'provider', state: 'default' },
+        { surface: 'model-picker', part: 'row', state: 'default' },
+        { surface: 'model-picker', part: 'row', state: 'selected' },
+        { surface: 'model-picker', part: 'effort', state: 'default' },
+      ]));
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('names the pane without an "Effective:" restatement of the checked model', async () => {
     const screen = await renderScreen(picker(['low', 'medium']));
     const texts = screen

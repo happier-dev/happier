@@ -1,3 +1,4 @@
+import { useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import { useCallback, useContext, type ReactNode, type Ref } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 
@@ -33,17 +34,19 @@ export function HappierSearchFieldBox(props: Readonly<{
    * beside a search field own their own hit areas.
    */
   hitReach?: HappierHitReach;
+  themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
   onFocusInput: () => void;
   leading?: ReactNode;
   trailing?: ReactNode;
   children: ReactNode;
   style?: HappierStyleProp;
   /** A floating capsule can bind its material body without replacing this field's focus/hit owner. */
-  renderSurface?: (input: Readonly<{ style: HappierStyleProp; children: ReactNode }>) => ReactNode;
+  renderSurface?: (input: Readonly<{ style: HappierStyleProp; children: ReactNode; themeSurface: import('@happier-dev/plugin-sdk/ui').SurfaceAddress }>) => ReactNode;
 }>) {
+  const surfaceBinding = useThemeSurfaceBinding(props.themeSurface ?? { surface: 'input', part: 'root' });
   const metrics = HAPPIER_SEARCH_FIELD_METRICS;
   const paintColor = useHappierMaterialColorResolver();
-  const style = [{ flexDirection: 'row' as const, alignItems: 'center' as const, borderRadius: props.radius, paddingLeft: metrics.iconInsetPx, paddingRight: metrics.trailingInsetPx, paddingVertical: 0, minHeight: metrics.heightPx, backgroundColor: paintColor(props.colors.backgroundColor), borderColor: props.colors.borderColor, borderWidth: StyleSheet.hairlineWidth }, happierRaisedEdgeStyle(props.colors.edge), props.style];
+  const style = [{ flexDirection: 'row' as const, alignItems: 'center' as const, borderRadius: props.radius, paddingLeft: metrics.iconInsetPx, paddingRight: metrics.trailingInsetPx, paddingVertical: 0, minHeight: metrics.heightPx, backgroundColor: paintColor(props.colors.backgroundColor), borderColor: props.colors.borderColor, borderWidth: StyleSheet.hairlineWidth }, happierRaisedEdgeStyle(props.colors.edge), props.style, surfaceBinding.style];
   const children = <>
     {props.leading ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ marginRight: metrics.iconGapPx }}>{props.leading}</View> : null}
     {props.children}
@@ -55,10 +58,10 @@ export function HappierSearchFieldBox(props: Readonly<{
     hitTarget: props.minimumTargetSize,
     hitReach: props.hitReach ?? SEARCH_FIELD_HIT_REACH,
   });
-  return <Pressable testID={props.testID ? `${props.testID}.field` : undefined} onPress={props.onFocusInput} accessible={false} focusable={false} tabIndex={-1}
+  return <Pressable {...{ dataSet: props.renderSurface ? undefined : surfaceBinding.dataSet }} testID={props.testID ? `${props.testID}.field` : undefined} onPress={props.onFocusInput} accessible={false} focusable={false} tabIndex={-1}
     hitSlop={hitArea.hitSlop} onLayout={hitArea.onLayout} style={pressableStyle}>
     {hitArea.frame}
-    {props.renderSurface ? props.renderSurface({ style, children }) : children}
+    {props.renderSurface ? props.renderSurface({ style, children, themeSurface: props.themeSurface ?? { surface: 'input', part: 'root' } }) : children}
   </Pressable>;
 }
 
@@ -338,6 +341,7 @@ export function resolveHappierFieldTextInputMetrics(input: Readonly<{
 }
 
 export type HappierFieldTextBoxProps = Readonly<{
+  themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
   colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor' | 'edge'>;
   multiline?: boolean;
   /** The adapter's text input, styled with {@link resolveHappierFieldTextInputMetrics}. */
@@ -372,6 +376,7 @@ const HAPPIER_FIELD_DOCUMENT_SHAPE: HappierPortableStyle = Object.freeze({
  * `FieldTextInput` and the public `TextField presentation="field"` render it.
  */
 export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
+  const surfaceBinding = useThemeSurfaceBinding(props.themeSurface ?? { surface: 'input', part: 'root' });
   const paintColor = useHappierMaterialColorResolver();
   return (
     <View
@@ -395,12 +400,14 @@ export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
         }}
       >
         <View
+          {...{ dataSet: surfaceBinding.dataSet }}
           style={[
             HAPPIER_FIELD_BOX_SHAPE,
             { justifyContent: 'center', borderColor: props.colors.borderColor, backgroundColor: paintColor(props.colors.backgroundColor) },
             happierRaisedEdgeStyle(props.colors.edge),
             props.multiline ? { paddingVertical: HAPPIER_FIELD_TEXT_METRICS.multilinePaddingVerticalPx } : null,
             props.presentation === 'document' ? HAPPIER_FIELD_DOCUMENT_SHAPE : null,
+            surfaceBinding.style,
           ]}
         >
           {props.leading == null && props.trailing == null ? props.children : (
