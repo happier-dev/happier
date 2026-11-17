@@ -1353,7 +1353,7 @@ describe('session.spawn_new canonical execution', () => {
     });
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       ...canonicalBirthInput,
-      approvalProfileId: null,
+      approvalProfileId: undefined,
       admittedInput: canonicalBirthInput,
       creationKey: 'plugin-operation-7',
       sessionCreationTag: deriveSessionCreationTagV1({

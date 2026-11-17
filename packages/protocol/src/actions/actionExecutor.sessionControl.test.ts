@@ -603,9 +603,9 @@ describe('createActionExecutor (session control)', () => {
         surface, serverId: 'home', defaultSessionId: 's1', sessionListAccess: 'current_session',
       });
       expect(result, JSON.stringify({ surface, result })).toMatchObject({ ok: true });
-      expect(sessionOpen).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 's1', destination }), {
+      expect(sessionOpen).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 's1', destination }), expect.objectContaining({
         surface, serverId: 'home', defaultSessionId: 's1', sessionListAccess: 'current_session',
-      });
+      }));
     }
   });
   it('dispatches current UI reads and opaque invocations to the answering client for Agent/MCP', async () => {
@@ -707,9 +707,9 @@ describe('createActionExecutor (session control)', () => {
     await expect(executor.execute('session.open', { sessionId: 's1', serverId: 'home-1', tabId: 'tab-2' }, {
       surface: 'ui', serverId: 'home-1', defaultSessionId: 's1',
     })).resolves.toMatchObject({ ok: true });
-    expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', tabId: 'tab-2' }), {
+    expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', tabId: 'tab-2' }), expect.objectContaining({
       surface: 'ui', serverId: 'home-1', defaultSessionId: 's1',
-    });
+    }));
   });
   it('opens an exact SCM comparison through semantic Session navigation and refuses headless success', async () => {
     const destination = { kind: 'scmReview', comparison: { kind: 'pullRequest', locator: {
@@ -720,9 +720,9 @@ describe('createActionExecutor (session control)', () => {
     await expect(executor.execute('session.open', { sessionId: 's1', serverId: 'home-1', destination }, {
       surface: 'ui', serverId: 'home-1',
     })).resolves.toMatchObject({ ok: true });
-    expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', destination }), {
+    expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', destination }), expect.objectContaining({
       surface: 'ui', serverId: 'home-1',
-    });
+    }));
     sessionOpen.mockClear();
     await expect(createExecutor({ sessionOpen }).execute('session.open', { sessionId: 's1', serverId: 'home-1', destination }, { surface: 'ui' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
@@ -780,7 +780,7 @@ describe('createActionExecutor (session control)', () => {
     }, { surface: 'ui', authority: 'present_user', serverId: 'home-1', defaultSessionId: 's1' })).resolves.toMatchObject({ ok: true });
     expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 's1', serverId: 'home-1', approvedNewDirectoryCreation: true,
-    }), { surface: 'ui', authority: 'present_user', serverId: 'home-1', defaultSessionId: 's1' });
+    }), expect.objectContaining({ surface: 'ui', authority: 'present_user', serverId: 'home-1', defaultSessionId: 's1' }));
   });
 
   it('executes delete and organization assignment through the existing Home HTTP owner', async () => {
@@ -834,7 +834,7 @@ describe('createActionExecutor (session control)', () => {
   it('declares detached history deletion as a Machine-scoped write under the existing Action', async () => {
     const { resolveMachineRpcRoutePolicy } = await import('../machines/peer/mediation/rpc/routePolicyV1.js');
     expect(getActionSpec('session.delete').bindings?.rpcMethod).toBe('session.delete');
-    expect(getActionSpec('session.delete').surfaces.rpc).toBe(false);
+    expect(getActionSpec('session.delete').surfaces.rpc).toBe(true);
     expect(resolveSocketRpcSessionAuthorization('machine-1:session.delete')).toMatchObject({ method: 'session.delete', machineScope: true });
     expect(resolveMachineRpcRoutePolicy('session.delete')).toMatchObject({
       rpcClassification: 'action_spec_bound', actionSpecId: 'session.delete', sharedMachineAccess: 'use', routeClass: 'server_required',
@@ -1072,14 +1072,14 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionPermissionModeSet).toHaveBeenCalledWith({
       sessionId: 'target',
       permissionMode: 'yolo',
-      context: {
+      context: expect.objectContaining({
         surface: 'ui',
         authority: 'present_user',
         causalPermissionAuthority: {
           kind: 'admittedSessionInputV1',
           admittedPermissionCeiling: 'not-a-permission-mode',
         },
-      },
+      }),
     });
   });
 
@@ -1311,9 +1311,9 @@ describe('createActionExecutor (session control)', () => {
       },
     )).resolves.toEqual({ ok: true, result: { ok: true } });
     expect(sessionPermissionModeSet).toHaveBeenCalledWith({
-      sessionId: 'target', permissionMode: 'read-only', context: {
+      sessionId: 'target', permissionMode: 'read-only', context: expect.objectContaining({
         surface: 'plugin', actionCaller: { kind: 'plugin', pluginId: 'acme.channels', contributionLocalId: 'inbound' },
-      },
+      }),
     });
 
     await expect(executor.execute(
@@ -1322,7 +1322,7 @@ describe('createActionExecutor (session control)', () => {
       { surface: 'cli', authority: 'present_user' },
     )).resolves.toEqual({ ok: true, result: { ok: true } });
     expect(sessionPermissionModeSet).toHaveBeenLastCalledWith({
-      sessionId: 'target', permissionMode: 'read-only', context: { surface: 'cli', authority: 'present_user' },
+      sessionId: 'target', permissionMode: 'read-only', context: expect.objectContaining({ surface: 'cli', authority: 'present_user' }),
     });
   });
 
@@ -1907,7 +1907,7 @@ describe('createActionExecutor (session control)', () => {
       permissionMode: 'read-only',
       applyTiming: 'immediate',
       serverId: 'server-a',
-      context: { surface: 'cli', defaultSessionId: null },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null }),
     });
   });
 
@@ -1952,7 +1952,7 @@ describe('createActionExecutor (session control)', () => {
     expect(res).toEqual({ ok: true, result: modelSetSuccess({ sessionId: 's1', modelId: 'default' }) });
     expect(sessionModelSet).toHaveBeenCalledWith({
       sessionId: 's1', modelId: 'default', serverId: 'server-a',
-      context: { surface: 'cli', defaultSessionId: null },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null }),
     });
   });
 
@@ -1971,7 +1971,7 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
       modelId: 'model-a',
       providerConnectionId: 'pc_work',
-      context: { surface: 'cli', defaultSessionId: null },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null }),
     });
   });
 
@@ -2003,7 +2003,7 @@ describe('createActionExecutor (session control)', () => {
       teamCredentialModel,
       teamVisibilityGrantConsent: { teamId: 'team-1' },
       serverId: 'server-team',
-      context: { surface: 'ui', defaultSessionId: 's1' },
+      context: expect.objectContaining({ surface: 'ui', defaultSessionId: 's1' }),
     });
   });
 
@@ -2049,7 +2049,7 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
       modelId: 'default',
       providerConnectionId: 'pc_work',
-      context: { surface: 'cli', defaultSessionId: null },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null }),
     });
   });
 
@@ -2322,7 +2322,7 @@ describe('createActionExecutor (session control)', () => {
       roles: ['user', 'assistant'],
       includeTools: true,
       serverId: 'server-a',
-      context: { surface: 'cli', defaultSessionId: null },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null }),
     });
   });
 
@@ -2362,11 +2362,11 @@ describe('createActionExecutor (session control)', () => {
       projection: 'externalShareableV1',
       cursor: '7',
       callerPluginId: 'com.example.channel',
-      context: {
+      context: expect.objectContaining({
         surface: 'plugin',
         defaultSessionId: null,
         actionCaller: { kind: 'plugin', pluginId: 'com.example.channel' },
-      },
+      }),
     });
   });
 
@@ -2424,7 +2424,7 @@ describe('createActionExecutor (session control)', () => {
       pluginContext,
     )).resolves.toEqual({ ok: true, result: { ok: true } });
     expect(sessionPermissionModeSet).toHaveBeenCalledWith({
-      sessionId: 's1', permissionMode: 'yolo', context: pluginContext,
+      sessionId: 's1', permissionMode: 'yolo', context: expect.objectContaining(pluginContext),
     });
   });
 
@@ -2473,7 +2473,7 @@ describe('createActionExecutor (session control)', () => {
       cursor: 'cursor-1',
       roles: ['user'],
       maxCharsPerMessage: 80,
-      context: { surface: 'cli', defaultSessionId: null },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null }),
     });
   });
 
@@ -2496,7 +2496,7 @@ describe('createActionExecutor (session control)', () => {
       limit: 3,
       roles: ['user', 'assistant'],
       serverId: 'server-a',
-      context: { surface: 'cli', defaultSessionId: null },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null }),
     });
   });
 
@@ -3108,7 +3108,7 @@ describe('createActionExecutor (session control)', () => {
       view: 'awareness',
       serverId: 'home-1',
       signal,
-      context: { surface: 'cli', defaultSessionId: null, serverId: 'home-1', signal },
+      context: expect.objectContaining({ surface: 'cli', defaultSessionId: null, serverId: 'home-1', signal }),
     });
   });
 

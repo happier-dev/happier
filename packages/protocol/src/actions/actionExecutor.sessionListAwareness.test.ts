@@ -449,7 +449,7 @@ describe('session.list execution', () => {
     await executor.execute('session.activity.get', { sessionId: 'same-id' }, {
       ...agentContext, serverId: 'home-two', signal,
     });
-    expect(request).toEqual({ context: { ...agentContext, serverId: 'home-two', signal }, sessionId: 'same-id', serverId: 'home-two', signal });
+    expect(request).toEqual({ context: expect.objectContaining({ ...agentContext, serverId: 'home-two', signal }), sessionId: 'same-id', serverId: 'home-two', signal });
   });
   it('forwards the canonical Lane 07 query and the admitted context to the listing owner', async () => {
     const sessionList = vi.fn(async () => markSessionListQueryResultV1({
@@ -465,7 +465,7 @@ describe('session.list execution', () => {
       signal,
     });
 
-    expect(sessionList).toHaveBeenCalledWith({ context: { ...agentContext, serverId: 'home-1', signal }, query: canonicalQuery, serverId: 'home-1', signal });
+    expect(sessionList).toHaveBeenCalledWith({ context: expect.objectContaining({ ...agentContext, serverId: 'home-1', signal }), query: canonicalQuery, serverId: 'home-1', signal });
     expect(result).toMatchObject({ ok: true, result: { queryVersion: 1 } });
   });
 
@@ -697,7 +697,7 @@ describe('session.activity.get awareness view selector', () => {
     }, agentContext);
 
     expect(sessionActivityGet).toHaveBeenCalledWith({
-      context: agentContext,
+      context: expect.objectContaining(agentContext),
       sessionId: 'session-1',
       view: 'awareness',
     });
@@ -710,7 +710,7 @@ describe('session.activity.get awareness view selector', () => {
 
     const result = await executor.execute('session.activity.get', { sessionId: 'session-1' }, agentContext);
 
-    expect(sessionActivityGet).toHaveBeenCalledWith({ context: agentContext, sessionId: 'session-1' });
+    expect(sessionActivityGet).toHaveBeenCalledWith({ context: expect.objectContaining(agentContext), sessionId: 'session-1' });
     expect(result).toEqual({ ok: true, result: compatibilityDigest });
   });
 

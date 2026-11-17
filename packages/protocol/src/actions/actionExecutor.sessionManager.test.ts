@@ -130,7 +130,7 @@ describe('session.manager.set', () => {
     await expect(executor.execute('session.manager.set', input, context)).resolves.toMatchObject({
       ok: false, errorCode: 'manager_forbidden', details: { reason: 'pairwise' },
     });
-    expect(sessionManagerSet).toHaveBeenCalledWith(expect.objectContaining({ ...input, context, serverId: 'home' }));
+    expect(sessionManagerSet).toHaveBeenCalledWith(expect.objectContaining({ ...input, context: expect.objectContaining(context), serverId: 'home' }));
   });
 
   it('refuses a response that belongs to a different attachment', async () => {

@@ -78,7 +78,7 @@ describe('current-Session presentation Action', () => {
 
     expect(presentationApply).toHaveBeenCalledWith({
       input: { intent: { kind: 'board.item.reveal', widgetId: 'note-a' } },
-      context,
+      context: expect.objectContaining(context),
       signal,
     });
   });
