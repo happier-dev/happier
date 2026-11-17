@@ -343,3 +343,25 @@ export const PluginUiSurfaceContextV1Schema = lazyZodSchema(() => z.strictObject
   diagnostics: z._default(z.array(z.string().check(z.trim(), z.minLength(1))), []),
 }));
 export type PluginUiSurfaceContextV1 = z.infer<typeof PluginUiSurfaceContextV1Schema>;
+
+/**
+ * The host-stamped context carried only to a contextual dynamic Resource
+ * producer. It is deliberately not a generic caller metadata bag: the closed
+ * union makes an absent/wrong context fail through the Resource owner.
+ */
+export const PluginResourceContextV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('global') }),
+  z.strictObject({
+    kind: z.literal('session'),
+    sessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+    target: z.optional(PluginUiHostApiSurfaceTargetV1Schema),
+  }).check(z.refine(value => value.target === undefined
+    || value.target.kind === 'session' && value.target.sessionId === value.sessionId)),
+  z.strictObject({
+    kind: z.literal('surface'),
+    mountInstanceKey: PluginUiInstanceKeyV1Schema,
+    launchInput: PluginUiLaunchInputV1Schema,
+    target: z.optional(PluginUiHostApiSurfaceTargetV1Schema),
+  }),
+]));
+export type PluginResourceContextV1 = z.infer<typeof PluginResourceContextV1Schema>;

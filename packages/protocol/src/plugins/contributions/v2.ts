@@ -111,7 +111,8 @@ import {
   PluginUiInstanceKeyV1Schema,
   PluginUiLaunchInputV1Schema,
 } from '../ui/semanticCommands.js';
-import { PluginUiHostApiSurfaceTargetV1Schema } from '../ui/surfaceContext.js';
+import { PluginResourceContextV1Schema } from '../ui/surfaceContext.js';
+export { PluginResourceContextV1Schema, type PluginResourceContextV1 } from '../ui/surfaceContext.js';
 import {
   PluginSessionHeaderActionDescriptorV1Schema,
 } from './ui/sessionHeaderActions.js';
@@ -789,28 +790,6 @@ export type PluginResourceSourceV2 = z.infer<typeof PluginResourceSourceV2Schema
  */
 export const PluginDynamicResourceScopeV1Schema = lazyZodSchema(() => z.enum(['global', 'session', 'surface']));
 export type PluginDynamicResourceScopeV1 = z.infer<typeof PluginDynamicResourceScopeV1Schema>;
-
-/**
- * The host-stamped context carried only to a contextual dynamic Resource
- * producer. It is deliberately not a generic caller metadata bag: the closed
- * union makes an absent/wrong context fail through the Resource owner.
- */
-export const PluginResourceContextV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('global') }),
-  z.strictObject({
-    kind: z.literal('session'),
-    sessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-    target: z.optional(PluginUiHostApiSurfaceTargetV1Schema),
-  }).check(z.refine(value => value.target === undefined
-    || value.target.kind === 'session' && value.target.sessionId === value.sessionId)),
-  z.strictObject({
-    kind: z.literal('surface'),
-    mountInstanceKey: PluginUiInstanceKeyV1Schema,
-    launchInput: PluginUiLaunchInputV1Schema,
-    target: z.optional(PluginUiHostApiSurfaceTargetV1Schema),
-  }),
-]));
-export type PluginResourceContextV1 = z.infer<typeof PluginResourceContextV1Schema>;
 
 /**
  * `source` is optional on the packaged arm so that every already-admitted
