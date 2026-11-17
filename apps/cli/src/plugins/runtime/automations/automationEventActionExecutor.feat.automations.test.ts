@@ -1797,3 +1797,55 @@ describe('createAutomationEventActionExecutor', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+
+it.each([true, false])('admits a terminal native Event only with its private after Action definition (available: %s)', async privateAvailable => {
+  const { createActionAutomationHttpPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+  const { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+  const row = { automationId: 'completion', triggerId: triggerIdFor('completion'), triggerRevision: 1,
+    workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'account',
+    actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], phase: 'after' as const };
+  const privateTrigger = { kind: 'action' as const, phase: 'after' as const,
+    actionIds: row.actionIds, filter: { v: 1 as const, all: [{ op: 'eq' as const, field: '/outcome', value: 'failed' }] } };
+  const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+    binding: { v: 1, automationId: row.automationId, triggerId: row.triggerId, triggerRevision: 1, triggerKind: 'action' },
+    definition: privateTrigger });
+  const admitted: unknown[] = [];
+  // These boundaries model Home index/occurrence transport and private stored content reads.
+  const port = createActionAutomationHttpPortV1({ accountId: 'account', request: async (_path, request) => {
+    if (request.method === 'GET') return { v: 1, rows: [row] };
+    admitted.push(request.body);
+    return { results: [{ automationId: row.automationId, triggerId: row.triggerId, kind: 'admitted', runId: 'run' }] };
+  } });
+  const executor = createAutomationEventActionExecutor({ credentials,
+    revalidateCallerMaterialization: async () => true,
+    revalidateCallerOccurrence: async () => true,
+    nativeCompletion: {
+      port, resolveDeclaration: async ref => ({ completesActionIds: row.actionIds,
+        completionOutcome: ref.localId === 'deployment-succeeded' ? 'succeeded' : 'failed' }),
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      readDefinition: async () => privateAvailable ? ({ id: row.automationId, triggers: [{ id: row.triggerId, revision: 1,
+        kind: 'action', phase: 'after', actionIds: row.actionIds, enabled: true, createdAt: 1, updatedAt: 1,
+        triggerDefinitionEnvelope: JSON.stringify(envelope) }] }) : null,
+    },
+  });
+  const result = await executor({ actionId: 'automation.event.admit', caller: actionCaller, input: {
+    eventRef: { pluginId: actionCaller.pluginId, localId: 'deployment-failed' }, sourceInstanceId: 'native-receipts',
+    occurrenceId: 'receipt-terminal', occurredAt: 100, observationReceivedAt: 101, originRunId: 'origin-run', payload: { private: 'never disclose' }, definitions: [],
+  } });
+  if (!privateAvailable) {
+    expect(result).toMatchObject({ ok: false, errorCode: 'automation_event_host_evidence_unavailable' });
+    expect(admitted).toEqual([]);
+    return;
+  }
+  expect(result).toEqual({ results: [] });
+  expect(admitted).toEqual([{ evidence: expect.objectContaining({ actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1,
+    status: 'failed', outcome: 'failed', phase: 'after', originRunId: 'origin-run' }), triggers: [{ automationId: row.automationId,
+    triggerId: row.triggerId, triggerRevision: 1 }] }]);
+  expect(JSON.stringify(admitted)).not.toContain('never disclose');
+  await executor({ actionId: 'automation.event.admit', caller: actionCaller, input: {
+    eventRef: { pluginId: actionCaller.pluginId, localId: 'deployment-succeeded' }, sourceInstanceId: 'native-receipts',
+    occurrenceId: 'another-receipt-terminal', occurredAt: 100, observationReceivedAt: 101, payload: {}, definitions: [],
+  } });
+  expect(admitted).toHaveLength(1);
+});

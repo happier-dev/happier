@@ -142,7 +142,7 @@ import { machineUpdateHandler } from '@/app/api/socket/machineUpdateHandler';
 import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '@/app/api/socket/machineSocketInstallationProof';
 import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema,
     SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
-import { createDeploymentInTx, transitionDeploymentInTx } from './deploymentService';
+import { createDeploymentInTx, transitionDeploymentInTx, projectDeploymentReceiptHeader } from './deploymentService';
 import { setDeploymentEnvironmentControllerInTx } from './deploymentControllerService';
 import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
 import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
@@ -7638,6 +7638,17 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await hasAcceptedDeploymentReceiptInTx(db, f.authorization.binding, continuation)).toBe(true);
         await db.automationRun.update({ where: { id: runId }, data: { state: 'cancelled' } });
         expect(await hasAcceptedDeploymentReceiptInTx(db, f.authorization.binding, continuation)).toBe(false);
+    });
+
+    it.each([false, true])('retains the signed Workflow cause on an accepted receipt (Workflow origin: %s)', async workflowOrigin => {
+        const f = await fixture('account', 'account', { workflowOrigin });
+        const header = projectDeploymentReceiptHeader(f.receipt);
+        if (workflowOrigin) {
+            expect(f.receipt).toHaveProperty('originRunId', f.workflowActionOrigin!.runId);
+            expect(header).toHaveProperty('originRunId', f.workflowActionOrigin!.runId);
+        } else {
+            expect(header).not.toHaveProperty('originRunId');
+        }
     });
 
     it.each([false, true])('finishes accepted restore, codec reads, cleanup and settlement after Team departure and token rotation (Workflow origin: %s)', async workflowOrigin => {

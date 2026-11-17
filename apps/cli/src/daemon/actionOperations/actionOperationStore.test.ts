@@ -37,7 +37,7 @@ describe('action operation store', () => {
     expect(outcomes).toEqual([]);
     for (const state of ['succeeded', 'failed'] as const) {
       store.create({ operationId: state, scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.run',
-        title: 'Backup', cancellation: 'unsupported', inputIdentity: JSON.stringify(input) });
+        title: 'Backup', cancellation: 'unsupported', inputIdentity: JSON.stringify(input), originRunId: 'backup-workflow' });
       store.markRunning(state);
       store.updateProgress(state, { kind: 'phase', phase: 'backup', label: 'Backing up' });
       expect(outcomes).toHaveLength(state === 'succeeded' ? 0 : 1);
@@ -52,8 +52,8 @@ describe('action operation store', () => {
     store.succeed('verify', {});
     expect(outcomes).toMatchObject([
       { kind: 'backup', serverId: 'home', machineId: ACCOUNT_SCOPE.machineId, environmentId: 'environment',
-        operationId: 'succeeded', state: 'succeeded', errorCode: null },
-      { kind: 'backup', operationId: 'failed', state: 'failed', errorCode: 'backup_failed' },
+        operationId: 'succeeded', state: 'succeeded', errorCode: null, originRunId: 'backup-workflow' },
+      { kind: 'backup', operationId: 'failed', state: 'failed', errorCode: 'backup_failed', originRunId: 'backup-workflow' },
     ]);
     expect(outcomes).toHaveLength(2);
     expect(JSON.stringify(outcomes)).not.toContain('Private native output');

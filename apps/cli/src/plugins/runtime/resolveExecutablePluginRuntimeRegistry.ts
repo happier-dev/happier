@@ -1,3 +1,4 @@
+import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { prepareServiceLaunchEnvironments } from './lifecycle/contributions/targetServiceLaunchEnvironments';
 import { deploymentUnavailableDiagnostic } from '@/deployments/deploymentFailure';
 import { createAccountMachineSourceDeclarationReader } from './invocation/actions/accountMachineSourceDeclarations';
@@ -1571,6 +1572,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 throw new Error('automation_event_source_demand_unavailable');
             }
             if (result.definitions.length > 0) return true;
+        }
+        const actionIds = [...new Set((target.manifest.contributes.events ?? []).flatMap(event =>
+            event.kind === 'event' && event.automation?.completionOutcome !== undefined
+                ? event.automation.completesActionIds ?? [] : []))];
+        if (actionIds.length > 0) {
+            const port = createCliActionAutomationPortV1({ token: credentials.token, serverHttpBaseUrl: resolveServerHttpBaseUrl() });
+            if (!port?.hasAfterActions) throw new Error('automation_action_index_unavailable');
+            return await port.hasAfterActions(actionIds);
         }
         return false;
     }

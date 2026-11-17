@@ -202,6 +202,25 @@ export const readAccountStoredPluginEventTriggerV1 = (row: AutomationDefinitionD
     return { trigger, binding, definition: openEvent(binding, envelope, current, true) };
   };
 
+export const readAccountStoredActionTriggerV1 = (row: Pick<AutomationDefinitionDetail, 'id' | 'triggers'>, triggerId: string, current: AvailableAutomationAccountEncryptionV1) => {
+    const trigger = row.triggers.find(item => item.id === triggerId);
+    if (!trigger || trigger.kind !== 'action' || 'consentFor' in trigger) unavailable();
+    const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: row.id,
+      triggerId, triggerRevision: trigger.revision, triggerKind: 'action' });
+    let envelope: unknown;
+    try { envelope = JSON.parse(trigger.triggerDefinitionEnvelope); } catch { unavailable(); }
+    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
+      ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+        ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
+    if (opened.kind !== 'available') unavailable();
+    const definition = AutomationActionTriggerSchema.parse(opened.definition);
+    const projected = projectAutomationActionTriggerStructuralV1(definition);
+    if (projected.phase !== trigger.phase || !pluginJsonValuesEqual(projected.actionIds, trigger.actionIds)
+      || projected.subjectKey !== trigger.subjectKey || projected.subjectKind !== trigger.subjectKind
+      || projected.mode !== trigger.mode || projected.onFailure !== trigger.onFailure) unavailable();
+    return { trigger, binding, definition };
+  };
+
 /**
  * Every Account host (CLI/daemon and the UI front door) composes the one trigger owner through
  * this adapter: Automation recipe/context and private trigger envelopes are opened and sealed with
@@ -448,24 +467,6 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     const binding = pullRequestBinding(row.id, trigger.id, trigger.revision, trigger.kind);
     return { trigger, binding, definition: openPullRequest(binding, envelope, current, true) };
   };
-  const storedAction = (row: AutomationDefinitionDetail, triggerId: string, current: AvailableAutomationAccountEncryptionV1) => {
-    const trigger = row.triggers.find(item => item.id === triggerId);
-    if (!trigger || trigger.kind !== 'action' || 'consentFor' in trigger) unavailable();
-    const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: row.id,
-      triggerId, triggerRevision: trigger.revision, triggerKind: 'action' });
-    let envelope: unknown;
-    try { envelope = JSON.parse(trigger.triggerDefinitionEnvelope); } catch { unavailable(); }
-    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
-      ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
-        ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
-    if (opened.kind !== 'available') unavailable();
-    const definition = AutomationActionTriggerSchema.parse(opened.definition);
-    const projected = projectAutomationActionTriggerStructuralV1(definition);
-    if (projected.phase !== trigger.phase || !pluginJsonValuesEqual(projected.actionIds, trigger.actionIds)
-      || projected.subjectKey !== trigger.subjectKey || projected.subjectKind !== trigger.subjectKind
-      || projected.mode !== trigger.mode || projected.onFailure !== trigger.onFailure) unavailable();
-    return { trigger, binding, definition };
-  };
   const prepareEvent = (automationId: string, triggerId: string, triggerRevision: number,
     trigger: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1,
     previous?: ReturnType<typeof readAccountStoredPluginEventTriggerV1>): AutomationTriggerDefinitionInput => {
@@ -575,7 +576,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     if (retained.kind !== requested.kind || retained.enabled !== requested.enabled || 'triggerDefinitionEnvelope' in requested) return false;
     if (requested.kind === 'action' && !('consentFor' in requested) && retained.kind === 'action' && !('consentFor' in retained)) {
       const { enabled: _enabled, ...definition } = requested;
-      return pluginJsonValuesEqual(storedAction(row, retained.id, current).definition, definition);
+      return pluginJsonValuesEqual(readAccountStoredActionTriggerV1(row, retained.id, current).definition, definition);
     }
     if (requested.kind === 'prComment' || requested.kind === 'ciFailed') {
       return pluginJsonValuesEqual(storedPullRequest(row, retained.id, current).definition,
@@ -774,7 +775,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
           }
           if (!isAvailableE2eeAutomationAccountEncryptionV1(current)) return item;
           const previous = retained.kind === 'pluginEvent' ? readAccountStoredPluginEventTriggerV1(row, item.triggerId, current)
-            : retained.kind === 'action' ? storedAction(row, item.triggerId, current) : storedPullRequest(row, item.triggerId, current);
+            : retained.kind === 'action' ? readAccountStoredActionTriggerV1(row, item.triggerId, current) : storedPullRequest(row, item.triggerId, current);
           return { ...item, triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema.parse(
             sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'e2ee', material: current.material.material,
               randomBytes: params.randomBytes, binding: { ...previous.binding, triggerRevision: item.expectedRevision + 1 },
@@ -812,7 +813,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     ...(params.pullRequests ? { pullRequests: params.pullRequests } : {}),
     openPullRequestTrigger: async (row, trigger) => storedPullRequest(row, trigger.id, await params.resolveEncryption()).definition,
     openPluginEventTrigger: async (row, trigger) => readAccountStoredPluginEventTriggerV1(row, trigger.id, await params.resolveEncryption()).definition,
-    openActionTrigger: async (row, trigger) => storedAction(row, trigger.id, await params.resolveEncryption()).definition,
+    openActionTrigger: async (row, trigger) => readAccountStoredActionTriggerV1(row, trigger.id, await params.resolveEncryption()).definition,
     resolveWorkflow: params.resolveWorkflow,
     ...(params.resolveWorkflowTeamIds ? { resolveWorkflowTeamIds: params.resolveWorkflowTeamIds } : {}),
     openContext: async (row) => {

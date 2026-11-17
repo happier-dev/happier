@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
-import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema } from './automationActionIdentityV1.js';
+import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema, AutomationActionOutcomeV1Schema } from './automationActionIdentityV1.js';
 
 const identifier = z.string().check(z.trim(), z.minLength(1));
 
@@ -19,6 +19,7 @@ export const AutomationActionRunEvidenceV1Schema = lazyZodSchema(() => z.strictO
     requestId: identifier,
     phase: AutomationActionPhaseV1Schema,
     status: z.optional(z.enum(['succeeded', 'failed'])),
+    outcome: z.optional(AutomationActionOutcomeV1Schema),
     errorCode: z.optional(identifier),
     machineId: z.optional(identifier),
     originRunId: z.optional(identifier),

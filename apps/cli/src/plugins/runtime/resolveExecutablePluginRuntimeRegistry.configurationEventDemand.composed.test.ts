@@ -34,7 +34,7 @@ import { createStablePluginEventsBroker } from './invocation/services/events';
 
 const pluginId = 'example.event-demand';
 const machineId = 'machine-event-demand';
-const credentials = { token: 'fixture-event-demand-account', encryption: null } as const;
+const credentials = { token: 'fixture.' + Buffer.from(JSON.stringify({ sub: 'event-demand-account' })).toString('base64url') + '.signature', encryption: null } as const;
 const sourceConfigSchema = { type: 'object', additionalProperties: false } as const;
 type SourceRead = ReturnType<typeof AutomationEventStoredDefinitionsReadHttpRequestV1Schema.parse>;
 
@@ -86,6 +86,8 @@ async function createEventDemandFixture(params: Readonly<{
     broker?: ReturnType<typeof createStablePluginEventsBroker>;
     eager?: boolean;
     deferConfiguredActivation?: boolean;
+    actionCompletion?: boolean;
+    actionCompletionPhase?: 'before';
 }>) {
     const observed = { activations: 0, starts: 0, sourcePages: [] as unknown[], errors: [] as unknown[],
         requests: [] as SourceRead[], queriedBeforePublication: false,
@@ -120,6 +122,18 @@ async function createEventDemandFixture(params: Readonly<{
         await params.beforeResponse?.(request);
         return httpResponse(sourcePage(request, present));
     });
+    if (params.actionCompletion) {
+        const rows = [{ automationId: 'action-completion', triggerId: 'after', triggerRevision: 1,
+            ownerAccountId: 'event-demand-account', workflowId: 'workflow', workflowRevision: 1,
+            actionIds: ['deployments.deploy'], phase: params.actionCompletionPhase ?? 'after',
+            subjectKind: 'environment', subjectKey: 'private-subject-key' }];
+        vi.spyOn(axios, 'request').mockResolvedValue(httpResponse({ v: 1, rows }));
+        // The authenticated socket boundary supplies the current structural row to a retained Account index.
+        const { applyCliActionAutomationUpdateV1 } = await import('@/api/actionAutomations');
+        const { resolveServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
+        applyCliActionAutomationUpdateV1({ token: credentials.token, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+            body: { actionIndex: { automationId: 'action-completion', rows } } });
+    }
     const plugin = definePlugin({
         id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
         activation: params.eager ? { events: [{ kind: 'startup' }] } : { events: [], configuration: { automationEventSources: true } },
@@ -133,7 +147,7 @@ async function createEventDemandFixture(params: Readonly<{
                 run: () => { throw new Error('Demand observation must not reset a source'); } },
         },
         events: { changed: { declaration: { kind: 'event', title: 'Changed', payloadSchema: { type: 'object' },
-            automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
+            automation: { v: 1, eligible: true, ...(params.actionCompletion ? { completesActionIds: ['deployments.deploy'], completionOutcome: 'failed' as const } : {}), source: { sourceContractVersion: 1,
                 supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema,
                 setupActionRef: { pluginId, localId: 'setup' }, historyGapResetActionRef: { pluginId, localId: 'reset' },
                 connectedAccountPurposeBindings: [] } },
@@ -188,6 +202,23 @@ function invalidateSources(broker: ReturnType<typeof createStablePluginEventsBro
 afterEach(() => vi.restoreAllMocks());
 
 describe('configuration-driven Automation Event activation', () => {
+    it('keeps native terminal observers dormant for only a before Action row and no Event definition', async () => {
+        const { fixture, observed } = await createEventDemandFixture({ present: () => false, actionCompletion: true, actionCompletionPhase: 'before' });
+        try {
+            expect(observed.activations).toBe(0);
+            expect(observed.starts).toBe(0);
+        } finally { await fixture.dispose(); }
+    });
+
+    it('activates native terminal observers for a scoped after Action row without an Event definition', async () => {
+        const { fixture, observed } = await createEventDemandFixture({ present: () => false, actionCompletion: true });
+        try {
+            await vi.waitFor(() => expect(observed.starts).toBe(1));
+            expect(observed.activations).toBe(1);
+            expect(observed.errors).toEqual([]);
+        } finally { await fixture.dispose(); }
+    });
+
     it('handles a rejected background declaration while configured source admission is still pending', async () => {
         let readStarted = false;
         let claimRefused = false;

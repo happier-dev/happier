@@ -68,6 +68,7 @@ function retainsReturnedRecoveryResult(actionId: string): boolean {
 type CreateActionOperationInput = Readonly<{
   operationId: string;
   actionId: string;
+  originRunId?: string;
   scope: ActionOperationScope;
   title: string;
   requestId?: string;
@@ -210,6 +211,7 @@ export function createActionOperationStore(options?: Readonly<{
       try {
         options?.onBackupOutcome?.({ kind: 'backup', serverId: backup.serverId, machineId: snapshot.scope.machineId,
           environmentId: backup.environmentId, operationId: snapshot.operationId, state: snapshot.state,
+          ...(snapshot.originRunId ? { originRunId: snapshot.originRunId } : {}),
           occurredAt: snapshot.settledAt, errorCode: snapshot.error?.errorCode ?? null }, snapshot.scope);
       } catch { /* Observation cannot change the retained backup result. */ }
     }
@@ -415,6 +417,7 @@ export function createActionOperationStore(options?: Readonly<{
         operationId: input.operationId,
         revision: 1,
         actionId: input.actionId,
+        ...(input.originRunId !== undefined ? { originRunId: input.originRunId } : {}),
         state: 'accepted',
         scope: input.scope,
         title: input.title,

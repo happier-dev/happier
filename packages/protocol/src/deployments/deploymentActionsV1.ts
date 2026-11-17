@@ -195,6 +195,8 @@ export const DeploymentReceiptMetadataV1Schema = lazyZodSchema(() => z.strictObj
   operation: DeploymentReceiptOperationV1Schema, state: DeploymentStateV1Schema,
   requestKey: DeploymentIdentifierV1Schema, requestedByAccountId: DeploymentIdentifierV1Schema,
   actionOperationId: DeploymentIdentifierV1Schema,
+  /** Immutable admitted Workflow cause; never supplied by the receipt request body. */
+  originRunId: z.optional(DeploymentIdentifierV1Schema),
   acceptedExecution: z.optional(DeploymentAcceptedExecutionV1Schema),
   predecessorDeploymentId: z.optional(DeploymentIdentifierV1Schema), rollbackOfDeploymentId: z.optional(DeploymentIdentifierV1Schema),
   restoreBackupId: z.optional(DeploymentIdentifierV1Schema),

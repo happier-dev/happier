@@ -3,6 +3,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationSubjectKindV1Schema, type AutomationSubjectKindV1 } from './automationSubjectV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { ActionIdSchema, type ActionId } from '../actions/actionIds.js';
+import { AutomationActionOutcomeV1Schema, type AutomationActionOutcomeV1 } from './automationActionIdentityV1.js';
 
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
 import {
@@ -26,11 +28,12 @@ import {
 import {
   hasValidPluginConnectedAccountPurposeBindingsV2,
   PluginActionConnectedAccountPurposeBindingV2Schema,
+  type PluginActionConnectedAccountPurposeBindingV2,
 } from '../plugins/actions/v2.js';
-import { PluginUiRendererChainBindingV1Schema } from '../plugins/contributions/ui/rendererChainBinding.js';
+import { PluginUiRendererChainBindingV1Schema, type PluginUiRendererChainBindingV1 } from '../plugins/contributions/ui/rendererChainBinding.js';
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
-import { PluginSubjectProjectionV1Schema } from '../plugins/actions/v2.js';
-import { ScmHostingProviderKindSchema } from '../scm/pullRequests.js';
+import { PluginSubjectProjectionV1Schema, type PluginSubjectProjectionV1 } from '../plugins/actions/v2.js';
+import { ScmHostingProviderKindSchema, type ScmHostingProviderKind } from '../scm/pullRequests.js';
 
 export const AutomationQualifiedPluginContributionRefV1Schema =
   PluginContributionIdentityV1Schema;
@@ -53,9 +56,15 @@ export type AutomationObservationTransportKindV1 = z.infer<
 >;
 
 /** Descriptor-only eligibility on the canonical Event contribution. */
-export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
+const completionActionIdSchema: z.ZodMiniType<ActionId> = ActionIdSchema;
+function createPluginEventAutomationDeclarationV1Schema() {
+return z.strictObject({
   v: z.literal(1),
   eligible: z.literal(true),
+  /** Settled resource Events resolve accepted-handle Action completion. */
+  completesActionIds: z.optional(z.array(completionActionIdSchema)),
+  /** Terminal mapping owned by this existing Event producer (R25). */
+  completionOutcome: z.optional(AutomationActionOutcomeV1Schema),
   subjects: z.optional(z.array(PluginSubjectProjectionV1Schema)),
   /** Native adapter identities; plugin support is derived from its validated subject projections. */
   subjectKinds: z.optional(z.array(AutomationSubjectKindV1Schema.check(z.refine(kind => kind !== 'plugin')))),
@@ -129,10 +138,33 @@ export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.st
       message: 'Connected Account source bindings must target one exact qualified credential-ref source-config leaf in every declared input arm.',
     });
   }
-})));
-export type PluginEventAutomationDeclarationV1 = z.infer<
-  typeof PluginEventAutomationDeclarationV1Schema
->;
+}));
+}
+export type PluginEventAutomationDeclarationV1 = {
+  v: 1;
+  eligible: true;
+  completesActionIds?: ActionId[];
+  completionOutcome?: AutomationActionOutcomeV1;
+  subjects?: PluginSubjectProjectionV1[];
+  subjectKinds?: AutomationSubjectKindV1[];
+  source: {
+    sourceContractVersion: number;
+    scmPullRequestLifecycle?: {
+      providerKind: ScmHostingProviderKind;
+      previewStatusActionRef?: AutomationQualifiedPluginContributionRefV1;
+    };
+    supportedObservationTransports: AutomationObservationTransportKindV1[];
+    webhookContributionRef?: AutomationQualifiedPluginContributionRefV1;
+    sourceConfigSchema: PluginJsonSchemaV2;
+    setupActionRef: AutomationQualifiedPluginContributionRefV1;
+    observationOnly?: z.infer<typeof AutomationObservationOnlyIntentV1Schema>;
+    setupSurface?: PluginUiRendererChainBindingV1;
+    historyGapResetActionRef?: AutomationQualifiedPluginContributionRefV1;
+    connectedAccountPurposeBindings?: PluginActionConnectedAccountPurposeBindingV2[];
+  };
+};
+export const PluginEventAutomationDeclarationV1Schema: z.ZodMiniType<PluginEventAutomationDeclarationV1> =
+  lazyZodSchema(createPluginEventAutomationDeclarationV1Schema);
 
 /** The declaration owner supplies the supported subject kinds to every authoring surface. */
 export function readAutomationEventSubjectKindsV1(

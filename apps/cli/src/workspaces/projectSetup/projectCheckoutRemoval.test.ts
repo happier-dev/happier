@@ -87,7 +87,10 @@ it.each([
         const before = JSON.parse(await readFile(statePath, 'utf8'));
         const signal = new AbortController().signal;
         const result = await operationRuntime.observeExecution({ actionId: 'scm.worktree.remove', input: { cwd: directory,
-            worktreePath: alias }, rpcContext: { signal }, execute: async operation => {
+            worktreePath: alias }, actionContext: { executionRunWorkflowRunId: 'removal-workflow',
+            actionCaller: { kind: 'workflowRun', runId: 'removal-workflow',
+                authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'yolo' } } },
+            rpcContext: { signal }, execute: async operation => {
             await expect(prepareProjectCheckoutRemoval({ runtime, ingress: { signal }, context: {}, operation,
                 worktreePath: join(directory, 'missing'), skipCleanup: true })).rejects.toMatchObject({ code: 'project_worktree_root_unavailable' });
             // A retained backend registration supplies this capture after an external
@@ -118,7 +121,7 @@ it.each([
         expect(result).toMatchObject({ ok: true });
         await vi.waitFor(() => expect(removals).toEqual([expect.objectContaining({
             workspace: associated ? expect.objectContaining({ workspaceId: 'workspace', rootPath: alias }) : null,
-            worktreePath: captured,
+            worktreePath: captured, originRunId: 'removal-workflow',
         })]));
         await vi.waitFor(async () => {
             const after = JSON.parse(await readFile(statePath, 'utf8'));

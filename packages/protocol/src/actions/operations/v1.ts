@@ -534,6 +534,8 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   actionId: ActionOperationIdentifierV1Schema,
   /** Current V2 read: accountable actor; null is an accepted approval without person identity. */
   actor: z.optional(z.nullable(ActionActorV1Schema)),
+  /** Admitted Workflow cause; separate from the eventual accountable approver. Current V2 read only. */
+  originRunId: z.optional(ActionOperationIdentifierV1Schema),
   state: ActionOperationStateV1Schema,
   scope: z.strictObject({
     accountId: ActionOperationIdentifierV1Schema,
@@ -711,7 +713,7 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
  * current readers use V2 and the store retains the complete owner observation.
  * Remove this projection when that supported predecessor reader is retired. */
 export function projectActionOperationSnapshotForV1Reader(snapshot: ActionOperationSnapshotV1): ActionOperationSnapshotV1 {
-  const { actor: _actor, domainRef, setupReview: _review, observation: _observation, operationCredentialUses: _credentialUses,
+  const { actor: _actor, originRunId: _originRunId, domainRef, setupReview: _review, observation: _observation, operationCredentialUses: _credentialUses,
     error, progress, result, ...projection } = snapshot;
   const legacyDomainRef = domainRef?.kind === 'forkRequest' || domainRef?.kind === 'spawnAttempt'
     || domainRef?.kind === 'handoff' ? domainRef : undefined;

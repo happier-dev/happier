@@ -125,6 +125,7 @@ export function createActionOperationRunner(deps: Readonly<{
 
   const observe = async (request: Readonly<{
     actionId: string;
+    originRunId?: string;
     action?: ResolvedTrackedAction;
     /** Verified retained deployment correspondence from the receiving host, never wire input. */
     restoredDeploymentOperationId?: string;
@@ -321,6 +322,7 @@ export function createActionOperationRunner(deps: Readonly<{
               lastEffect = effect;
             },
             operationAcceptance: { operationId, actionId: action.actionId,
+              originRunId: deps.store.get(request.scope, operationId)?.originRunId,
               ...(action.actionId === 'session.spawn_new' ? {
                 observeSessionBirth: (read: () => Promise<import('@happier-dev/protocol').SessionSpawnNewResultV1 | null>) => sessionBirth.retain(operationId, read),
               } : {}),
@@ -652,6 +654,7 @@ export function createActionOperationRunner(deps: Readonly<{
     const created = deps.store.create({
       operationId,
       actionId: action.actionId,
+      ...(request.originRunId !== undefined ? { originRunId: request.originRunId } : {}),
       scope: request.scope,
       ...(request.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: request.requesterWorkAttributionV1 } : {}),
       title: action.title,

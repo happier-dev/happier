@@ -5,7 +5,8 @@ import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machin
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { isMachineSetupOperationActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
-import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { buildActionExecutorContextForRpc, type RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { readActionWorkflowOriginRunIdV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 
 import { createActionOperationRpcHandlers, resolveActionOperationScope, type ActionOperationRpcContext } from './actionOperationRpcHandlers';
@@ -248,6 +249,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     sessionId?: string;
     /** Already admitted receiving-host context, never a public Action input. */
     rpcContext?: ActionOperationRpcContext & ConfirmationContext;
+    actionContext?: ActionExecutorContext;
     /** Existing domain owner opens and validates the exact candidate before returning correspondence. */
     recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined>;
     existingDeploymentOperationId?: string;
@@ -361,6 +363,8 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         errorCode: 'action_operation_unavailable', error: 'action_operation_unavailable' };
       operationInput = { ...original, ...teardown.data };
     }
+    const operationContext = request.actionContext ?? buildActionExecutorContextForRpc({ ...request.rpcContext, actionId: spec.id });
+    const originRunId = readActionWorkflowOriginRunIdV1(operationContext);
     let observedOperationId: string | undefined;
     const execution = runner.observe({
       actionId: request.actionId,
@@ -390,6 +394,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         } : {}),
       } } : {}),
       scope,
+      ...(originRunId !== undefined ? { originRunId } : {}),
       ...(restoredDeploymentOperationId ? { restoredDeploymentOperationId } : {}),
       ...(request.existingDeploymentOperationId ? { existingDeploymentOperationId: request.existingDeploymentOperationId } : {}),
       ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
@@ -553,6 +558,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     requestId?: string;
     sessionId?: string;
     rpcContext?: ActionOperationRpcContext & Pick<RpcActionExecutorContext, 'externalActionExecutionAuthorization'>;
+    actionContext?: ActionExecutorContext;
     execute: (context: Readonly<{
       signal: AbortSignal;
       operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
@@ -568,6 +574,8 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       });
     }
     const attribution = acceptedAttribution(scope, request.rpcContext);
+    const operationContext = request.actionContext ?? buildActionExecutorContextForRpc({ ...request.rpcContext, actionId: 'action.invoke' });
+    const originRunId = readActionWorkflowOriginRunIdV1(operationContext);
     return await runner.observe({
       actionId: request.actionId,
       ...(request.response ? { response: request.response } : {}),
@@ -577,6 +585,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         operation: request.operation,
       },
       scope,
+      ...(originRunId !== undefined ? { originRunId } : {}),
       ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
       ...(request.requestId ? { requestId: request.requestId } : {}),
       input: request.input,
@@ -674,7 +683,7 @@ export async function runHostActionOperation(
     || Boolean(context.externalActionExecutionAuthorization?.binding.workflowActionOrigin);
   const workflowOperationReceipt = isMachineSetupOperationActionIdV1(request.actionId);
   const workflowContinuationResult = readManagedWorkflowContinuationResultPort(context);
-  return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context,
+  return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context, actionContext: context,
     ...(workflowContinuationResult ? { workflowContinuationResult } : {}),
     ...((context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
       // Setup completion retains this host receipt before observing terminal

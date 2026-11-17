@@ -1,5 +1,6 @@
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { fetchChanges } from '../changes';
+import { refreshCliActionAutomationsFromChangesV1 } from '../actionAutomations';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import {
     isChangesPageFull, projectPushedChangesPageAt, PushedAccountChangesPageV1Schema, readSessionTranscriptChangeHintV1,
@@ -39,9 +40,9 @@ function snapshotReasonForChangesFallback(reason: 'connect' | 'reconnect' | 'liv
 type ChangesPage = Awaited<ReturnType<typeof fetchChanges>>;
 
 /** The change kinds `runSessionChangesSyncOnConnect` reads: Account rows (Settings, catalogs), plugin
- * Settings records, and the Session's own `session` / `share` rows. The Account updates socket declares
+ * Settings records, Action automation index rows, and the Session's own `session` / `share` rows. The Account updates socket declares
  * them as its change-row demand, so its wakes carry exactly these rows. */
-export const SESSION_CLIENT_ACCOUNT_CHANGE_KINDS = ['account', 'pluginDomain', 'session', 'share'] as const satisfies readonly ChangeKind[];
+export const SESSION_CLIENT_ACCOUNT_CHANGE_KINDS = ['account', 'pluginDomain', 'session', 'share', 'automation', 'artifact'] as const satisfies readonly ChangeKind[];
 const SESSION_CLIENT_CHANGE_KINDS: ReadonlySet<unknown> = new Set(SESSION_CLIENT_ACCOUNT_CHANGE_KINDS);
 
 /** The wake's pushed page, parsed explicitly; absent or malformed is undefined and the wake keeps its routing only. */
@@ -200,12 +201,20 @@ function dropHeldPushedChangesPages(token: string, sessionId: string): void {
  * change arrives with a new wake, which starts a fresh read. A failed read is never shared after it
  * settles; every read settles on its own request timeout.
  */
-function fetchSessionChangesPage(request: Readonly<{ token: string; after: number; limit: number; live: boolean }>): Promise<ChangesPage> {
+function fetchSessionChangesPage(request: Readonly<{ token: string; after: number; limit: number; live: boolean;
+    pushed?: ChangesResponse }>): Promise<ChangesPage> {
     const key = `${resolveServerHttpBaseUrl()}\n${request.token}\n${request.after}\n${request.limit}`;
     const wakePages = request.live ? accountWakeStreams.get(request.token)?.pages : undefined;
     const existing = wakePages?.get(key) ?? inFlightChangesPages.get(key);
     if (existing) return existing;
-    const read = fetchChanges({ token: request.token, after: request.after, limit: request.limit })
+    const read = (request.pushed ? Promise.resolve({ status: 'ok' as const, response: request.pushed })
+        : fetchChanges({ token: request.token, after: request.after, limit: request.limit }))
+        .then(async result => {
+            if (result.status === 'ok') await refreshCliActionAutomationsFromChangesV1({
+                token: request.token, serverHttpBaseUrl: resolveServerHttpBaseUrl(), changes: result.response.changes,
+            });
+            return result;
+        })
         .finally(() => { inFlightChangesPages.delete(key); });
     inFlightChangesPages.set(key, read);
     if (wakePages) {
@@ -256,8 +265,8 @@ export async function runSessionChangesSyncOnConnect(params: {
         if (!('gap' in held) && !held.full) await params.writeChangesCursor(accountId, held.page.nextCursor);
         if ('gap' in held || !held.full) return;
     }
-    const result = held && !('gap' in held) ? { status: 'ok' as const, response: held.page }
-        : await fetchSessionChangesPage({ token: params.token, after, limit: CHANGES_PAGE_LIMIT, live: params.reason === 'live' });
+    const result = await fetchSessionChangesPage({ token: params.token, after, limit: CHANGES_PAGE_LIMIT,
+        live: params.reason === 'live', ...(held && !('gap' in held) ? { pushed: held.page } : {}) });
     if (result.status === 'cursor-gone') {
         params.onSessionFollowInvalidated?.();
         let transcriptCatchUpSucceeded = true;

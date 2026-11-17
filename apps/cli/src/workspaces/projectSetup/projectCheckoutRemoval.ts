@@ -87,6 +87,7 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
                 kind: 'worktreeRemoved', serverId: runtime.serverId, occurredAt: Date.now(), removal: {
                     workspace: association ? workspaceAddressFromRefV1(association.workspace) : null,
                     project: association?.project ?? null, machineId: runtime.machineId, operationId,
+                    ...(operation.operationAcceptance?.originRunId ? { originRunId: operation.operationAcceptance.originRunId } : {}),
                     worktreePath: physicalRoot, outcome: 'removed', removalKind,
                 },
             } }, () => false);

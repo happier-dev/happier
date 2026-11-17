@@ -1,3 +1,4 @@
+import { admitNativeActionCompletion, type NativeActionCompletionHost } from './automationActionCompletion';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
 import axios from '@/api/client/credentialAxios';
@@ -184,6 +185,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
   resolveAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
   /** Commits source-owned projections before the runner may advance its checkpoint. */
   onCommittedObservation?(input: CommittedAutomationEventObservationV1): Promise<void>;
+  nativeCompletion?: NativeActionCompletionHost;
   randomBytes?: (length: number) => Uint8Array;
 }>): ExecuteAutomationEventAction {
   const transport = params.transport ?? createDefaultTransport(params.credentials);
@@ -360,6 +362,20 @@ export function createAutomationEventActionExecutor(params: Readonly<{
     if (args.actionId === 'automation.event.admit') {
       admissionInput = AutomationEventAdmitInputV1Schema.safeParse(args.input);
       if (!admissionInput.success) return admissionFailure('automation_event_host_evidence_unavailable');
+      if (admissionInput.data.definitions.length === 0) {
+        if (!admissionInput.data.sourceInstanceId || !params.nativeCompletion
+          || admissionInput.data.eventRef.pluginId !== args.caller.pluginId) {
+          return admissionFailure('automation_event_host_evidence_unavailable');
+        }
+        try {
+          await admitNativeActionCompletion(params.nativeCompletion, { ...admissionInput.data,
+            sourceInstanceId: admissionInput.data.sourceInstanceId, machineId: materialization.data.machineId }, { signal });
+          return { results: [] };
+        } catch {
+          signal.throwIfAborted();
+          return admissionFailure('automation_event_host_evidence_unavailable');
+        }
+      }
       if (adoptedDefinitionSet === null) {
         // Exactly one watcher-scope generation-local adopted set can contain
         // the requested selectors: a trigger persists exactly one observation

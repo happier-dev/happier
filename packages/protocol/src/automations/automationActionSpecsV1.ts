@@ -299,6 +299,9 @@ export type AutomationEventAdmitDefinitionSelectorV1 = z.infer<
 // behind an import cycle and are not initialized when this module loads.
 const automationEventAdmitInputFieldsV1 = () => ({
   subjectContexts: z.optional(z.array(AutomationSubjectContextV1Schema)),
+  /** Native completion delivery needs no independently saved Event source. */
+  sourceInstanceId: z.optional(AutomationEventSourceInstanceIdV1Schema),
+  originRunId: z.optional(asProtocolZod(HostIdentifierV1Schema)),
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   occurrenceId: AutomationEventSourceOrOccurrenceIdV1Schema,
   occurredAt: AutomationOccurredAtV1Schema,
@@ -308,8 +311,12 @@ const automationEventAdmitInputFieldsV1 = () => ({
 
 export const AutomationEventAdmitInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...automationEventAdmitInputFieldsV1(),
-  definitions: z.array(AutomationEventAdmitDefinitionSelectorV1Schema).check(z.minLength(1)),
-}));
+  definitions: z.array(AutomationEventAdmitDefinitionSelectorV1Schema),
+}).check(z.superRefine((input, context) => {
+  if (input.definitions.length === 0 && input.sourceInstanceId === undefined) {
+    context.addIssue({ code: 'custom', path: ['definitions'], message: 'A native completion supplies its source identity' });
+  }
+})));
 export type AutomationEventAdmitInputV1 = z.infer<typeof AutomationEventAdmitInputV1Schema>;
 
 /**

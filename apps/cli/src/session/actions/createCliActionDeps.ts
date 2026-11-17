@@ -1,3 +1,4 @@
+import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
@@ -620,6 +621,32 @@ export function createCliActionDeps(params: CliActionDepsParams,
       credentials: params.credentials,
       ...(params.resolveAuthenticatedAccountId ? { resolveAccountId: params.resolveAuthenticatedAccountId } : {}),
       resolveAdoptedDefinitionSet: params.resolveAutomationEventAdoptedDefinitionSet,
+      nativeCompletion: {
+        get port() {
+          const port = actionDeps.actionAutomations;
+          if (!port) throw new Error('automation_action_admission_unavailable');
+          return port;
+        },
+        resolveDeclaration: async eventRef => {
+          const lease = await params.acquireAutomationEventObservationRegistry?.();
+          if (!lease) throw new Error('automation_event_declaration_unavailable');
+          try {
+            const entry = lease.registry.contributes.events?.find(entry => entry.pluginId === eventRef.pluginId
+              && entry.definition.localId === eventRef.localId);
+            return entry?.definition.kind === 'event' ? entry.definition.automation ?? null : null;
+          } finally { await lease.release(); }
+        },
+        readDefinition: async automationId => {
+          const { getAutomationDefinition } = await import('@/api/automations');
+          return runWithServerHttpBaseUrl(todoHomeBaseUrl, () => getAutomationDefinition({
+            token: params.credentials!.token, automationId,
+          }));
+        },
+        resolveEncryption: async () => {
+          const { createCliAutomationEncryptionResolver } = await import('./workflowTriggers');
+          return createCliAutomationEncryptionResolver({ credentials: params.credentials!, serverHttpBaseUrl: todoHomeBaseUrl })();
+        },
+      },
       onCommittedObservation: async (observation: CommittedAutomationEventObservationV1) => {
         const noticeHomeIdentity = await resolveProjectHomeIdentity();
         const { createConfiguredHealthCheckNotices } = await import('@/deployments/deploymentServiceHealthNotices');
@@ -1060,6 +1087,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
   const openPrivateLabel = createCliPrivateLabelActionOpener(params.credentials?.token === params.token ? params.credentials.encryption : null);
   const actionDeps: CliActionDeps = {
+    actionAutomations: createCliActionAutomationPortV1({ token: params.token,
+      serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+      isCredentialCurrent: params.isCredentialCurrent,
+    }),
     prepareNativeGoalOwner,
     machinePresetPrepare: params.machinePresetPrepare,
     machinePresetArchive: params.machinePresetArchive,

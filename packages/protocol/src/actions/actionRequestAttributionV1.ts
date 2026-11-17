@@ -32,6 +32,13 @@ export const ActionActorV1Schema = lazyZodSchema(() => z.union([
 ]));
 export type ActionActorV1 = Readonly<z.infer<typeof ActionActorV1Schema>>;
 
+/** Immutable admitted Workflow cause, independent of the person who later approves the effect. */
+export function readActionWorkflowOriginRunIdV1(context: ActionExecutorContext): string | undefined {
+  return context.externalActionExecutionAuthorization?.binding.workflowActionOrigin?.runId
+    ?? (context.actionCaller?.kind === 'workflowRun' && context.executionRunWorkflowRunId === context.actionCaller.runId
+      ? context.actionCaller.runId : undefined);
+}
+
 /** Capture only host-authenticated provenance at the operation/effect owner's admission boundary. */
 export function deriveActionActorV1(context: ActionExecutorContext, actionId: ActionId,
   witnessedApproval?: Readonly<Pick<NonNullable<ActionExecutorContext['presentUserApproval']>, 'decidingAccountId'>>): ActionActorV1 | undefined {

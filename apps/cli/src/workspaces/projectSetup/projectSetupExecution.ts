@@ -68,6 +68,7 @@ export type ProjectSetupSettlement = Readonly<{
     workspace: WorkspaceRefV1;
     project: QualifiedProjectTrustProjectV1;
     operationId: string;
+    originRunId?: string;
 } & ({ outcome: 'finished' } | { outcome: 'failed'; errorCode: string })>;
 
 export type ProjectSetupExecutionOutcome = Readonly<{
@@ -132,6 +133,8 @@ export async function executeProjectSetup(input: ProjectSetupExecutionInput): Pr
                 workspace: input.preparation.workspace,
                 project: input.preparation.projectAssociation.project,
                 operationId: input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId!,
+                ...(input.operation.operationAcceptance?.originRunId
+                    ? { originRunId: input.operation.operationAcceptance.originRunId } : {}),
                 ...(outcome.result.ok ? { outcome: 'finished' as const }
                     : { outcome: 'failed' as const, errorCode: outcome.result.errorCode }),
             } };

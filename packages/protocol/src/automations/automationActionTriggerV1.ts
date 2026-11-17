@@ -10,6 +10,7 @@ import {
 } from './automationSubjectV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationStoredContentEnvelopeV1Schema } from './automationStoredContentEnvelopeV1.js';
+import { AutomationEventFilterV1Schema } from './automationEventFilterV1.js';
 
 export const AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 = '/v1/automations/actions/index';
 
@@ -28,6 +29,8 @@ export const AutomationActionTriggerSchema = lazyZodSchema(() => z.strictObject(
   phase: AutomationActionPhaseV1Schema,
   actionIds: z.array(AutomationTriggerActionIdV1Schema).check(z.minLength(1)),
   subject: z.optional(AutomationSubjectV1Schema),
+  /** Authored Only-when content remains in the private definition, outside public routing tuples. */
+  filter: z.optional(z.nullable(AutomationEventFilterV1Schema)),
   mode: z.optional(z.enum(['wait', 'notify'])),
   onFailure: z.optional(z.enum(['refuse', 'ask'])),
 }).check(z.superRefine(checkActionPhase)));

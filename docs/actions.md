@@ -2026,6 +2026,62 @@ consumers keep the existing array, schema-map and accessor contracts. Spec
 authors must still avoid reading the catalog while their modules are evaluating,
 and ordinary schema initialization must remain safe independently.
 
+In 0.3 development source, automation operands are declared by the existing
+`sessionTarget` and `approvalScope` owners. Machine and Environment approval
+scopes retain their policy meaning. A domain-owned `approvalScope` projector
+can also return exact resource identities, such as a qualified Project, an App's
+Source, an Environment's backup stream, or the exact database destination of a
+restore. The admission result carries those
+identities to automation selection once. Incidental input ids and an ambient
+`defaultSessionId` do not establish operands. The bound approval profile is
+context. Contextual Project and Machine facts come from the exact admitted
+Session through the existing execution-origin port, loaded only when an Action
+bucket needs them. The CLI's bound Session metadata supplies a Machine; it
+does not infer a Project from a directory or an unrelated id.
+Contributed Actions declare a saved health check with
+`approvalScope: 'healthCheck'`; the host retains its source-instance and check
+identity. A heartbeat endpoint id is not part of that subject.
+Custom plugin subjects use their contribution owner's identity-schema admission.
+Native domain projectors declare their potential `subjectKinds` alongside the
+`project` function in `approvalScope`. Discovery enumerates these kinds without
+running a projector on fabricated input. Admission still supplies the actual
+resource identity and decides its authority.
+
+An Action with an existing `completion` declaration has no immediate
+after-Action bucket. For example, `projects.prepare` can return
+an operation to observe or an immediate no-launch result; neither response
+starts an immediate after-Action Run. An after-Action link remains one Action
+trigger row with one id and revision; ordinary update and removal apply. Its
+matcher consumes the existing terminal Events whose declarations name that
+Action in `completesActionIds`. The producer maps each terminal Event to
+`completionOutcome`; safe Action evidence exposes that value as `outcome`.
+Deployment success, failure, cancellation and unknown outcome keep their
+existing Event identities. Project setup completion maps to `succeeded` or
+`failed`. An Only-when filter on `/outcome` selects, for example, only failure.
+The authored filter stays in the private trigger definition. Deployment
+completion continues to come from the deployment receipt observer; the matcher
+creates neither a combined Event nor a group of trigger rows.
+Accepted operations and deployment receipts retain the admitted Workflow origin
+separately from the eventual approving person. Native terminal observations carry
+that origin into ordinary Run admission, whose existing ancestor rule suppresses
+the firing trigger without disabling later independent Actions. The V1 operation
+read projection omits this V2-only provenance field.
+Synchronous SCM worktree create/remove responses already report the completed
+repository operation and carry no accepted-operation handle. These contracts are
+development source; composed automation validation is still required.
+
+Development Action discovery summaries expose `automation.before`,
+`automation.after`, `automation.workflowStep` and native `automation.subjectKinds`.
+The existing `action.spec.search` and `action.spec.get` Actions return these
+fields. The catalog derives these
+choices from the existing effect, completion and Workflow-step declarations;
+pickers consume the read projection. Completion Actions offer an after choice
+whose admission comes from terminal Events; their executor still suppresses
+immediate after settlement. Read-only Actions cannot be hooked. Subject kinds
+describe potential applicability, including Session-derived Project and Machine
+context and the bound approval profile; they do not promise a subject is present
+on every invocation or grant permission to manage it.
+
 In 0.3 development source, `action_interception_rejected` is presented as
 a refusal. `readActionFailurePresentationV1` owns that classification and reads
 only the producer's safe `details.message`; absent text uses the surface's

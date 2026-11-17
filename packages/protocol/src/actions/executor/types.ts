@@ -650,6 +650,12 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 export type ActionExecutorContext = Readonly<{
   /** Opened requester registry-read operand; never part of public Action input. */
   registryThemeContent?: import('../externalActionApi.js').ExternalActionRequestEnvelopeV1['registryThemeContent'];
+  /** Host-private admission shared by direct dispatch, prepared invocation and approved continuation. */
+  actionAutomationAdmission?: import('./actionSettlement.js').ActionAutomationInvocationV1;
+  /** Existing invocation's host transport, retained across contributed dispatch; never wire authority. */
+  actionAutomationPort?: import('./actionAutomationAdmission.js').ActionAutomationPortV1;
+  /** One lazy exact-Session origin projection shared by matching and any subsequent Ask. */
+  prepareAdmittedExecutionOrigin?: () => ReturnType<NonNullable<ActionExecutorDeps['prepareApprovalExecutionOriginContext']>>;
   /** Exact host-local Preset selection for initial Pool binding; never Action/RPC input or admission authority. */
   managedPresetOrigin?: import('../../machines/managed/managedMachinePresetV1.js').ManagedMachinePresetAcquireOriginV1;
   /** Mounted recipient-catalog facts, scoped to their Home. Host-only presentation; never Action/RPC input. */
@@ -780,6 +786,8 @@ export type ActionExecutorContext = Readonly<{
     actionId?: string;
     /** Accepted private provenance; null suppresses an unknown approver's initiating actor. */
     actor?: ActionActorV1 | null;
+    /** Accepted Workflow cause retained by the operation owner, never authored Action input. */
+    originRunId?: string;
     /** Same-input failed creation receipt retained by the host; never transported or accepted from Action input. */
     previousSessionCreationFailure?: Extract<SessionSpawnNewResultV1, Readonly<{ type: 'error' }>>;
     /** Provider outcome retained by this exact held restore; never Action input or RPC authority. */
@@ -1634,6 +1642,9 @@ export type ActionExecutorDeps = Readonly<{
     caller: NonNullable<ActionExecutorContext['actionCaller']>;
     result: ActionExecuteResult;
   }>) => Promise<void> | void;
+
+  /** Account-lifetime structural index and ordinary occurrence admission, independent of plugins. */
+  actionAutomations?: import('./actionAutomationAdmission.js').ActionAutomationPortV1;
 
   /** Host-private execution custody after admission/approval, never a plugin hook or wire field. */
   runActionOperation?: (request: Readonly<{

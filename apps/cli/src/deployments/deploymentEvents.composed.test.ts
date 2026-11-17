@@ -97,7 +97,7 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
         sources(definitions: PluginCheckpointedEventSourceDefinitionV1[]) { currentDefinitions = definitions; },
         configure(sourceConfig: typeof config & { previewChildren?: true }) { currentDefinitions = currentDefinitions.map(current => ({ ...current, sourceConfig })); },
         async wake(environmentId = 'env', deploymentId = 'failed') {
-            for (const listener of listeners.get('@happier/deployment/receipt-invalidated') ?? []) await listener({ payload: { environmentId, deploymentId } });
+            for (const listener of listeners.get('@happier/deployment/receipt-invalidated') ?? []) await listener({ payload: { serverId: 'home', environmentId, deploymentId } });
         },
         domainsAvailable(value: boolean) { domainsAvailable = value; },
         domains(count: number) { domainCount = count; },
@@ -178,7 +178,7 @@ describe('deployment receipt Events through canonical admission', () => {
         f.execute.mockClear();
         await f.wake('env', f.rows[0].id); await f.cycle();
         expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.get').map(([, input]) => input.serverId))
-            .toEqual(['home', 'other-home']);
+            .toEqual(['home']);
         expect(f.admissions).toEqual([]);
     });
     it('reads receipt facts once for six outcomes and preserves independent occurrences and reconnect catch-up', async () => {
@@ -357,12 +357,19 @@ describe('deployment receipt Events through canonical admission', () => {
         expect(f.admissions).toHaveLength(2);
         expect(f.admissions[1].occurredAt).toBe(5);
     });
-    it('projects only committed receipt identities from the existing account-change push', () => {
+    it('projects only committed receipt identities from the existing account-change push', async () => {
         const body = UpdateBodySchema.parse({ t: 'account-change', entityIds: [
             'deployment-receipt:env:failed', 'deployment-environment:env', 'unrelated',
         ] });
         if (body.t !== 'account-change') throw new Error('Expected Account change fixture');
-        expect(projectDeploymentReceiptInvalidationsForHost(body)).toEqual([{ eventId: '@happier/deployment/receipt-invalidated', scope: { kind: 'account' },
-            payload: { environmentId: 'env', deploymentId: 'failed' } }]);
+        const resolveHome = vi.fn(async () => 'home');
+        expect(await projectDeploymentReceiptInvalidationsForHost(body, resolveHome)).toEqual([{ eventId: '@happier/deployment/receipt-invalidated', scope: { kind: 'account' },
+            payload: { serverId: 'home', environmentId: 'env', deploymentId: 'failed' } }]);
+        expect(resolveHome).toHaveBeenCalledTimes(1);
+    });
+    it('does not acquire Home identity for unrelated Account invalidations', async () => {
+        const resolveHome = vi.fn(async () => 'home');
+        expect(await projectDeploymentReceiptInvalidationsForHost({ t: 'account-change', entityIds: ['unrelated', 'deployment-environment:env'] }, resolveHome)).toEqual([]);
+        expect(resolveHome).not.toHaveBeenCalled();
     });
 });

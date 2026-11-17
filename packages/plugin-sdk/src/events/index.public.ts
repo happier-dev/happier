@@ -49,5 +49,8 @@ export {
 } from '../eventAutomation.js';
 export { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from './accountFacts.js';
 
-export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema } from './machineServices.js';
-export type { MachineServiceObservationV1, WorktreeRemovedEventV1 } from './machineServices.js';
+export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema, ProjectSetupSettledEventV1ProtocolSchema } from './machineServices.js';
+export type { MachineServiceObservationV1, WorktreeRemovedEventV1, ProjectSetupSettledEventV1 } from './machineServices.js';
+
+export { SCM_WORKTREE_REMOVE_ACTION_ID_V1, PROJECT_PREPARE_ACTION_ID_V1 } from './machineServices.js';
+export { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from './deploymentReceipts.js';

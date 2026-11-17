@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema,
     type HostEventEnvelope } from '@happier-dev/plugin-sdk/events';
 import type { BackgroundServiceContext, PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
@@ -7,6 +7,30 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 
 const pluginId = 'happier.machine.services';
 const source = { v: 1 as const, serverId: 'home', machineId: 'machine', environmentId: 'environment' };
+it('delivers native worktree completion without a configured Event trigger', async () => {
+    let listener: ((event: HostEventEnvelope<typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1>) => void | Promise<void>) | undefined;
+    const execute = vi.fn(async () => ({ results: [] }));
+    // Authenticated host delivery and Action transport are the external boundaries.
+    const host = { subscribe(_target: unknown, callback: typeof listener) {
+        listener = callback;
+        return { dispose() {} };
+    } } as unknown as BackgroundServiceContext['services']['events']['host'];
+    const context = { signal: new AbortController().signal, services: { actions: { execute } } } as unknown as BackgroundServiceContext;
+    const adapter = createMachineOutcomeEventSourceAdapter(host, () => 200, context);
+    const subscription = adapter.subscribeWake!(async () => {});
+    try {
+        await listener?.({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' }, payload: {
+            kind: 'worktreeRemoved', serverId: 'home', occurredAt: 100, removal: { originRunId: 'origin-run',
+                workspace: null, project: null, machineId: 'machine', operationId: 'retire', worktreePath: '/worktree',
+                outcome: 'removed', removalKind: 'retired',
+            },
+        } });
+        expect(execute).toHaveBeenCalledWith('automation.event.admit', expect.objectContaining({
+            eventRef: { pluginId, localId: 'worktree-removed' }, definitions: [], occurredAt: 100, originRunId: 'origin-run',
+            subjectContexts: [{ role: 'context', subject: { kind: 'machine', serverId: 'home', machineId: 'machine' } }],
+        }), { signal: context.signal });
+    } finally { subscription.dispose(); }
+});
 function definition(event: string): PluginCheckpointedEventSourceDefinitionV1 {
     return { automationId: '11111111-1111-4111-8111-111111111111', triggerId: 'watch', triggerRevision: 1,
         sourceSelectorId: '22222222-2222-4222-8222-222222222222', eventRef: { pluginId, localId: event },
@@ -15,6 +39,10 @@ function definition(event: string): PluginCheckpointedEventSourceDefinitionV1 {
         filter: null, maximumObservationAgeMs: null };
 }
 it('offers settled machine events and their setup Actions through the existing When catalog', () => {
+    for (const [localId, completionOutcome] of [['project-setup-finished', 'succeeded'], ['project-setup-failed', 'failed']] as const) {
+        const event = PLUGIN_MANIFEST.contributes.events?.find(row => row.id === localId);
+        expect(event && 'automation' in event && event.automation).toMatchObject({ completionOutcome });
+    }
     for (const localId of ['backup-failed', 'backup-succeeded', 'machine-pressure-changed', 'worktree.removed']) {
         const event = PLUGIN_MANIFEST.contributes.events?.find(row => row.id === localId);
         expect(event?.kind).toBe('event');
@@ -48,6 +76,48 @@ it.each([true, false])('projects a successful removal with Workspace association
     expect(wakes).toEqual(['worktree-removed']);
     expect(observed.observations).toHaveLength(1);
     expect(observed.observations[0]).toMatchObject({ occurredAt: 100, payload: removal });
+});
+it.each([true, false].flatMap(associated => [false, true].map(nativeUnavailable => ({ associated, nativeUnavailable }))))('retains the original worktree Event with Workspace association $associated and native admission unavailable $nativeUnavailable', async ({ associated, nativeUnavailable }) => {
+    let listener: ((event: HostEventEnvelope<typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1>) => void | Promise<void>) | undefined;
+    // The authenticated host transport is the boundary; delivery and source matching remain real.
+    const host = { subscribe(target: { eventId: string }, callback: typeof listener) {
+        if (target.eventId === MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1) listener = callback;
+        return { dispose() {} };
+    } } as unknown as BackgroundServiceContext['services']['events']['host'];
+    const context = { signal: new AbortController().signal, services: { actions: {
+        execute: async () => ({ ok: false, errorCode: 'automation_event_host_evidence_unavailable' }),
+    } } } as unknown as BackgroundServiceContext;
+    const adapter = createMachineOutcomeEventSourceAdapter(host, () => 200, nativeUnavailable ? context : undefined);
+    const selected = { ...definition('worktree-removed'), sourceConfig: { v: 1, serverId: 'home', machineId: 'machine' } };
+    const decoded = adapter.decode(selected);
+    expect(decoded).not.toBeNull();
+    if (!decoded) throw new Error('Expected valid removal source');
+    const observe = () => adapter.observe({ context, definition: selected, definitions: [selected], source: decoded, isCurrent: async () => true });
+    await observe();
+    const wakes: string[] = [];
+    adapter.subscribeWake!(async sourceId => { if (sourceId) wakes.push(sourceId); });
+    const originalPath = associated ? '/original' : '/physical-without-workspace';
+    const removal = {
+        workspace: associated ? { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: originalPath } : null,
+        project: associated ? { serverId: 'home', projectId: 'accepted-project' } : null, machineId: 'machine', operationId: 'retire', worktreePath: originalPath,
+        outcome: 'removed' as const, removalKind: 'retired' as const,
+    };
+    const delivered = listener?.({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
+        payload: { kind: 'worktreeRemoved', serverId: 'home', occurredAt: 100, removal } });
+    if (nativeUnavailable) await expect(delivered).rejects.toMatchObject({ code: 'automation_event_host_evidence_unavailable' });
+    else await delivered;
+    const observed = await observe();
+    expect(wakes).toEqual(['worktree-removed']);
+    expect(observed.observations).toHaveLength(1);
+    expect(observed.observations[0]).toMatchObject({ occurredAt: 100 });
+    expect(observed.observations[0]!.payload).toEqual(removal);
+    expect(observed.observations[0]!.subjectContexts).toEqual([
+        { role: 'context', subject: { kind: 'machine', serverId: 'home', machineId: 'machine' } },
+        ...(associated ? [{ role: 'context', subject: { kind: 'project', serverId: 'home', projectKey: 'accepted-project' } }] : []),
+    ]);
+    if (!associated) expect(observed.observations[0]!.payload).toMatchObject({
+        workspace: null, project: null, worktreePath: '/physical-without-workspace',
+    });
 });
 it('projects each matched settled run and pressure transition once, retains arrivals during admission, and has zero idle reads', async () => {
     let listener: ((event: HostEventEnvelope<typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1>) => void | Promise<void>) | undefined;

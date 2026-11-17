@@ -2050,7 +2050,19 @@ export async function bootstrapMachineSyncRuntime(
     connectedApiMachine.onUpdate((update) => {
       const body = UpdateBodySchema.safeParse(update?.body);
       if (body.success && body.data.t === 'account-change' && !params.isShuttingDown()) {
-        for (const event of projectDeploymentReceiptInvalidationsForHost(body.data)) publishDaemonHostEvent(event, params.isShuttingDown);
+        const receiptChange = body.data;
+        const resolveReceiptOrigin = params.resolveCurrentMachineExecutionOriginContext
+          ?? createCurrentMachineExecutionOriginContextResolver({ serverUrl: resolveServerHttpBaseUrl(),
+            resolveCurrentMachineId: () => params.machineId });
+        void projectDeploymentReceiptInvalidationsForHost(receiptChange, async () => {
+          const origin = await resolveReceiptOrigin();
+          if (!origin) throw new Error('Current Home identity is unavailable for deployment receipt Events.');
+          return origin.serverIdentityId;
+        }).then(events => {
+          for (const event of events) {
+            publishDaemonHostEvent(event, params.isShuttingDown);
+          }
+        }).catch(error => logger.warn('[DAEMON RUN] Deployment receipt Event unavailable', error));
         const entities = projectAccountEntitiesInvalidationForHost(body.data);
         if (entities) publishDaemonHostEvent(entities, params.isShuttingDown);
       }

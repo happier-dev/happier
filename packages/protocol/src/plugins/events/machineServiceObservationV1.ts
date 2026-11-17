@@ -2,7 +2,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 import { MachineVitalsAlertEpisodeV1Schema } from '../../machines/vitals/machineVitalsHistoryV1.js';
-import { WorkspaceAddressV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../../workspaces/workspaceRefV1.js';
 import { QualifiedProjectTrustProjectV1Schema } from '../../workspaces/projectSetup/projectTrustRowV1.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 
@@ -13,6 +13,7 @@ const timestamp = () => z.number().check(z.int(), z.nonnegative());
 export const BackupOutcomeEventV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('backup'), serverId: id(), machineId: id(), environmentId: id(), operationId: id(),
   state: z.enum(['succeeded', 'failed']), occurredAt: timestamp(), errorCode: z.nullable(id()),
+  originRunId: z.optional(ActionOperationIdentifierV1Schema),
 }));
 export type BackupOutcomeEventV1 = z.infer<typeof BackupOutcomeEventV1Schema>;
 export const MachinePressureEventV1Schema = lazyZodSchema(() => z.strictObject({
@@ -26,6 +27,7 @@ export const WorktreeRemovedEventV1Schema = lazyZodSchema(() => z.strictObject({
   project: z.nullable(QualifiedProjectTrustProjectV1Schema),
   machineId: WorkspaceAddressV1Schema.shape.machineId,
   operationId: ActionOperationIdentifierV1Schema,
+  originRunId: z.optional(ActionOperationIdentifierV1Schema),
   worktreePath: WorkspaceAddressV1Schema.shape.rootPath,
   outcome: z.literal('removed'),
   removalKind: z.enum(['deleted', 'retired']),
@@ -36,10 +38,24 @@ export type WorktreeRemovedEventV1 = z.infer<typeof WorktreeRemovedEventV1Schema
 const WorktreeRemovedObservationV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('worktreeRemoved'), serverId: id(), occurredAt: timestamp(), removal: WorktreeRemovedEventV1Schema,
 }));
+/** Setup publication consumes the Project owner's redacted settlement, never command output. */
+const projectSetupFields = () => ({ workspace: WorkspaceAddressV2Schema,
+  project: QualifiedProjectTrustProjectV1Schema, operationId: ActionOperationIdentifierV1Schema,
+  originRunId: z.optional(ActionOperationIdentifierV1Schema) });
+export const ProjectSetupSettledEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
+  z.strictObject({ ...projectSetupFields(), outcome: z.literal('finished') }),
+  z.strictObject({ ...projectSetupFields(), outcome: z.literal('failed'), errorCode: id() }),
+]));
+export type ProjectSetupSettledEventV1 = z.infer<typeof ProjectSetupSettledEventV1Schema>;
+const ProjectSetupSettledObservationV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('projectSetupSettled'), serverId: id(), machineId: id(), occurredAt: timestamp(),
+  settlement: ProjectSetupSettledEventV1Schema,
+}));
 export const MachineServiceObservationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  BackupOutcomeEventV1Schema, MachinePressureEventV1Schema, WorktreeRemovedObservationV1Schema,
+  BackupOutcomeEventV1Schema, MachinePressureEventV1Schema, WorktreeRemovedObservationV1Schema, ProjectSetupSettledObservationV1Schema,
 ]));
 export type MachineServiceObservationV1 = z.infer<typeof MachineServiceObservationV1Schema>;
 export const BackupOutcomeEventV1ProtocolSchema = projectZodProtocolSchema(BackupOutcomeEventV1Schema);
 export const MachinePressureEventV1ProtocolSchema = projectZodProtocolSchema(MachinePressureEventV1Schema);
 export const WorktreeRemovedEventV1ProtocolSchema = projectZodProtocolSchema(WorktreeRemovedEventV1Schema);
+export const ProjectSetupSettledEventV1ProtocolSchema = projectZodProtocolSchema(ProjectSetupSettledEventV1Schema);

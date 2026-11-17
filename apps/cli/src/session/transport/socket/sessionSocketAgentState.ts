@@ -1,4 +1,6 @@
 import type { Socket } from 'socket.io-client';
+import { applyCliActionAutomationUpdateV1, reconnectCliActionAutomationsV1 } from '@/api/actionAutomations';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import { createSessionScopedSocket, createSessionScopedSocketConnection, createUserScopedSocketConnection } from '@/api/session/sockets';
 import { createManagedConnectionSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
@@ -39,7 +41,12 @@ export function observeSessionSocketEvents(
         if (!opts.sessionId) throw new Error('session_observation_id_required');
         return createSessionScopedSocketConnection({ ...opts, sessionId: opts.sessionId });
       })();
-      const update = (value: unknown) => handlers.onUpdate?.(value);
+      const update = (value: unknown) => {
+        const parsed = UpdateContainerSchema.safeParse(value);
+        if (parsed.success) applyCliActionAutomationUpdateV1({ token: opts.token,
+          serverHttpBaseUrl: opts.serverUrl ?? resolveServerHttpBaseUrl(), body: parsed.data.body });
+        handlers.onUpdate?.(value);
+      };
       const ephemeral = (value: unknown) => handlers.onEphemeral?.(value);
       connection.socket.on('update', update);
       connection.socket.on('ephemeral', ephemeral);
@@ -54,6 +61,10 @@ export function observeSessionSocketEvents(
       } };
     },
     probeReadiness: async () => ({ status: 'ready' }),
+    onConnected: ({ state }) => {
+      if (state.lastDisconnectedAt !== null) reconnectCliActionAutomationsV1({ token: opts.token,
+        serverHttpBaseUrl: opts.serverUrl ?? resolveServerHttpBaseUrl() });
+    },
     classifyTransportErrorToProbeResult,
     onAuthFailed: ({ probe }) => handlers.onError(createAuthenticationHttpStatusError(
       probe.statusCode === 403 ? 403 : 401, 'Session observation authentication failed',

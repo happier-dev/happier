@@ -3857,6 +3857,8 @@ model Deployment {
     requestedByAccountId String
     requestedByAccount Account @relation(fields: [requestedByAccountId], references: [id], onDelete: Restrict)
     actionOperationId String
+    /// Admitted Workflow cause, independent of requester and eventual approver.
+    originRunId String?
     acceptedRequestEnvelopeDigest String?
     acceptedControllerMachineId String?
     acceptedControllerInstallationId String?

@@ -1,4 +1,5 @@
 import { Socket } from 'socket.io-client';
+import { applyCliActionAutomationUpdateV1, reconnectCliActionAutomationsV1 } from '@/api/actionAutomations';
 
 import {
     createManagedConnectionSupervisor,
@@ -90,6 +91,7 @@ export function initializeSessionClientConnection(
         ? params.transport.createAccountUpdatesSocket?.() ?? null
         : null;
     userSocket?.on('update', (data: Update) => {
+        applyCliActionAutomationUpdateV1({ token: params.token, serverHttpBaseUrl: params.transport.serverUrl, body: data.body });
         // AccountChange carries no Session identity. The existing changes-feed
         // owner determines whether this destination's context was invalidated.
         if (data.body?.t === 'account-change') {
@@ -178,6 +180,8 @@ export function initializeSessionClientConnection(
             const connected = typeof markedConnected === 'string'
                 ? { reason: markedConnected, epoch: 0 }
                 : markedConnected;
+            if (connected.reason === 'reconnect') reconnectCliActionAutomationsV1({ token: params.token,
+                serverHttpBaseUrl: params.transport.serverUrl });
             await params.recoverAppliedPermissionCompletions?.().catch(() => {
                 logger.infoFile('[API] session_permission_completion_recovery_failed', { operation: 'update-state' });
             });

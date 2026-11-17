@@ -169,6 +169,8 @@ export type AutomationEventsActionInputById = {
                 kind: 'project';
             };
         }[];
+        sourceInstanceId?: string | undefined;
+        originRunId?: string | undefined;
     };
     readonly "automation.event.source.status.report": {
         kind: 'catalogReconciliation';

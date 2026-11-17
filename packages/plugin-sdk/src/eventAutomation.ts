@@ -60,6 +60,8 @@ export type PluginEventObservationV1 = Readonly<{
     payload: JsonValue;
     /** Already-admitted factual identities projected once by the native source owner. */
     subjectContexts?: readonly AutomationSubjectContextV1[];
+    /** The accepted native operation's retained Workflow cause, never inferred from a person actor. */
+    originRunId?: string;
 }>;
 
 export type PluginEventDispositionV1 = Readonly<{

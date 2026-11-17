@@ -1,4 +1,14 @@
 import { describe, expect, it } from 'vitest';
+
+it('admits a source-owned native completion without a separate Event trigger', () => {
+  const occurrence = { eventRef: { pluginId: 'happier.machine.services', localId: 'project-setup-finished' },
+    sourceInstanceId: 'native-machine-source', occurrenceId: 'operation', occurredAt: 10,
+    observationReceivedAt: 11, payload: {}, definitions: [], originRunId: 'origin-run' };
+  expect(AutomationEventAdmitInputV1Schema.safeParse(occurrence).success).toBe(true);
+  expect(AutomationEventAdmitInputV1Schema.parse(occurrence).originRunId).toBe('origin-run');
+  const { sourceInstanceId: _source, ...unbound } = occurrence;
+  expect(AutomationEventAdmitInputV1Schema.safeParse(unbound).success).toBe(false);
+});
 import { QualifiedConnectedAccountRefJsonSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 
 import {

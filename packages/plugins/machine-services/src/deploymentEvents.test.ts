@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
-import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions } from './deploymentEvents.js';
+import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions, deploymentEvents } from './deploymentEvents.js';
 
 import { PLUGIN_MANIFEST as vercel } from '../../deploy-vercel/src/manifest.js';
 import { PLUGIN_MANIFEST as cloudflare } from '../../deploy-cloudflare/src/manifest.js';
@@ -84,7 +84,29 @@ function fixture(periodMs?: number, eventId = 'deployment-failed') {
     return { context, controller, execute, admissions, reads, settle, environment,
         setReceipt(overrides: Partial<typeof current>) { current = { ...current, ...overrides }; },
         receiptChanged(environmentId = config.environmentId, deploymentId = current.id) {
-            return emit('@happier/deployment/receipt-invalidated', { environmentId, deploymentId });
+            return emit.each(['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const)(
+    'delivers native deployment %s completion without a configured Event trigger', async state => {
+        const h = fixture();
+        const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200, h.context);
+        const subscription = adapter.subscribeWake!(async () => {});
+        try {
+            h.settle(state);
+            const localId = state === 'outcome_unknown' ? 'deployment-outcome-unknown' : `deployment-${state}`;
+            expect(deploymentEvents[localId]?.declaration.automation.completionOutcome).toBe(state);
+            await h.receiptChanged();
+            expect(h.admissions).toHaveLength(1);
+            expect(h.admissions[0]).toMatchObject({
+                eventRef: { pluginId, localId: state === 'outcome_unknown' ? 'deployment-outcome-unknown' : `deployment-${state}` },
+                definitions: [], occurredAt: 1100,
+                subjectContexts: expect.arrayContaining([{ role: 'operand', subject: { kind: 'environment', serverId: config.serverId, environmentId: config.environmentId } }]),
+            });
+            expect(h.reads).toEqual([receipt.id]);
+            expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.list')).toHaveLength(0);
+        } finally { subscription.dispose(); }
+    },
+);
+
+it('@happier/deployment/receipt-invalidated', { serverId: config.serverId, environmentId, deploymentId });
         },
         reconnect() { return emit('@happier/automation/event-sources-invalidated', { reason: 'reconnect', definitionsChanged: false }); },
         settleOnNextObserve(state: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' = 'failed') { settleNextObserve = state; }, deferNextObserve() { pendingNextObserve = true; },

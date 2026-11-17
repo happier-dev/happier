@@ -14,9 +14,17 @@ export const ApprovalAutomaticSelectedTriggerV1Schema = lazyZodSchema(() => z.st
 }));
 export type ApprovalAutomaticSelectedTriggerV1 = z.infer<typeof ApprovalAutomaticSelectedTriggerV1Schema>;
 
+/** Presentation facts from the admitted consent comparison; operands stay with Workflow reads. */
+export const ActionAutomationConsentReviewV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: z.enum(['steps', 'match']),
+  changedSteps: z.optional(z.array(z.strictObject({ sourceKey: id(), blockId: id() }))),
+}));
+export type ActionAutomationConsentReviewV1 = z.infer<typeof ActionAutomationConsentReviewV1Schema>;
+
 export const ActionAutomationConsentV1Schema = lazyZodSchema(() => z.strictObject({
   ...triggerRef(), decision: z.enum(['pending', 'allow', 'skip']),
   actorConsent: z.optional(ActionAutomationTriggerReferenceV1Schema),
+  review: z.optional(ActionAutomationConsentReviewV1Schema),
 }));
 export type ActionAutomationConsentV1 = z.infer<typeof ActionAutomationConsentV1Schema>;
 

@@ -237,6 +237,19 @@ describe('finite Project setup execution', () => {
         expect(f.spawned).toHaveLength(2);
     });
 
+    it('retains the admitted operation Workflow cause in the redacted setup settlement', async () => {
+        const f = await fixture(['echo setup']);
+        const run = f.start({}, { operation: { signal: new AbortController().signal,
+            operationProgress: { update() {} }, operationOwnerUpdate: { update() {} },
+            operationAcceptance: { operationId: 'workflow-setup',
+                actionId: 'projects.prepare', originRunId: 'admitted-run', accept() {} } } });
+        await expect.poll(() => f.spawned.length).toBe(1);
+        f.spawned[0]!.pty.exit(0);
+        expect(await run.execution).toMatchObject({ kind: 'process_settled', setupSettlement: {
+            operationId: 'workflow-setup', outcome: 'finished', originRunId: 'admitted-run',
+        } });
+    });
+
     it('emits no setup settlement for no-launch setup under the 18:47Z owner ruling', async () => {
         const f = await fixture([]);
         expect(await f.start().execution).toMatchObject({ kind: 'no_launch', result: { ok: true } });

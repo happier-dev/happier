@@ -1,4 +1,5 @@
 import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
+import { applyCliActionAutomationUpdateV1, reconnectCliActionAutomationsV1, refreshCliActionAutomationsFromChangesV1 } from './actionAutomations';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { z } from 'zod/mini';
@@ -5772,6 +5773,8 @@ export class ApiMachineClient {
                     logger.debug('[API MACHINE] Connected to server');
                     const isReconnect = this.hasConnectedOnce;
                     this.hasConnectedOnce = true;
+                    if (isReconnect) reconnectCliActionAutomationsV1({ token: this.token,
+                        serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl });
                     takeoverOnNextConnect = false;
 
                     const socket = this.socket;
@@ -6175,6 +6178,8 @@ export class ApiMachineClient {
             if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration) || socket !== this.socket) {
                 return;
             }
+            applyCliActionAutomationUpdateV1({ token: this.token,
+                serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, body: data.body });
             if (data.body.t === 'update-machine' && (data.body as UpdateMachineBody).machineId === this.machine.id) {
                 const update = data.body as UpdateMachineBody;
 
@@ -6814,6 +6819,8 @@ export class ApiMachineClient {
                 }
 
                 const changes = result.response.changes;
+                await refreshCliActionAutomationsFromChangesV1({ token: this.token,
+                    serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, changes });
                 const nextCursor = result.response.nextCursor;
                 const pageFull = pushed ? pushed.full : isChangesPageFull(result.response, CHANGES_PAGE_LIMIT);
                 if (pageFull && nextCursor <= after) {

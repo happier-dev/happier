@@ -324,6 +324,39 @@ A timer is only one of three automatic sources that can start a Workflow.
 triggers can still run when you choose **Run now**, invoke it from the CLI, or
 admit an authorized bound conversation.
 
+### Before and after Actions (development work in progress)
+
+Unreleased 0.3 development work adds Workflow triggers around effectful Happier
+Actions. For example, a commit can start a review Workflow after the commit
+settles. A trigger can cover an Action kind or one selected subject. Read-only
+Actions do not run these checks. A plugin Action whose input chooses between a
+preview and a write is checked only for its write operation.
+
+Before checks can wait for a Workflow or start a notification without waiting
+for its result. Waiting checks continue the original Action only after they
+pass; a trigger may instead let a person approve after a failed check. The
+Action's normal approval still applies. A shared Workflow needs the executing
+person's consent before it runs in their Account on their Machine. Skipping a
+shared check applies to that invocation, and changes to reviewed steps require
+consent again.
+
+These Workflows can use safe Action event values, such as the original request
+identifier and the Action that ran. After values also describe its terminal
+outcome. A Workflow triggered by several Action kinds receives the actual
+invoked Action's identity. Only referenced scalar values are retained in the
+private Run snapshot; raw Action inputs, outputs and exception text are not
+available as event values. Before and after values stay separate, and Run now
+has no Action event values.
+
+These paths are still being integrated and tested in development source; they
+are not certified stable or preview availability. They cover Actions invoked
+through Happier, not arbitrary shell commands or direct service requests.
+For an Action that returns a background operation, “after” follows its terminal
+event rather than the initial accepted receipt.
+The link remains one trigger. Use **Only when** on its `outcome` value to select
+only failures, successes, cancellations, or unknown outcomes. A failure filter
+does not create another trigger or change the Action's own result.
+
 In 0.3 development source, plugins can also declare their own subjects, such as
 a ticket, for Event and Action triggers. A selected plugin subject applies only
 to your own occurrences, even when its Workflow is shared. Equal resource ids

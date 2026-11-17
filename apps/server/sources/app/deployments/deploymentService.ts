@@ -48,6 +48,7 @@ export function projectDeploymentReceiptHeader(row: Receipt) {
         v: 1, id: row.id, environmentId: row.environmentId, targetLinkId: row.targetLinkId, revision: row.revision,
         operation: row.operation, state: row.state, requestKey: row.requestKey, requestedByAccountId: row.requestedByAccountId,
         actionOperationId: row.actionOperationId, ...deploymentContentReference(row),
+        ...(row.originRunId ? { originRunId: row.originRunId } : {}),
         ...(acceptedExecution ? { acceptedExecution } : {}),
         ...(row.predecessorDeploymentId ? { predecessorDeploymentId: row.predecessorDeploymentId } : {}),
         ...(row.restoreBackupId ? { restoreBackupId: row.restoreBackupId } : {}),
@@ -234,6 +235,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
         requestedByAccountId: actorAccountId, actionOperationId: input.actionOperationId,
         ...(acceptedExecution ? deploymentAcceptedExecutionColumns(acceptedExecution) : {}),
         acceptedRequestEnvelopeDigest: acceptedExecution ? executionBinding?.requestEnvelopeDigest ?? null : null,
+        originRunId: acceptedExecution ? executionBinding?.workflowActionOrigin?.runId ?? null : null,
         ...(selectiveTeardown || removeEnvironment ? { teardownProof: {
             ...(selectiveTeardown ? { admittedMachines: link.machines.filter(member => teardownMachines.includes(member.machineId))
                 .map(member => ({ machineId: member.machineId, installationId: member.installationId })) } : {}),

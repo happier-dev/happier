@@ -22,6 +22,7 @@ export const HealthCheckHeartbeatReceivedHostEventV1Schema = PluginWebhookHeartb
 export type HealthCheckHeartbeatReceivedHostEventV1 = z.infer<typeof HealthCheckHeartbeatReceivedHostEventV1Schema>;
 export const HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1 = '@happier/deployment/receipt-invalidated' as const;
 export const DeploymentReceiptInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: z.string().check(z.minLength(1)),
   environmentId: z.string().check(z.minLength(1)), deploymentId: z.string().check(z.minLength(1)),
 }));
 export type DeploymentReceiptInvalidatedHostEventV1 = z.infer<typeof DeploymentReceiptInvalidatedHostEventV1Schema>;

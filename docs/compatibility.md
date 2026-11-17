@@ -53,6 +53,15 @@ retain their meanings. The ordinary Automation Run occurrence and cause owners
 admit Action events; an Action declaring deferred completion uses its terminal
 domain event instead of treating its accepted handle as completion.
 
+An after-Action trigger remains one row and revision. Existing terminal Event
+declarations name their completed Actions and map their terminal state to the
+safe `outcome` field (`succeeded`, `failed`, `cancelled` or `outcome_unknown`).
+An Only-when filter on that field stays in the private trigger definition;
+the structural index does not receive it. No combined Event is introduced.
+Accepted V2 operations and deployment receipts retain the admitted Workflow
+origin separately from the approver, so terminal admission applies the ordinary
+ancestor loop rule. The V1 operation projection omits that provenance field.
+
 ## Workflow authoring discovery (unreleased 0.3)
 
 The existing Action discovery read accepts optional `purpose: 'workflow_step' |

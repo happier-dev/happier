@@ -88,6 +88,37 @@ describe('finite host operation custody', () => {
     expect(result).toEqual(terminal);
   });
 
+  it.each(['signed', 'workflow', 'unadmitted'] as const)(
+    'retains only admitted Workflow cause independently of the approving person (%s)', async origin => {
+      const runtime = createHostActionOperationRuntime({ machineId: 'machine', serverId: 'home',
+        resolveAccountId: async () => 'account', generateOperationId: () => 'workflow-cause' });
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root',
+        binding: { accountId: 'account', custodianAccountId: 'account', principalId: 'principal', credentialId: 'credential',
+          grant: API_TOKEN_FULL_GRANT_V1, accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'machine',
+          installationId: 'installation', actionId: 'deployments.deploy', requestId: 'workflow-request',
+          target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43),
+          workflowActionOrigin: { runId: 'admitted-run', requestId: 'workflow-request' } } });
+      await runtime.runActionOperation({ actionId: 'deployments.deploy', input: {
+        serverId: 'home', environmentId: 'environment', sha: 'a'.repeat(40), requestKey: 'workflow-cause',
+        ...(origin === 'unadmitted' ? { originRunId: 'authored-claim' } : {}) },
+        context: { surface: 'agent', actionRequestId: 'workflow-request',
+          presentUserApproval: { actionId: 'deployments.deploy', requestId: 'workflow-request', inputDigest: 'digest',
+            decidingAccountId: 'approver', decidedAtMs: 100 },
+          ...(origin === 'signed' ? { externalActionExecutionAuthorization: authorization } : {
+            actionCaller: { kind: 'workflowRun', runId: 'admitted-run',
+              authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'yolo' } },
+            ...(origin === 'workflow' ? { executionRunWorkflowRunId: 'admitted-run' } : {}),
+          }) },
+        execute: async () => ({ ok: true, result: { ok: true, deploymentId: 'deployment', state: 'succeeded' } }) });
+      const read = await runtime.handlers.getV2({ operationId: 'workflow-cause' });
+      if (read.kind !== 'found') throw new Error('Expected accepted operation');
+      if (origin === 'unadmitted') expect(read.operation).not.toHaveProperty('originRunId');
+      else expect(read.operation).toHaveProperty('originRunId', 'admitted-run');
+      const legacy = await runtime.handlers.get({ operationId: 'workflow-cause' });
+      if (legacy.kind !== 'found') throw new Error('Expected legacy operation');
+      expect(legacy.operation).not.toHaveProperty('originRunId');
+    });
+
   it('keeps an unconfirmed restore snapshot on the same receipt through exact replay and reviewed skip', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'machine', serverId: 'home',
       resolveAccountId: async () => 'account', generateOperationId: () => 'held-restore' });
