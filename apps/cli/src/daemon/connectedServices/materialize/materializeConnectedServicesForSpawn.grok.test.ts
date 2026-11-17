@@ -44,36 +44,20 @@ beforeAll(async () => {
       scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() } } });
 });
 
-it('withholds unverified selected-account model rows through the registered authenticated ACP preflight', async () => {
+it('lists native selected-account model rows through the registered preflight', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-grok-account-catalog-'));
-  const capture = join(root, 'auth-methods.json');
   const script = join(root, 'grok.cjs');
   const executableName = process.platform === 'win32' ? 'grok.cmd' : 'grok';
   const environment = createEnvKeyScope(['PATH']);
   try {
     // The native executable is the OS boundary; admission, Agent callback,
-    // ACP authentication, observation normalization and cache remain real.
+    // observation normalization and cache remain real. The native models command
+    // serves selected Accounts too (61906d2de9b); ACP auth is covered by the launch controls below.
     await writeFile(script, `
-      const fs = require('node:fs');
       if (process.argv.includes('models')) {
         process.stdout.write('Available models:\\n  * bundled-grok (default)\\n');
       } else {
-        const rl = require('node:readline').createInterface({ input: process.stdin });
-        rl.on('line', line => {
-          const r = JSON.parse(line); if (r.id === undefined) return;
-          let result = {};
-          if (r.method === 'initialize') result = { protocolVersion: 1, agentCapabilities: {},
-            authMethods: [{id:'cached_token',name:'Subscription'},{id:'xai.api_key',name:'API key'}],
-            _meta: { defaultAuthMethodId: 'xai.api_key' } };
-          if (r.method === 'authenticate') {
-            const path = ${JSON.stringify(capture)};
-            const methods = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path,'utf8')) : [];
-            methods.push(r.params); fs.writeFileSync(path, JSON.stringify(methods));
-          }
-          if (r.method === 'session/new') result = { sessionId:'fake-catalog-session',
-            models:{currentModelId:'bundled-grok',availableModels:[{modelId:'bundled-grok',name:'Bundled Grok'}]} };
-          process.stdout.write(JSON.stringify({ jsonrpc:'2.0',id:r.id,result })+'\\n');
-        });
+        process.exitCode = 1;
       }
     `);
     await writeExecutableShim({ dir: root, fileName: executableName, contents: process.platform === 'win32'
@@ -92,12 +76,8 @@ it('withholds unverified selected-account model rows through the registered auth
     for (const mode of ['subscription', 'api-key'] as const) {
       const selected = await probe({ ...env, GROK_CONNECTED_ACCOUNT_MODE: mode,
         ...(mode === 'subscription' ? { GROK_OAUTH2_ISSUER: 'https://auth.x.ai' } : {}) });
-      expect(selected).toMatchObject({ source: 'unavailable', availableModels: [], refreshError: true, cacheable: false });
+      expect(selected).toMatchObject({ source: 'dynamic', availableModels: nativeModels.availableModels });
     }
-    expect(JSON.parse(await readFile(capture, 'utf8'))).toEqual([
-      { methodId: 'cached_token', _meta: { headless: true } },
-      { methodId: 'xai.api_key', _meta: { headless: true } },
-    ]);
   } finally { environment.restore(); resetAgentModelsProbeCacheForTests(); await rm(root, { recursive: true, force: true }); }
 });
 afterAll(async () => {
