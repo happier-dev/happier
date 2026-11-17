@@ -29,7 +29,7 @@ export type ThemeProfileLibraryContext = Readonly<{
 }>;
 const unchanged = (entry: ThemeLibraryEntry | null = null): ThemeLibraryMutationResult => ({ entry, change: { changedIds: [], removedIds: [], selectionChangedModes: [] } });
 function assertYours(source: ThemeProfileSource): void {
-    if (source.kind !== 'yours') throw new Error('Duplicate this theme before editing');
+    if (source.kind !== 'yours') throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_immutable_source', error: 'Duplicate this theme before editing' });
 }
 function sameContent(left: ThemeProfileDocument, right: ThemeProfileDocument): boolean {
     const { updatedAt: _left, ...before } = left.raw;
@@ -103,7 +103,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
             const summary = await artifacts.getSummary(id);
             const entry = summary?.entry;
             if (!entry || !summary) return unchanged();
-            if (!entry.deletable || entry.source.kind !== 'yours') throw new Error('Theme is owned by its source');
+            if (!entry.deletable || entry.source.kind !== 'yours') throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_immutable_source', error: 'Theme is owned by its source' });
             await artifacts.delete(id, options?.expectedRevision ?? summary.revision);
             // Missing references render the mode's base; deletion never rewrites a preference.
             return { entry: null, change: { changedIds: [], removedIds: [id], selectionChangedModes: [] } };

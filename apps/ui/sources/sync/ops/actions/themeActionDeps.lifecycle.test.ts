@@ -6,6 +6,7 @@ import { createThemeActionHarness as setup, themeActionDocument as document } fr
 import { createThemeActionExecute } from './themeActionDeps';
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
 import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
+import { createThemeProfileSourceAdapter } from '@/theme/profiles/themeProfileLibrary';
 
 // Platform is the external paint adapter; all profile and material owners stay real.
 vi.mock('react-native', async () => {
@@ -15,6 +16,33 @@ vi.mock('react-native', async () => {
 
 const actionContext = { surface: 'ui' as const, authority: 'present_user' as const };
 describe('theme Actions through real library and try-on owners', () => {
+    it('preserves immutable-source refusals for installed Artifact saves and deletes through the Action receiver', async () => {
+        const f = setup();
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: async operation => operation(f.library), readSelection: () => f.selection, clientId: () => 'this-app',
+        }) });
+        expect(await execute.execute(THEME_ACTION_IDS.save, { document: document('editable-control') }, actionContext))
+            .toMatchObject({ ok: true, result: { entry: { source: { kind: 'yours' } } } });
+        const source = createThemeProfileSourceAdapter(f.context);
+        const installed = await source.save(mergeThemeProfileDocumentEdit(document('installed'), { source: {
+            kind: 'store', contributionId: 'dark', provenance: { sourceId: 'registry', format: 'git',
+                sourceUrl: 'https://registry.example.test', itemId: 'package',
+                ref: { kind: 'gitTree', repo: 'https://registry.example.test/themes.git', path: 'theme', commit: 'first', treeSha: 'first-tree' }, importedAt: 0 },
+        } }));
+        if (!installed.entry) throw new Error('Expected installed fixture');
+        const retained = await f.library.get(installed.entry.reference);
+        if (!retained) throw new Error('Expected installed document');
+        const writes = f.writes();
+        for (const inputDocument of [retained, mergeThemeProfileDocumentEdit(retained, { source: { kind: 'yours' } })]) {
+            expect(await execute.execute(THEME_ACTION_IDS.save,
+                { ref: installed.entry.reference, document: inputDocument }, actionContext))
+                .toMatchObject({ ok: false, errorCode: 'theme_immutable_source' });
+        }
+        expect(await execute.execute(THEME_ACTION_IDS.delete, { ref: installed.entry.reference }, actionContext))
+            .toMatchObject({ ok: false, errorCode: 'theme_immutable_source' });
+        expect(f.writes()).toBe(writes);
+        expect(await f.library.get(installed.entry.reference)).toEqual(retained);
+    });
     it('returns a built-in document through the public Action output parser', async () => {
         const f = setup();
         const execute = createActionExecutor({ themeAction: createThemeActionExecute({
