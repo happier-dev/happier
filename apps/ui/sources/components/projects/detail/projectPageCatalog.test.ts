@@ -41,13 +41,13 @@ describe('Project page catalog', () => {
     it('pins the six Project page tabs by default and keeps later built-ins behind More (plan 12 D44)', () => {
         const placements = resolveNavigationPlacements(resolveProjectPageCatalog({ target }));
         expect(placements.pinned.map(item => item.id)).toEqual(['overview', 'code', 'changes', 'scripts', 'services', 'context']);
-        expect(placements.overflow.map(item => item.id)).toEqual(['deployments', 'memory']);
+        expect(placements.overflow.map(item => item.id)).toEqual(['deployments', 'memory', 'defaults']);
         // A person's own choice still pins a later page.
         expect(resolveNavigationPlacements(resolveProjectPageCatalog({ target }), { orderedIds: [], placements: { deployments: 'pinned' } })
             .pinned.map(item => item.id)).toContain('deployments');
         // The phone bar follows the same default: later pages start in its More.
         const phone = resolveProjectPageCatalogState({ target }).items;
-        expect(phone.filter(item => item.phonePlacement === 'more').map(item => item.id)).toEqual(expect.arrayContaining(['deployments', 'memory']));
+        expect(phone.filter(item => item.phonePlacement === 'more').map(item => item.id)).toEqual(expect.arrayContaining(['deployments', 'memory', 'defaults']));
         expect(phone.find(item => item.id === 'context')?.phonePlacement).toBe('bar');
     });
     it('describes built-ins then qualified project pages without a Machine', () => {

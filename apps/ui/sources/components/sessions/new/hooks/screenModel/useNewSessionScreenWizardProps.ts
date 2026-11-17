@@ -113,7 +113,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'permissionMode'
         | 'nativeSandbox'
         | 'permissionModeLock'
-        | 'permissionModeSource'
+        | 'permissionModeAttribution'
         | 'handlePermissionModeChange'
     > & Readonly<{
         selectedBackendTargetKey: string;

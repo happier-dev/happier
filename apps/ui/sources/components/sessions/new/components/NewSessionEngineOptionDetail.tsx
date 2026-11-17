@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -85,6 +86,8 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
         'teamCredentialResources' | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId' | 'teamCredentialResourceStatusByKey'
         | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'onRecoverTeamCredentialResource' | 'probe'> & {
         onSelectOtherModel: () => void;
+        /** The inherited default's source for this Agent's selected model row; null when the person chose it. */
+        modelAttribution?: Readonly<{ agentTargetKey: string; label: string | null }> | null;
     }>;
     /** The account or pool this Agent's own models run through, for the picker's native heading. */
     nativeSourceLabel?: string | null;
@@ -450,6 +453,9 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             onToggle={props.favoriteEngine.onToggle}
         />
     ) : undefined;
+    const inheritedModel = props.teamModels?.modelAttribution;
+    const modelAttribution = inheritedModel && backendTargetKeysMatch(inheritedModel.agentTargetKey, agentTargetKey)
+        ? inheritedModel.label : null;
     const providerPicker = (
         <SessionModelPicker
             fillAvailableSpace
@@ -460,6 +466,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             nativeSourceLabel={props.nativeSourceLabel}
             providerGroups={providerGroups}
             {...props.teamModels}
+            selectedAttribution={modelAttribution}
             providerProjectionAuthoritative={providerProjection.status === 'success'}
             projectionError={providersFeatureEnabled ? providerProjection.error : null}
                 projectionFailures={providersFeatureEnabled ? providerProjection.refreshFailures : []}

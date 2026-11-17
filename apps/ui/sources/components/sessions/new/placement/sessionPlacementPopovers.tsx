@@ -177,6 +177,8 @@ export type SessionMachineChoiceParams = Readonly<{
     ManagedSessionPlacementV1,
     { kind: 'preset' }
   > | null;
+  /** Which default placed that preset ("Team default"); shown on its picker row, never on the chip. */
+  managedPlacementSourceLabel?: string | null;
   onSelectManagedMachine?: ManagedMachineUse;
   /** Whether the composer holds a drafted prompt; a getter, so typing never re-renders the picker. */
   managedMachineStartsSession?: () => boolean;
@@ -268,6 +270,7 @@ export function useSessionMachineChoicePopover(
     managedMachines: params.managedMachines,
     selectedManagedMachine: params.selectedManagedMachine,
     managedPlacementPreset: params.managedPlacementPreset,
+    managedPlacementSourceLabel: params.managedPlacementSourceLabel,
     onSelectManagedMachine: params.onSelectManagedMachine,
     managedMachineStartsSession: params.managedMachineStartsSession,
     testIdPrefix: params.testIdPrefix ?? 'new-session-machine',
@@ -315,6 +318,7 @@ export function useSessionMachineChoicePopover(
       params.managedMachines,
       params.selectedManagedMachine,
       params.managedPlacementPreset,
+      params.managedPlacementSourceLabel,
       executionTarget,
       params.temporaryComputers?.availability,
       params.useMachinePickerSearch,
@@ -368,6 +372,7 @@ export function useSessionMachineChoicePopover(
             managedMachines={renderParams.managedMachines}
             selectedManagedMachine={renderParams.selectedManagedMachine}
             managedPlacementPreset={renderParams.managedPlacementPreset}
+            managedPlacementSourceLabel={renderParams.managedPlacementSourceLabel}
             managedMachineStartsSession={
               renderParams.managedMachineStartsSession
             }

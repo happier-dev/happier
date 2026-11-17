@@ -4092,7 +4092,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const attributedPermissionModeOptions = React.useMemo(() => permissionModeAttribution === null ? permissionModeOptions
         : permissionModeOptions.map((option) => option.value !== props.permissionMode ? option : {
             ...option,
-            description: [option.description, permissionModeAttribution].filter(Boolean).join(' · '),
+            attribution: permissionModeAttribution,
         }), [permissionModeAttribution, permissionModeOptions, props.permissionMode]);
 
     const overlayLayer = (

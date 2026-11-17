@@ -14,6 +14,7 @@ import { ProjectRightPanelServicesView } from '@/components/projects/detail/serv
 import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
 import { ProjectContextBody } from '@/components/projects/context/ProjectContextBody';
 import { ProjectMemoryBody } from '@/components/projects/memory/ProjectMemoryBody';
+import { ProjectSessionDefaultsBody } from '@/components/projects/sessionDefaults/ProjectSessionDefaultsBody';
 import { ProjectDeploymentsBody } from '@/components/projects/deployments/ProjectDeploymentsBody';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -57,8 +58,8 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     <ProjectCredentialScope serverId={props.workspaceRef.serverId}>
     <CheckoutReachabilityScope scope={props.workspaceRef}>
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-            {/* Context, Memory and Deployments read the Project source, not the checkout. */}
-            {props.surface === 'context' || props.surface === 'memory' || props.surface === 'deployments' ? null : <CheckoutReachabilityLine scope={props.workspaceRef} testID="project-checkout-reachability" />}
+            {/* Context, Memory, Deployments and Session defaults read the Project source, not the checkout. */}
+            {props.surface === 'context' || props.surface === 'memory' || props.surface === 'deployments' || props.surface === 'defaults' ? null : <CheckoutReachabilityLine scope={props.workspaceRef} testID="project-checkout-reachability" />}
             <ProjectCockpitSurface {...props} />
         </View>
     </CheckoutReachabilityScope>
@@ -254,6 +255,10 @@ function ProjectCockpitPage(props: ProjectCockpitShellProps & Pick<ProjectSurfac
 
     if (props.surface === 'memory') {
         return <ProjectMemoryBody workspaceRef={props.workspaceRef} testID="project-memory-screen" />;
+    }
+
+    if (props.surface === 'defaults') {
+        return <ProjectSessionDefaultsBody workspaceRef={props.workspaceRef} testID="project-session-defaults-screen" />;
     }
 
     return (

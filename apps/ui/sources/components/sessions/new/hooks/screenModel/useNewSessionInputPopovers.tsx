@@ -70,6 +70,8 @@ export function useNewSessionInputPopovers(params: Readonly<{
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
     managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
+    /** Which default placed that preset ("Team default"), for its picker row. */
+    managedPlacementSourceLabel?: string | null;
     onSelectManagedMachine?: ManagedMachineUse;
     /** Whether the composer holds a drafted prompt; a getter, so typing never re-renders the picker. */
     managedMachineStartsSession?: () => boolean;
@@ -152,6 +154,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         managedMachines: params.managedMachines,
         selectedManagedMachine: params.selectedManagedMachine,
         managedPlacementPreset: params.managedPlacementPreset,
+        managedPlacementSourceLabel: params.managedPlacementSourceLabel,
         onSelectManagedMachine: params.onSelectManagedMachine,
         managedMachineStartsSession: params.managedMachineStartsSession,
         temporaryComputers,

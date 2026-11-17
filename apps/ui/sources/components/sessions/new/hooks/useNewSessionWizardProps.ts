@@ -131,7 +131,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     permissionMode: PermissionMode;
     nativeSandbox?: NewSessionWizardAgentProps['nativeSandbox'];
     permissionModeLock?: NewSessionWizardAgentProps['permissionModeLock'];
-    permissionModeSource?: NewSessionWizardAgentProps['permissionModeSource'];
+    permissionModeAttribution?: NewSessionWizardAgentProps['permissionModeAttribution'];
     handlePermissionModeChange: (mode: PermissionMode) => void;
 
     // Machine section
@@ -436,7 +436,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             permissionMode: params.permissionMode,
             nativeSandbox: params.nativeSandbox,
             permissionModeLock: params.permissionModeLock,
-            permissionModeSource: params.permissionModeSource,
+            permissionModeAttribution: params.permissionModeAttribution,
             handlePermissionModeChange: params.handlePermissionModeChange,
             installableDepInstallers,
         };
@@ -478,7 +478,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.permissionMode,
         params.nativeSandbox,
         params.permissionModeLock,
-        params.permissionModeSource,
+        params.permissionModeAttribution,
         params.profileMap,
         params.selectedIndicatorColor,
         params.onAgentPickerSelect,

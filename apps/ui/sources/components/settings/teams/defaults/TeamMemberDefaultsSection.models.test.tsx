@@ -173,3 +173,33 @@ it('shows a failed Team model catalog and reloads it without losing native choic
         expect(screen.getTextContent()).not.toContain(t('teams.errors.loadFailed'));
     });
 });
+
+it('shows what an empty project field falls back to, whose it is, and names it on the clear row', async () => {
+    const { serverId } = await account.restore({ accountId: 'admin', currentAccount: true, waivedActions: ['providers.models.refresh'],
+        machines: [createMachineFixture({ id: 'machine-5964', activeAt: Date.now(), storageMode: 'plain' })],
+        settings: { experiments: true, featureToggles: { providers: true } },
+        features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, teams: { enabled: true } } }),
+    });
+    const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+    const save = vi.fn(async () => {});
+    // The project's shared Source sets Codex to read-only; nothing is set For me.
+    const context = { primaryTeamId: null, projectDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' as const } } };
+    const screen = await renderScreen(<ModalProvider><ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+        defaults={{}} save={save} scope="personal-project" context={context} teamName="Acme" projectName="acme/web"
+        editable busy={false} /></ModalProvider>);
+    const agent = () => screen.findAll(node => node.props.testID === 'defaults-agent:codex'
+        && typeof node.props.onExpandedChange === 'function')[0];
+    await waitForHomeGovernance(() => expect(agent()).toBeDefined());
+    await act(async () => { agent()!.props.onExpandedChange(true); });
+    const source = t('teams.settings.memberDefaults.sourceTeamProject', { team: 'Acme', project: 'acme/web' });
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(source));
+    const { getPermissionModeOptionsForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
+    const readOnly = getPermissionModeOptionsForAgentType('codex', 'settings').find(option => option.value === 'read-only')!.label;
+    // The field shows the value a new session falls back to; the clear row names what it restores.
+    const permissionMenu = screen.findAll(node => Array.isArray(node.props.items)
+        && node.props.items.some((item: { testID?: string }) => item.testID === 'defaults-agent:codex:permission:none'))[0];
+    expect(permissionMenu).toBeDefined();
+    expect(permissionMenu!.props.items[0]).toMatchObject({ title: t('teams.settings.memberDefaults.useDefault', { value: readOnly }), subtitle: source });
+    expect(permissionMenu!.props.itemTrigger.detailFormatter(permissionMenu!.props.items[0])).toBe(readOnly);
+    expect(save).not.toHaveBeenCalled();
+});

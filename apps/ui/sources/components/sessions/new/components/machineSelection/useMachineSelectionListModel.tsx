@@ -199,6 +199,8 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
     managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
     /** Commits local reviewed intent only; explicit admission owns resource acquisition. */
+    /** Which default placed the preset ("Team default"): the matching row's trailing provenance. */
+    managedPlacementSourceLabel?: string | null;
     onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
     /** Opens the Machines presets (the managed group's trailing "Presets" destination). */
     onOpenManagedPresets?: () => void;
@@ -733,6 +735,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     && offer.presetId === managedPlacementPreset.presetId)?.id ?? null
                 : null;
         // "Connect a computer…" closes the New machine group (lab m-pick): the other way to add a machine.
+        // Provenance sits on the inherited preset's row only (owner ruling 2026-11-16), never on the chip.
+        const inheritedPresetOptionId = !params.selectedManagedMachine && params.managedPlacementSourceLabel ? managedOptionId : null;
         const connectMachineOption: SelectionListOption | null = purpose === 'session' && hasConnectMachine
             ? {
                 id: 'connect-machine',
@@ -768,7 +772,9 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         purpose === 'finite' ? t('managedMachines.picker.createdOnRun') : undefined) } : {}),
                     // A preset carries its provider's mark; "One-off machine…" reads as making a new one.
                     icon: offer.mark ?? <Icon name={offer.kind === 'one-off' ? 'plus-circle' : 'stack'} size={24} color={theme.colors.text.secondary} />,
-                    ...(offer.cost ? { rightAccessory: offer.cost } : {}),
+                    ...(offer.id === inheritedPresetOptionId ? { rightAccessory: (
+                        <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{params.managedPlacementSourceLabel}</Text>
+                    ) } : offer.cost ? { rightAccessory: offer.cost } : {}),
                     disabled: offer.disabled === true || (offer.draft
                         ? !hasSelectManagedMachine
                         : !offer.onSelect),
@@ -1256,6 +1262,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         params.selectedManagedMachine,
         params.managedPlacementPreset,
         hasSelectManagedMachine,
+        params.managedPlacementSourceLabel,
         hasOpenManagedPresets,
         pendingExpiry,
         theme.colors.text.secondary,

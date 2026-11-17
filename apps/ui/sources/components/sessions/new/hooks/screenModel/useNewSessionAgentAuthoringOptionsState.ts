@@ -244,6 +244,8 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     teamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
     setModelSelection: (selection: SessionModelSelectionV1 | null) => void;
     setModelSelectionForBackendTarget: (backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void;
+    /** The layer the model came from, for the picker row's provenance. */
+    modelSource: ReturnType<typeof resolveManagedSessionDefaults>['model']['source'];
     acpSessionModeId: string | null;
     setAcpSessionModeId: React.Dispatch<React.SetStateAction<string | null>>;
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
@@ -576,6 +578,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         setModelSelection,
         setModelSelectionForBackendTarget,
         acpSessionModeId,
+        modelSource: modelDecision.source,
         setAcpSessionModeId,
         sessionConfigOptionOverrides,
         setSessionConfigOptionOverrides,

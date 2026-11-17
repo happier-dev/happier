@@ -107,7 +107,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     permissionMode: React.ComponentProps<typeof AgentInput>['permissionMode'];
     nativeSandbox?: React.ComponentProps<typeof AgentInput>['nativeSandbox'];
     permissionModeLock?: OrganizationPolicyLock | null;
-    permissionModeSource?: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['permissionMode']['source'];
+    /** The source word for an inherited permission mode, shown on the picker's selected row only. */
+    permissionModeAttribution?: string | null;
     allowedPermissionModes?: React.ComponentProps<typeof AgentInput>['allowedPermissionModes'];
     handlePermissionModeChange: React.ComponentProps<typeof AgentInput>['onPermissionModeChange'];
     modelMode: React.ComponentProps<typeof AgentInput>['modelMode'];

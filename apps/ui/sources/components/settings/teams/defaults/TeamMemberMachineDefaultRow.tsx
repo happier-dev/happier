@@ -10,6 +10,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import type { ProjectSessionDefaultsInheritance } from '@/hooks/projects/useProjectSessionDefaultsSectionAdapter';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/domains/state/storage';
@@ -18,6 +19,7 @@ import { t } from '@/text';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 
 import type { TeamSectionContext } from '../teamSectionContext';
+import { describeInheritedDefaultSource } from './inheritedDefaultSourceLabel';
 import { withPlacement } from './memberDefaults';
 
 const EMPTY_MACHINES: readonly Machine[] = Object.freeze([]);
@@ -31,6 +33,7 @@ type MachineDefaultState = Readonly<{
     disabled: boolean;
     conflictNote: string;
     save: (next: ManagedSessionDefaultsV1) => void;
+    inheritance?: ProjectSessionDefaultsInheritance;
 }>;
 
 /** Chooses future placement through New Session's preset source; it never acquires a Machine. */
@@ -56,6 +59,17 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
         return machine ? resolveMachineDisplayNames(inventory).get(machine.id) ?? getMachineDisplayName(machine) ?? machine.id : null;
     }, [selectedMachineId, state.editable]);
     const readOnlyMachineTitle = useMachineListForServerSelection(state.serverId, selectReadOnlyMachineTitle);
+    // A project scope with nothing set here starts from the next layer down: show that value and whose it is.
+    const inherited = placement === undefined ? state.inheritance?.placement : undefined;
+    const inheritedPlacement = inherited?.value;
+    const inheritedSource = inheritedPlacement ? describeInheritedDefaultSource(inherited.source, inherited.names) : null;
+    const inheritedMachineId = inheritedPlacement?.kind === 'machine' && inheritedPlacement.target.serverId === state.serverId
+        ? inheritedPlacement.target.machineId : null;
+    const selectInheritedMachineTitle = React.useCallback((inventory: readonly Machine[]) => {
+        const machine = inheritedMachineId ? inventory.find(candidate => candidate.id === inheritedMachineId) : undefined;
+        return machine ? resolveMachineDisplayNames(inventory).get(machine.id) ?? getMachineDisplayName(machine) ?? machine.id : null;
+    }, [inheritedMachineId]);
+    const inheritedMachineTitle = useMachineListForServerSelection(state.serverId, selectInheritedMachineTitle);
     const [open, setOpen] = React.useState(false);
     // Load selectable targets only while open; a closed field reads only its selected record.
     const serverIds = React.useMemo(() => open ? [state.serverId] : [],
@@ -66,6 +80,10 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
     const homeId = getServerProfileById(state.serverId)?.serverIdentityId;
     const selectedRecord = useMachinePreset(state.serverId, !open && placement?.kind === 'preset'
         && placement.homeId === homeId ? placement.presetId : '', props.onApprovalPending);
+    const inheritedRecord = useMachinePreset(state.serverId, inheritedPlacement?.kind === 'preset'
+        && inheritedPlacement.homeId === homeId ? inheritedPlacement.presetId : '', props.onApprovalPending);
+    const inheritedTitle = inheritedPlacement?.kind === 'preset' ? inheritedRecord.state.value?.name ?? t('teams.settings.memberDefaults.preset')
+        : inheritedPlacement ? inheritedMachineTitle ?? t('teams.settings.memberDefaults.unavailableMachine') : null;
     const choosePreset = useEventCallback((preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => {
         if (!preset || state.disabled || placement?.kind === 'preset'
             && placement.homeId === preset.homeId && placement.presetId === preset.id) return;
@@ -108,11 +126,13 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             noItemsMessage={presetState?.loading ? t('common.loading') : undefined}
             dropdownTitle={t('teams.settings.memberDefaults.machine')}
             // The field names the selection; the line beneath carries only what the field cannot.
-            dropdownSubtitle={[unseen, note].filter(Boolean).join(' ') || undefined}
+            dropdownSubtitle={[inheritedSource, unseen, note].filter(Boolean).join(' ') || undefined}
             dropdownTestID={props.testID}
             testIdPrefix={props.testID}
             dropdownClearOption={{
-                title: t('teams.settings.memberDefaults.none'), current: placement === undefined,
+                title: inheritedTitle ? t('teams.settings.memberDefaults.useDefault', { value: inheritedTitle }) : t('teams.settings.memberDefaults.none'),
+                subtitle: inheritedSource ?? undefined,
+                current: placement === undefined,
                 onSelect: () => {
                     if (!state.disabled && placement !== undefined) state.save(withPlacement(state.defaults, undefined));
                 },
@@ -125,9 +145,9 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
         /> : <Item
             testID={props.testID}
             title={t('teams.settings.memberDefaults.machine')}
-            subtitle={note ?? undefined}
+            subtitle={[inheritedSource, note].filter(Boolean).join(' ') || undefined}
             subtitleLines={0}
-            detail={selectedPresetTitle ?? readOnlyMachineTitle ?? unseen ?? t('teams.settings.memberDefaults.none')}
+            detail={selectedPresetTitle ?? readOnlyMachineTitle ?? inheritedTitle ?? unseen ?? t('teams.settings.memberDefaults.none')}
             icon={<Icon name="desktop" size={24} color={theme.colors.text.secondary} />}
             mode="info"
             showChevron={false}

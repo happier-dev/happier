@@ -14,6 +14,8 @@ export type PermissionModePickerOption = Readonly<{
     value: PermissionMode;
     label: string;
     description: string;
+    /** Where an inherited default came from ("Team default"), trailing on the selected row only. */
+    attribution?: string | null;
 }>;
 
 export function PermissionModePicker(props: {
@@ -80,6 +82,12 @@ export function PermissionModePicker(props: {
                             </Text>
                             {option.description ? <Text style={props.styles.overlayOptionDescription}>{option.description}</Text> : null}
                         </View>
+                        {option.attribution ? (
+                            <Text testID={`permission-mode-${option.value}-attribution`} numberOfLines={1}
+                                style={[props.styles.overlayOptionDescription, { marginLeft: theme.space.s12, alignSelf: 'flex-start' }]}>
+                                {option.attribution}
+                            </Text>
+                        ) : null}
                     </Pressable>
                 );
             })}

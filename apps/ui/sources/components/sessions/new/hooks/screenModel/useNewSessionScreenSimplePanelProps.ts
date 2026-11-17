@@ -7,9 +7,8 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { describeExecutionTargetDestination } from '@/components/sessions/new/hooks/temporaryComputerTargetPresentation';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
-import type { ManagedSessionPlacementV1, ResolvedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
+import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import { t } from '@/text';
-import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 
 type ModelOptionsProbe = NonNullable<NewSessionSimplePanelProps['modelOptionsProbe']>;
 type AcpSessionModeProbe = NonNullable<NewSessionSimplePanelProps['acpSessionModeProbe']>;
@@ -86,7 +85,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     }>;
     model: Pick<
         NewSessionSimplePanelProps,
-        'permissionMode' | 'nativeSandbox' | 'permissionModeLock' | 'permissionModeSource' | 'handlePermissionModeChange' | 'modelMode' | 'setModelMode' | 'modelOptions' | 'modelPickerProps' | 'modelPickerPresentation'
+        'permissionMode' | 'nativeSandbox' | 'permissionModeLock' | 'permissionModeAttribution' | 'handlePermissionModeChange' | 'modelMode' | 'setModelMode' | 'modelOptions' | 'modelPickerProps' | 'modelPickerPresentation'
     > & Readonly<{
         modelOptionsProbeState: ModelOptionsProbeState;
     }>;
@@ -132,7 +131,6 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         managedMachineSelection?: ManagedMachineSelectionDraft | null;
         managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
         /** The managed layer that placed the preset; a Team or Group default says so in the chip. */
-        managedPlacementSource?: ResolvedManagedSessionDefaults['placement']['source'] | null;
         /** The placed preset's name once its record is read; the chip says "New machine" until then. */
         managedPlacementPresetName?: string | null;
         destination?: Readonly<{
@@ -157,7 +155,6 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         executionTarget,
         managedMachineSelection,
         managedPlacementPreset,
-        managedPlacementSource,
         managedPlacementPresetName,
         hasMachine,
         pathPopover,
@@ -169,9 +166,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine) ?? readManagedMachineSelectionName(managedMachineSelection)
         ?? (managedPlacementPreset ? managedPlacementPresetName || t('managedMachines.picker.newMachine') : undefined);
     const destinationParts = machineName ? [machineName] : [];
-    // A preset the member did not pick says which default placed it; picking anything else replaces both parts.
-    const placementSourceLabel = managedPlacementPreset ? describeInheritedDefaultSource(managedPlacementSource) : null;
-    if (placementSourceLabel) destinationParts.unshift(placementSourceLabel);
+    // Chips show the value only; which default placed a preset is said on its machine picker row (owner ruling 2026-11-16).
     const serverId = params.targetServerId;
     // Pool provenance and the Home prefix describe an exact Machine choice; a
     // Temporary computer has neither, so it keeps its own single-part label.

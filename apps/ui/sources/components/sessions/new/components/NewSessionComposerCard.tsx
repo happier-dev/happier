@@ -12,7 +12,6 @@ import { projectAgentInputAttachmentRowItems } from '@/components/sessions/agent
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { t } from '@/text';
-import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { resolveAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/composerKeyboardGeometry';
 import { useComposerAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/useComposerAvailablePanelHeight';
@@ -254,7 +253,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         nativeSandbox={props.nativeSandbox}
                         allowedPermissionModes={props.allowedPermissionModes}
                         onPermissionModeChange={props.permissionModeLock ? undefined : props.handlePermissionModeChange}
-                        permissionModeAttribution={describeInheritedDefaultSource(props.permissionModeSource)}
+                        permissionModeAttribution={props.permissionModeAttribution}
                         modelMode={props.modelMode}
                         modelPickerPresentation={props.modelPickerPresentation}
                         onModelModeChange={props.setModelMode}

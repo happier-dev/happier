@@ -31,6 +31,7 @@ export interface MachineSelectorProps {
     selectedMachine: Machine | null;
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
+    managedPlacementSourceLabel?: string | null;
     onDropdownOpenChange?: (open: boolean) => void;
     recentMachines?: ReadonlyArray<Machine>;
     favoriteMachines?: ReadonlyArray<Machine>;
@@ -145,6 +146,7 @@ export function MachineSelector(props: MachineSelectorProps) {
         purpose, workerPlacement: props.workerPlacement, resolveMachinePlacementFacts: props.resolveMachinePlacementFacts,
         groups, selectedMachine: props.selectedMachine, selectedServerId: groupServerId,
         managedMachines: managedOffers, managedPlacementPreset: props.managedPlacementPreset,
+        managedPlacementSourceLabel: props.managedPlacementSourceLabel,
         recentMachines: props.recentMachines ?? EMPTY_MACHINES, favoriteMachines: props.favoriteMachines ?? EMPTY_MACHINES,
         onSelectMachine: selectMachine, onSelectScopedMachine: selectMachine,
         onToggleFavorite: props.onToggleFavorite ? toggleFavorite : undefined,

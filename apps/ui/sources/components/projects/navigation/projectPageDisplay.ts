@@ -4,7 +4,7 @@ import { t } from '@/text';
 
 const PAGE_GLYPHS: Readonly<Record<ProjectPageV1, IconName>> = {
     overview: 'list-bullets', code: 'code', changes: 'git-branch', scripts: 'play',
-    services: 'hard-drives', deployments: 'rocket-launch', context: 'stack', memory: 'book-bookmark',
+    services: 'hard-drives', deployments: 'rocket-launch', context: 'stack', memory: 'book-bookmark', defaults: 'sliders-horizontal',
 };
 
 export function projectPageGlyph(page: ProjectPageV1): IconName {
@@ -21,5 +21,6 @@ export function projectPageLabel(page: ProjectPageV1): string {
         case 'deployments': return t('projects.pages.deployments');
         case 'context': return t('projects.pages.context');
         case 'memory': return t('projects.pages.memory');
+        case 'defaults': return t('projects.pages.defaults');
     }
 }

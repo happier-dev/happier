@@ -27,7 +27,6 @@ import { AdaptiveSelectionSection } from '@/components/ui/selection/AdaptiveSele
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { isProfileCompatibleWithAgent, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -201,7 +200,8 @@ export interface NewSessionWizardAgentProps {
     permissionMode: PermissionMode;
     nativeSandbox?: React.ComponentProps<typeof AgentInput>['nativeSandbox'];
     permissionModeLock?: OrganizationPolicyLock | null;
-    permissionModeSource?: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['permissionMode']['source'];
+    /** The source word for an inherited permission mode, shown on the selected permission row only. */
+    permissionModeAttribution?: string | null;
     handlePermissionModeChange: (mode: PermissionMode) => void;
     installableDepInstallers?: InstallableDepInstallerProps[];
 }
@@ -504,7 +504,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         profileMap,
         permissionMode,
         permissionModeLock,
-        permissionModeSource,
+        permissionModeAttribution,
         handlePermissionModeChange,
         installableDepInstallers,
     } = props.agent;
@@ -803,7 +803,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         permissionMode={permissionMode}
                                         nativeSandbox={props.agent.nativeSandbox}
                                         onPermissionModeChange={permissionModeLock ? undefined : handlePermissionModeChange}
-                                        permissionModeAttribution={describeInheritedDefaultSource(permissionModeSource)}
+                                        permissionModeAttribution={permissionModeAttribution}
                                         onPermissionClick={handleAgentInputPermissionClick}
                                         modelMode={modelMode}
                                         modelPickerPresentation={props.agent.modelPickerPresentation}
@@ -1235,7 +1235,6 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                     <ItemGroup
                                         title={t('newSession.wizardSection.permission')}
                                         description={[t('newSession.selectPermissionModeDescription'),
-                                            describeInheritedDefaultSource(permissionModeSource),
                                             describeNativeSandbox(props.agent.nativeSandbox)].filter(Boolean).join(' · ')}
                                     >
                                         {permissionModeLock ? <Item
@@ -1250,6 +1249,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     key={option.value}
                                                     title={option.label}
                                                     subtitle={option.description}
+                                                    detail={permissionMode === option.value ? permissionModeAttribution ?? undefined : undefined}
                                                     rightElement={renderSelectedMark(permissionMode === option.value)}
                                                     onPress={() => handlePermissionModeChange(option.value)}
                                                     showChevron={false}

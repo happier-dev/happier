@@ -88,6 +88,19 @@ function experimentalProviderGroup(id: string) {
 }
 
 describe('SessionModelPicker', () => {
+    it('names an inherited default\'s source on the selected model row only', async () => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const selected = { agentTargetKey, providerConnectionId: null, modelId: 'gpt-5.6-luna' };
+        const screen = await renderScreen(<SessionModelPicker agentTargetKey={agentTargetKey} declarationContext={{ kind: 'account' }}
+            nativeModels={[{ value: 'gpt-5.6-luna', label: 'Luna' }, { value: 'gpt-5.6-sol', label: 'Sol' }]}
+            providerGroups={[]} providerProjectionAuthoritative selected={selected} selectedAttribution="Team default"
+            onSelect={vi.fn()} />);
+        const attributed = new Set(screen.root.findAll((node) => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('model-picker-overlay-option-attribution:')).map((node) => node.props.testID));
+        expect([...attributed]).toEqual([
+            `model-picker-overlay-option-attribution:${sessionModelSelectionKey(selected)}`]);
+        expect(findTestInstanceByTypeContainingText(screen.root, Text, 'Team default')).toBeTruthy();
+    });
     it('selects an experimental preference directly while execution still requests confirmation', async () => {
         const { providerGroups, selected } = experimentalProviderGroup('pc_preference');
         const onSelect = vi.fn();

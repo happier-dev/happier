@@ -4,6 +4,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import type { ManagedSessionDefaultsV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import {
@@ -23,6 +25,7 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useProjectSessionDefaultsSectionAdapter, type ProjectSessionDefaultsInheritance, type ProjectSessionDefaultsSectionInput } from '@/hooks/projects/useProjectSessionDefaultsSectionAdapter';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { setTeamPolicy } from '@/sync/ops/teams/teamOperations';
@@ -30,6 +33,8 @@ import { setHomeSessionDefaults } from '@/sync/ops/home/homeGovernanceOperations
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
 
+import type { ResolvedInheritedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
+import { describeInheritedDefaultSource } from './inheritedDefaultSourceLabel';
 import { TeamMemberMachineDefaultRow } from './TeamMemberMachineDefaultRow';
 import type { TeamSectionContext } from '../teamSectionContext';
 import type { HomeAdministrationContext } from '@/components/settings/home/governance/homeAdministrationContext';
@@ -60,6 +65,7 @@ type RowState = Readonly<{
   disabled: boolean;
   conflictNote: string;
   save: SaveDefaults;
+  inheritance?: ProjectSessionDefaultsInheritance;
 }>;
 
 /**
@@ -239,7 +245,13 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = React.useState(false);
   const key = props.entry.backendTargetKey!;
-  const { defaults } = props.state;
+  const { defaults, inheritance } = props.state;
+  // A project scope shows what each field falls back to; resolved only while the Agent is open.
+  const inherited = React.useMemo(() => {
+    if (!expanded || !inheritance) return null;
+    const target = agentExecutionTargetOf(props.entry);
+    return target ? inheritance.forAgent(target) : null;
+  }, [expanded, inheritance, props.entry]);
   const permissionMode = defaults.permissionModeByAgentTargetKey?.[key];
   // Collapsed, the row names what is set: the permission mode by its value, the rest by kind.
   const setLabels = [
@@ -312,6 +324,7 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
             entry={props.entry}
             state={props.state}
             conflict={props.conflicts.permissionMode}
+            inherited={inherited?.permissionMode ?? null}
             testID={`${props.testID}:permission`}
           />
           <ModelDefaultRow
@@ -338,6 +351,8 @@ const PermissionModeDefaultRow = React.memo(function PermissionModeDefaultRow(
     state: RowState;
     conflict: boolean;
     testID: string;
+    /** What clearing this project field restores, and whose it is (project scopes only). */
+    inherited?: ResolvedInheritedManagedSessionDefaults['permissionMode'] | null;
   }>,
 ) {
   const [open, setOpen] = React.useState(false);
@@ -350,7 +365,13 @@ const PermissionModeDefaultRow = React.memo(function PermissionModeDefaultRow(
   if (options.length === 0) return null;
   const current = state.defaults.permissionModeByAgentTargetKey?.[key];
   const title = t('teams.settings.memberDefaults.permissionMode');
-  const note = props.conflict ? state.conflictNote : undefined;
+  const none = t('teams.settings.memberDefaults.none');
+  const restoreLabel = props.inherited?.value !== undefined
+    ? options.find((option) => option.value === props.inherited?.value)?.label ?? null : null;
+  const restoreSource = restoreLabel && props.inherited ? describeInheritedDefaultSource(props.inherited.source, props.inherited.names) : null;
+  const inheritedLabel = current === undefined ? restoreLabel : null;
+  const note = [current === undefined ? restoreSource : null, props.conflict ? state.conflictNote : null]
+    .filter(Boolean).join(' ') || undefined;
   if (!state.editable) {
     return (
       <Item
@@ -360,7 +381,7 @@ const PermissionModeDefaultRow = React.memo(function PermissionModeDefaultRow(
         subtitleLines={0}
         detail={
           options.find((option) => option.value === current)?.label ??
-          t('teams.settings.memberDefaults.none')
+          inheritedLabel ?? none
         }
         mode="info"
         showChevron={false}
@@ -384,11 +405,14 @@ const PermissionModeDefaultRow = React.memo(function PermissionModeDefaultRow(
         subtitle: note,
         showSelectedSubtitle: false,
         itemProps: { disabled: state.disabled, testID: props.testID },
+        // Nothing set here: the field shows the value a new session falls back to.
+        detailFormatter: (item) => item?.id === NONE_ID ? inheritedLabel ?? none : item?.title ?? null,
       }}
       items={[
         {
           id: NONE_ID,
-          title: t('teams.settings.memberDefaults.none'),
+          title: restoreLabel ? t('teams.settings.memberDefaults.useDefault', { value: restoreLabel }) : none,
+          subtitle: restoreSource ?? undefined,
           testID: `${props.testID}:none`,
         },
         ...options.map((option) => ({
@@ -631,3 +655,132 @@ const ConnectedServiceDefaultRows = React.memo(
     );
   },
 );
+
+const NO_CONFLICTS: MemberDefaultsConflicts = Object.freeze({
+  placement: false, permissionMode: false, model: false, connectedServices: new Set<string>(),
+});
+
+/** The Agent a project's new sessions start with: an exact execution target, never an id parsed from a label. */
+function agentExecutionTargetOf(entry: ResolvedAgentCatalogEntry): AgentExecutionTargetV1 | null {
+  if (entry.identity) return { kind: 'agent', identity: entry.identity };
+  return entry.backendTargetKey ? resolveAgentExecutionTargetForBackendTarget({ backendTarget: entry.backendTargetKey }) : null;
+}
+
+function sameAgentTarget(left: AgentExecutionTargetV1 | null | undefined, right: AgentExecutionTargetV1 | null | undefined): boolean {
+  return Boolean(left && right && left.identity.pluginId === right.identity.pluginId
+    && left.identity.localId === right.identity.localId && left.definitionId === right.definitionId);
+}
+
+const ProjectAgentDefaultRow = React.memo(function ProjectAgentDefaultRow(props: Readonly<{
+  agents: readonly ResolvedAgentCatalogEntry[];
+  state: RowState;
+  current: AgentExecutionTargetV1 | undefined;
+  onSelect: (target: AgentExecutionTargetV1 | undefined) => void;
+  testID: string;
+}>) {
+  const { theme } = useUnistyles();
+  const [open, setOpen] = React.useState(false);
+  const options = React.useMemo(() => props.agents.flatMap((entry) => {
+    const target = agentExecutionTargetOf(entry);
+    return target ? [{ entry, target }] : [];
+  }), [props.agents]);
+  const selected = options.find((option) => sameAgentTarget(option.target, props.current));
+  const title = t('projects.sessionDefaults.agent');
+  const none = t('teams.settings.memberDefaults.none');
+  const icon = <Icon name="sparkle" />;
+  const restore = props.state.inheritance?.agentTarget;
+  const restoreOption = restore?.value ? options.find((option) => sameAgentTarget(option.target, restore.value)) : undefined;
+  const restoreSource = restoreOption && restore ? describeInheritedDefaultSource(restore.source, restore.names) : null;
+  const inheritedTitle = props.current === undefined ? restoreOption?.entry.title ?? null : null;
+  const subtitle = props.current === undefined ? restoreSource ?? undefined : undefined;
+  if (!props.state.editable) {
+    return <Item testID={props.testID} icon={icon} title={title} subtitle={subtitle}
+      detail={selected?.entry.title ?? inheritedTitle ?? none} mode="info" showChevron={false} />;
+  }
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      variant="selectable"
+      search={false}
+      selectedId={selected?.entry.backendTargetKey ?? NONE_ID}
+      showCategoryTitles={false}
+      matchTriggerWidth
+      connectToTrigger
+      rowKind="item"
+      popoverPortalWebTarget="body"
+      itemTrigger={{
+        title,
+        subtitle,
+        showSelectedSubtitle: false,
+        detailFormatter: (item) => item?.id === NONE_ID ? inheritedTitle ?? none : item?.title ?? null,
+        itemProps: { disabled: props.state.disabled, testID: props.testID, icon },
+      }}
+      items={[
+        { id: NONE_ID, title: restoreOption ? t('teams.settings.memberDefaults.useDefault', { value: restoreOption.entry.title }) : none,
+          subtitle: restoreSource ?? undefined, testID: `${props.testID}:none` },
+        ...options.map(({ entry }) => ({
+          id: entry.backendTargetKey!,
+          title: entry.title,
+          icon: <AgentCatalogIdentityIcon entry={entry} machineId={null} serverId={props.state.serverId}
+            current={false} color={theme.colors.text.secondary} size={18} />,
+          testID: `${props.testID}:${entry.agentId}`,
+        })),
+      ]}
+      onSelect={(id) => {
+        setOpen(false);
+        const next = options.find((option) => option.entry.backendTargetKey === id)?.target;
+        if (props.state.disabled || sameAgentTarget(next, props.current) || (!next && !props.current)) return;
+        props.onSelect(next);
+      }}
+    />
+  );
+});
+
+/**
+ * The same member-defaults editor, for a project (plan F §2, lab L11): Machine first, the project-only Agent
+ * row, then one row per Agent; each pick saves on its own. The host owns the scope (For me, or the project's
+ * Source) and its writer; this section only renders the rows and reports a failed save.
+ */
+export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionDefaultsSection(props: ProjectSessionDefaultsSectionInput & Readonly<{
+  serverId: string;
+  teamId: string | null;
+  editable: boolean;
+  busy: boolean;
+  testID: string;
+}>) {
+  const { defaults } = props;
+  const { save, selectAgent, error, inheritance } = useProjectSessionDefaultsSectionAdapter(props);
+  const enabledAgentIds = useEnabledAgentIds();
+  const agents = React.useMemo(
+    () => getResolvedAgentCatalogEntries({ enabledAgentIds }).filter((entry) => entry.backendTargetKey !== null),
+    [enabledAgentIds],
+  );
+  const row: RowState = {
+    serverId: props.serverId,
+    teamId: props.teamId ?? '',
+    defaults,
+    editable: props.editable,
+    disabled: props.busy,
+    conflictNote: '',
+    save,
+    inheritance,
+  };
+  return (
+    <>
+      {error ? (
+        <AttentionBanner testID={`${props.testID}-attention`} title={t('homeGovernance.changeFailedTitle')}
+          description={t('teams.errors.generic')} accessibilityLiveRegion="assertive" />
+      ) : null}
+      <ItemGroup testID={props.testID}>
+        <TeamMemberMachineDefaultRow state={row} conflict={false} testID={`${props.testID}-machine`} />
+        <ProjectAgentDefaultRow agents={agents} state={row} current={defaults.defaultAgentTarget}
+          onSelect={selectAgent} testID={`${props.testID}-agent`} />
+        {agents.map((entry) => (
+          <AgentDefaultsItem key={entry.backendTargetKey} entry={entry} state={row} conflicts={NO_CONFLICTS}
+            testID={`${props.testID}-agent:${entry.agentId}`} />
+        ))}
+      </ItemGroup>
+    </>
+  );
+});
