@@ -21,6 +21,8 @@ export type RuntimeActionSpecFamily = Readonly<{
   approvalSummaries?: Readonly<Partial<Record<RuntimeActionIdV1, (input: unknown) => string | null>>>;
   titles: RuntimeActionSpecTextMap;
   descriptions?: RuntimeActionSpecTextMap;
+  /** Agent-only call instructions (ActionSpec `prompting.agentGuidance`); descriptions stay readable by people. */
+  agentGuidance?: RuntimeActionSpecTextMap;
   /** Canonical per-id schema rows for public/runtime projections. */
   inputSchemas?: RuntimeActionSchemaMap;
   outputSchemas?: RuntimeActionSchemaMap;

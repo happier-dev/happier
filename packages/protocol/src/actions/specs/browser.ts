@@ -319,6 +319,11 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
   ...browserRecording.titles,
 });
 
+/** How an agent calls these Actions; people read only the descriptions above in Settings and forms. */
+export const BROWSER_RUNTIME_ACTION_AGENT_GUIDANCE: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'browser.context.attachToComposer': 'source="activePage" captures and attaches the exact mounted page, qualified by browserSessionId, viewId and navigationGeneration.',
+});
+
 export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
   'browser.extensions.list': 'List installed extensions in a managed persistent browser profile, or all persistent profiles on this Machine.',
   'browser.extensions.install': 'Install or update an extension in a managed persistent browser profile after reviewing added permissions. Changes apply when the profile restarts.',
@@ -392,7 +397,7 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
   'browser.diagnostics.releaseObjectGroup': 'Let go of page values that were kept for inspection.',
   'browser.diagnostics.elementPicker.start': 'Start picking an element by pointing at it in the page.',
   'browser.diagnostics.elementPicker.cancel': 'Stop picking an element without choosing one.',
-  'browser.context.attachToComposer': 'Add captured browser context to the message you are writing. source="activePage" captures and attaches the exact mounted page, qualified by browserSessionId, viewId and navigationGeneration.',
+  'browser.context.attachToComposer': 'Add captured browser context to the message you are writing.',
   'browser.context.attachToAgentTurn': 'Give what you captured from the browser to the agent with its next turn.',
   'browser.context.clear': 'Throw away what was captured from the browser and not yet sent.',
   'browser.recording.start': 'Start recording a video of a browser view.',
@@ -653,6 +658,7 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
   approvalTechnicalInputPaths: typeof BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS;
   titles: typeof BROWSER_RUNTIME_ACTION_TITLES;
   descriptions: typeof BROWSER_RUNTIME_ACTION_DESCRIPTIONS;
+  agentGuidance: typeof BROWSER_RUNTIME_ACTION_AGENT_GUIDANCE;
   inputSchemas: typeof BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS;
   outputSchemas: typeof BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS;
 }> = Object.freeze({
@@ -689,6 +695,7 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
   approvalTechnicalInputPaths: BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS,
   titles: BROWSER_RUNTIME_ACTION_TITLES,
   descriptions: BROWSER_RUNTIME_ACTION_DESCRIPTIONS,
+  agentGuidance: BROWSER_RUNTIME_ACTION_AGENT_GUIDANCE,
   inputSchemas: BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS,
   outputSchemas: BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS,
 } satisfies RuntimeActionSpecFamily);

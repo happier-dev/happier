@@ -59,6 +59,7 @@ function mergeRuntimeActionTextMaps(
 
 const RUNTIME_ACTION_TITLES = mergeRuntimeActionTextMaps((family) => family.titles);
 const RUNTIME_ACTION_DESCRIPTIONS = mergeRuntimeActionTextMaps((family) => family.descriptions);
+const RUNTIME_ACTION_AGENT_GUIDANCE = mergeRuntimeActionTextMaps((family) => family.agentGuidance);
 const RUNTIME_ACTION_ORIGINAL_EXECUTION: NonNullable<RuntimeActionSpecFamily['originalExecution']> = Object.freeze(
   Object.assign({}, ...RUNTIME_ACTION_SPEC_FAMILIES.map((family: RuntimeActionSpecFamily) => family.originalExecution ?? {})),
 );
@@ -269,6 +270,7 @@ function createRuntimeActionSpecFor<
       projectObservationOutput: () => ({}),
       approvalPresentation: { summary: () => 'Exchange clipboard text with the selected computer. Content stays private to this live invocation.' },
     } : {}),
+    ...(RUNTIME_ACTION_AGENT_GUIDANCE[actionId] ? { prompting: { agentGuidance: RUNTIME_ACTION_AGENT_GUIDANCE[actionId] } } : {}),
     inputHints: {
       title,
       description: executorReal ? humanDescription : RUNTIME_ACTION_PROJECTION_CONTRACT_HINT_DESCRIPTION,
