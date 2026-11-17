@@ -10,7 +10,47 @@ import { DaemonPluginUiResourceReadRequestSchema } from '@happier-dev/protocol/d
 import { createHash } from 'node:crypto';
 import { logger } from '@/ui/logger';
 
+const nativeWriteBoundary = vi.hoisted(() => ({ failure: undefined as Error | undefined }));
+// The native filesystem adapter is a system boundary; stage-log state and custody stay real.
+vi.mock('node:fs', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return { ...actual, writeSync: (...args: Parameters<typeof actual.writeSync>) => {
+        if (nativeWriteBoundary.failure) {
+            const error = nativeWriteBoundary.failure;
+            nativeWriteBoundary.failure = undefined;
+            throw error;
+        }
+        return Reflect.apply(actual.writeSync, actual, args);
+    } };
+});
+
 describe('operation-owned deployment stage file', () => {
+    it('retains a closed local cause when the native stage-log write fails', async () => {
+        const deploymentRoot = await mkdtemp(join(tmpdir(), 'happier-stage-write-failure-'));
+        const logged = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        let file: Awaited<ReturnType<typeof openOwnServerDeploymentStageLog>> | undefined;
+        try {
+            file = await openOwnServerDeploymentStageLog({ deploymentRoot,
+                environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost('home', 'environment'),
+                deploymentId: 'deployment', machineId: 'runtime', installationId: 'installation' });
+            file.appendRedacted('stdout', Buffer.from('successful redacted write'));
+            file.assertWritten();
+            nativeWriteBoundary.failure = Object.assign(new Error('PRIVATE native write details'), { code: 'ENOSPC' });
+            file.appendRedacted('stderr', Buffer.from('PRIVATE rejected bytes'));
+            expect(() => file?.assertWritten()).toThrowError(expect.objectContaining({ code: 'deployment_log_unavailable' }));
+            expect(logged).toHaveBeenCalledOnce();
+            expect(logged).toHaveBeenCalledWith('[Deployment] Stage log write failed', expect.objectContaining({
+                phase: 'deployment.logs.write', errorClass: 'Error', errorCode: 'ENOSPC',
+            }));
+            expect(JSON.stringify(logged.mock.calls)).not.toContain('PRIVATE');
+        } finally {
+            nativeWriteBoundary.failure = undefined;
+            logged.mockRestore();
+            await file?.close().catch(() => undefined);
+            await rm(deploymentRoot, { recursive: true, force: true });
+        }
+    });
+
     it('closes an in-flight open range before later-step bytes and joins only repeated selected-step segments', async () => {
         const deploymentRoot = await mkdtemp(join(tmpdir(), 'happier-stage-boundary-'));
         try {

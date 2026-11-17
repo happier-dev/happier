@@ -131,7 +131,11 @@ export async function openOwnServerDeploymentStageLog(input: Placement & Readonl
                     truncated ||= combined.length > MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES;
                     tail = Buffer.from(combined.subarray(Math.max(0, combined.length - MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES)));
                     if (observers.has(path)) publish(path, { stepId: activeStep?.ref, appended: true });
-                } catch (error) { failure = error; }
+                } catch (error) {
+                    failure = error;
+                    logger.warnLocalFile('[Deployment] Stage log write failed',
+                        projectActionFailureCauseV1(error, 'deployment.logs.write', { allowUnknownErrorCode: false }));
+                }
             },
             assertWritten() { if (closed || failure !== undefined) return unavailable(); },
             async close() { if (closed) return; closed = true; await handle.close(); if (failure !== undefined) return unavailable(); },
