@@ -832,6 +832,12 @@ export const DiscussionInviteButton = React.memo(
             onRequestClose={close}
             backdrop={{ enabled: false }}
             portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
+            // A phone gets the shared bottom sheet (lab T2-Ip); the invite's own header names it there too.
+            phonePresentation="sheet"
+            sheetHeader="none"
+            accessibilityLabel={props.draft
+              ? t('session.collaboration.discussion.newPage.inviteTitle')
+              : t('session.collaboration.discussion.invite.title', { title: props.discussionTitle })}
           >
             {({ maxHeight }) => {
               const listMaxHeight = Math.max(0, maxHeight - chromeHeights.header - chromeHeights.footer);

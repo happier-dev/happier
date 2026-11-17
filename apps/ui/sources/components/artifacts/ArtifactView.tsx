@@ -41,6 +41,7 @@ import { ArtifactPassageThreadCardPlaceholder } from './ArtifactPassageThreadCar
 import { clearDocReturn, peekDocReturn, trackDocScroll } from './docThreadReturn';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
 import type { ScrollView, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 
 /**
@@ -372,7 +373,11 @@ function ArtifactThreadsMenu(props: Readonly<{ collaboration: DocCollaboration; 
     })), [collaboration.threads, theme.colors.state.warning.textForeground]);
     const count = collaboration.openCommentCount;
     const countStatus = collaboration.commentCountStatus;
+    const anchorRef = React.useRef<View>(null);
+    const sheetThreadId = collaboration.sheetThreadId;
     return (
+        <>
+        <View ref={anchorRef} collapsable={false}>
         <DropdownMenu
             testID="artifact:comments.menu"
             open={open}
@@ -388,6 +393,8 @@ function ArtifactThreadsMenu(props: Readonly<{ collaboration: DocCollaboration; 
             placement="bottom"
             // A body tap far down the Doc opens this list too: a phone's anchored panel flips above the tap when below is short.
             popoverAccessibilityLabel={t('artifacts.browser.passage.threadsTitle')}
+            // A phone lists the Doc's threads in the shared bottom sheet over the Doc (lab L8-STp).
+            popoverPhonePresentation="sheet"
             popoverAnchorAlign="start"
             matchTriggerWidth={false}
             showCategoryTitles={false}
@@ -411,6 +418,24 @@ function ArtifactThreadsMenu(props: Readonly<{ collaboration: DocCollaboration; 
                 />
             )}
         />
+        </View>
+        {/* Without a margin, a chosen thread's card comes up over the Doc: the same card as beside the passage. */}
+        {sheetThreadId ? (
+            <Popover
+                open
+                anchorRef={anchorRef}
+                placement="bottom"
+                maxWidthCap={420}
+                phonePresentation="sheet"
+                accessibilityLabel={t('artifacts.browser.passage.threadsTitle')}
+                onRequestClose={collaboration.closeThreadSheet}
+                backdrop={{ enabled: false }}
+                portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
+            >
+                {() => <View style={stylesheet.threadSheet}>{collaboration.margin.renderCard(sheetThreadId)}</View>}
+            </Popover>
+        ) : null}
+        </>
     );
 }
 
@@ -448,6 +473,8 @@ function NoCommentsYet() {
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+    // The thread card over the Doc keeps the page's gutters, as the margin keeps the column's.
+    threadSheet: { paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s16 },
     unreachable: {
         marginBottom: theme.space.s12,
     },

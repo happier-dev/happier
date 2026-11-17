@@ -55,8 +55,11 @@ export type DocCollaboration = Readonly<{
   /** Who the Doc reaches; `null` while unknown (the header then says nothing about it). */
   audience: DocAudience | null;
   threads: readonly DocThreadListItem[];
-  /** Beside the passages: focus the thread there. Without a margin: open it. */
+  /** Beside the passages: focus the thread there. Without a margin: show its card over the Doc (lab L8-STp). */
   selectThread: (id: string) => void;
+  /** The thread shown over the Doc while no margin stands beside it (a phone); `null` when none is. */
+  sheetThreadId: string | null;
+  closeThreadSheet: () => void;
   /** Open suggestions based on the version being read (the header's "1 suggestion"); `null` until threads are read. */
   suggestionCount: number | null;
   /** Show the open suggestions: the one suggestion's thread (beside it, or opened on a phone), else the thread list. */
@@ -395,13 +398,17 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null, canResto
       })),
     [resolveSpeakerLabel, threads, viewerAccountId],
   );
+  // Without a margin the card comes up over the Doc, so the passage stays in view; its open link still
+  // leads to the whole Discussion.
+  const [sheetThreadId, setSheetThreadId] = React.useState<string | null>(null);
   const selectThread = React.useCallback(
     (id: string) => {
-      if (marginShown.current) setFocusedId(id);
-      else open(id);
+      setFocusedId(id);
+      if (!marginShown.current) setSheetThreadId(id);
     },
-    [open],
+    [],
   );
+  const closeThreadSheet = React.useCallback(() => setSheetThreadId(null), []);
   // Several suggestions open the existing thread list, never an arbitrary first one.
   const openSuggestions = React.useCallback((openThreadList: () => void) => {
     if (suggestionIds.length === 1) selectThread(suggestionIds[0]!);
@@ -429,6 +436,8 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null, canResto
     audience: audience && audience.key === candidate.id ? audience.value : null,
     threads: list,
     selectThread,
+    sheetThreadId: marginShownState ? null : sheetThreadId,
+    closeThreadSheet,
     suggestionCount,
     openSuggestions,
     acceptedVersions,
