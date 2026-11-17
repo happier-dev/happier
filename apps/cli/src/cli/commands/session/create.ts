@@ -4,17 +4,11 @@ import {
   readSessionSpawnNewActionResultV1,
   SessionSpawnNewActionResultV1Schema,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import type { SessionSpawnNewActionAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
-import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/protocol/connect/resolveConnectedServicesLaunchAuthV1';
-
-import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
-
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { parseSessionCreateSpawnOptions } from './create/parseSessionCreateSpawnOptions';
@@ -35,27 +29,6 @@ function hasSpawnNonce(details: unknown): boolean {
     && (details as { accepted?: unknown }).accepted === true
     && typeof (details as { spawnNonce?: unknown }).spawnNonce === 'string'
     && (details as { spawnNonce: string }).spawnNonce.trim());
-}
-
-/** API tokens keep the released public Action preflight without borrowing stored Account custody. */
-async function resolveApiTokenLaunchAuth(
-  executor: ReturnType<typeof createCliActionExecutorFromCredentials>,
-  input: SessionSpawnNewActionAuthoringInputV2,
-  agentId: string,
-): Promise<SessionSpawnNewActionAuthoringInputV2> {
-  const { connectedServicesAuthIntent: intent, ...spawnInput } = input;
-  if (!intent || intent.kind === 'default') return spawnInput;
-  const connectedServices = await resolveConnectedServicesLaunchAuthWithInventory({
-    intent,
-    supportedServiceIds: resolveCatalogAgentConnectedAccountServiceIds(agentId),
-    listInventory: async () => {
-      const result = await executor.execute('sessions.spawn.connected_services.list',
-        { agentId, includeUnavailable: false, includeDefaults: false }, { surface: 'cli', defaultSessionId: null });
-      if (!result.ok) throwCliActionFailure(result);
-      return result.result ?? null;
-    },
-  });
-  return connectedServices ? { ...spawnInput, connectedServices } : spawnInput;
 }
 
 export async function cmdSessionCreate(
@@ -144,12 +117,9 @@ export async function cmdSessionCreate(
   try {
     const normalizedSpawn = await normalizeSessionCreateSpawnRequest(spawnRequest);
     recordStartupPhase('normalization');
-    const input = credentials.credentialProvenance === 'api_token'
-      ? await resolveApiTokenLaunchAuth(executor, normalizedSpawn.input, normalizedSpawn.agentId ?? DEFAULT_AGENT_ID)
-      : normalizedSpawn.input;
     actionRes = await executor.execute(
       'session.spawn_new',
-      input,
+      normalizedSpawn.input,
       {
         surface: 'cli',
         defaultSessionId: null,

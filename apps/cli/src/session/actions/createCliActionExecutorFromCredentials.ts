@@ -5,6 +5,7 @@ import { readDeploymentReadReceiverMachineId } from '@/deployments/deploymentRea
 import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
 import { measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import { createOriginDaemonApprovalOutcomePublisher } from './approvals/publishOutcome';
 import { timeApprovalPhase, withApprovalActionTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { createSessionReadStateActionDeps } from '@/api/sessionReadStateActionDeps';
@@ -22,6 +23,8 @@ import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE
 import { DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
+import { resolveSessionSpawnConnectedServices } from '@/session/creation/prepareSessionSpawnInput';
+import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { configuration } from '@/configuration';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { getDaemonMachineAdmissionTransport, getDaemonClientActionExecutor, getDaemonConfidentialSecretFillExecutor, getDaemonConfidentialActionInputsExecutor, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
@@ -56,13 +59,13 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindCallerInput } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ActionIdSchema, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isLocalServiceStopActionIdV1, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isSettingsDeclarationActionIdV1, SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { enrichCliActionApprovalContext } from './enrichCliActionApprovalContext';
@@ -472,17 +475,40 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   if (publicActionId.data === 'session.spawn_new') {
     // The shared spawn projection retains canonical input for every caller.
     // API admission derives placement from the stamped envelope and Home.
+    let projection: ReturnType<typeof projectSessionSpawnNewApiRequest>;
     try {
-      const projection = projectSessionSpawnNewApiRequest(params.input);
-      return {
-        kind: 'ready',
-        input: projection.input,
-        ...(daemonLocalMachineId
-          ? { target: encryptedDaemonTarget(params.credentials, daemonLocalMachineId) }
-          : { target: projection.target }),
-      };
+      projection = projectSessionSpawnNewApiRequest(params.input);
     } catch {
       return { kind: 'settled', result: actionFailure('invalid_parameters') };
+    }
+    const { connectedServicesAuthIntent, ...input } = projection.input;
+    const target = daemonLocalMachineId ? encryptedDaemonTarget(params.credentials, daemonLocalMachineId) : projection.target;
+    if (!connectedServicesAuthIntent || connectedServicesAuthIntent.kind === 'default') return { kind: 'ready', input, target };
+    try {
+      const agentId = input.agentTarget
+        ? resolveSessionCreationAgentTarget(input.agentTarget)?.agentId : DEFAULT_AGENT_ID;
+      if (!agentId) throw createActionExecuteFailureError(actionFailure('target_unavailable'));
+      const connectedServices = await resolveSessionSpawnConnectedServices({ connectedServicesAuthIntent }, agentId, async args => {
+        // Public inventory needs a manageable transport. The launch Machine is
+        // only a preference among the requester's eligible transports.
+        const inventoryMachineId = daemonLocalMachineId ?? await resolveCurrentAccountAdministrationMachine({
+          token: params.credentials.token, serverHttpBaseUrl: params.serverApiUrl,
+          preferredMachineId: projection.target.machineId, requiredAccessRole: 'manage', ...(signal ? { signal } : {}),
+        });
+        if (!inventoryMachineId) throw createActionExecuteFailureError(actionFailure('target_unavailable'));
+        const inventoryTarget = daemonLocalMachineId ? target : { kind: 'machine' as const, machineId: inventoryMachineId };
+        const result = await executePatPublicActionPlan({ actionId: SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1,
+          credentials: params.credentials, serverApiUrl: params.serverApiUrl, context: undefined,
+          ...(signal ? { invocationSignal: signal } : {}), plan: { kind: 'ready', input: args, target: inventoryTarget },
+        });
+        if (!result.ok) throw createActionExecuteFailureError(result);
+        return result.result ?? null;
+      });
+      return { kind: 'ready', input: connectedServices ? { ...input, connectedServices } : input, target };
+    } catch (error) {
+      return { kind: 'settled', result: { ok: false,
+        ...normalizeActionExecutorThrownError(error, 'session.creation.preparation', signal?.aborted ? 'cancelled' : 'action_failed'),
+        effectAttempted: false } };
     }
   }
   const inputSessionId = readNonEmptyString(readRecord(params.input)?.sessionId);

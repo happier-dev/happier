@@ -15,30 +15,45 @@ import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpa
 import { ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
 
 it.each(['cs:explicit-account', 'cs:group:explicit-pool'])(
-  'spawns with explicit %s without consulting Account defaults', async auth => {
+  'launches a Can-use member’s API-token Session with %s on the owner Machine', async auth => {
     const service = 'happier.agent.claude/claude-subscription';
     let selected: unknown;
-    let inventoryReads = 0;
+    let spawnTarget: unknown;
+    const inventoryRequests: unknown[] = [];
+    const apiToken = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
     // Public Action HTTP only: real CLI parsing, Action input and auth resolution.
     const server = createServer(async (request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      if (request.method === 'GET' && request.url === '/v1/machines') {
+        response.end(JSON.stringify([
+          { id: 'owner-machine', role: 'use', accountId: 'owner' },
+          { id: 'member-machine', role: 'manage', accountId: 'member' },
+        ].map(({ id, role, accountId }) => ({ id, active: true, kind: 'persistent',
+          revokedAt: null, replacedByMachineId: null,
+          access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId, displayName: accountId },
+            role, resourceMode: 'plain', accessState: 'ready' }),
+        }))));
+        return;
+      }
       let body = '';
       for await (const chunk of request) body += String(chunk);
-      const { requestId, input } = JSON.parse(body) as { requestId?: string; input?: Record<string, unknown> };
-      response.writeHead(200, { 'content-type': 'application/json' });
+      const { requestId, input, target } = JSON.parse(body) as {
+        requestId?: string; input?: Record<string, unknown>; target?: { kind: string; machineId?: string };
+      };
       if (request.url === '/v1/actions/sessions.spawn.connected_services.list') {
-        inventoryReads += 1;
-        const refusal = new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
+        inventoryRequests.push({ target, bearer: request.headers.authorization, includeDefaults: input?.includeDefaults });
         response.end(JSON.stringify({ v: 1, actionId: 'sessions.spawn.connected_services.list', requestId,
-          execution: input?.includeDefaults === false ? { ok: true, result: {
+          execution: target?.machineId === 'member-machine' && input?.includeDefaults === false ? { ok: true, result: {
             profileOptionsByServiceId: { [service]: [{ profileId: 'explicit-account', status: 'connected' }] },
             groupOptionsByServiceId: { [service]: [{ groupId: 'explicit-pool' }] },
-          } } : { ok: false, errorCode: refusal.code, error: refusal.message, details: refusal.details } }));
+          } } : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } }));
         return;
       }
       selected = input?.connectedServices;
+      spawnTarget = target;
       response.end(JSON.stringify({ v: 1, actionId: 'session.spawn_new', requestId, execution: { ok: true, result: {
         type: 'success', sessionId: 'explicit-auth-session', disposition: 'created',
-        executionTarget: { serverId: configuration.activeServerId, machineId: 'explicit-machine' },
+        executionTarget: { serverId: configuration.activeServerId, machineId: 'owner-machine' },
         organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
       } } }));
     });
@@ -53,16 +68,17 @@ it.each(['cs:explicit-account', 'cs:group:explicit-pool'])(
         env: { HAPPIER_SERVER_URL: url, HAPPIER_WEBAPP_URL: url } }, async () => {
         const output = captureStdoutJsonOutput();
         try {
-          await cmdSessionCreate(['--machine-id', 'explicit-machine', '--path', '/tmp/explicit-auth',
+          await cmdSessionCreate(['--machine-id', 'owner-machine', '--path', '/tmp/explicit-auth',
             '--agent', 'claude', '--auth', auth, '--json'], { readCredentialsFn: async () => ({
-              token: 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43), encryption: null,
-              credentialProvenance: 'api_token',
+              token: apiToken, encryption: null, credentialProvenance: 'api_token',
             }) });
+          expect(inventoryRequests).toEqual([{ target: { kind: 'machine', machineId: 'member-machine' },
+            bearer: `Bearer ${apiToken}`, includeDefaults: false }]);
           expect(output.json()).toMatchObject({ ok: true, data: { session: { id: 'explicit-auth-session' } } });
           expect(selected).toMatchObject({ v: 2, bindingsByServiceId: { [service]: auth === 'cs:explicit-account'
             ? { source: 'connected', selection: 'profile', profileId: 'explicit-account' }
             : { source: 'connected', selection: 'group', groupId: 'explicit-pool' } } });
-          expect(inventoryReads).toBe(1);
+          expect(spawnTarget).toEqual({ kind: 'machine', machineId: 'owner-machine' });
         } finally { output.restore(); }
       });
     } finally {
@@ -79,10 +95,18 @@ it('identifies Account purpose catalog unavailability in the exact FIN reload80 
   // auth parser, SDK transport and CLI error presenters remain real.
   const server = createServer(async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    if (request.method === 'GET' && request.url === '/v1/machines') {
+      response.end(JSON.stringify([{ id: '4af70cb8-88bb-4f41-86d7-94455e4f7e29', active: true, kind: 'persistent',
+        revokedAt: null, replacedByMachineId: null,
+        access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'owner', displayName: 'Owner' },
+          role: 'manage', resourceMode: 'plain', accessState: 'ready' }),
+      }]));
+      return;
+    }
     let body = '';
     for await (const chunk of request) body += String(chunk);
     const { requestId } = JSON.parse(body) as { requestId?: string };
-    response.writeHead(200, { 'content-type': 'application/json' });
     if (request.url === '/v1/actions/session.spawn_new') {
       response.end(JSON.stringify({ v: 1, actionId: 'session.spawn_new', requestId,
         execution: { ok: true, result: { type: 'success', sessionId: 'fin-reload80-fixture', disposition: 'created',
@@ -126,8 +150,8 @@ it('identifies Account purpose catalog unavailability in the exact FIN reload80 
           ? 'cs:happier.agent.codex/openai-codex:group:codex-pool' : value), '--json'], deps);
         expect(output.json()).toMatchObject({ ok: true, kind: 'session_create',
           data: { session: { id: 'fin-reload80-fixture' } } });
-        expect(requests).toEqual(['POST /v1/actions/sessions.spawn.connected_services.list',
-          'POST /v1/actions/sessions.spawn.connected_services.list', 'POST /v1/actions/session.spawn_new']);
+        expect(requests).toEqual(['GET /v1/machines', 'POST /v1/actions/sessions.spawn.connected_services.list',
+          'GET /v1/machines', 'POST /v1/actions/sessions.spawn.connected_services.list', 'POST /v1/actions/session.spawn_new']);
       } finally { output.restore(); }
     });
   } finally {

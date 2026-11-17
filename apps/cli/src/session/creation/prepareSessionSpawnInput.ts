@@ -7,7 +7,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
-import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2,
+import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2, type SessionSpawnNewActionAuthoringInputV2,
   projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
@@ -27,6 +27,21 @@ import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/m
 function unavailable(reason: string): never {
   throw createActionExecuteFailureError({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
     details: { reason }, effectAttempted: false });
+}
+
+/** Settle authored launch auth with the inventory transport of the original requester. */
+export async function resolveSessionSpawnConnectedServices(
+  input: Pick<SessionSpawnNewActionAuthoringInputV2, 'connectedServicesAuthIntent'>,
+  agentId: string,
+  listInventory: NonNullable<ActionExecutorDeps['spawnConnectedServicesList']>,
+) {
+  const intent = input.connectedServicesAuthIntent;
+  if (!intent) return null;
+  return resolveConnectedServicesLaunchAuthWithInventory({
+    intent,
+    supportedServiceIds: resolveCatalogAgentConnectedAccountServiceIds(agentId),
+    listInventory: () => listInventory({ agentId, includeUnavailable: false, includeDefaults: false }),
+  });
 }
 
 /** Authoring omissions settle here before any Machine or Agent is admitted. */
@@ -93,12 +108,9 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       model: { value: null, updatedAtMs: modelSelectionInput.updatedAt, selectionSource: 'explicit' as const },
     } : input.configuration;
     const connectedServices = connectedServicesAuthIntent
-      ? await resolveConnectedServicesLaunchAuthWithInventory({
-        intent: connectedServicesAuthIntent,
-        supportedServiceIds: resolveCatalogAgentConnectedAccountServiceIds(resolvedAgent.agentId),
-        listInventory: () => inventory.spawnConnectedServicesList({ agentId: resolvedAgent.agentId,
-          includeUnavailable: false, includeDefaults: false }, context),
-      }) : undefined;
+      ? await resolveSessionSpawnConnectedServices({ connectedServicesAuthIntent }, resolvedAgent.agentId,
+        args => inventory.spawnConnectedServicesList(args, context))
+      : null;
     let executionTarget = input.executionTarget;
     let managedPresetAcquisition: ManagedAcquireInputV1 | undefined;
     let managedPresetControllerAccess: ManagedControllerAccessV1 | undefined;

@@ -3,7 +3,7 @@ import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema, type ExternalActionMachineBootstrapV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1, type MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1, type MachineAccessRoleV1, type MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
 import { DevcontainerChildProjectionV1Schema, type DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { isMachineReachableV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
@@ -256,7 +256,8 @@ export async function readCurrentAccountMachinePreparationCleanupUnavailable(par
  * target-unavailable verdict (`isMachineRequestReachabilityFailureV1`).
  */
 export async function listCurrentAccountAdministrationMachines(params: Parameters<typeof listCurrentAccountMachines>[0]
-  & Readonly<{ token: string; requestedMachineId?: string; preferredMachineId?: string | null; requiredPluginId?: string }>): Promise<readonly string[]> {
+  & Readonly<{ token: string; requestedMachineId?: string; preferredMachineId?: string | null; requiredPluginId?: string;
+    requiredAccessRole?: MachineAccessRoleV1 }>): Promise<readonly string[]> {
   if (params.requestedMachineId !== undefined) {
     const resolution = await resolveCurrentAccountMachineTarget(params);
     return resolution.kind === 'selected' ? [resolution.target.machineId] : [];
@@ -291,6 +292,7 @@ export async function listCurrentAccountAdministrationMachines(params: Parameter
   }
   const reachable = machines.filter(machine => machine.kind === 'persistent' && !machine.replacedByMachineId
     && (!pluginMachines || pluginMachines.has(machine.id))
+    && (!params.requiredAccessRole || machine.access?.role === params.requiredAccessRole)
     && (!machine.access || machine.access.accessState === 'ready') && isMachineReachableV1({ machine, nowMs: Date.now() }))
     .map(machine => machine.id);
   return params.preferredMachineId && reachable.includes(params.preferredMachineId)
