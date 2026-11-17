@@ -32,6 +32,20 @@ function executor() {
 }
 
 describe('project definition exact Machine transport', () => {
+  it('dispatches setup edits through the bound Project owner and preserves its association refusal', async () => {
+    accountBoundary();
+    const actions = executor();
+    const context = { authority: 'present_user' as const, surface: 'cli' as const };
+    // An existing Account Project mutation proves this exact Home boundary works.
+    expect(await actions.execute('projects.organization.update', {
+      projectRef: { serverId: 'home-a', projectKey: 'first' }, expectedRevision: 2, label: 'Setup edit control',
+    }, context)).toMatchObject({ ok: true, result: { ok: true, revision: 3 } });
+    expect(await actions.execute('projects.setup.set', {
+      projectRef: { serverId: 'home-a', projectKey: 'first' }, expectedRevision: 3,
+      workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'visible', rootPath: '/work/visible' },
+      intent: { kind: 'personal', setupOverrides: null },
+    }, context)).toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_workspace_association_mismatch' } });
+  });
   it('carries original requester authority to Project Open instead of using ambient Account transport', async () => {
     const token = 'requester-token';
     const privateKey = new Uint8Array(32).fill(3);
