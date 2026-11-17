@@ -5,6 +5,7 @@ import { isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentTelemetryNa
 import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentPrincipalsV1Schema, DeploymentPreviewDataTargetsV1Schema,
     type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
     machineSecretGrantSubjectKey, resolveDeploymentStoredDefinitionRevisionV1,
     isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1,
@@ -618,6 +619,11 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
 ) {
     const telemetryMachineId = input.telemetryMachineId === undefined ? loaded.row.telemetryMachineId : input.telemetryMachineId;
     const telemetryChanged = telemetryMachineId !== loaded.row.telemetryMachineId;
+    const previousTelemetryCapabilities = { metrics: loaded.row.telemetryMetricsEnabled,
+        appLlmCost: loaded.row.telemetryAppLlmCostEnabled, exceptions: loaded.row.telemetryExceptionsEnabled };
+    const telemetryCapabilities = input.telemetryCapabilities === undefined ? previousTelemetryCapabilities
+        : resolveDeploymentTelemetryCapabilitiesV1(input.telemetryCapabilities);
+    const telemetryCapabilitiesChanged = !isDeepStrictEqual(previousTelemetryCapabilities, telemetryCapabilities);
     if (input.telemetryMachineId) {
         const admitted = executionBinding?.deploymentNativeAdmission;
         const alreadyAdmitted = admitted && isDeploymentTelemetryNativeAdmissionV1(admitted)
@@ -676,9 +682,13 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         : await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, loaded.row);
     if (!previous.ok) return previous;
     if (preparedContent.content && (!previous.content || (!placement
-        && !isDeploymentEnvironmentBindingsOnlyUpdateV1(previous.content, preparedContent.content)))) {
+        && !isDeploymentEnvironmentBindingsOnlyUpdateV1(previous.content, preparedContent.content,
+            input.telemetryCapabilities === undefined ? 'bindings' : 'telemetry')))) {
         return deploymentFailure('deployment_conflict');
     }
+    if (preparedContent.content && input.telemetryCapabilities !== undefined
+        && !isDeepStrictEqual(resolveDeploymentTelemetryCapabilitiesV1(preparedContent.content.telemetry), telemetryCapabilities))
+        return deploymentFailure('deployment_conflict');
     const existingGrants = await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: loaded.row.id });
     // Retained identities come from stored custody, independently of caller seals.
     const previousBindingCaptures = previous.content ? captureDeploymentBindingSavedSecretRevisionsV1(previous.content.bindings)
@@ -854,7 +864,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'deploy', placement.deployerPrincipals);
     const dataEditorsChanged = placement?.dataEditors !== undefined
         && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'dataEdit', placement.dataEditors);
-    if (!linkCandidate && !grantsChanged && !principalsChanged && !dataEditorsChanged && !telemetryChanged
+    if (!linkCandidate && !grantsChanged && !principalsChanged && !dataEditorsChanged && !telemetryChanged && !telemetryCapabilitiesChanged
         && (placement?.dataEditorMode ?? loaded.row.dataEditorMode) === loaded.row.dataEditorMode
         && (placement?.dataAgentAccess ?? loaded.row.dataAgentAccess) === loaded.row.dataAgentAccess
         && (placement?.deployerMode ?? loaded.row.deployerMode) === loaded.row.deployerMode
@@ -870,7 +880,9 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             data: { ...deploymentContentReference(linkCandidate), revision: { increment: 1 } } });
         if (updated.count !== 1) throw new Error('Locked deployment TargetLink changed during binding CAS');
     }
-    const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId, telemetryTokenHash: null } : {}), ...(placement ? { buildMachineId,
+    const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId, telemetryTokenHash: null } : {}),
+        ...(telemetryCapabilitiesChanged ? { telemetryMetricsEnabled: telemetryCapabilities.metrics,
+            telemetryAppLlmCostEnabled: telemetryCapabilities.appLlmCost, telemetryExceptionsEnabled: telemetryCapabilities.exceptions } : {}), ...(placement ? { buildMachineId,
             ...(placement.edgeMachineId !== undefined ? { edgeMachineId: placement.edgeMachineId } : {}),
             ...(placement.protection !== undefined ? { protection: placement.protection } : {}),
             ...(placement.deployerMode !== undefined ? { deployerMode: placement.deployerMode } : {}),
@@ -891,7 +903,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             ...referencedSavedSecretRevisions.map(capture => capture.resourceId),
         ]);
     }
-    if (telemetryChanged) await publishDeploymentTelemetryMachinesInTx(tx, [loaded.row.telemetryMachineId, telemetryMachineId]);
+    if (telemetryChanged || telemetryCapabilitiesChanged)
+        await publishDeploymentTelemetryMachinesInTx(tx, [loaded.row.telemetryMachineId, telemetryMachineId]);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1);
     return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision + 1 };
 }

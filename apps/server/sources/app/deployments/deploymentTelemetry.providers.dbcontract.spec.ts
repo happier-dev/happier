@@ -83,7 +83,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Telemetry' })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(value) })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
-        const createContentArtifact = (artifactId: string) => createPlainArtifact(artifactId, 'deployment-environment.v1', definition.v);
+        const createContentArtifact = (artifactId: string, telemetry?: { metrics: boolean; appLlmCost: boolean; exceptions: boolean }) =>
+            createPlainArtifact(artifactId, 'deployment-environment.v1', { ...definition.v, ...(telemetry ? { telemetry } : {}) });
         const createReference = async (kind: 'deployment-target-link.v1' | 'deployment-receipt.v1') => {
             const content = kind === 'deployment-target-link.v1' ? createDeploymentTargetLinkV1().content : createDeploymentV1().content;
             if (content.t !== 'plain') throw new Error('Expected plain fixture');
@@ -210,10 +211,22 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
         const collectorBearer = await auth.createToken(f.custodian.id, undefined, { kind: 'account', authority: 'present_user' });
         const nextCollectorBearer = await auth.createToken(f.newCollector.accountId, undefined, { kind: 'account', authority: 'present_user' });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
-            const write = (expectedRevision: number, telemetryMachineId: string | null) => app.inject({ method: 'POST',
-                url: `/v1/deployments/environments/${f.environment.id}/bindings`, headers: { authorization: `Bearer ${ownerBearer}` },
-                payload: { serverId, environmentId: f.environment.id, expectedRevision, ...f.reference,
-                    referencedSavedSecretRevisions: [], grants: [], telemetryMachineId } });
+            let reference = f.reference;
+            let previousCapabilities: string | undefined;
+            const write = async (expectedRevision: number, telemetryMachineId: string | null,
+                telemetryCapabilities?: { metrics: boolean; appLlmCost: boolean; exceptions: boolean }) => {
+                if (telemetryCapabilities && JSON.stringify(telemetryCapabilities) !== previousCapabilities) {
+                    const artifact = await f.createContentArtifact(randomUUID(), telemetryCapabilities);
+                    if (!artifact.ok) throw new Error(artifact.error);
+                    reference = { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+                    previousCapabilities = JSON.stringify(telemetryCapabilities);
+                }
+                return app.inject({ method: 'POST',
+                    url: `/v1/deployments/environments/${f.environment.id}/bindings`, headers: { authorization: `Bearer ${ownerBearer}` },
+                    payload: { serverId, environmentId: f.environment.id, expectedRevision, ...reference,
+                        referencedSavedSecretRevisions: [], grants: [], telemetryMachineId,
+                        ...(telemetryCapabilities ? { telemetryCapabilities } : {}) } });
+            };
             expect((await write(1, f.oldCollector.id)).statusCode).toBe(200);
             const assignments = async (machine = f.oldCollector,
                 bearer = machine.id === f.oldCollector.id ? collectorBearer : nextCollectorBearer, signed = true,
@@ -231,7 +244,19 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
             };
             // G1: a real collector installation reads even though it cannot read the Environment's Source.
             expect((await assignments()).json()).toEqual({ ok: true,
-                assignments: [{ environmentId: f.environment.id, tokenHash: null }] });
+                assignments: [{ environmentId: f.environment.id, tokenHash: null,
+                    capabilities: { metrics: false, appLlmCost: false, exceptions: false } }] });
+            const selected = { metrics: true, appLlmCost: false, exceptions: true };
+            const changed = await write(2, f.oldCollector.id, selected);
+            expect(changed.statusCode, changed.body).toBe(200);
+            expect((await assignments()).json()).toEqual({ ok: true,
+                assignments: [{ environmentId: f.environment.id, tokenHash: null, capabilities: selected }] });
+            const mismatched = await app.inject({ method: 'POST',
+                url: `/v1/deployments/environments/${f.environment.id}/bindings`, headers: { authorization: `Bearer ${ownerBearer}` },
+                payload: { serverId, environmentId: f.environment.id, expectedRevision: 3, ...reference,
+                    referencedSavedSecretRevisions: [], grants: [], telemetryMachineId: f.oldCollector.id,
+                    telemetryCapabilities: { ...selected, metrics: false } } });
+            expect(mismatched.statusCode, mismatched.body).toBe(409);
             expect((await assignments(f.newCollector)).json()).toEqual({ ok: true, assignments: [] });
             expect((await assignments(f.oldCollector, ownerBearer)).statusCode).toBe(403);
             expect((await assignments(f.oldCollector, collectorBearer, false)).statusCode).toBe(403);
@@ -260,7 +285,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
                 headers: { authorization: `Bearer ${ownerBearer}` }, payload: { ...body, proof } });
             expect(settle.statusCode, settle.body).toBe(200);
             expect((await assignments()).json()).toEqual({ ok: true,
-                assignments: [{ environmentId: f.environment.id, tokenHash: hash }] });
+                assignments: [{ environmentId: f.environment.id, tokenHash: hash, capabilities: selected }] });
             const publication = await db.accountChange.findFirstOrThrow({ where: { accountId: f.custodian.id,
                 kind: 'machine', entityId: f.oldCollector.id } });
             const replay = await app.inject({ method: 'POST',
@@ -285,13 +310,24 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
                 url: `/v1/deployments/environments/${f.environment.id}/deployments/${failed.id}/transitions`,
                 headers: { authorization: `Bearer ${ownerBearer}` }, payload: { ...failedBody, proof: failedProof } })).statusCode).toBe(200);
             expect((await assignments()).json()).toEqual({ ok: true,
-                assignments: [{ environmentId: f.environment.id, tokenHash: hash }] });
+                assignments: [{ environmentId: f.environment.id, tokenHash: hash, capabilities: selected }] });
             expect(await db.accountChange.findFirstOrThrow({ where: { accountId: f.custodian.id,
                 kind: 'machine', entityId: f.oldCollector.id } })).toEqual(publication);
-            expect((await write(2, f.newCollector.id)).statusCode).toBe(200);
+            const disabled = { ...selected, metrics: false };
+            const disabledWrite = await write(3, f.oldCollector.id, disabled);
+            expect(disabledWrite.statusCode, disabledWrite.body).toBe(200);
+            expect((await assignments()).json()).toEqual({ ok: true,
+                assignments: [{ environmentId: f.environment.id, tokenHash: hash, capabilities: disabled }] });
+            const disabledPublication = await db.accountChange.findFirstOrThrow({ where: { accountId: f.custodian.id,
+                kind: 'machine', entityId: f.oldCollector.id } });
+            const unchanged = await write(4, f.oldCollector.id, disabled);
+            expect(unchanged.json()).toMatchObject({ ok: true, revision: 4 });
+            expect(await db.accountChange.findFirstOrThrow({ where: { accountId: f.custodian.id,
+                kind: 'machine', entityId: f.oldCollector.id } })).toEqual(disabledPublication);
+            expect((await write(4, f.newCollector.id)).statusCode).toBe(200);
             expect((await assignments()).json()).toEqual({ ok: true, assignments: [] });
             expect((await assignments(f.newCollector)).json()).toEqual({ ok: true,
-                assignments: [{ environmentId: f.environment.id, tokenHash: null }] });
+                assignments: [{ environmentId: f.environment.id, tokenHash: null, capabilities: disabled }] });
             const late = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: link.id,
                 requestedByAccountId: f.owner.id, requestKey: randomUUID(), actionOperationId: randomUUID(),
                 operation: 'deploy', state: 'running', acceptedControllerMachineId: f.controller.id,
@@ -308,13 +344,13 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
                 headers: { authorization: `Bearer ${ownerBearer}` }, payload: { ...lateBody, proof: lateProof } });
             expect(lateSettle.statusCode, lateSettle.body).toBe(200);
             expect((await assignments(f.newCollector)).json()).toEqual({ ok: true,
-                assignments: [{ environmentId: f.environment.id, tokenHash: null }] });
+                assignments: [{ environmentId: f.environment.id, tokenHash: null, capabilities: disabled }] });
             const beforeRemoval = await db.accountChange.findFirstOrThrow({ where: { accountId: f.newCollector.accountId,
                 kind: 'machine', entityId: f.newCollector.id } });
             const removed = await app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${f.environment.id}/delete`,
                 headers: { authorization: `Bearer ${ownerBearer}` }, payload: { serverId, environmentId: f.environment.id,
-                    expectedRevision: 3, requestKey: randomUUID(), detachKeepRunning: true } });
+                    expectedRevision: 5, requestKey: randomUUID(), detachKeepRunning: true } });
             expect(removed.statusCode, removed.body).toBe(200);
             expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } }))
                 .toMatchObject({ telemetryMachineId: null, telemetryTokenHash: null });

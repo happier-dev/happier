@@ -78,9 +78,12 @@ export function registerDeploymentRoutes(app: Fastify): void {
         }
         const rows = await inReadSnapshot(tx => tx.deploymentEnvironment.findMany({
             where: { telemetryMachineId: request.params.machineId, deletedAt: null },
-            select: { id: true, telemetryTokenHash: true }, orderBy: { id: 'asc' },
+            select: { id: true, telemetryTokenHash: true, telemetryMetricsEnabled: true,
+                telemetryAppLlmCostEnabled: true, telemetryExceptionsEnabled: true }, orderBy: { id: 'asc' },
         }));
-        return reply.send({ ok: true as const, assignments: rows.map(row => ({ environmentId: row.id, tokenHash: row.telemetryTokenHash })) });
+        return reply.send({ ok: true as const, assignments: rows.map(row => ({ environmentId: row.id, tokenHash: row.telemetryTokenHash,
+            capabilities: { metrics: row.telemetryMetricsEnabled, appLlmCost: row.telemetryAppLlmCostEnabled,
+                exceptions: row.telemetryExceptionsEnabled } })) });
     });
     app.get('/v1/deployments/domains', {
         preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
