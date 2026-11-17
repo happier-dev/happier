@@ -120,3 +120,16 @@ it('acquires native names only while the retained row is presented', async () =>
   await hook.rerender(true);
   await expect.poll(() => hook.getCurrent()?.lines[0]?.value).toBe(run.display!.title);
 });
+
+it('says what happened to a Machine in the title and names the Machine beneath, so a long name never hides the event', async () => {
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  const online = { key: 'machine-online', kind: 'machine', machineId: source.machineId, event: 'online',
+    sourceRevision: 1, occurredAt: 300, coverage: 'live' } as const satisfies WorkflowActivityFact;
+  const machine = await renderHook(() => useServerScopedMachineLabel(lifetime.scope.serverId, source.machineId));
+  await expect.poll(() => machine.getCurrent()).toEqual(expect.any(String));
+  const hook = await renderHook(() => useWorkflowEventPresentation(online, lifetime.scope));
+  expect(hook.getCurrent()).toMatchObject({
+    title: t('workflows.events.machineOnline', { machine: t('workflows.events.someMachine') }),
+    subtitle: machine.getCurrent(),
+  });
+});

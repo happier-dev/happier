@@ -365,7 +365,9 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             anchorRef={props.anchorRef}
             rootStep={rootStep}
             optionPresentation="menu"
-            heightBehavior="fixedToMaxHeight"
+            // The editor's Add keeps one steady viewport across its submenus; the sentence's short verb list sizes
+            // to its rows (lab builder:v:verbs) instead of hanging an empty box under four choices.
+            heightBehavior={props.purpose === 'verb' ? 'stabilizedContentHeight' : 'fixedToMaxHeight'}
             onSelect={() => {
                 // Each option's own `onSelect` is the action source and closes the menu.
             }}

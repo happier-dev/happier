@@ -127,7 +127,7 @@ export function ResourceLinkWorkflowSheet(
       options: ordered.filter((option) => (option.origin ?? 'yours') === origin).map((option) => ({
         id: option.ref,
         label: option.title,
-        icon: <Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
+        icon: <Icon name="tree-structure" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
         testID: `resource-link-pick:${option.ref}`,
         ...(option.unavailableReason ? { disabled: true, subtitle: option.unavailableReason } : {}),
       })),
@@ -245,7 +245,7 @@ export function ResourceLinkWorkflowSheet(
         anchorAlign: 'end',
       }}
     >
-      {({ maxHeight }) => workflow === null ? (
+      {({ maxHeight, presentation }) => workflow === null ? (
         <FloatingOverlay maxHeight={maxHeight}>
           <SelectionList
             testID="resource-link-pick"
@@ -265,9 +265,12 @@ export function ResourceLinkWorkflowSheet(
       ) : (
         <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
           <View style={styles.body} testID="resource-link-sheet">
-            <Text variant="label" emphasis="semiBold" style={styles.title}>
-              {t('workflows.triggers.link.title', { name: props.resourceName })}
-            </Text>
+            {/* A phone sheet's band already names it. */}
+            {presentation === 'sheet' ? null : (
+              <Text variant="label" emphasis="semiBold" style={styles.title}>
+                {t('workflows.triggers.link.title', { name: props.resourceName })}
+              </Text>
+            )}
             <TrackRow
               label={t('workflows.triggers.link.workflow')}
               trackKey="resource-link-workflow"

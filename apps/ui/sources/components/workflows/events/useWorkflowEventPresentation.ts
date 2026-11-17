@@ -178,17 +178,19 @@ export function useWorkflowEventPresentation(
       }
       case 'machine': {
         const machine = machineName ?? t('workflows.events.someMachine');
+        // Like a Session event, the title says what happened and the line under it which Machine: a long,
+        // disambiguated Machine name ("NLDW3-5-36-33 · e8ba") must never truncate the "came online" away.
         return {
           fact,
           runsStarted,
           glyph: 'desktop',
           needsYou: false,
-          subtitle: null,
+          subtitle: machineName,
           title: t(
             fact.event === 'online'
               ? 'workflows.events.machineOnline'
               : 'workflows.events.machineOffline',
-            { machine },
+            { machine: t('workflows.events.someMachine') },
           ),
           lines: [
             {
