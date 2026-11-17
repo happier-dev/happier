@@ -16,9 +16,24 @@ export class DatabaseConnectionUrlError extends Error {
 const engines = { 'postgres:': 'postgresql', 'postgresql:': 'postgresql', 'mysql:': 'mysql', 'mariadb:': 'mysql',
     'sqlite:': 'sqlite', 'file:': 'sqlite' } as const;
 
+function connectionUrl(input: string): URL {
+    try { return new URL(input); } catch { throw new DatabaseConnectionUrlError(); }
+}
+
+/** Scheme selection shares the dialect URL boundary; it never publishes credentials. */
+export function databaseConnectionScheme(input: string): string {
+    return connectionUrl(input).protocol.slice(0, -1);
+}
+
+/** Builtin association only; contributed schemes come from the enabled plugin catalogue. */
+export function builtinDatabaseConnectionEngine(input: string): DatabaseConnection['engine'] | undefined {
+    const protocol = connectionUrl(input).protocol;
+    return Object.hasOwn(engines, protocol) ? engines[protocol as keyof typeof engines] : undefined;
+}
+
 function readConnectionUrl(input: string): { url: URL; connection: DatabaseConnection } {
     try {
-        const url = new URL(input);
+        const url = connectionUrl(input);
         if (!Object.hasOwn(engines, url.protocol)) throw new DatabaseConnectionUrlError();
         const engine = engines[url.protocol as keyof typeof engines];
         const connection = { engine, hostname: url.hostname, ...(url.port ? { port: Number(url.port) } : {}),
