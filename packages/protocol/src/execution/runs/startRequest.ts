@@ -378,7 +378,7 @@ export const ExecutionRunScmDiffSummaryInputV1Schema = lazyZodSchema(() => (<T e
 })).check(z.refine(input => input.outputs?.length !== 0 || Boolean(input.resultId), 'Discussion requires a saved result')));
 export type ExecutionRunScmDiffSummaryInputV1 = z.infer<typeof ExecutionRunScmDiffSummaryInputV1Schema>;
 
-export const ExecutionRunScmDiffSummaryResultV1Schema = ScmDiffSummaryGenerateOutputSchema;
+export const ExecutionRunScmDiffSummaryResultV1Schema = lazyZodSchema(() => ScmDiffSummaryGenerateOutputSchema);
 export type ExecutionRunScmDiffSummaryResultV1 = z.infer<typeof ExecutionRunScmDiffSummaryResultV1Schema>;
 
 /**

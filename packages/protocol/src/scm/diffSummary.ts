@@ -7,7 +7,7 @@ import { ScmComparisonSchema, ScmComparisonSourceSchema, type ScmComparison } fr
 import { ReviewLaunchFailureSchema } from '../reviews/reviewLaunchFailure.js';
 import { ReviewPublicationEvidenceSchema } from '../reviews/reviewPublicationEvidence.js';
 import { ExecutionRunTransportErrorCodeSchema } from '../execution/runs/runPrimitives.js';
-import { AGENT_START_REFUSAL_CODES_V1 } from '../account/settings/admitAgentStartV1.js';
+import { AGENT_START_REFUSAL_CODES_V1 } from '../account/settings/agentStartRefusalCodesV1.js';
 import { ProviderBoundModelRefSchema } from '../providers/selection/v1.js';
 import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 import { AcpConfigOptionOverridesV1Schema } from '../sessions/metadata/metadataOverridesV1.js';
