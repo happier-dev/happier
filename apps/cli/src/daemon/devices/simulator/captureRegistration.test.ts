@@ -30,6 +30,23 @@ const unavailableIosResource: SimulatorDeviceResourceV1 = {
 };
 
 describe('createSimulatorCaptureRegistryReconciler', () => {
+    it('keeps the admitted capture occurrence alive across unchanged discovery reads', async () => {
+        const { createSimulatorCaptureRegistryReconciler } = await import('./captureRegistration');
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const reconciler = createSimulatorCaptureRegistryReconciler({
+            registry, createAdapter: () => unavailableMachineLiveStreamCaptureAdapter,
+        });
+        reconciler.reconcile({ resources: [availableIosResource], refreshState: 'idle' });
+        const original = registry.list()[0]!;
+        reconciler.reconcile({ resources: [structuredClone(availableIosResource)], refreshState: 'idle' });
+        expect(original.retirementSignal?.aborted).toBe(false);
+        expect(registry.list()[0]?.sourceOccurrenceId).toBe(original.sourceOccurrenceId);
+        reconciler.reconcile({ resources: [{ ...availableIosResource, displayName: 'Renamed device' }], refreshState: 'idle' });
+        expect(original.retirementSignal?.aborted).toBe(true);
+        expect(registry.list()[0]?.sourceOccurrenceId).not.toBe(original.sourceOccurrenceId);
+        reconciler.stop();
+        expect(registry.list()).toEqual([]);
+    });
     it('registers available simulator resources as PMS capture sources keyed by source id', async () => {
         const mod = await import('./captureRegistration').catch(() => null);
 
@@ -140,7 +157,7 @@ describe('createSimulatorCaptureRegistryReconciler', () => {
 
         failAdapterCreation = true;
 
-        expect(reconciler.reconcile({ resources: [availableIosResource], refreshState: 'idle' })).toEqual({
+        expect(reconciler.reconcile({ resources: [{ ...availableIosResource, displayName: 'Changed device' }], refreshState: 'idle' })).toEqual({
             registered: [],
             unregistered: ['ios-simulator:A1B2-C3D4:screen'],
             diagnostics: [expect.objectContaining({

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { MachineLiveStreamCaptureSourceV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/captureV1';
 import { simulatorCaptureStreamFamilyV1 } from '@happier-dev/protocol/devices/simulator/v1';
 import { BACKED_SIMULATOR_SIDEBAND_KINDS_V1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
@@ -64,15 +65,15 @@ function capabilitiesForResource(
 export function createSimulatorCaptureRegistryReconciler(
     input: CreateSimulatorCaptureRegistryReconcilerInput,
 ): SimulatorCaptureRegistryReconciler {
-    const managedSourceIds = new Set<string>();
+    const managedResources = new Map<string, SimulatorDeviceResourceV1>();
     const maxFramesPerSecond = input.maxFramesPerSecond ?? 30;
 
     const unregisterMissing = (nextSourceIds: ReadonlySet<string>): readonly string[] => {
         const unregistered: string[] = [];
-        for (const sourceId of [...managedSourceIds]) {
+        for (const sourceId of managedResources.keys()) {
             if (nextSourceIds.has(sourceId)) continue;
             input.registry.unregister(sourceId);
-            managedSourceIds.delete(sourceId);
+            managedResources.delete(sourceId);
             unregistered.push(sourceId);
         }
         return unregistered;
@@ -88,6 +89,13 @@ export function createSimulatorCaptureRegistryReconciler(
                 if (!isCaptureAvailable(resource)) continue;
 
                 const sourceId = resource.capture.sourceId;
+                // Re-registering retires the admitted occurrence and its active capture.
+                // Snapshot and sideband reads must preserve unchanged registrations.
+                if (isDeepStrictEqual(managedResources.get(sourceId), resource)) {
+                    nextSourceIds.add(sourceId);
+                    registered.push(sourceId);
+                    continue;
+                }
 
                 let adapter: MachineLiveStreamCaptureAdapter;
                 try {
@@ -120,7 +128,7 @@ export function createSimulatorCaptureRegistryReconciler(
                     adapter,
                     capabilities: capabilitiesForResource(resource, maxFramesPerSecond),
                 });
-                managedSourceIds.add(sourceId);
+                managedResources.set(sourceId, resource);
                 nextSourceIds.add(sourceId);
                 registered.push(sourceId);
             }
