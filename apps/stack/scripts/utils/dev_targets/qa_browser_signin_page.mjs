@@ -32,7 +32,8 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
   const home = () => {
     if (document.querySelector('[data-testid="home-unreachable"]')) return 'home_unavailable';
     if (location.pathname === '/' && !document.querySelector('[data-testid="restore-manual-wizard"]')
-      && document.querySelector('[data-testid="navigation-sidebar"]')) return 'home';
+      && (document.querySelector('[data-testid="navigation-sidebar"]')
+        || document.querySelector('[data-testid="main-app-tabbar"]'))) return 'home';
     return null;
   };
   if (step === 'home') return await waitFor(home);

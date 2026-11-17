@@ -10,7 +10,7 @@ const canonicalServerUrl = 'https://qa-home.invalid';
 const aliasUrl = 'https://previous-home.invalid';
 
 // Browser DOM/input/observers are a platform boundary; execute the real driver.
-async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false, restored = false } = {}) {
+async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false, restored = false, compact = false } = {}) {
   let view = 'restore';
   let submitted = false;
   let aliasConfirmed = false;
@@ -39,7 +39,8 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
       }
       if (view === 'account' && homeUnavailable && selector === '[data-testid="home-unreachable"]') return {};
       if (view === 'account' && accountReady && selector === '[data-testid="settings-account-identity"]') return {};
-      if (view === 'home' && selector === '[data-testid="navigation-sidebar"]') return {};
+      if (view === 'home' && !compact && selector === '[data-testid="navigation-sidebar"]') return {};
+      if (view === 'home' && compact && selector === '[data-testid="main-app-tabbar"]') return {};
       if (view !== 'restore') return null;
       if (selector === '[data-testid="restore-manual-wizard"] input') return input;
       if (selector === '[data-testid="restore-manual-submit"]') return {
@@ -117,6 +118,11 @@ test('the current Home address does not authorize a different saved alias', asyn
 
 test('restores normally when there is no Home alias warning', async () => {
   assert.equal((await observe()).result, 'home');
+});
+
+test('settles restore and Home readiness on the compact phone shell without a desktop sidebar', async () => {
+  assert.equal((await observe({ compact: true })).result, 'home');
+  assert.equal((await observe({ compact: true, restored: true, step: 'home' })).result, 'home');
 });
 
 test('reports a declined canonical migration instead of treating its error dialog as alias consent', async () => {
