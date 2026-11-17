@@ -9,6 +9,7 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import { getDbProviderFromEnv } from '@/storage/db';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 
 /** A Machine admission the caller already decided in this request for one exact actor and Machine. */
 type AdmittedMachine = Extract<MachineAdmission, { kind: 'admitted' }>;
@@ -52,7 +53,7 @@ export async function isCurrentSessionInputMachineTargetInTx(tx: Tx, target: Ses
 export async function areCurrentSessionInputMachineTargetsInTx(tx: Tx, targets: readonly SessionInputMachineTargetV1[],
     options?: Readonly<{ admittedWork?: true }>): Promise<readonly boolean[]> {
     if (targets.length === 0) return [];
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     if (provider !== 'postgres' && targets.length > SESSION_ACCESS_SESSION_BATCH_SIZE) {
         const currentness: boolean[] = [];
         for (let offset = 0; offset < targets.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {

@@ -15,6 +15,7 @@ import { readCurrentSessionInputMachineTargetInTx } from "@/app/session/messages
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/db";
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { sessionRecipientPublicationResult, type SessionRecipientPublicationResult } from "@/app/session/changeTracking/sessionRecipientPublicationResult";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
@@ -66,7 +67,7 @@ type InstalledMachineTerminalCustody = Readonly<{ installationId: string }>;
  * single writer already serializes the transaction.
  */
 async function lockSessionRowInTx(tx: Tx, sessionId: string): Promise<void> {
-    const provider = getDbProviderFromEnv(process.env, "postgres");
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
     if (provider === "postgres") {
         await tx.$queryRawUnsafe('SELECT "id" FROM "Session" WHERE "id" = $1 FOR NO KEY UPDATE', sessionId);
     } else if (provider === "mysql") {

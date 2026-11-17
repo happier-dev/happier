@@ -11,6 +11,7 @@ import { hasSessionFollowSessionSource } from '@/app/session/follow/sessionFollo
 import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { resolveSessionGrantedAccountIdsInTx } from '@/app/session/access/sessionRecipients';
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 
 export class SessionDeleteConditionLostError extends Error {
@@ -55,7 +56,7 @@ export async function deleteSessionTree(
     // new binding's FK KEY SHARE. Upgrade this exact parent before the native
     // policy publication so an already-accepted row cannot hide until cascade.
     // MySQL admission already holds FOR UPDATE; SQLite serializes writers.
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         await tx.$queryRawUnsafe('SELECT "id" FROM "Session" WHERE "id" = $1 FOR UPDATE', params.sessionId);
     }
     await publishNativeCredentialPolicyChangesInTx(tx, { sessionIds: [params.sessionId] });

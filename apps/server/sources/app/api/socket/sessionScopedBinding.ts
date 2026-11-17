@@ -7,6 +7,7 @@ import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { readSessionMachineBindingStateInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { buildMachineAdmissionFactsSelect, projectActiveMachineAdmissionFromFacts } from '@/app/machines/machineAccess';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
@@ -126,7 +127,7 @@ export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<
     lockAuthority?: boolean;
     currentFacts?: CurrentSessionScopedMachineAccessFacts;
 }>): Promise<boolean> {
-    if (params.lockAuthority && getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+    if (params.lockAuthority && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         const machines = await params.tx.$queryRawUnsafe<Array<{ id: string }>>('SELECT "id" FROM "Machine" WHERE "id" = $1 FOR SHARE', params.machineId);
         if (machines.length === 0) return false;
         const keys = await params.tx.$queryRawUnsafe<Array<{ accountId: string }>>(

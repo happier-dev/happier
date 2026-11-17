@@ -26,6 +26,7 @@ import { SessionInputAdmissionReceiptV1Schema, deriveWorkflowSessionInputLocalId
 import type { SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import type { Prisma } from '@prisma/client';
 import { log } from '@/utils/logging/log';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -193,7 +194,7 @@ export async function readDiscussionReplyPublicationFailuresInTx(tx: Tx,
 /** Keep UNION ordering and cursor comparison at the database's own identifier collation. */
 async function listOriginalReplyKeysInTx(tx: Tx, scope: Readonly<{ sessionId: string } | { machineId: string; accountId: string }>,
     after?: Readonly<{ sessionId: string; localId: string }>): Promise<Array<{ sessionId: string; localId: string }>> {
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     const quote = (identifier: string) => provider === 'mysql' ? `\`${identifier}\`` : `"${identifier}"`;
     const values: Array<string | number> = [];
     const bind = (value: string | number) => { values.push(value); return provider === 'postgres' ? `$${values.length}` : '?'; };
