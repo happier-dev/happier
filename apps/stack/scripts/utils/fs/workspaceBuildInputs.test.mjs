@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -246,6 +247,34 @@ test('source component tooling captures and watches the CLI test preparation pol
     const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component });
     assert.ok(inputs.files.includes(policy), `${component} tooling imports the CLI test preparation policy`);
     assert.ok(inputs.watchPaths.includes(fixture.path(policy)), `${component} observes policy edits`);
+  }
+});
+
+test('guest workspace tooling imports the canonical server Prisma layout from its captured inventory', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-guest-prisma-layout-' });
+  const repoDir = fixture.path('repo');
+  await mkdir(repoDir);
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+  await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/stack/package.json'), JSON.stringify({ name: '@happier-dev/stack', type: 'module' }));
+  const consumer = 'apps/stack/scripts/build/server_generated_clients.mjs';
+  const layout = 'apps/server/scripts/prismaInstallLayout.mjs';
+  for (const [path, url] of [
+    [consumer, new URL('../../build/server_generated_clients.mjs', import.meta.url)],
+    [layout, new URL('../../../../server/scripts/prismaInstallLayout.mjs', import.meta.url)],
+  ]) {
+    await mkdir(dirname(join(repoDir, path)), { recursive: true });
+    await writeFile(join(repoDir, path), await readFile(url));
+  }
+  // Server is deliberately outside the daemon package closure, as in the
+  // guest workspace. Keep the real Stack import and layout implementation.
+  for (const component of ['daemon', 'server', 'expo']) {
+    const inputs = await readSourceComponentBuildInputs({ repoDir, component });
+    const captureDir = fixture.path(component);
+    await captureBuildInputFiles({ sourceDir: repoDir, captureDir, readPaths: async () => inputs.files });
+    const tooling = await import(pathToFileURL(join(captureDir, consumer)));
+    assert.deepEqual(tooling.readStaleServerGeneratedClients({ readSchema: () => null }), []);
+    assert.ok(inputs.watchPaths.includes(join(repoDir, layout)), `${component} observes layout edits`);
   }
 });
 

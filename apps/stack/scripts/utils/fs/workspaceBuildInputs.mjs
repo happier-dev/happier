@@ -225,6 +225,9 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
         ...(component === 'daemon' ? ['.node-version', 'apps/stack/scripts/build/build_source_runtime.mjs'] : []),
         // Captured Stack tooling imports this shared CLI admission policy.
         'apps/cli/scripts/vitestPreparation.mjs',
+        // Stack's generated-client owner imports the server layout even when
+        // the guest/daemon closure does not otherwise include the server.
+        'apps/server/scripts/prismaInstallLayout.mjs',
         'apps/cli/scripts/build-owned/bundledPluginMembership.ts',
         ...(component === 'expo' ? ['patches'] : []),
         // This collector imports the generator's path owner even when the
