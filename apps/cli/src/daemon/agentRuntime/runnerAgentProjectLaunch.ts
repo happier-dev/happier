@@ -84,6 +84,8 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     ingress?: RpcHandlerContext;
     /** Original startup/Run occurrence, retained by its existing lifecycle owner. */
     operation?: ProjectSetupOperationContext;
+    /** Exact admitted root and existing executable child port, retained only for this launch. */
+    setupAutostart?: import('@/workspaces/projectSetup/projectSetupAutostart').ProjectSetupAutostartContext;
     /** Host-authored identity and control of the existing Session-owned Run. */
     executionRun?: RetainedExecutionRunControl & Readonly<{ runId: string }>;
     isCurrent(): boolean | Promise<boolean>;
@@ -145,6 +147,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                 await assertCurrent();
                 return current;
             } }, ingress, cwd: input.cwd,
+                ...(input.setupAutostart ? { setupAutostart: input.setupAutostart } : {}),
                 ...(operation ? { operation } : {}),
                 ...(input.sessionId ? { sessionId: input.sessionId } : {}),
                 async resolveSecretInputs(projectBindings) {

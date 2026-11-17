@@ -188,6 +188,7 @@ export async function gitWorktreeRemove(input: {
         const path = validatedPath.value;
         input.context.assertFilesystemPathAuthorized?.(path);
         const before = await readPathIdentity(path);
+        let missingWorktree: Parameters<NonNullable<ScmBackendContext['beforeFilesystemMutation']>>[0];
         if (before?.isDirectory() && !before.isSymbolicLink() && input.context.beforeFilesystemMutation
             && await readGitRetentionKind(path, input.context.cwd, input.context.retainedSourcePath ?? path)) {
             const remove = readCurrentBackendRuntimeServices()?.removeRetainedPath;
@@ -202,7 +203,9 @@ export async function gitWorktreeRemove(input: {
                 args: ['worktree', 'list', '--porcelain', '-z'], env: buildScmNonInteractiveEnv() });
             if (!listed.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: listed.stderr };
             const registered = parseGitWorktreeListPorcelain({ worktreesOutput: listed.stdout, currentWorktreePath: null });
-            if (!registered.some(entry => canonicalAbsolutePathsEqual(entry.path, path))) {
+            const retained = registered.find(entry => canonicalAbsolutePathsEqual(entry.path, path));
+            if (retained) missingWorktree = { physicalRootPath: retained.path, alreadyAbsent: true };
+            else {
                 await input.context.beforeFilesystemMutation();
                 if (await readPathIdentity(path)) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
                     error: 'The removed worktree path became occupied' };
@@ -228,7 +231,7 @@ export async function gitWorktreeRemove(input: {
             } catch { /* Ordinary worktrees are unlocked. */ }
         }
 
-        await input.context.beforeFilesystemMutation?.();
+        await input.context.beforeFilesystemMutation?.(missingWorktree);
         const result = await runScmCommand({
             bin: 'git',
             cwd: input.context.cwd,

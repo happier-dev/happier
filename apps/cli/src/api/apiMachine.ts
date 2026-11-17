@@ -2050,6 +2050,7 @@ export class ApiMachineClient {
         // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
         // even when no session is currently active.
         registerScmHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
+            resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
             accessPolicy: this.filesystemAccessPolicy,
             machineId: this.machine.id,
             selectWorkspaceSource: (context, input) => this.filesystemEffectAdmission.selectWorkspaceSource(context, input),
@@ -3154,6 +3155,7 @@ export class ApiMachineClient {
                 };
             },
             resolveRequesterIdentity: context => this.resolveDeploymentSourceRequesterIdentity(context),
+            resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
             resolveRequesterRuntime: async ingress => {
                 if (!this.machineRuntimeInstallationId) return null;
                 return resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: this.machineRuntimeServerId,

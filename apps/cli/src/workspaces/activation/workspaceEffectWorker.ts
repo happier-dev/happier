@@ -6,7 +6,7 @@ import type { MaterializedProjectCheckout } from './materializeProjectCheckout';
 import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
 import { executePrivateProjectSyncEffect, privateSyncEffectError, type PrivateProjectNativeSyncProcessPort,
   type PrivateProjectSyncEffectConfiguration, type PrivateProjectSyncNetwork, type WorkspaceNativeSyncEffect } from './privateProjectSyncEffect';
-import { executeMemberScmRead, type MemberScmReadEffect } from '@/scm/rpc/memberScmRead';
+import { executeMemberScmRead, type MemberScmReadEffect, type MemberScmRemovalService } from '@/scm/rpc/memberScmRead';
 import { executeMemberSessionImport, type MemberSessionImportEffect, type MemberSessionImportRecord } from '@/session/handoff/agentBundle/memberImportEffect';
 
 export type WorkspaceEffectServices = Readonly<{
@@ -18,6 +18,8 @@ export type WorkspaceEffectServices = Readonly<{
   completeNativeSync?(result: PrivateProjectNativeSyncProcessPort): Promise<void>;
   /** A local repository operation run as the member: its whole SCM response. */
   completeScmRead?(response: unknown): Promise<void>;
+  /** Existing Project removal owner; child supplies filesystem facts and the destructive effect. */
+  removeScmWorktree?: MemberScmRemovalService;
   /** A member's handoff Session import: the Agent's native result or typed failure. */
   completeSessionImport?(record: MemberSessionImportRecord): Promise<void>;
 }>;
@@ -63,7 +65,7 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
           try {
             if ('kind' in dispatched && dispatched.kind === 'scm_read') {
               if (!services.completeScmRead) throw privateProjectCheckoutRefusal();
-              await services.completeScmRead(await executeMemberScmRead(dispatched, signal));
+              await services.completeScmRead(await executeMemberScmRead(dispatched, signal, services));
               send({ kind: 'settled', id: runId });
               return;
             }

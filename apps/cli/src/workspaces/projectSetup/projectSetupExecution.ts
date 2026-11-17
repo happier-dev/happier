@@ -34,7 +34,8 @@ import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import { createProjectDotenvPreparation } from './projectDotenv';
 
 export type ProjectSetupOperationContext = Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0]
-    & Pick<ActionExecutorContext, 'externalActionExecutionAuthorization' | 'externalActionTarget'>;
+    & Pick<ActionExecutorContext, 'externalActionExecutionAuthorization' | 'externalActionTarget'>
+    & Readonly<{ setupAutostart?: import('./projectSetupAutostart').ProjectSetupAutostartContext }>;
 export type ProjectSetupExecutionInput = Readonly<{
     preparation: Parameters<typeof prepareProjectSetup>[0];
     requesterAccountId: string;

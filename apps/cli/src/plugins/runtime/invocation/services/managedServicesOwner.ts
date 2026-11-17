@@ -2,6 +2,8 @@ import { readDecodedFetchResponseHeaders } from '@happier-dev/cli-common/plugins
 import { resolveProjectManagedService } from './projectServiceResolution';
 import { createProjectServiceRecoveryStore } from './projectServiceRecoveryStore';
 import { createHash, randomBytes } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { isDeepStrictEqual } from 'node:util';
 import { createEnvironmentServiceRecovery } from './environmentServiceRecovery';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -3012,6 +3014,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         generation: Readonly<{ deploymentId: string; containerIds: readonly string[] }>): ReturnType<NonNullable<ProjectBuiltinNativeLifecycle['readLogRedactionLease']>>;
     listProjectServices(): readonly ProjectManagedServiceHandle[];
     listProjectServices(options: Readonly<{ requireComplete: true; workspaceRoot?: string }>): Promise<readonly ProjectManagedServiceHandle[]>;
+    /** Confirmed stopped custody for a physical worktree, including nested service cwd. */
+    isWorkspaceStopped(rootPath: string): Promise<boolean>;
     /** Joins this owner's one restart reconciliation; consumers never inspect PIDs. */
     restoreProjectServices(): Promise<void>;
     /** First requested read joins retained deployment observation recovery. */
@@ -4439,6 +4443,24 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             }
         })();
     }
+    async function isWorkspaceStopped(rootPath: string): Promise<boolean> {
+        const handles = await listProjectServices({ requireComplete: true });
+        const inventory = await activity.read();
+        if (inventory.coverage !== 'complete') return fail('plugin_managed_service_unavailable', 'Project service custody is unavailable');
+        for (const handle of handles) {
+            if (!inventory.items.some(item => item.ownerRef === handle.instanceId && item.state !== 'settled')) continue;
+            const roots = handle.kind === 'workspace' ? [handle.workspace.rootPath, handle.cwd] : [handle.cwd];
+            for (const root of roots) {
+                // A retained registration remains meaningful after external deletion.
+                const physical = await realpath(root).catch((error: unknown) => {
+                    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return root;
+                    throw error;
+                });
+                if (isCanonicalAbsolutePathInsideRoot(rootPath, physical)) return false;
+            }
+        }
+        return true;
+    }
     function superviseProject(request: WorkspaceProjectManagedServiceSupervisionInput): Promise<WorkspaceProjectManagedServiceHandle>;
     function superviseProject(request: EnvironmentProjectManagedServiceSupervisionInput): Promise<EnvironmentProjectManagedServiceHandle>;
     function superviseProject(request: ProjectManagedServiceSupervisionInput): Promise<ProjectManagedServiceHandle>;
@@ -5162,6 +5184,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         superviseProject,
         bindWorkloads: admission => bindManagedWorkloadsForHost({ listProjectServices, machineServiceRows }, admission),
         listProjectServices,
+        isWorkspaceStopped,
         restoreProjectServices,
         restoreEnvironmentServices,
         machineServiceRows,

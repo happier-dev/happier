@@ -1,6 +1,6 @@
 import { createScmOperationUnknownOutcome, SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema, ScmOperationOutcomeSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmOperationReconciliation } from '@happier-dev/protocol/scm';
 import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMachineControlUnavailableError, readRpcErrorCode, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMachineControlUnavailableError, readRpcErrorCode, type RpcErrorCarrier, type RpcError } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
@@ -25,6 +25,7 @@ export type ScmRpcFailure = Readonly<{
     outcome?: ScmOperationOutcome;
     /** Action/RPC admission is not a Git failure or an uncertain dispatched command. */
     actionErrorCode?: string;
+    details?: RpcError['details'];
     /**
      * The person declined the Action's in-place confirmation: nothing ran and nothing failed. Presenters
      * stay quiet (see `isScmActionNotRun`); `errorCode` is only the closed-vocabulary placeholder.

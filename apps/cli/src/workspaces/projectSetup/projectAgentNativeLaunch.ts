@@ -15,6 +15,7 @@ import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
+import { startProjectSetupAutostartServices, type ProjectSetupAutostartContext } from './projectSetupAutostart';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
 
 
@@ -25,6 +26,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
     cwd: string;
     sessionId?: string;
     operation?: ProjectSetupOperationContext;
+    setupAutostart?: ProjectSetupAutostartContext;
     resolveSecretInputs?: NonNullable<ProjectAgentLaunchPreparationInput['resolveSecretInputs']>;
 }>) {
     const { runtime, ingress } = input;
@@ -138,6 +140,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                     sourceWorkspace: workspaceAddressFromRefV1(baseline.workspace), requesterAccountId: runtime.accountId, operation });
                 publish();
                 pendingPhase = 'worker_admission';
+                const setupState: { outcome?: ProjectSetupExecutionOutcome } = {};
                 const result = await runtime.workerAdmission.execute({ operationId: operationId!, workspaceRefId: baseline.workspace.id,
                     requesterAccountId: runtime.accountId, signal, accept() {},
                     onQueue: queueAhead => operation.operationProgress.update({ phase: 'queued', queueAhead }),
@@ -174,6 +177,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                                 ...(runtime.platform ? { platform: runtime.platform } : {}),
                                 hostEnvironment: originalEnvironment });
                             kind = executed.kind;
+                            setupState.outcome = executed;
                             return executed;
                         } catch (error) {
                             const code = signal.aborted ? 'cancelled' : error && typeof error === 'object' && 'code' in error
@@ -188,6 +192,15 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 if (!result.ok) return fail(result.errorCode);
                 if (result.result && typeof result.result === 'object' && 'kind' in result.result && result.result.kind === 'not_accepted') {
                     return fail('project_worker_not_accepted');
+                }
+                if (setupState.outcome?.setupSettlement?.outcome === 'finished') {
+                    const autostart = input.setupAutostart ?? operation.setupAutostart;
+                    if (autostart) {
+                        const refusal = await startProjectSetupAutostartServices({ outcome: setupState.outcome, manifest: baseline.manifest, ...autostart });
+                        if (refusal) return fail(refusal.errorCode);
+                    } else if (Object.values(baseline.manifest?.services ?? {}).some(service => service.runtime?.autostart === true)) {
+                        return fail('project_service_action_context_unavailable');
+                    }
                 }
                 await refresh();
             }

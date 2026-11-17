@@ -45,10 +45,12 @@ import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendPr
 import { ProfileRecordV1Schema, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; boundRequester?: boolean;
+async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean; trusted?: boolean; boundRequester?: boolean;
   projectSecret?: 'saved' | 'missing' | 'stale' | 'overlay' | 'profile'; publishUnrelatedPreference?: boolean }> = {}) {
   const refs = { project: formatSharedSavedSecretRefV1('native-project-secret'), invocation: formatSharedSavedSecretRefV1('native-invocation-secret') };
   const f = await createProjectSessionRuntimeFixture({ ...(options.boundRequester ? { boundSessionId: 'session' } : {}) });
@@ -65,6 +67,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
   const cwd = join(f.directory, 'accepted-project');
   await mkdir(join(cwd, '.happier'), { recursive: true });
   const manifest = { version: 1, toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+    ...(options.autostart ? { services: { web: { source: { kind: 'command', command: 'printf web' }, runtime: { autostart: true } } } } : {}),
     ...(options.projectSecret ? { environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }] } : {}),
     ...(options.setup ? { workspace: { setup: [{ kind: 'command', command: 'printf setup' }] } } : {}) };
   await writeFile(join(cwd, '.happier/project.json'), JSON.stringify(manifest));
@@ -171,6 +174,17 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
     custodyBinding: { serverId: 'session-home', installationId: f.installation.installationId } });
   const admission = createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
     readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'default', metadataVersion: 1 }) });
+  const autostarts: Array<{ input: unknown; activeWork: ReturnType<typeof admission.dependencies> }> = [];
+  const childExecutor = createActionExecutor({
+    // The native launcher is the process boundary; setup admission, child issuance and Action policy stay real.
+    runtimeActionExecute: async ({ input }) => {
+      autostarts.push({ input, activeWork: admission.dependencies() });
+      return { protocolVersion: 1, machineId: 'machine', targetId: 'web', status: 'succeeded',
+        snapshot: { v: 1, machineId: 'machine', updatedAt: 1, targets: [] } };
+    },
+  });
+  const autostartContext: ActionExecutorContext = { surface: 'ui', authority: 'present_user', serverId: 'session-home',
+    runtimeAccountId: 'requester', executeHostReviewedChildAction: (actionId, input, context) => childExecutor.execute(actionId, input, context) };
   const factory = createInstalledProjectFiniteRuntime({ api, credentials: custodianCredentials,
     externalActionAccountId: 'custodian', finiteServerId: 'session-home', finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
     admission, nativeIo, successHomeDir: join(f.directory, 'success'), isCurrent: async () => true,
@@ -236,7 +250,10 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
         coldOperationId = operation.operationAcceptance?.operationId;
         const retained = createRunnerAgentProjectLaunchInvocation({ cwd, signal: operation.signal, sessionId: 'session',
           requester: { bootstrap: f.bootstrap, isCurrent: f.bootstrap.isCurrent }, isCurrent: () => true,
-          operation: operation satisfies ProjectSetupOperationContext,
+          operation: { ...operation, ...(options.autostart ? { setupAutostart: {
+            parent: { actionId: 'session.spawn_new' as const, input: { creationKey: 'original-cold-start' } },
+            context: autostartContext,
+          } } : {}) } satisfies ProjectSetupOperationContext,
           resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
         onTestFinished(() => retained.disposeProjectAgentLaunch());
         const retainedService = createStablePluginExecService({ signal: operation.signal,
@@ -255,7 +272,7 @@ async function harness(options: Readonly<{ setup?: boolean; trusted?: boolean; b
     if (!authorized) throw new Error('Original launch did not complete');
     return authorized;
   };
-  return { launch, launchWithOperation, spawned, cwd, admission, scope, invocation,
+  return { launch, launchWithOperation, spawned, autostarts, cwd, admission, scope, invocation,
     async launchWithUnboundMachineAdmission() {
       const admitted = createRunnerAgentProjectLaunchInvocation({ cwd, signal, isCurrent: () => true,
         ingress: { signal, machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({
@@ -554,6 +571,35 @@ it('executes trusted cold setup inside the original startup reservation before a
   const launch = await launching;
   try { expect(launch.env.NATIVE).toBe('active'); expect(h.spawned).toHaveLength(1); }
   finally { await launch.release(); }
+});
+
+it('autostarts after successful cold setup releases its only worker slot and does not repeat on Agent re-adoption', async () => {
+  const h = await harness({ setup: true, autostart: true });
+  const launching = h.launchWithOperation();
+  void launching.catch(() => {});
+  await expect.poll(() => h.spawned.length).toBe(1);
+  expect(h.autostarts).toEqual([]);
+  h.spawned[0]!.exit(0);
+  const launch = await launching;
+  try {
+    expect(h.autostarts).toEqual([{ input: expect.objectContaining({ declaration: {
+      workspaceRefId: 'workspace', selection: { kind: 'manifest', name: 'web' },
+    } }), activeWork: [] }]);
+    const adopted = await h.launch();
+    try { expect(h.autostarts).toHaveLength(1); expect(h.spawned).toHaveLength(1); }
+    finally { await adopted.release(); }
+  } finally { await launch.release(); }
+});
+
+it('keeps autostart services stopped when cold Agent setup fails', async () => {
+  const h = await harness({ setup: true, autostart: true });
+  const launching = h.launchWithOperation();
+  void launching.catch(() => {});
+  await expect.poll(() => h.spawned.length).toBe(1);
+  h.spawned[0]!.exit(1);
+  await expect(launching).rejects.toMatchObject({ code: 'project_setup_step_failed' });
+  expect(h.autostarts).toEqual([]);
+  expect(h.admission.dependencies()).toEqual([]);
 });
 
 it.each(['thisTime', 'untilChanged', 'skip', 'changed', 'reassigned', 'cancel'] as const)('retains original cold setup for %s without a replacement preparation Action', async decision => {

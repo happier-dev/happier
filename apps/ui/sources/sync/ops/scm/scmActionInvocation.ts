@@ -7,19 +7,28 @@ import { randomUUID } from '@/platform/randomUUID';
 import { safeParse, type core } from 'zod/mini';
 import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
 import type { ScmRpcFailure } from './scmRpcFailure';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 
 export type UiScmActionExecutor = FrontDoorActionExecute['confirmed'] & Pick<FrontDoorActionExecute, 'confirmed'>;
 export type UiScmActionFailure = Readonly<{
     success: false; errorCode: string; error: string; approvalArtifactId?: string;
+    details?: MachineDaemonRpcFailure['details'];
 }>;
 const APPROVAL_REQUIRED = 'approval_required';
+
+function projectUiScmActionFailure(error: unknown): UiScmActionFailure {
+    const failure = projectMachineDaemonRpcFailure(error);
+    return { success: false, errorCode: failure.errorCode ?? 'result_unavailable',
+        error: error instanceof Error ? error.message : 'The owning machine is unavailable.',
+        ...(failure.details ? { details: failure.details } : {}) };
+}
 
 /** Legacy typed SCM facades retain their closed error vocabulary and approval handle. */
 export function normalizeUiScmFacadeResult<T extends { success: boolean; error?: string; errorCode?: string }>(result: unknown): T | ScmRpcFailure {
     if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
         const refusal = ActionExecuteFailureSchema.safeParse(result);
-        if (refusal.success) result = { success: false, errorCode: refusal.data.errorCode, error: refusal.data.error };
+        if (refusal.success) result = projectUiScmActionFailure(createRpcCallError(refusal.data));
     }
     // An approval request was created: the Action waits for someone to decide, which is neither a failure nor
     // a Git outcome. COMMAND_CANCELLED is only the closed-vocabulary placeholder; `awaitingApproval` is the authority.
@@ -87,7 +96,7 @@ export async function invokeUiScmAction<T>(params: Readonly<{
             ...params.context, surface: 'ui', actionRequestId: randomUUID(),
         });
         if (!effectReceipt && !current()) return retired();
-        if (!response.ok) return { success: false, errorCode: response.errorCode ?? 'result_unavailable', error: response.error };
+        if (!response.ok) return projectUiScmActionFailure(createRpcCallError(response));
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(response.result);
         if (approval.success) {
             const { announceActionApprovalPending } = await import('@/components/approvals/announceActionApprovalPending');
@@ -100,7 +109,6 @@ export async function invokeUiScmAction<T>(params: Readonly<{
             error: 'The SCM Action response could not be validated.' };
     } catch (error) {
         if (!effectReceipt && !current()) return retired();
-        return { success: false, errorCode: readRpcErrorCode(error) ?? 'result_unavailable',
-            error: error instanceof Error ? error.message : 'The owning machine is unavailable.' };
+        return projectUiScmActionFailure(error);
     }
 }

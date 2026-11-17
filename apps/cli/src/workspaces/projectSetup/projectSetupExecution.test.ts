@@ -588,4 +588,41 @@ describe('finite Project setup execution', () => {
         expect(f.spawned).toEqual([]);
     });
 
+
+    it('exposes one accepted setup settlement for confirmed processes and none for reused preparation', async () => {
+        const f = await fixture(['echo setup']);
+        const first = f.start();
+        await expect.poll(() => f.spawned.length).toBe(1);
+        f.spawned[0]!.pty.exit(3);
+        expect(await first.execution).toMatchObject({ kind: 'process_settled', setupSettlement: {
+            workspace: f.preparation.workspace, project: f.preparation.projectAssociation.project,
+            operationId: 'operation-1', outcome: 'failed', errorCode: 'project_setup_step_failed',
+        } });
+        const retry = f.start();
+        await expect.poll(() => f.spawned.length).toBe(2);
+        f.spawned[1]!.pty.exit(0);
+        expect(await retry.execution).toMatchObject({ kind: 'process_settled', setupSettlement: {
+            workspace: f.preparation.workspace, project: f.preparation.projectAssociation.project,
+            operationId: 'operation-2', outcome: 'finished',
+        } });
+        expect(await f.start().execution).not.toHaveProperty('setupSettlement');
+        expect(f.spawned).toHaveLength(2);
+    });
+
+    it('emits no setup settlement for no-launch setup under the 18:47Z owner ruling', async () => {
+        const f = await fixture([]);
+        expect(await f.start().execution).toMatchObject({ kind: 'no_launch', result: { ok: true } });
+        expect(await f.start().execution).not.toHaveProperty('setupSettlement');
+        expect(await f.store.read(f.target)).toBeNull();
+        expect(f.spawned).toEqual([]);
+    });
+
+    it('does not classify a settled teardown process as setup settlement', async () => {
+        const f = await fixture([], ['echo teardown']);
+        const run = f.start({ purpose: 'teardown' });
+        await expect.poll(() => f.spawned.length).toBe(1);
+        f.spawned[0]!.pty.exit(0);
+        expect(await run.execution).toMatchObject({ kind: 'process_settled', result: { ok: true } });
+        expect(await run.execution).not.toHaveProperty('setupSettlement');
+    });
 });

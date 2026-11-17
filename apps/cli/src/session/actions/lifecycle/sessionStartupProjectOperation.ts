@@ -25,6 +25,7 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
         ? { signal: context.signal, actionRequestId: local.actionRequestId ?? undefined,
             operationProgress: local.operationProgress, operationOwnerUpdate: local.operationOwnerUpdate,
             operationAcceptance: local.operationAcceptance, operationReview: local.operationReview,
+            ...(local.setupAutostart ? { setupAutostart: local.setupAutostart } : {}),
             ...(authorization ? { externalActionExecutionAuthorization: authorization,
                 externalActionTarget: authorization.binding.target } : {}),
             ...(local.operationCancellation ? { operationCancellation: local.operationCancellation } : {}),

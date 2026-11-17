@@ -1,3 +1,13 @@
+import { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetup/projectCheckoutRemoval';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { runHostActionOperation } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
+import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { ScmWorktreeRemoveResponseSchema } from '@happier-dev/protocol/scm';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { createMemberWorkspaceReadSource } from '@/workspaces/activation/memberWorkspaceSource';
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
@@ -144,6 +154,9 @@ export function registerScmHandlers(
         nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'> & Partial<Pick<ApiMachineClient, 'readMemberFolderOwner'>>;
         /** The member Workspace effect child: the daemon already admitted this one local repository operation. */
         admittedLocalRepositoryOperation?: true;
+        resolveProjectRuntime?: (ingress: RpcHandlerContext) => Promise<ProjectFiniteActionRuntime | null>;
+        /** Private member worker callback to the original host Account/operation owner. */
+        admittedRemoveWorktree?: Parameters<typeof executeScmActionOperation>[0]['removeWorktree'];
     }>,
 ): void {
     const refused = (actionErrorCode: string) => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
@@ -171,9 +184,23 @@ export function registerScmHandlers(
         try {
             if (!native.memberIdentity) return refused('agent_isolation_unavailable');
             const { readScmAsMember } = await import('@/scm/rpc/memberScmRead');
+            const memberRoot = native.memberIdentity.workspaceRoot;
+            const removeMemberWorktree: import('@/scm/rpc/memberScmRead').MemberScmRemovalService | undefined = deps.resolveProjectRuntime
+                ? async (removal, workspace) => {
+                    try {
+                        return await runWithWorkspaceSource(createMemberWorkspaceReadSource(workspace, memberRoot),
+                            () => removeProjectWorktree(removal, context, { requesterIdentity: identity, agentIsolation: native.agentIsolation }));
+                    } catch (error) {
+                        const code = readRpcErrorCode(error) ?? readErrorCode(error);
+                        const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
+                        throw new PluginError({ code, message: code,
+                            ...(details === undefined ? {} : { details: projectNativeJsonValueForTransport(details) }) });
+                    }
+                } : undefined;
             return await readScmAsMember({ agentIsolation: native.agentIsolation, requesterIdentity: identity,
-                workspaceRoot: native.memberIdentity.workspaceRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
-                method, input, signal: context.signal });
+                workspaceRoot: memberRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
+                method, input, signal: context.signal,
+                ...(removeMemberWorktree ? { removeWorktree: removeMemberWorktree } : {}) });
         } catch (error) {
             return refused(readErrorCode(error));
         } finally { await native.dispose(); }
@@ -280,7 +307,36 @@ export function registerScmHandlers(
         },
     });
     const scmRpcHandlerManager = scopedRegistrar(true);
+    const removeProjectWorktree = async (input: Parameters<NonNullable<Parameters<typeof executeScmActionOperation>[0]['removeWorktree']>>[0],
+        ingress: RpcHandlerContext | undefined, member?: Pick<ProjectFiniteActionRuntime, 'requesterIdentity' | 'agentIsolation'>): Promise<ScmWorktreeRemoveResponse> => {
+            const source = currentWorkspaceSource();
+            const installed = ingress ? await deps?.resolveProjectRuntime?.(ingress) : null;
+            const runtime = installed && member ? { ...installed, ...member } : installed;
+            if (!ingress || !runtime) throw new RpcError('Project cleanup runtime is unavailable', 'project_setup_operation_unavailable');
+            const context = buildActionExecutorContextForRpc({ ...ingress, actionId: 'scm.worktree.remove', serverId: runtime.serverId });
+            const result = await runHostActionOperation(runtime.operationRuntime.observeExecution, {
+                actionId: 'scm.worktree.remove', input: input.request, context,
+                execute: async current => {
+                    let preparation: ReturnType<typeof prepareProjectCheckoutRemoval> | undefined;
+                    const removed = await input.remove(missingWorktree => runWithWorkspaceSource(source, async () => {
+                        preparation ??= prepareProjectCheckoutRemoval({ runtime, ingress, context: current,
+                            operation: requireProjectCheckoutRemovalOperation(current), worktreePath: input.worktreePath,
+                            skipCleanup: input.request.skipCleanup === true, ...(missingWorktree ? { missingWorktree } : {}) });
+                        await preparation;
+                    }));
+                    const prepared = preparation ? await preparation : undefined;
+                    if (removed.success) prepared?.settle('deleted');
+                    return { ok: true, result: removed };
+                },
+            }, ingress);
+            if (!result.ok) throw createRpcCallError({ error: result.error, errorCode: result.errorCode,
+                failureCause: result.failureCause, details: result.details });
+            return ScmWorktreeRemoveResponseSchema.parse(result.result);
+    };
+    const removeWorktree: Parameters<typeof executeScmActionOperation>[0]['removeWorktree'] = deps?.admittedRemoveWorktree
+        ?? (deps?.resolveProjectRuntime ? input => removeProjectWorktree(input, scmRpcOperationContextStorage.getStore()?.context) : undefined);
     const routeBase = {
+        removeWorktree,
         emitFileReviewNote: async ({ sessionId, ...note }: FileReviewNoteV1 & Readonly<{ sessionId: string }>) => {
             const credentials = await readStoredCredentials();
             if (!credentials) throw new Error('File review note credentials are unavailable');

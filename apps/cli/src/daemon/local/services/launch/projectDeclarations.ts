@@ -13,6 +13,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readProjectFiniteIngressRefusal, readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { resolveProjectRequesterSecretInputs } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
 import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
+import { startProjectSetupAutostartServices } from '@/workspaces/projectSetup/projectSetupAutostart';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { prepareProjectSetup, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
@@ -866,6 +867,10 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (outcome.kind === 'outcome_uncertain') { uncertain = true; throw new ServiceStartRefusal('outcome_uncertain'); }
             if (!outcome.result.ok) throw new ServiceStartRefusal(outcome.result.errorCode);
             if (!setupInput) throw new ServiceStartRefusal('project_setup_operation_unavailable');
+            const autostartFailure = await startProjectSetupAutostartServices({ outcome, manifest: current.plan.manifest,
+                context, parent: { actionId: 'localServices.launcher.start', input: projectNativeJsonValueForTransport(request) as Record<string, JsonValue> },
+                ...(request.declaration.selection.kind === 'manifest' ? { excludeServiceName: request.declaration.selection.name } : {}) });
+            if (autostartFailure) throw new ServiceStartRefusal(autostartFailure.errorCode);
             current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);
             unchanged(current);
             if (current.setupReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);

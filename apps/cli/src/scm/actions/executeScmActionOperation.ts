@@ -1,3 +1,4 @@
+import type { ScmBackendContext } from '@/scm/types';
 import { runWithScmHostingActionExecutor } from '../hostingProviders/executionAuthority';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -82,6 +83,9 @@ export type ExecuteScmActionOperationParams = Readonly<{
     executeHostingProviderAction?: Parameters<ScmActionExecute>[0]['executeHostingProviderAction'];
     /** Exact host-stamped caller context, never parsed from SCM Action input. */
     actionContext?: ActionExecutorContext;
+    /** Installed lifecycle owner; RPC adapters delegate rather than emitting removal. */
+    removeWorktree?: (input: Readonly<{ worktreePath: string; request: scm.ScmWorktreeRemoveRequest;
+        remove(beforeEffect: NonNullable<ScmBackendContext['beforeFilesystemMutation']>): Promise<scm.ScmWorktreeRemoveResponse> }>) => Promise<scm.ScmWorktreeRemoveResponse>;
     executeReviewedMarks?: (evidence: ScmComparison | ScmReviewedMarksSource, request: ScmReviewedUnmarkInput, reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
     /** Released RPC readers have a closed outer error-code vocabulary. */
     rpcCompatibility?: true;
@@ -811,7 +815,9 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
         }
         case 'scm.worktree.remove': {
             const request = params.input as scm.ScmWorktreeRemoveRequest;
-            return runMutation(async () => runScmRoute<scm.ScmWorktreeRemoveRequest, scm.ScmWorktreeRemoveResponse>({
+            return runMutation(async () => {
+                let removalFailure: unknown;
+                const result = await runScmRoute<scm.ScmWorktreeRemoveRequest, scm.ScmWorktreeRemoveResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<scm.ScmWorktreeRemoveResponse>(),
@@ -824,11 +830,23 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                     if (!target.valid) {
                         return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: target.error };
                     }
-                    return selection.backend.worktreeRemove
-                        ? await selection.backend.worktreeRemove({ context, request: { ...request, worktreePath: target.resolvedPath } })
-                        : { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' };
+                    const remove = selection.backend.worktreeRemove;
+                    if (!remove) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' };
+                    const run = (beforeEffect?: NonNullable<ScmBackendContext['beforeFilesystemMutation']>) => remove({ context: { ...context,
+                        ...(beforeEffect ? { beforeFilesystemMutation: async missingWorktree => {
+                            await context.beforeFilesystemMutation?.(missingWorktree); await beforeEffect(missingWorktree);
+                        } } : {}) }, request: { ...request, worktreePath: target.resolvedPath } });
+                    if (!params.removeWorktree) return run();
+                    try { return await params.removeWorktree({ worktreePath: target.resolvedPath,
+                        request, remove: run }); }
+                    catch (error) { removalFailure = error; throw error; }
                 },
-            }));
+                });
+                // The SCM adapter's closed error vocabulary cannot flatten a
+                // Project cleanup refusal or cancellation into COMMAND_FAILED.
+                if (removalFailure !== undefined) throw removalFailure;
+                return result;
+            });
         }
         case 'scm.worktree.prune': {
             const request = params.input as scm.ScmWorktreePruneRequest;

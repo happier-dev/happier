@@ -58,6 +58,7 @@ export type MachineStorageFailure = Readonly<{
     reason: 'older_happier' | 'policy_unavailable' | 'whole_disk_disabled' | 'permission_denied' | 'request_failed' | 'invalid_response' | 'approval_requested' | 'declined';
     errorCode?: MachineDaemonRpcFailure['errorCode'];
     failureCause?: MachineDaemonRpcFailure['failureCause'];
+    details?: MachineDaemonRpcFailure['details'];
     error?: string;
 }>;
 export type MachineStorageResult<T> = Readonly<{ ok: true; value: T }> | MachineStorageFailure;
@@ -124,7 +125,8 @@ async function execute(input: MachineStorageReadInput & Readonly<{ reviewedByPer
         machineId: input.machineId, ...(input.serverId ? { serverId: input.serverId } : {}), ...extra,
     }, { surface: 'ui', ...(input.serverId ? { serverId: input.serverId } : {}),
         ...(input.expectedAccountId ? { expectedAccountId: input.expectedAccountId } : {}), ...(input.signal ? { signal: input.signal } : {}) });
-    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode, failureCause: outcome.failureCause });
+    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode,
+        failureCause: outcome.failureCause, details: outcome.details });
     return outcome.result;
 }
 

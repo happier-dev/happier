@@ -93,12 +93,13 @@ function observedSyncStatuses(relationships: readonly WorkspaceSyncRelationshipV
             beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } } }));
 }
 
-function createFiniteActionWithCapturedRequester(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): ReturnType<typeof createProjectFiniteAction> {
+function createFiniteActionWithCapturedRequester(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext,
+    removalOperation?: Parameters<typeof createProjectFiniteAction>[2]): ReturnType<typeof createProjectFiniteAction> {
     return async args => {
         const home = runtime.resolveHostHomeServerIdentityId
             ? await runtime.resolveHostHomeServerIdentityId(ingress.signal) : await resolveServerProfileHomeIdentityId(runtime.serverId);
         return createProjectFiniteAction({ ...runtime, requesterIdentity: runtime.requesterIdentity
-            ?? selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: home }) }, ingress)(args);
+            ?? selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: home }) }, ingress, removalOperation)(args);
     };
 }
 
@@ -2996,6 +2997,71 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.runtime.workerAdmission.dependencies()).toMatchObject([{ operationId: 'operation', state: 'setup' }]);
         expect(h.operationRuntime.runner.cancel(scope, 'operation')).toEqual({ kind: 'requested' });
         await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('cancelled');
+        expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
+    });
+
+    it('runs teardown under the admitted removal operation without creating a child operation', async () => {
+        const h = await harness({ version: 1, workspace: { teardown: [{ kind: 'command', command: 'true' }] } });
+        h.waiveSetupApproval();
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        const accepted = h.operationRuntime.observeExecution({ actionId: 'scm.worktree.remove',
+            input: { cwd: h.root, worktreePath: h.root, confirmed: true }, actionRequestId: 'remove', response: 'admission',
+            execute: async operation => {
+                const nested = await createFiniteActionWithCapturedRequester(h.runtime, h.context, { operation })({
+                    actionId: 'projects.prepare', input: { workspace: h.address, phase: 'teardown' },
+                    context: { authority: 'present_user', surface: 'ui', serverId: 'home', actionsSettings: normalizeActionsSettingsV1({
+                        v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['ui'] },
+                    }) },
+                });
+                const failed = ActionExecuteFailureSchema.safeParse(nested);
+                return failed.success ? failed.data : { ok: true, result: nested };
+            } });
+        await expect.poll(() => h.spawned.length).toBe(1);
+        expect(h.operationRuntime.store.list(scope).items).toHaveLength(1);
+        h.spawned[0]!.pty.exit(0);
+        expect(await accepted).toMatchObject({ ok: true });
+        await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('succeeded');
+    });
+
+    it('retains the second teardown failure and original redacted review on the removal operation', async () => {
+        const h = await harness({ version: 1, environmentVariables: [{ name: 'PRIVATE_URL', kind: 'config', required: true }],
+            workspace: { teardown: [{ kind: 'command', command: 'echo first' }, { kind: 'command', command: 'echo second' }] } });
+        await writeFile(join(h.root, '.env'), 'PRIVATE_URL=private-cleanup-sentinel\n');
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        const accepted = h.operationRuntime.observeExecution({ actionId: 'scm.worktree.remove',
+            input: { cwd: h.root, worktreePath: h.root, confirmed: true }, actionRequestId: 'remove', response: 'admission',
+            execute: async operation => {
+                const nested = await createFiniteActionWithCapturedRequester(h.runtime, h.context, { operation })({
+                    actionId: 'projects.prepare', input: { workspace: h.address, phase: 'teardown' },
+                    context: { authority: 'present_user', surface: 'rpc', serverId: 'home' },
+                });
+                const failure = ActionExecuteFailureSchema.safeParse(nested);
+                return failure.success ? failure.data : { ok: true, result: nested };
+            } });
+        expect(await accepted).toMatchObject({ ok: true });
+        await expect.poll(() => {
+            const operation = h.operationRuntime.store.get(scope, 'operation');
+            return { code: operation?.setupReview?.code, state: operation?.state, error: operation?.error };
+        }).toEqual({ code: 'project_setup_consent_required', state: 'running', error: undefined });
+        const reviewed = h.operationRuntime.store.get(scope, 'operation')!.setupReview!;
+        expect(h.operationRuntime.store.get(scope, 'operation')).toMatchObject({ actionId: 'scm.worktree.remove',
+            setupReview: { reviewedEffectDigest: expect.any(String), reviewedEffect: expect.anything() } });
+        expect(JSON.stringify(reviewed)).not.toContain('private-cleanup-sentinel');
+        expect(h.spawned).toEqual([]);
+        await h.rememberSetup(reviewed.reviewedEffectDigest);
+        await h.operationRuntime.handlers.getV2({ operationId: 'operation' });
+        await expect.poll(() => h.spawned.length).toBe(1);
+        h.spawned[0]!.pty.exit(0);
+        await expect.poll(() => h.spawned.length).toBe(2);
+        expect(h.spawned[1]!.params.options.env?.PRIVATE_URL).toBe('private-cleanup-sentinel');
+        h.spawned[1]!.pty.exit(7);
+        await h.operationRuntime.runner.waitForTerminal(scope, 'operation');
+        const failed = h.operationRuntime.store.get(scope, 'operation');
+        expect(failed?.error?.errorCode).toBe('project_setup_step_failed');
+        expect(failed?.error?.details).toEqual({ kind: 'finiteCommand', phase: 'teardown', step: 1, exitCode: 7, signal: null });
+        expect(failed?.state).toBe('failed');
+        expect(JSON.stringify(failed)).not.toContain('private-cleanup-sentinel');
+        expect(h.operationRuntime.store.list(scope).items).toHaveLength(1);
         expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
     });
 });

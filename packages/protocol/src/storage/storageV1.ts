@@ -388,10 +388,13 @@ export const MachineStorageTrashMoveInputV1Schema = lazyZodSchema(() => z.strict
   ...target(), items: z.array(z.extend(checkedItem(), { claimedVerdict: StorageItemV1Schema.shape.verdict, reason: z.optional((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(StorageReasonV1Schema)) })).check(z.minLength(1)),
   notIncluded: z.optional(z.array(z.extend(StorageItemV1Schema, { size: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(StorageSizeV1Schema), reason: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(StorageReasonV1Schema), loses: z.optional(z.array((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(StorageReasonV1Schema))) }))),
   goalBytes: z.optional(bytes()), emptyAfter: z.optional(z.boolean()),
+  /** Explicit choice on the reviewed removal; never inferred for collection. */
+  skipCleanup: z.optional(z.boolean()),
   retry: z.optional(z.strictObject({ sessionId: z.string().check(z.minLength(1)) })),
 }));
 export type MachineStorageTrashMoveInputV1 = z.infer<typeof MachineStorageTrashMoveInputV1Schema>;
-export const MachineStorageDeleteNowInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), items: z.array(checkedItem()).check(z.minLength(1)) }));
+export const MachineStorageDeleteNowInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), items: z.array(checkedItem()).check(z.minLength(1)),
+  skipCleanup: z.optional(z.boolean()) }));
 export type MachineStorageDeleteNowInputV1 = z.infer<typeof MachineStorageDeleteNowInputV1Schema>;
 export const MachineStorageTrashEmptyInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...target(), volume: z.optional(z.string().check(z.minLength(1))), entryIds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))), batchId: z.optional(z.string().check(z.minLength(1))),

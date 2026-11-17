@@ -42,6 +42,8 @@ export type StorageOperationActor = Readonly<{
     accountId: string;
     kind: 'person' | 'agent';
     custodianAccountId: string;
+    /** The native removal invocation retains its requester, cancellation and review owner. */
+    removalContext?: import('./worktrees/storageWorktreeOperations').StorageWorktreeRemovalContext;
     /** Absent for admitted Machine Manage; Use is limited to these requester-owned Sessions. */
     sessionIds?: ReadonlySet<string>;
     /** Target/lifetime checks and current Session custody, without Machine admission verification. */

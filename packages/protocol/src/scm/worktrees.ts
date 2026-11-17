@@ -47,6 +47,8 @@ export const ScmWorktreeRemoveRequestSchema = lazyZodSchema(() => z.extend(ScmRe
   worktreePath: z.string().check(z.minLength(1)),
   confirmed: z.literal(true),
   authorizationToken: z.literal(SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN),
+  /** Explicit consequential removal choice; never inferred from failed cleanup. */
+  skipCleanup: z.optional(z.boolean()),
 }));
 export type ScmWorktreeRemoveRequest = z.infer<typeof ScmWorktreeRemoveRequestSchema>;
 

@@ -31,8 +31,19 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
+// Collect the real Action graph before measuring any receiver behavior.
+const { machineScmWorktreeRemove } = await import('./machineScm');
 
 describe('machineScm', () => {
+    it('preserves the Project teardown refusal and recovery facts after a worktree removal Action', async () => {
+        const details = { kind: 'finiteCommand', phase: 'teardown', step: 1, exitCode: 7, signal: null };
+        machineRpcWithServerScopeMock.mockResolvedValue({ ok: false, errorCode: 'project_setup_step_failed',
+            error: 'Cleanup failed', details });
+        expect(await machineScmWorktreeRemove('machine-1', { cwd: '/repo', worktreePath: '/repo/feature',
+            confirmed: true, authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN }, { serverId }))
+            .toMatchObject({ success: false, actionErrorCode: 'project_setup_step_failed', details });
+    });
+
     beforeEach(async () => {
         await harness.reset();
         serverId = await harness.addHome({ name: 'SCM Home', serverUrl: 'https://scm.example', accountId: 'account-b',

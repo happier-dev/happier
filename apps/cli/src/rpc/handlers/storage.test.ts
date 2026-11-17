@@ -23,6 +23,7 @@ import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 const filesystemBoundary = vi.hoisted<{ beforeMkdir?: (path: string) => Promise<void>;
     beforeLstat?: (path: string) => void; beforeAccess?: (path: string) => void }>(() => ({}));
@@ -77,6 +78,29 @@ function setup(input: Readonly<{
     return { handlers, routes, constructions: () => constructions };
 }
 describe('lazy storage Machine RPC', () => {
+    it('preserves settled Project cleanup details when a removal RPC rejoins its admitted operation', async () => {
+        const { routes } = setup();
+        const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'owner' });
+        const input = { machineId: 'machine', items: [{ ref: {
+            itemId: 'checkout', path: join(lazyFixtureDirectory, 'checkout'),
+            identity: { dev: 'fixture', ino: '1', kind: 'directory' as const }, collectedAt: 1,
+            collectedBy: { accountId: 'owner', kind: 'person' as const } }, expect: 'reviewed-checkout' }] };
+        const details = { kind: 'finiteCommand' as const, phase: 'teardown' as const, step: 1, exitCode: 7, signal: null };
+        const ingress = { ...context(), localActionContext: { actionRequestId: 'cleanup-retry' } };
+        // Seed the real operation owner's settled result, then rejoin through the
+        // receiving RPC. Storage, operation replay and failure projection stay real.
+        expect(await operationRuntime.observeExecution({ actionId: 'machines.storage.deleteNow', input,
+            actionRequestId: 'cleanup-retry', rpcContext: ingress, execute: async () => ({ ok: false,
+                errorCode: 'project_setup_step_failed', error: 'Cleanup command failed', details }) }))
+            .toMatchObject({ ok: false, details });
+        const handlers: RpcHandlerMap = new Map();
+        registerDaemonStorageRpcHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } },
+            { ...routes, observeActionExecution: operationRuntime.observeExecution });
+        try {
+            await expect(handlers.get(RPC_METHODS.DAEMON_STORAGE_DELETE_NOW)!(input, ingress))
+                .rejects.toMatchObject({ rpcErrorCode: 'project_setup_step_failed', details });
+        } finally { routes.dispose(); }
+    });
     beforeAll(async () => { lazyFixtureDirectory = await realpath(await mkdtemp(join(tmpdir(), 'happier-storage-lazy-'))); });
     afterAll(async () => { await rm(lazyFixtureDirectory, { recursive: true, force: true }); });
     it.skipIf(process.platform === 'win32').each(['EACCES', 'EPERM', 'EROFS'])('isolates the MACH-REPLAY-84 boot EFI EACCES and reports %s volumes on summary reads', async code => {

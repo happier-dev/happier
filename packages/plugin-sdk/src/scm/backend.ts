@@ -314,7 +314,11 @@ export type BackendRuntimeContext = Readonly<{
     /** Host policy check for backend-derived filesystem targets; throws on refusal. */
     assertFilesystemPathAuthorized?: (targetPath: string) => void;
     /** Trusted host revalidation immediately before a queued filesystem effect; never request input. */
-    beforeFilesystemMutation?: () => Promise<void>;
+    beforeFilesystemMutation?: (missingWorktree?: Readonly<{
+        /** Physical path retained by the backend's worktree registration after external deletion. */
+        physicalRootPath: string;
+        alreadyAbsent: true;
+    }>) => Promise<void>;
     /** Original path retained by host Trash; relative orphan back-references are resolved here under the trusted guard. */
     retainedSourcePath?: string;
     detection: Readonly<{

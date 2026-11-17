@@ -853,4 +853,129 @@ describe('current Project setup effect and preparation admission', () => {
         expect(changedAdapter.executionEnvironmentEffectDigest).not.toBe(first.executionEnvironmentEffectDigest);
         expect(prepareToolchain).not.toHaveBeenCalled();
     });
+
+    it('reviews executable autostart effects with lifecycle consent while excluding presentation and manual services', async () => {
+        const manifest = {
+            version: 1,
+            workspace: { setup: [{ kind: 'command', command: 'echo setup' }] },
+            worktreePorts: { enabled: true, slots: 2 },
+            services: {
+                web: { source: { kind: 'command', command: 'node web.cjs' }, runtime: { autostart: true, portSlot: 0, title: 'Web' } },
+                manual: { source: { kind: 'command', command: 'node manual.cjs' } },
+            },
+        };
+        const { root, input } = await fixture(manifest, { 'web.cjs': 'console.log("web");', 'manual.cjs': 'console.log("manual");' });
+        const setup = await reviewed(input);
+        expect((await reviewed({ ...input, purpose: 'teardown' })).reviewedEffectDigest).toBe(setup.reviewedEffectDigest);
+        await writeFile(join(root, 'manual.cjs'), 'console.log("manual changed");');
+        await writeFile(join(root, '.happier/project.json'), JSON.stringify({ ...manifest,
+            services: { ...manifest.services, web: { ...manifest.services.web, runtime: { ...manifest.services.web.runtime, portSlot: 1, title: 'Browser' } } },
+        }));
+        expect((await reviewed(input)).reviewedEffectDigest).toBe(setup.reviewedEffectDigest);
+        await writeFile(join(root, 'web.cjs'), 'console.log("web changed");');
+        const changed = await reviewed(input);
+        expect(changed.reviewedEffectDigest).not.toBe(setup.reviewedEffectDigest);
+        await writeFile(join(root, '.happier/project.json'), JSON.stringify({ ...manifest,
+            services: { ...manifest.services, web: { ...manifest.services.web, runtime: { ...manifest.services.web.runtime, autostart: false } } },
+        }));
+        expect((await reviewed(input)).reviewedEffectDigest).not.toBe(changed.reviewedEffectDigest);
+    });
+
+    it('shares remembered consent across setup and teardown while retaining phase-specific execution', async () => {
+        const { input } = await fixture({ version: 1, workspace: {
+            setup: [{ kind: 'command', command: 'echo setup' }],
+            teardown: [{ kind: 'command', command: 'echo teardown' }],
+        } });
+        const setup = await reviewed(input);
+        const teardown = await reviewed({ ...input, purpose: 'teardown' });
+        expect(teardown.reviewedEffectDigest).toBe(setup.reviewedEffectDigest);
+        expect(setup.reviewedEffect.lifecycle).toMatchObject({ setup: [{ command: 'echo setup' }], teardown: [{ command: 'echo teardown' }] });
+        expect(setup.commands).toMatchObject([{ source: { command: 'echo setup' } }]);
+        expect(teardown.commands).toMatchObject([{ source: { command: 'echo teardown' } }]);
+        trustTransport(setup.reviewedEffectDigest);
+        expect(await prepareProjectSetup({ ...input, purpose: 'teardown' })).toMatchObject({ kind: 'prepared', consent: 'trusted' });
+    });
+
+    it('reviews teardown-only lifecycle consent during setup and reuses its remembered digest at teardown', async () => {
+        const { root, input } = await fixture({ version: 1, workspace: {
+            teardown: [{ kind: 'command', command: 'echo cleanup' }],
+        } });
+        const setupInput = { ...input, successHomeDir: root };
+        const plan = await reviewed(setupInput);
+        expect(plan.commands).toEqual([]);
+        trustTransport(null);
+        expect(await inspectProjectSetup(setupInput, { reviewConsent: true })).toMatchObject({
+            setupReadiness: { kind: 'unprepared', reviewedEffectDigest: plan.reviewedEffectDigest },
+            setupReview: { reviewedEffectDigest: plan.reviewedEffectDigest,
+                reviewedEffect: { lifecycle: { teardown: [{ command: 'echo cleanup' }] } } },
+            setupConsent: { kind: 'required', code: 'project_setup_consent_required' },
+        });
+        expect(await prepareProjectSetup(setupInput)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+        trustTransport(plan.reviewedEffectDigest);
+        expect(await prepareProjectSetup(setupInput)).toMatchObject({ kind: 'prepared', consent: 'trusted', plan: { commands: [] } });
+        expect(await prepareProjectSetup({ ...setupInput, purpose: 'teardown' })).toMatchObject({
+            kind: 'prepared', consent: 'trusted', plan: { reviewedEffectDigest: plan.reviewedEffectDigest,
+                commands: [{ source: { command: 'echo cleanup' } }] },
+        });
+        const noCleanup = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
+        expect(await prepareProjectSetup({ ...noCleanup.input, purpose: 'teardown' })).toMatchObject({ kind: 'notRequired' });
+    });
+
+    it('invalidates lifecycle consent when the other phase executable changes', async () => {
+        const manifest = { version: 1, workspace: {
+            setup: [{ kind: 'command', command: 'echo setup' }],
+            teardown: [{ kind: 'command', command: 'sh cleanup.sh' }],
+        } };
+        const { root, input } = await fixture(manifest, { 'cleanup.sh': 'echo first' });
+        const before = await reviewed(input);
+        await writeFile(join(root, 'cleanup.sh'), 'echo changed');
+        expect((await reviewed(input)).reviewedEffectDigest).not.toBe(before.reviewedEffectDigest);
+    });
+
+    it('requires remembered lifecycle consent for unattended removal even when setup invocation approval is waived', async () => {
+        const { input } = await fixture({ version: 1, workspace: { teardown: [{ kind: 'command', command: 'echo cleanup' }] } });
+        trustTransport(null);
+        const unattended = { ...input, purpose: 'teardown' as const, requireRememberedConsent: true as const,
+            approvalContext: { authority: 'account_automation' as const, surface: 'agent' as const,
+                actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['agent'] } }) } };
+        expect(await prepareProjectSetup(unattended)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+        const plan = await reviewed(unattended);
+        trustTransport(plan.reviewedEffectDigest);
+        expect(await prepareProjectSetup(unattended)).toMatchObject({ kind: 'prepared', consent: 'trusted' });
+    });
+
+    it('binds an explicit cleanup skip to the current reviewed teardown effect before honoring it', async () => {
+        const { root, input } = await fixture({ version: 1, workspace: { teardown: [{ kind: 'command', command: 'sh cleanup.sh' }] } },
+            { 'cleanup.sh': 'echo reviewed' });
+        trustTransport(null);
+        const teardown = { ...input, purpose: 'teardown' as const };
+        const original = await reviewed(teardown);
+        expect(await prepareProjectSetup({ ...teardown, expectedEffectDigest: original.reviewedEffectDigest, skipForInvocation: true }))
+            .toMatchObject({ kind: 'skippedForInvocation' });
+        await writeFile(join(root, 'cleanup.sh'), 'echo edited');
+        const changed = await reviewed(teardown);
+        expect(changed.reviewedEffectDigest).not.toBe(original.reviewedEffectDigest);
+        expect(await prepareProjectSetup({ ...teardown, expectedEffectDigest: original.reviewedEffectDigest, skipForInvocation: true }))
+            .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_effect_changed',
+                plan: { reviewedEffectDigest: changed.reviewedEffectDigest, reviewedEffect: changed.reviewedEffect } });
+    });
+
+    it('shares reviewed lifecycle consent with teardown and distinguishes empty/platform-inapplicable preparation', async () => {
+        const { input } = await fixture({ version: 1, workspace: {
+            setup: [{ kind: 'command', command: 'echo setup' }], teardown: [{ kind: 'command', command: 'echo teardown' }],
+        } });
+        const setup = await reviewed(input);
+        const teardownInput = { ...input, purpose: 'teardown' as const };
+        const teardown = await reviewed(teardownInput);
+        expect(teardown.reviewedEffectDigest).toBe(setup.reviewedEffectDigest);
+        expect(teardown.executionEnvironmentEffectDigest).toBe(setup.executionEnvironmentEffectDigest);
+        trustTransport(setup.reviewedEffectDigest);
+        expect(await prepareProjectSetup(teardownInput)).toMatchObject({ kind: 'prepared', consent: 'trusted',
+            plan: { commands: teardown.commands } });
+        expect(teardown.commands).not.toEqual(setup.commands);
+        const inapplicable = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo Windows setup', platforms: ['windows'] }] } });
+        expect(await prepareProjectSetup(inapplicable.input)).toMatchObject({ kind: 'notRequired', plan: { commands: [] } });
+        const absent = await fixture({ version: 1 });
+        expect(await prepareProjectSetup(absent.input)).toMatchObject({ kind: 'notRequired' });
+    });
 });

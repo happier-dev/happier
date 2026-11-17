@@ -6,7 +6,7 @@ import type { HappierStorageCategoryIdV1, StorageItemV1, StorageReasonV1, Storag
 import type { ScmWorktreeEnrichmentEntry } from '@happier-dev/protocol/scm';
 import type { SessionDraftPresence } from '@/session/drafts/readSessionDraftPresence';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import type { createStorageWorktreeOperations } from '../worktrees/storageWorktreeOperations';
+import type { createStorageWorktreeOperations, StorageWorktreeRemovalContext } from '../worktrees/storageWorktreeOperations';
 import type { SkillCachePaths } from '@/prompts/skills/store/skillStore';
 import type { createProjectWorkspaceRetirement } from '@/workspaces/projectWorkspaceRetirement';
 import type { ScmBackendRegistry } from '@/scm/registry';
@@ -99,9 +99,9 @@ export type StorageCategoryAdapter = Readonly<{
     restorable: boolean;
     /** Git-touching maintenance waits for the daemon's existing idle boundary. */
     requiresIdle?: boolean;
-    retire(input: Readonly<{ payloadPath: string; beforeEffect?: () => Promise<void> }>): Promise<void>;
+    retire(input: Readonly<{ payloadPath: string; beforeEffect?: () => Promise<void>; removalContext?: StorageWorktreeRemovalContext }>): Promise<void>;
     reinstate(input: Readonly<{ payloadPath: string; restorePath: string; beforeEffect?: () => Promise<void> }>): Promise<void>;
-    discard(input: Readonly<{ payloadPath?: string; beforeEffect?: () => Promise<void> }>): Promise<void>;
+    discard(input: Readonly<{ payloadPath?: string; beforeEffect?: () => Promise<void>; removalContext?: StorageWorktreeRemovalContext }>): Promise<void>;
 }>;
 export class StorageCategoryAdapterError extends Error {
     constructor(readonly code: 'owner_unavailable' | 'owner_data_invalid' | 'restore_unsupported' | 'restore_path_unsupported') {

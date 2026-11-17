@@ -30,13 +30,13 @@ function adapter(raw: unknown, deps: StorageCategoryCatalogDeps): StorageCategor
     if (!owner) throw new StorageCategoryAdapterError('owner_unavailable');
     return {
         ownerData: data, restorable: data.retentionSupported, requiresIdle: true,
-        async retire({ payloadPath, beforeEffect }) {
+        async retire({ payloadPath, beforeEffect, removalContext }) {
             if (!data.retentionSupported) throw new StorageCategoryAdapterError('restore_unsupported');
             const sourceIdentity = await readStoragePathIdentity(data.worktreePath).catch((error: unknown) => {
                 if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
                 throw error;
             });
-            await owner.retire({ repositoryRoot: data.repositoryRoot, worktreePath: data.worktreePath,
+            const removal = await owner.retire({ repositoryRoot: data.repositoryRoot, worktreePath: data.worktreePath, removalContext,
                 targetPath: payloadPath, retentionKind: data.retentionKind, entryId: basename(dirname(payloadPath)),
                 beforeEffect: async () => { await beforeEffect?.(); if (data.referenceOwnerData !== undefined) {
                     if (!deps.checkoutReferences) throw new StorageCategoryAdapterError('owner_unavailable');
@@ -61,6 +61,7 @@ function adapter(raw: unknown, deps: StorageCategoryCatalogDeps): StorageCategor
                     throw error;
                 }
             }
+            removal?.settle('retired');
         },
         async reinstate({ payloadPath, restorePath, beforeEffect }) {
             if (!data.retentionSupported) throw new StorageCategoryAdapterError('restore_unsupported');
@@ -73,13 +74,14 @@ function adapter(raw: unknown, deps: StorageCategoryCatalogDeps): StorageCategor
                 await deps.checkoutReferences.reinstate(data.referenceOwnerData, data.repositoryRoot);
             }
         },
-        async discard({ payloadPath, beforeEffect }) {
-            await owner.remove({ repositoryRoot: data.repositoryRoot, worktreePath: payloadPath ?? data.worktreePath,
+        async discard({ payloadPath, beforeEffect, removalContext }) {
+            const removal = await owner.remove({ repositoryRoot: data.repositoryRoot, worktreePath: payloadPath ?? data.worktreePath, removalContext,
                 retentionKind: data.retentionKind, retainedSourcePath: data.worktreePath, beforeEffect });
             if (data.referenceOwnerData !== undefined) {
                 if (!deps.checkoutReferences) throw new StorageCategoryAdapterError('owner_unavailable');
                 await deps.checkoutReferences.retire(data.referenceOwnerData);
             }
+            removal?.settle('deleted');
         },
     };
 }

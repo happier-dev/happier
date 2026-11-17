@@ -1227,7 +1227,11 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           ...(directTargetTransport
             ? { directTransport: { ...directTargetTransport.spawnedSession,
                 spawn: (request, options) => directTargetTransport.spawnedSession.spawn(request, {
-                  ...options, ...(context ? { localActionContext: context } : {}),
+                  ...options, ...(context ? { localActionContext: { ...context,
+                    ...(input.admittedInput ? { setupAutostart: {
+                      parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: input.admittedInput }, context,
+                    } } : {}),
+                  } } : {}),
                 }),
               } }
             : {}),

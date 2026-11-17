@@ -1,7 +1,8 @@
 import { isPluginError } from '../plugins/errors.js';
-import { SocketRpcAnsweringClientCandidatesV1Schema, type SocketRpcAnsweringClientCandidateV1 } from './answeringClient.js';
 import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import { MachineAvailabilityDiagnosticV1Schema, type MachineAvailabilityDiagnosticV1 } from '../machines/machineAccessV1.js';
+import { FiniteCommandFailureDetailsV1Schema, type FiniteCommandFailureDetailsV1 } from '../actions/operations/finiteCommandFailureV1.js';
+import { SocketRpcAnsweringClientCandidatesV1Schema, type SocketRpcAnsweringClientCandidateV1 } from './answeringClient.js';
 
 export const MACHINE_RPC_TIMEOUT_ERROR_CODE = 'MACHINE_RPC_TIMEOUT';
 
@@ -76,7 +77,7 @@ export class RpcError extends Error {
   readonly rpcErrorCode: RpcErrorCode | string;
   readonly failureCause?: ActionFailureCauseV1;
   // No `declare` here: Babel-transformed loads (Metro, Playwright) reject it. Assigned after construction.
-  readonly details?: MachineAvailabilityDiagnosticV1
+  readonly details?: MachineAvailabilityDiagnosticV1 | FiniteCommandFailureDetailsV1
     | Readonly<{ clients: readonly SocketRpcAnsweringClientCandidateV1[] }>;
 
   constructor(message: string, rpcErrorCode: RpcErrorCode | string, failureCause?: ActionFailureCauseV1) {
@@ -99,8 +100,10 @@ export function isRpcError(error: unknown): error is RpcError {
 export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined; failureCause?: unknown; effectAttempted?: unknown; details?: unknown }): Error {
   const failureCause = ActionFailureCauseV1Schema.safeParse(opts.failureCause);
   // Home owns availability; retain only its closed diagnostic, never infer one from the code.
-  const details = opts.errorCode === 'target_unavailable' && opts.details !== undefined
+  const availability = opts.errorCode === 'target_unavailable' && opts.details !== undefined
     ? MachineAvailabilityDiagnosticV1Schema.safeParse(opts.details) : undefined;
+  const finiteCommand = opts.errorCode === 'project_setup_step_failed' && opts.details !== undefined
+    ? FiniteCommandFailureDetailsV1Schema.safeParse(opts.details) : undefined;
   const clients = (opts.errorCode === 'client_ambiguous' || opts.errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS)
     && opts.details && typeof opts.details === 'object'
     ? SocketRpcAnsweringClientCandidatesV1Schema.safeParse('clients' in opts.details ? opts.details.clients : undefined) : undefined;
@@ -108,8 +111,9 @@ export function createRpcCallError(opts: { error: string; errorCode?: string | n
     ? new RpcError(opts.error, opts.errorCode, failureCause.success ? failureCause.data : undefined)
     : Object.assign(new Error(opts.error), failureCause.success ? { failureCause: failureCause.data } : {});
   if (typeof opts.effectAttempted === 'boolean') Object.assign(failure, { effectAttempted: opts.effectAttempted });
+  if (availability?.success) return Object.assign(failure, { ok: false, errorCode: 'target_unavailable', error: opts.error, details: availability.data });
   if (clients?.success) return Object.assign(failure, { details: { clients: clients.data } });
-  return details?.success ? Object.assign(failure, { ok: false, errorCode: 'target_unavailable', error: opts.error, details: details.data }) : failure;
+  return finiteCommand?.success ? Object.assign(failure, { details: finiteCommand.data }) : failure;
 }
 
 export function readRpcErrorCode(error: unknown): string | undefined {

@@ -812,6 +812,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
   }),
   defineScmActionSpec({
     id: 'scm.worktree.remove', approval: {result: 'required'},
+    operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     irreversible: true,
     approvalPresentation: { summary: describeScmWorktreeRemoveApprovalSummary },
     workspaceWrite: true,
@@ -831,6 +832,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
         { path: 'worktreePath', title: 'worktree Path', widget: 'text' },
         { path: 'confirmed', title: 'confirmed', widget: 'boolean' },
         { path: 'authorizationToken', title: 'authorization Token', widget: 'text' },
+        { path: 'skipCleanup', title: 'Remove without cleanup', widget: 'boolean' },
       ],
     },
   }),

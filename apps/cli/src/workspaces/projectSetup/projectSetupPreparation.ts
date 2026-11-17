@@ -83,6 +83,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     effectDecision?: Readonly<{ authority: 'present_user'; project: QualifiedProjectTrustProjectV1; reviewedEffectDigest: string }>;
     /** The admitted host's original surface and Account policy, never Project Action input. */
     approvalContext?: ActionExecutorContext;
+    /** Unattended checkout destruction consumes remembered lifecycle consent only. */
+    requireRememberedConsent?: boolean;
     signal?: AbortSignal;
 }>;
 
@@ -104,6 +106,8 @@ export type ProjectSetupReviewedEffect = Readonly<{
     v: 1;
     purpose: 'setup' | 'teardown';
     commands: readonly unknown[];
+    lifecycle: Readonly<Record<ProjectSetupPreparationInput['purpose'], readonly unknown[]>>;
+    autostart?: readonly Readonly<{ name: string; commands: readonly unknown[] }>[];
     toolchain: Readonly<{ selection: ProjectToolchainSelectionV1; adapterVersion?: string; tool?: Readonly<{ executable?: string; version?: string }> }>;
     files: readonly Readonly<{ file: string; digest: string }>[];
     setupInputs: readonly Readonly<{ file: string; digest: string }>[];
@@ -391,9 +395,21 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const executionEnvironmentEffectDigest = digest({ v: 1, toolchain: reviewedToolchain,
             files: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, digest]) => ({ file, digest })),
             bindings, configEnvironment });
-        const commands: PreparedProjectSetupCommand[] = [];
-        const reviewedCommands: unknown[] = [];
-        for (const source of includeSetupEffects ? manifest?.workspace?.[input.purpose] ?? [] : []) {
+        const lifecycleCommands: Record<ProjectSetupPreparationInput['purpose'], PreparedProjectSetupCommand[]> = { setup: [], teardown: [] };
+        const lifecycleReview: Record<ProjectSetupPreparationInput['purpose'], unknown[]> = { setup: [], teardown: [] };
+        const autostart = Object.entries(includeSetupEffects ? manifest?.services ?? {} : {})
+            .filter(([, service]) => service.runtime?.autostart === true)
+            .map(([name, service]) => ({ name, commands: [] as PreparedProjectSetupCommand[], reviewedCommands: [] as unknown[], source: service.source }));
+        // Human consent covers one lifecycle; only the requested phase is executed.
+        const phases = [
+            ...(includeSetupEffects ? (['setup', 'teardown'] as const).map(phase => ({ commands: lifecycleCommands[phase],
+                reviewedCommands: lifecycleReview[phase], sources: manifest?.workspace?.[phase] ?? [], usage: 'setup' as const })) : []),
+            ...autostart.map(service => ({ commands: service.commands, reviewedCommands: service.reviewedCommands,
+                sources: [service.source], usage: 'service' as const })),
+        ];
+        for (const phase of phases) {
+        const { commands, reviewedCommands } = phase;
+        for (const source of phase.sources) {
             if (input.signal?.aborted) return refuse('project_setup_cancelled');
             if (source.kind === 'command') {
                 if (source.platforms && !source.platforms.some(platform => platform === input.platform.os)) continue;
@@ -423,7 +439,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 reviewedCommands.push({ source: provenance, adapterVersion: selected.lease.pluginVersion });
                 continue;
             }
-            const resolved = await inspectProjectNativeCommand({ root, source, usage: 'setup', io: input.nativeIo,
+            const resolved = await inspectProjectNativeCommand({ root, source, usage: phase.usage, io: input.nativeIo,
                 ...(input.signal ? { signal: input.signal } : {}) });
             if (resolved.kind === 'refused') return refuse(resolved.code);
             const native = resolved;
@@ -454,6 +470,9 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 });
             } else return refuse('native_adapter_result_invalid');
         }
+        }
+        const commands = lifecycleCommands[input.purpose];
+        const reviewedCommands = lifecycleReview[input.purpose];
         const setupInputs: Array<Readonly<{ file: string; digest: string }>> = [];
         for (const file of includeSetupEffects ? manifest?.workspace?.setupInputs ?? [] : []) {
             const result = await addFile(file);
@@ -462,9 +481,11 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
             setupInputs.push({ file: normalized, digest: files.get(normalized)! });
         }
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
-        const semanticEffect = { v: 1 as const, purpose: input.purpose, commands: reviewedCommands, toolchain: reviewedToolchain,
+        const semanticEffect = { v: 1 as const, purpose: input.purpose, commands: reviewedCommands, lifecycle: lifecycleReview, toolchain: reviewedToolchain,
+            ...(autostart.length ? { autostart: autostart.map(service => ({ name: service.name, commands: service.reviewedCommands })) } : {}),
             files: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, digest]) => ({ file, digest })), setupInputs, bindings, configEnvironment };
-        const reviewedEffectDigest = digest(semanticEffect);
+        const { purpose: _purpose, commands: _commands, ...lifecycleEffect } = semanticEffect;
+        const reviewedEffectDigest = digest(lifecycleEffect);
         // SCM provenance is display context, excluded from the consent digest.
         // Native-launch checkpoints remeasure effect inputs, not repository UI.
         const provenanceStartedAt = performance.now();
@@ -473,7 +494,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
             durationMs: Math.round(performance.now() - provenanceStartedAt) });
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
         if (toolchainAdapterLease && !toolchainAdapterLease.isCurrent()
-            || commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) return refuse('native_adapter_retired');
+            || phases.some(phase => phase.commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent()))) return refuse('native_adapter_retired');
         const reviewedEffect: ProjectSetupReviewedEffect = { ...semanticEffect, presentation: { bindings: displayBindings, provenance } };
         const setupInputsDigest = digest(setupInputs);
         const successBasis = { cwd: root, platform: input.platform, reviewedEffectDigest, setupInputsDigest,
@@ -517,11 +538,20 @@ export async function inspectProjectSetup(input: ProjectSetupPreparationInput, o
     return { setupReview, setupConsent, setupReadiness: await readReviewedProjectSetupReadiness(input, reviewed.plan) };
 }
 
+/** Setup admits the whole lifecycle; cleanup only admits effects it will execute. */
+function hasProjectSetupAdmissionEffect(plan: PreparedProjectSetupPlan): boolean {
+    if (plan.toolchain.kind !== 'host') return true;
+    if (plan.purpose === 'teardown') return plan.commands.length > 0;
+    return plan.reviewedEffect.lifecycle.setup.length > 0
+        || plan.reviewedEffect.lifecycle.teardown.length > 0
+        || (plan.reviewedEffect.autostart?.some(service => service.commands.length > 0) ?? false);
+}
+
 async function readReviewedProjectSetupReadiness(input: ProjectSetupPreparationInput, plan: PreparedProjectSetupPlan): Promise<ProjectSetupReadinessV1> {
     if (plan.commands.some(command => command.kind === 'pluginNativeReference')) {
         return { kind: 'unknown', code: 'native_setup_readiness_unresolved' };
     }
-    if (plan.commands.length === 0 && plan.toolchain.kind === 'host') {
+    if (!hasProjectSetupAdmissionEffect(plan)) {
         return { kind: 'notRequired', reviewedEffectDigest: plan.reviewedEffectDigest };
     }
     if (!input.successHomeDir) return { kind: 'unknown', code: 'project_setup_success_unavailable' };
@@ -595,7 +625,7 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
         return { kind: 'pendingApproval', code: 'project_setup_effect_changed', plan };
     }
     if (input.skipForInvocation) return { kind: 'skippedForInvocation', plan };
-    if (plan.commands.length === 0 && plan.toolchain.kind === 'host') return { kind: 'notRequired', plan };
+    if (!hasProjectSetupAdmissionEffect(plan)) return { kind: 'notRequired', plan };
     try {
         const checkpoint = input.purpose === 'setup' && input.successHomeDir !== undefined
             ? await createProjectSetupSuccessStore({ homeDir: input.successHomeDir }).readMatching({
@@ -623,7 +653,7 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
             consent = 'completed';
         } else {
             const settings = readProjectActionApprovalSettings(input);
-            if (!isApprovalRequiredByActionsSettings('projects.prepare', settings, input.approvalContext)) {
+            if (!input.requireRememberedConsent && !isApprovalRequiredByActionsSettings('projects.prepare', settings, input.approvalContext)) {
                 // The person's policy permits this invocation; it does not write a
                 // Project trust grant or turn an agent into an approving user.
                 consent = 'thisTime';

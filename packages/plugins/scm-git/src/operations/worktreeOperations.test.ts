@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +11,7 @@ import {
 
 import {
     runWithGitScmCommandRunner,
+    runWithRealGitScmRuntime,
     type GitScmCommandRunner,
 } from '../testkit/scmRuntime.test-support.js';
 import { gitWorktreeCreate, gitWorktreeRemove } from './worktreeOperations.js';
@@ -193,6 +195,37 @@ describe('git worktree operations', () => {
             }),
         );
         expect(mkdirMock).not.toHaveBeenCalled();
+    });
+
+    it('supplies retained Git physical identity for an explicitly removed checkout that disappeared externally', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'git-missing-removal-')));
+        const repository = join(root, 'repository');
+        const physicalParent = join(root, 'physical');
+        const aliasParent = join(root, 'alias');
+        mkdirSync(repository);
+        mkdirSync(physicalParent);
+        symlinkSync(physicalParent, aliasParent, process.platform === 'win32' ? 'junction' : 'dir');
+        const git = (...args: string[]) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8' });
+        try {
+            git('init');
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture');
+            git('worktree', 'add', '--detach', join(aliasParent, 'checkout'), 'HEAD');
+            const physicalRootPath = realpathSync(join(aliasParent, 'checkout'));
+            rmSync(physicalRootPath, { recursive: true });
+            let captured: unknown;
+            const result = await runWithRealGitScmRuntime(() => gitWorktreeRemove({ context: {
+                cwd: repository, projectKey: repository,
+                detection: { isRepo: true, rootPath: repository, mode: '.git' },
+                beforeFilesystemMutation: async (...args: unknown[]) => { captured = args[0]; },
+            }, request: { cwd: repository, worktreePath: physicalRootPath,
+                confirmed: true, authorizationToken: 'remove-worktree' } }));
+            expect(result).toMatchObject({ success: true });
+            expect(captured).toEqual({ physicalRootPath, alreadyAbsent: true });
+            expect(git('worktree', 'list', '--porcelain', '-z')).not.toContain(physicalRootPath);
+            expect(git('rev-parse', '--show-toplevel').trim()).toBe(repository);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 
     it('rejects worktree removal without explicit authorization before invoking git', async () => {

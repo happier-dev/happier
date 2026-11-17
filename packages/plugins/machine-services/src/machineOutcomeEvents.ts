@@ -1,7 +1,7 @@
 import { computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema,
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema,
     createPluginEventAutomationSetupResultV1JsonSchema, type MachineServiceObservationV1,
     type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
@@ -19,23 +19,27 @@ const descriptors = {
     'backup-succeeded': { key: 'backupSucceeded', title: 'Backup succeeded', description: 'A backup run settled successfully.', schema: BackupOutcomeEventV1ProtocolSchema },
     'machine-pressure-changed': { key: 'machinePressureChanged', title: 'Machine pressure changed',
         description: 'An enabled memory, CPU or disk alert fired or recovered.', schema: MachinePressureEventV1ProtocolSchema },
+    'worktree-removed': { key: 'worktreeRemoved', title: 'Worktree removed',
+        description: 'An accepted worktree was deleted or retired.', schema: WorktreeRemovedEventV1ProtocolSchema },
 } as const;
 type EventId = keyof typeof descriptors;
 const isEventId = (value: string): value is EventId => Object.hasOwn(descriptors, value);
 const eventIds = Object.keys(descriptors) as EventId[];
+const setupFor = (event: EventId) => event === 'backup-failed' || event === 'backup-succeeded' ? backupSetup : machineSetup;
 const matches = (event: EventId, source: Source, fact: MachineServiceObservationV1) =>
-    fact.serverId === source.serverId && fact.machineId === source.machineId
+    fact.serverId === source.serverId && (fact.kind === 'worktreeRemoved' ? fact.removal.machineId : fact.machineId) === source.machineId
     && (fact.kind === 'pressure' ? event === 'machine-pressure-changed'
+        : fact.kind === 'worktreeRemoved' ? event === 'worktree-removed'
         : fact.environmentId === source.environmentId
             && event === (fact.state === 'failed' ? 'backup-failed' : 'backup-succeeded'));
 export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event => [event + '/setup', {
-    title: event === 'machine-pressure-changed' ? 'Choose Machine' : 'Choose backup Environment',
+    title: setupFor(event) === machineSetup ? 'Choose Machine' : 'Choose backup Environment',
     execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
     surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'] as const, dangerLevel: 'safe' as const, readOnly: true,
-    inputSchema: event === 'machine-pressure-changed' ? machineSetup : backupSetup,
+    inputSchema: setupFor(event),
     resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceSchema.jsonSchema),
     async run(value: unknown, context: PluginInvocationContext) {
-        const selected = (event === 'machine-pressure-changed' ? machineSetup : backupSetup).parse(value);
+        const selected = setupFor(event).parse(value);
         const read = await context.services.actions.execute('machines.resources.policy.get', {
             serverId: selected.serverId, machineId: selected.machineId,
         }, { signal: context.signal });
@@ -68,7 +72,7 @@ export function createMachineOutcomeEventSourceAdapter(host: BackgroundServiceCo
         decode(definition) {
             if (definition.eventRef.pluginId !== pluginId || definition.sourceContractVersion !== 1 || !isEventId(definition.eventRef.localId)) return null;
             const parsed = sourceSchema.safeParse(definition.sourceConfig);
-            if (!parsed.success || definition.eventRef.localId !== 'machine-pressure-changed' && !parsed.data.environmentId) return null;
+            if (!parsed.success || setupFor(definition.eventRef.localId) === backupSetup && !parsed.data.environmentId) return null;
             return parsed.data;
         },
         async observe({ definition, source }) {
@@ -89,15 +93,16 @@ export function createMachineOutcomeEventSourceAdapter(host: BackgroundServiceCo
         },
         subscribeWake(wake) {
             return host.subscribe({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } }, async ({ payload }) => {
-                const occurredAt = payload.kind === 'backup' ? payload.occurredAt : payload.episode.at;
+                const occurredAt = payload.kind === 'pressure' ? payload.episode.at : payload.occurredAt;
                 const identity = payload.kind === 'backup' ? [payload.operationId]
+                    : payload.kind === 'worktreeRemoved' ? [payload.removal.operationId]
                     : [payload.episode.rule, payload.episode.volumeId ?? '', payload.episode.state, String(payload.episode.at)];
                 for (const [sourceInstanceId, state] of states) {
                     if (!matches(state.event, state.source, payload)) continue;
                     state.pending.push({ eventRef: { pluginId, localId: state.event }, sourceInstanceId, sourceContractVersion: 1,
                         occurrenceId: computeCanonicalDomainSeparatedDigest('happier.machine.event-occurrence.v1',
-                            [payload.serverId, payload.machineId, state.event, ...identity]),
-                        occurredAt, observationReceivedAt: now(), observedDelta: 1, payload });
+                            [payload.serverId, payload.kind === 'worktreeRemoved' ? payload.removal.machineId : payload.machineId, state.event, ...identity]),
+                        occurredAt, observationReceivedAt: now(), observedDelta: 1, payload: payload.kind === 'worktreeRemoved' ? payload.removal : payload });
                     await wake(sourceInstanceId);
                 }
             });

@@ -464,6 +464,7 @@ export function createStorageOperations(input: Readonly<{
             policy();
             await assertActor(actor);
             const result = await applyPile({ items: request.items, mode: 'trash', actor: { accountId: actor.accountId, kind: actor.kind },
+                removalContext: actor.removalContext,
                 custodianAccountId: actor.custodianAccountId, emptyAfter: request.emptyAfter,
                 assertCurrent: () => assertActor(actor), assertCurrentAuthority: async item => { await assertEffectActor(actor, item); policy(); } },
                 { ...await reviewDeps(actor), trashStore: await getTrash(), resolveAdapter: catalog.resolveAdapter,
@@ -474,6 +475,7 @@ export function createStorageOperations(input: Readonly<{
             policy();
             await assertActor(actor);
             const result = await applyPile({ items: request.items, mode: 'delete', actor: { accountId: actor.accountId, kind: actor.kind },
+                removalContext: actor.removalContext,
                 custodianAccountId: actor.custodianAccountId,
                 assertCurrent: () => assertActor(actor), assertCurrentAuthority: async item => { await assertEffectActor(actor, item); policy(); } },
                 { ...await reviewDeps(actor), trashStore: await getTrash(), resolveAdapter: catalog.resolveAdapter,

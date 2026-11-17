@@ -23,16 +23,17 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1, ProjectWorkerNoAcceptanceFailureDetail
 import { resolveProjectExecutionChoiceV1, projectExecutionChoicesEqualV1, type ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { assertProjectReceivingPlacement } from '@/workspaces/execution/projectReceivingPlacement';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
+import { PROJECT_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import type { ActionExecuteResult, ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProjectCommandSourceV1, ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { resolveProjectMemoryDemandV1 as maximumDemand } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
 import { isProjectNativeProcessUncertain, preserveUnconfirmedNativeProcess, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { authorizeResolvedProjectExecLaunchForHost, type ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath } from '@/session/handoff/paths/sessionHandoffPathNormalization';
-import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
+import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { resolveHostRequesterAgentPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -47,6 +48,7 @@ import { selectProjectDefinitionRead } from './projectDefinitionRead';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
+import { startProjectSetupAutostartServices } from './projectSetupAutostart';
 import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
 import { prepareProjectSetup, resolveProjectSetupConfigEnvironment, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan } from './projectSetupPreparation';
 import { executeProjectSetup, executeProjectFiniteProcess, publishProjectFiniteAdmission, authorizePreparedProjectCommand, projectBaseEnvironment,
@@ -179,7 +181,9 @@ type Invocation = Readonly<{
 type Review = Readonly<{ kind: 'reviewed'; invocation: Invocation }> | Readonly<{ kind: 'failed'; result: ActionExecuteResult }>;
 
 /** Receiving host adapter. Action invocation approval has already completed at the outer executor. */
-export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): NonNullable<ActionExecutorDeps['projectAction']> {
+export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext,
+    removal?: Readonly<{ operation: ProjectSetupOperationContext; association?: ProjectSetupAcceptedAssociation;
+        requireRememberedConsent?: boolean }>): NonNullable<ActionExecutorDeps['projectAction']> {
     const authorityRuntime = runtime;
     return async args => {
         const rootRequestId = args.context.actionRequestId ?? ingress.transportRequestId;
@@ -255,6 +259,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         let workerBasis: WorkspaceSyncWorkerTargetBasis | undefined;
         const resolveAccepted = () => stage('project.workspace.resolve', async () => {
             await assertNotCancelled();
+            if (removal?.association) return removal.association;
             const association = await resolveProjectSetupAcceptedWorkspace({ address: request.input.workspace,
                 ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
             await assertNotCancelled();
@@ -489,6 +494,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             return selected;
         };
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,
+            ...(removal?.requireRememberedConsent ? { requireRememberedConsent: true } : {}),
             dotenvPreparation: dotenvPreparation(),
             originalEnvironment,
             runtimeEnvironment: runtimeEnvironments.get(association.workspace.rootPath),
@@ -809,6 +815,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 ...(runtime.platform ? { platform: runtime.platform } : {}), hostEnvironment: originalEnvironment,
                 ...(originRun ? { originRun } : {}),
             });
+            const setupState: { settled?: Readonly<{ outcome: ProjectSetupExecutionOutcome; manifest: PreparedProjectSetupPlan['manifest'] }> } = {};
             const admitted = await runtime.workerAdmission.execute({ operationId, workspaceRefId: association.workspace.id, requesterAccountId: runtime.accountId,
                 memoryDemand: acceptedMemory, signal: operationSignal,
                 ...(workerBasis ? { relatedWorkspaces: workerBasis.relationships.flatMap(relationship => [
@@ -816,7 +823,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     { workspaceRefId: relationship.betaWorkspaceRefId, relationshipId: relationship.relationshipId },
                 ]) } : {}),
                 accept(handle) { publishProjectFiniteAdmission({ workspace: association.workspace, purpose, requesterAccountId: runtime.accountId, operation,
-                    ...commandIdentity, ...(originRun ? { originRun } : {}) }); operation.operationAcceptance?.accept(handle); },
+                    ...commandIdentity, ...(originRun ? { originRun } : {}) });
+                    if (!removal) operation.operationAcceptance?.accept(handle); },
                 onQueue: ahead => {
                     traceExternalActionStage(args.actionId, rootRequestId, 'project.reservation.queued');
                     operation.operationProgress.update({ phase: 'queued', queueAhead: ahead, label: `Queued — ${ahead} ahead` });
@@ -838,7 +846,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     };
                     const resumeSetupReview = async (result: ActionExecuteResult) => {
                         const pending = readProjectSetupConsentFailureV1(withRequestedConsentScope(result));
-                        if (kind !== 'no_launch' || !pending || !operation.operationReview) return false;
+                        if (kind !== 'no_launch' || !pending || !operation.operationReview || removal?.requireRememberedConsent) return false;
                         preparationPhase('setup');
                         await operation.operationReview.waitForResume(pending.details, { review: async decision => {
                             await assertNotCancelled();
@@ -951,6 +959,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         }
                         kind = setup.kind;
                         if (setup.kind === 'outcome_uncertain') throw coded(setup.result.ok ? 'outcome_uncertain' : setup.result.errorCode);
+                        setupState.settled = { outcome: setup, manifest: setupReview.invocation.plan.manifest };
                         if (!setup.result.ok || request.actionId === 'projects.prepare') return finish(setup.result);
                         // No setup process or environment effect ran. The final
                         // post-authorization review still checks current bytes.
@@ -1033,6 +1042,13 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         unavailable: workerUnavailable, reason: admissionResult.data.reason }) : null;
                 return failure(admissionResult.data.reason, details?.success ? details.data : undefined);
             }
+            // Release the containing finite reservation before a Service child
+            // admits its own setup. A one-slot host must not queue behind itself.
+            if (setupState.settled) {
+                const autostartFailure = await startProjectSetupAutostartServices({ ...setupState.settled, context: args.context,
+                    parent: { actionId: request.actionId, input: projectNativeJsonValueForTransport(request.input) as Record<string, JsonValue> } });
+                if (autostartFailure) return autostartFailure;
+            }
             return admitted;
             } finally {
                 try { if (!nativeUncertain) await releaseNativeInvocations(); }
@@ -1047,7 +1063,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         };
         let result: ActionExecuteResult;
         const local = args.context.operationAcceptance?.actionId === request.actionId ? args.context : ingress.localActionContext;
-        if (local?.operationOwnerUpdate && local.operationAcceptance?.actionId === request.actionId) {
+        if (removal && request.actionId === PROJECT_PREPARE_ACTION_ID_V1 && request.input.phase === 'teardown') {
+            result = await run(removal.operation);
+        } else if (local?.operationOwnerUpdate && local.operationAcceptance?.actionId === request.actionId) {
             const attribution = acceptedAttribution('requesterWorkAttributionV1' in local ? local.requesterWorkAttributionV1 : undefined);
             const ingressReview = ingress.localActionContext?.operationAcceptance?.actionId === request.actionId
                 && ingress.localActionContext.operationAcceptance.operationId === local.operationAcceptance.operationId

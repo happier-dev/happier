@@ -24,6 +24,17 @@ describe('rpcErrors', () => {
       .not.toHaveProperty('details');
   });
 
+  it('retains closed Project cleanup settlement details for recovery without forwarding opaque diagnostics', () => {
+    const details = { kind: 'finiteCommand', phase: 'teardown', step: 0, exitCode: 1, signal: null };
+    const failure = createRpcCallError({ error: 'Cleanup failed', errorCode: 'project_setup_step_failed', details });
+    expect(failure).toMatchObject({ rpcErrorCode: 'project_setup_step_failed', details });
+    expect(createRpcCallError({ error: 'Cleanup failed', errorCode: 'action_failed', details }))
+      .not.toHaveProperty('details');
+    expect(createRpcCallError({ error: 'Cleanup failed', errorCode: 'project_setup_step_failed',
+      details: { ...details, environment: { PRIVATE_TOKEN: 'must-not-forward' } } }))
+      .not.toHaveProperty('details');
+  });
+
   it.each([RPC_ERROR_CODES.OUTCOME_UNKNOWN, undefined])('keeps typed diagnostics separate from native Error.cause (%s)', errorCode => {
     const failureCause = { phase: 'rpc.relay', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null };
     const error = createRpcCallError({ error: 'Relay failed', errorCode, failureCause });

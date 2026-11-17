@@ -37,6 +37,13 @@ beforeEach(async () => {
 afterEach(async () => { boundary.rpc.mockReset(); await homes.reset(); });
 
 describe('storage Action and Machine RPC boundary', () => {
+    it('preserves the teardown refusal and its closed recovery facts at the Storage receiver', async () => {
+        const details = { kind: 'finiteCommand', phase: 'teardown', step: 0, exitCode: 7, signal: null };
+        boundary.rpc.mockResolvedValueOnce({ ok: false, errorCode: 'project_setup_step_failed', error: 'Cleanup failed', details });
+        expect(await storageRpc.deleteMachineStorageNowViaAction({ ...key, items: [reviewed()], reviewedByPerson: true }))
+            .toMatchObject({ ok: false, reason: 'request_failed', errorCode: 'project_setup_step_failed', details });
+    });
+
     it('preserves typed non-permission failures through Action reads and parked watches', async () => {
         const failureCause = { phase: 'dispatch' as const, errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
         boundary.rpc.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN, failureCause));

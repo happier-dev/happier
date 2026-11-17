@@ -2,7 +2,7 @@ import type { RpcAdmissionPredicate, RpcHandlerContext, RpcHandlerRegistrar } fr
 import type { StorageService, StorageServiceDeps, StorageOperationActor } from '@/storage/storageService';
 import { parkWatch } from '@/daemon/lifecycle/parkWatch';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPermissionError } from '@/storage/categories/filesystem';
 import {
@@ -23,6 +23,8 @@ import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { MachineStorageDockerPruneInputV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { runHostActionOperation, type HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import type { ActionId } from '@happier-dev/protocol/actions';
+import { requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetup/projectCheckoutRemoval';
 
 export type DaemonStorageTarget = Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }>;
 export type DaemonStorageRoutes = Readonly<{
@@ -271,10 +273,10 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
                 ? { changed: true, summary: projectSummary(summary, access.canManage) } : { changed: false }) satisfies MachineStorageWatchResultV1;
         }, access.assertCurrent);
     });
-    function registerOperation<I extends Readonly<{ serverId?: string; machineId: string }>, O>(
+    function registerOperation<I extends Readonly<{ serverId?: string; machineId: string; skipCleanup?: boolean }>, O>(
         method: string, requestSchema: Readonly<{ parse(raw: unknown): I }>,
         invoke: (service: StorageService, request: I, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) => Promise<O>,
-        manageOnly = false, effect = false,
+        manageOnly = false, effect = false, removalActionId?: ActionId,
     ) {
         rpc.registerHandler(method, async (raw: unknown, context) => {
             const request = requestSchema.parse(raw);
@@ -287,6 +289,19 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
                 // This dispatch accepts the daemon operation. Closing a sheet or transport
                 // cannot cancel an accepted cleanup; its owner keeps local safety and custody checks.
                 if (effect) await access.assertLocalAuthority();
+                if (removalActionId && options.observeActionExecution && context) {
+                    const actionContext = buildActionExecutorContextForRpc({ ...context, actionId: removalActionId,
+                        serverId: access.target!.serverId });
+                    const outcome = await runHostActionOperation(options.observeActionExecution, {
+                        actionId: removalActionId, input: request, context: actionContext,
+                        execute: async current => ({ ok: true, result: await invoke(service, request, { actor: { ...actor,
+                            removalContext: { ingress: context, context: current, operation: requireProjectCheckoutRemovalOperation(current),
+                                skipCleanup: request.skipCleanup === true },
+                        } }) }),
+                    }, context);
+                    if (!outcome.ok) throw createRpcCallError(outcome);
+                    return outcome.result;
+                }
                 return invoke(service, request, { actor, ...(effect ? {} : { signal: context?.signal }) });
             }, effect ? access.assertLocalAuthority : access.assertCurrent);
             return result;
@@ -299,9 +314,9 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
     registerOperation(RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK, MachineStorageItemsCheckInputV1Schema,
         (service, request, operation) => service.itemsCheck(request.refs, operation));
     registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE, MachineStorageTrashMoveInputV1Schema,
-        (service, request, operation) => service.trashMove(request, operation), false, true);
+        (service, request, operation) => service.trashMove(request, operation), false, true, 'machines.storage.trash.move');
     registerOperation(RPC_METHODS.DAEMON_STORAGE_DELETE_NOW, MachineStorageDeleteNowInputV1Schema,
-        (service, request, operation) => service.deleteNow(request, operation), false, true);
+        (service, request, operation) => service.deleteNow(request, operation), false, true, 'machines.storage.deleteNow');
     rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE, async (raw: unknown, context) => {
         const request = MachineStorageDockerPruneInputV1Schema.parse(raw);
         const access = admission(request, context, true);

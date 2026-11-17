@@ -94,4 +94,34 @@ describe('resume native startup observation', () => {
         await expect(spawn({ directory: '/repo', existingSessionId: 'resumed-session' }))
             .resolves.toEqual({ type: 'success', sessionId: 'resumed-session' });
     });
+
+    it('retains the exact admitted spawn Action for setup autostart rather than inferring a new parent', async () => {
+        const target = { kind: 'machine' as const, machineId: 'machine' };
+        const originalInput = { directory: '/original-project', creationKey: 'original-creation' };
+        const envelope = { v: 1 as const, requestId: 'spawn', target, input: originalInput };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted', binding: {
+            serverIdentityId: 'home', accountId: 'person', authentication: { kind: 'account', tokenEpoch: 0 },
+            actionId: 'session.spawn_new', requestId: 'spawn', requestEnvelopeDigest: 'a'.repeat(43),
+            machineId: 'machine', custodianAccountId: 'person', installationId: 'installation', target, accountEncryptionMode: 'plain',
+        } });
+        const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'person', generateOperationId: () => 'startup' });
+        await operations.observeExecution({ actionId: 'session.spawn_new', input: originalInput, execute: async operation => {
+            const retained = { parent: { actionId: 'session.spawn_new' as const, input: originalInput }, context: {
+                surface: 'rpc' as const, authority: 'account_automation' as const,
+                originalActionEnvelope: envelope, externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+                executeHostReviewedChildAction: async () => ({ ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' }),
+            } };
+            const spawn = createSessionStartupProjectSpawn({ context: { signal: operation.signal,
+                localActionContext: { ...operation, setupAutostart: retained } },
+                awaitAgentSessionOpen: async () => ({ status: 'opened', request: { kind: 'create', sessionId: 'session', cwd: '/resolved-project' } }),
+                stopSession: async () => true,
+                spawnSession: async options => {
+                    expect(options.projectSetupOperation?.setupAutostart?.parent).toEqual({ actionId: 'session.spawn_new', input: originalInput });
+                    expect(options.projectSetupOperation?.setupAutostart?.context.externalActionExecutionAuthorization).toBe(authorization);
+                    return { type: 'success', sessionId: 'session' };
+                } });
+            await spawn({ directory: '/resolved-project' });
+            return { ok: true, result: {} };
+        } });
+    });
 });

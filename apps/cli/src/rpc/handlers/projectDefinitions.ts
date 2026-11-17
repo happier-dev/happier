@@ -149,16 +149,7 @@ export function createProjectDefinitionAction(params: Readonly<{
         runtime = await params.acquirePluginRuntime();
         const services = runtime.registry.projectManagedServices;
         if (!services) return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
-        // A lexical workspace filter would hide a service admitted through a symlink.
-        const handles = await services.listProjectServices({ requireComplete: true });
-        const serviceActivity = await services.activity.read();
-        if (serviceActivity.coverage !== 'complete') return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
-        let isActive = false;
-        for (const handle of handles) {
-          if (handle.kind !== 'workspace' || !serviceActivity.items.some(item => item.ownerRef === handle.instanceId
-            && item.state !== 'settled')) continue;
-          if (canonicalAbsolutePathsEqual(physicalRoot, await realpath(handle.workspace.rootPath))) { isActive = true; break; }
-        }
+        const isActive = !await services.isWorkspaceStopped(physicalRoot);
         return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive,
           ...(context.signal ? { signal: context.signal } : {}) });
       } catch (error) {

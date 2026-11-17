@@ -521,6 +521,27 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationSnapshotV1Schema.safeParse({ ...held, actionId: 'session.spawn_new' }).success).toBe(false);
     expect(ActionOperationSnapshotV1Schema.safeParse({ ...held, state: 'succeeded', startedAt: 110, settledAt: 120 }).success).toBe(false);
   });
+  it.each(['scm.worktree.remove', 'machines.storage.trash.move', 'machines.storage.deleteNow'])(
+    'retains teardown review on the original %s operation', actionId => {
+      const held = { ...baseSnapshot, actionId,
+        setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'cleanup',
+          reviewedEffect: { commands: [] } },
+        domainRef: { kind: 'projectCommand', purpose: 'teardown', serverId: 'home', machineId: 'machine',
+          workspaceRefId: 'workspace', cwd: '/project' } };
+      expect(ActionOperationSnapshotV1Schema.safeParse(held).success).toBe(true);
+      expect(ActionOperationSnapshotV1Schema.safeParse({ ...held,
+        domainRef: { ...held.domainRef, purpose: 'setup' } }).success).toBe(false);
+      expect(ActionOperationSnapshotV1Schema.safeParse({ ...held, state: 'succeeded', startedAt: 110, settledAt: 120 }).success).toBe(false);
+    });
+  it('retains closed finite cleanup settlement without embedding another review', () => {
+    const failed = { ...baseSnapshot, actionId: 'scm.worktree.remove', state: 'failed', startedAt: 110, settledAt: 120,
+      error: { errorCode: 'project_setup_step_failed', error: 'Cleanup failed', details: {
+        kind: 'finiteCommand', phase: 'teardown', step: 1, exitCode: 7, signal: null,
+      } } };
+    expect(ActionOperationSnapshotV1Schema.safeParse(failed).success).toBe(true);
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...failed,
+      error: { ...failed.error, details: { ...failed.error.details, cleanupReview: {} } } }).success).toBe(false);
+  });
   it('accepts only strict producer setup-consent facts bound to the terminal failure code', () => {
     const failure = { errorCode: 'project_setup_consent_required', error: 'Consent required', details: {
       kind: 'pendingApproval', code: 'project_setup_consent_required',

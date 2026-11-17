@@ -19,6 +19,7 @@ import { parseQualifiedPluginContributionKey } from '../../plugins/contributionI
 import { PluginActionFailureResponseV1Schema } from '../../plugins/actions/failureResponse.js';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
+import { isProjectCheckoutRemovalActionIdV1 } from '../projectActionIdsV1.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1 } from '../projectWorkerRefusal.js';
 import { ApprovalStaleFailureDetailsSchema } from '../../approvals/approvalStaleReason.js';
@@ -33,6 +34,8 @@ import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV
   readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
+import { ActionOperationProgressPhaseV1Schema } from './progressV1.js';
+import { FiniteCommandFailureDetailsV1Schema } from './finiteCommandFailureV1.js';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema,
   MachineAgentIsolationSetResultV1Schema } from '../../machines/agentIsolationV1.js';
 import { DeploymentTargetLinkProvisionedResultV1Schema, projectDeploymentTargetLinkFailureV1 } from '../../deployments/deploymentActionsV1.js';
@@ -53,10 +56,13 @@ import { DeploymentRestoreFailureResultV1Schema, type DeploymentRestoreFailureRe
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentBackupActionIdV1, isDeploymentTargetLinkActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 export { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 export { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from './methodsV1.js';
+export { ACTION_OPERATION_PROGRESS_PHASE_MAX_LENGTH_V1, ActionOperationProgressPhaseV1Schema } from './progressV1.js';
+export { FiniteCommandFailureDetailsV1Schema, type FiniteCommandFailureDetailsV1 } from './finiteCommandFailureV1.js';
 
 /** Existing operations that may hold their original Project setup invocation. */
 export function canRetainProjectSetupReviewV1(actionId: string): boolean {
-  return actionId === 'projects.prepare' || actionId === 'projects.script.run' || actionId === 'projects.compute.exec'
+  return isProjectCheckoutRemovalActionIdV1(actionId)
+    || actionId === 'projects.prepare' || actionId === 'projects.script.run' || actionId === 'projects.compute.exec'
     || actionId === 'session.spawn_new' || actionId === 'session.fork' || actionId === 'session.handoff'
     || actionId === 'execution.run.start' || actionId === 'execution.run.ensure_or_start';
 }
@@ -72,25 +78,13 @@ export const ACTION_OPERATION_SNAPSHOT_EPHEMERAL_TYPE_V1 = 'action-operation-sna
  */
 export const ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1 = 'action-operation-updated';
 
-export const ACTION_OPERATION_PROGRESS_PHASE_MAX_LENGTH_V1 = 200;
 export const ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1 = 1_000;
 const ACTION_OPERATION_TITLE_MAX_LENGTH_V1 = 10_000;
 const ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1 = 200;
 const ACTION_OPERATION_ERROR_MAX_LENGTH_V1 = 10_000;
 
 
-export const ActionOperationProgressPhaseV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_PHASE_MAX_LENGTH_V1)));
 const ActionOperationProgressLabelV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1)));
-
-/** Finite process settlement facts only; command bodies, environment and output never enter this carrier. */
-export const FiniteCommandFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('finiteCommand'),
-  phase: ActionOperationProgressPhaseV1Schema,
-  step: z.optional(z.number().check(z.int(), z.gte(0))),
-  exitCode: z.nullable(z.number().check(z.int())),
-  signal: z.nullable(z.number().check(z.int())),
-}));
-export type FiniteCommandFailureDetailsV1 = Readonly<z.infer<typeof FiniteCommandFailureDetailsV1Schema>>;
 
 export const ActionOperationDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   version: z.literal(1),
@@ -638,8 +632,10 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   }
   if (snapshot.setupReview && (terminal || snapshot.domainRef?.kind !== 'projectCommand'
     || !canRetainProjectSetupReviewV1(snapshot.actionId)
-    || !['projects.prepare', 'projects.script.run', 'projects.compute.exec'].includes(snapshot.actionId)
-      && snapshot.domainRef.purpose !== 'setup')) {
+    || (isProjectCheckoutRemovalActionIdV1(snapshot.actionId)
+      ? snapshot.domainRef.purpose !== 'teardown'
+      : !['projects.prepare', 'projects.script.run', 'projects.compute.exec'].includes(snapshot.actionId)
+        && snapshot.domainRef.purpose !== 'setup'))) {
     context.addIssue({ code: 'custom', path: ['setupReview'], message: 'Only live Project preparation operations may retain a no-effect setup review.' });
   }
   if (snapshot.startedAt !== undefined && snapshot.startedAt < snapshot.createdAt) {

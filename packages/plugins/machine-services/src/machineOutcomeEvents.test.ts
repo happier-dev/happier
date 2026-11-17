@@ -14,8 +14,8 @@ function definition(event: string): PluginCheckpointedEventSourceDefinitionV1 {
         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: { pluginId, machineId: 'machine', materializationId: 'installed' } },
         filter: null, maximumObservationAgeMs: null };
 }
-it('offers all three events and their setup Actions through the existing When catalog', () => {
-    for (const localId of ['backup-failed', 'backup-succeeded', 'machine-pressure-changed']) {
+it('offers settled machine events and their setup Actions through the existing When catalog', () => {
+    for (const localId of ['backup-failed', 'backup-succeeded', 'machine-pressure-changed', 'worktree.removed']) {
         const event = PLUGIN_MANIFEST.contributes.events?.find(row => row.id === localId);
         expect(event?.kind).toBe('event');
         expect(event && 'automation' in event && event.automation).toMatchObject({ eligible: true,
@@ -23,13 +23,39 @@ it('offers all three events and their setup Actions through the existing When ca
         expect(PLUGIN_MANIFEST.contributes.actions?.find(row => row.id === localId + '/setup')).toBeDefined();
     }
 });
+it.each([true, false])('projects a successful removal with Workspace association %s as the exact original worktree fact without requiring a backup Environment', async associated => {
+    let listener: ((event: HostEventEnvelope<typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1>) => void | Promise<void>) | undefined;
+    // The authenticated host transport is the boundary; delivery and source matching remain real.
+    const host = { subscribe(_target: unknown, callback: typeof listener) { listener = callback; return { dispose() {} }; } } as unknown as BackgroundServiceContext['services']['events']['host'];
+    const adapter = createMachineOutcomeEventSourceAdapter(host, () => 200);
+    const selected = { ...definition('worktree-removed'), sourceConfig: { v: 1, serverId: 'home', machineId: 'machine' } };
+    const decoded = adapter.decode(selected);
+    expect(decoded).not.toBeNull();
+    if (!decoded) throw new Error('Expected valid removal source');
+    const context = { signal: new AbortController().signal } as BackgroundServiceContext;
+    const observe = () => adapter.observe({ context, definition: selected, definitions: [selected], source: decoded, isCurrent: async () => true });
+    await observe();
+    const wakes: string[] = [];
+    adapter.subscribeWake!(async sourceId => { if (sourceId) wakes.push(sourceId); });
+    const removal = {
+        workspace: associated ? { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/original' } : null,
+        project: null, machineId: 'machine', operationId: 'retire', worktreePath: '/original',
+        outcome: 'removed' as const, removalKind: 'retired' as const,
+    };
+    await listener?.({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
+        payload: { kind: 'worktreeRemoved', serverId: 'home', occurredAt: 100, removal } });
+    const observed = await observe();
+    expect(wakes).toEqual(['worktree-removed']);
+    expect(observed.observations).toHaveLength(1);
+    expect(observed.observations[0]).toMatchObject({ occurredAt: 100, payload: removal });
+});
 it('projects each matched settled run and pressure transition once, retains arrivals during admission, and has zero idle reads', async () => {
     let listener: ((event: HostEventEnvelope<typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1>) => void | Promise<void>) | undefined;
     let disposed = false;
     // Authenticated host-event transport is the boundary; the adapter and schemas remain real.
     const host = { subscribe(_target: unknown, callback: typeof listener) { listener = callback; return { dispose() { disposed = true; } }; } } as unknown as BackgroundServiceContext['services']['events']['host'];
     const adapter = createMachineOutcomeEventSourceAdapter(host, () => 200);
-    const definitions = ['backup-failed', 'backup-succeeded', 'machine-pressure-changed'].map(definition);
+    const definitions = ['backup-failed', 'backup-succeeded', 'machine-pressure-changed', 'worktree.removed'].map(definition);
     const context = { signal: new AbortController().signal } as BackgroundServiceContext;
     const observe = async (definition: PluginCheckpointedEventSourceDefinitionV1) => {
         const decoded = adapter.decode(definition);

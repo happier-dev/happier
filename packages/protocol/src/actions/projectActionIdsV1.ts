@@ -1,9 +1,18 @@
 import { RPC_METHODS } from '../rpc/methods.js';
 
+export const PROJECT_PREPARE_ACTION_ID_V1 = 'projects.prepare' as const;
+
+/** Destructive checkout owners retain cleanup review and Stop in their own operation. */
+export function isProjectCheckoutRemovalActionIdV1(actionId: string): actionId is
+  'scm.worktree.remove' | 'machines.storage.trash.move' | 'machines.storage.deleteNow' | 'projects.worker.copy.retire' | 'session.delete' {
+  return actionId === 'scm.worktree.remove' || actionId === 'machines.storage.trash.move' || actionId === 'machines.storage.deleteNow'
+    || actionId === 'projects.worker.copy.retire' || actionId === 'session.delete';
+}
+
 /** Pure vocabulary keeps Action identity admission independent of completion/catalog loading. */
 export const PROJECT_ACTION_IDS_V1 = [
   'projects.pages.list',
-  'projects.trust.list', 'projects.trust.revoke', 'projects.prepare', 'projects.script.run', 'projects.compute.exec',
+  'projects.trust.list', 'projects.trust.revoke', PROJECT_PREPARE_ACTION_ID_V1, 'projects.script.run', 'projects.compute.exec',
 ] as const;
 export type ProjectActionIdV1 = typeof PROJECT_ACTION_IDS_V1[number];
 export const PROJECT_FINITE_ACTION_RPC_METHODS_V1 = {

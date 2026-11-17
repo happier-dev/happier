@@ -7,10 +7,12 @@ import { PileFactError, pileFactsExpect, readPileFacts, storageSizeFromMeasureme
 import { readStoragePathIdentity } from './trash/removeStoragePath';
 import { storagePathsEqual as canonicalAbsolutePathsEqual } from './storagePath';
 import { minimalPileUnion } from './pileStore';
+import type { StorageWorktreeRemovalContext } from './worktrees/storageWorktreeOperations';
 
 export type PileApplyInput = Readonly<{
     items: readonly Readonly<{ ref: PileItemRefV1; expect: string }>[];
     mode: 'trash' | 'delete'; actor: StorageActorV1; custodianAccountId: string; emptyAfter?: boolean;
+    removalContext?: StorageWorktreeRemovalContext;
     assertCurrent?(): Promise<void>;
     assertCurrentAuthority(item: StorageCleanupItem): Promise<void>;
 }>;
@@ -75,14 +77,14 @@ export async function applyPile(input: PileApplyInput, deps: PileApplyDeps): Pro
                 const entry = await prepared.commit(async ({ payloadPath, beforeEffect: trashBeforeEffect }) => {
                     const composedBeforeEffect = async () => { await trashBeforeEffect?.(); await beforeEffect(); };
                     await input.assertCurrent?.();
-                    await adapter.retire({ payloadPath, beforeEffect: composedBeforeEffect });
+                    await adapter.retire({ payloadPath, beforeEffect: composedBeforeEffect, removalContext: input.removalContext });
                 });
                 movedEntries.push({ entryId: entry.entryId, itemId: checked.ref.itemId, payloadPath: prepared.payloadPath,
                     bytes: entry.size.allocatedBytes, item: facts.item });
                 result.inTrashBytes += entry.size.allocatedBytes;
                 result.outcomes.push({ itemId: checked.ref.itemId, status: 'moved' });
             } else {
-                await input.assertCurrent?.(); await adapter.discard({ beforeEffect });
+                await input.assertCurrent?.(); await adapter.discard({ beforeEffect, removalContext: input.removalContext });
                 try { await readStoragePathIdentity(facts.ref.path); throw new Error('Storage owner left the removed path behind'); }
                 catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
                 result.freedBytes += measured.totalExclusiveBytes;

@@ -3333,7 +3333,8 @@ export async function startDaemon(
             happyHomeDir: home, activeServerDir, installDir: projectPath(),
             ...(hostBootedAt !== undefined ? { bootedAt: hostBootedAt } : {}),
             managedSessionDirectories: createManagedSessionDirectories({ activeServerDir }),
-            worktreeOperations: createStorageWorktreeOperations({ happyHomeDir: home }),
+            worktreeOperations: createStorageWorktreeOperations({ happyHomeDir: home,
+              resolveProjectRuntime: async ingress => await apiMachine?.resolveProjectFiniteRuntime(ingress) ?? null }),
             checkoutReferences: createProjectWorkspaceRetirement({ authority: { credentials: capturedCredentials, serverId: target.serverId },
               serverId: target.serverId, machineId: target.machineId,
               assertCurrentAuthority: async () => {

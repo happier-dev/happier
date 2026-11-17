@@ -19,6 +19,12 @@ import {
   type AdmittedScmEffect,
 } from '@/workspaces/activation/workspaceEffect';
 import { resolveCwd } from '@/scm/runtime';
+import type { ExecuteScmActionOperationParams } from '@/scm/actions/executeScmActionOperation';
+import { createMemberWorkspaceReadServices, type MemberWorkspaceReadServices } from '@/workspaces/activation/memberWorkspaceSource';
+import type { WorkspaceEffectServices } from '@/workspaces/activation/workspaceEffectWorker';
+
+export type MemberScmRemovalService = (input: Parameters<NonNullable<ExecuteScmActionOperationParams['removeWorktree']>>[0],
+  workspace: MemberWorkspaceReadServices) => ReturnType<NonNullable<ExecuteScmActionOperationParams['removeWorktree']>>;
 
 /** One local repository operation (a read, or a Manage write), executed whole by the member-owned Workspace effect child. */
 export type MemberScmReadEffect = Readonly<{
@@ -40,6 +46,41 @@ const unavailable = (code = 'agent_isolation_unavailable') =>
     details: { reason: code, phase: 'native_execution_preparation' },
   });
 
+/** The existing finite Workspace-effect launch, shared by repository operations and comparisons. */
+export async function runMemberScmEffect<T>(input: Readonly<{
+  agentIsolation: HostAgentIsolationLaunchContext;
+  requesterIdentity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+  workspaceRoot: string; signal: AbortSignal;
+  effect: (scm: AdmittedScmEffect) => unknown;
+  services?: Partial<WorkspaceEffectServices>;
+}>): Promise<T> {
+  const executable = input.agentIsolation.read()?.launch?.managedHappierBinaryPath;
+  if (!executable) throw unavailable();
+  const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+  try {
+    const admitted = await prepareAdmittedScmEffect({ registry: lease.registry });
+    const launch = await authorizeWorkspaceEffectLaunch({
+      agentIsolation: input.agentIsolation, requesterIdentity: input.requesterIdentity, signal: input.signal,
+      assertCurrent: () => { input.signal.throwIfAborted(); admitted.assertCurrent(); },
+      managedHappierBinaryPath: executable, workspaceRoot: input.workspaceRoot,
+    });
+    let result: { value: T } | undefined;
+    let failure: unknown;
+    const outcome = await runWorkspaceEffectChild({ launch, signal: input.signal, id: randomUUID(), effect: input.effect(admitted.effect),
+      refusal: unavailable, services: {
+        onEffectsIssued: async () => {}, complete: async () => { throw unavailable('workspace_effect_protocol_invalid'); },
+        ...input.services,
+        fail: async (error: Error) => { failure = error; },
+        completeScmRead: async (value: T) => { result = { value }; },
+      } });
+    if (outcome.failure !== undefined) throw outcome.failure;
+    if (failure) throw failure;
+    input.signal.throwIfAborted();
+    if (!outcome.settled || !result) throw unavailable('workspace_effect_outcome_unknown');
+    return result.value;
+  } finally { await lease.release(); }
+}
+
 /**
  * Daemon side. Repository work in a member folder (a Can use member's read, or Manage's read
  * or write) touches member-controlled Git metadata and config (state files may be symlinks or
@@ -59,6 +100,7 @@ export async function readScmAsMember(
     method: string;
     input: unknown;
     signal: AbortSignal;
+    removeWorktree?: MemberScmRemovalService;
   }>,
 ): Promise<unknown> {
   // Lexical only: the member child resolves links as the member.
@@ -73,63 +115,17 @@ export async function readScmAsMember(
       error: 'Path is outside your folder',
     };
   }
-  const executable =
-    input.agentIsolation.read()?.launch?.managedHappierBinaryPath;
-  if (!executable) throw unavailable();
-  const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-  try {
-    const admitted = await prepareAdmittedScmEffect({
-      registry: lease.registry,
-    });
-    const effect: MemberScmReadEffect = {
+  return runMemberScmEffect({ ...input,
+    effect: scm => ({
       kind: 'scm_read',
       workspaceRoot: input.workspaceRoot,
       ...(input.root !== undefined ? { root: input.root } : {}),
       method: input.method,
       input: input.input,
-      scm: admitted.effect,
-    };
-    const launch = await authorizeWorkspaceEffectLaunch({
-      agentIsolation: input.agentIsolation,
-      requesterIdentity: input.requesterIdentity,
-      signal: input.signal,
-      assertCurrent: () => {
-        input.signal.throwIfAborted();
-        admitted.assertCurrent();
-      },
-      managedHappierBinaryPath: executable,
-      workspaceRoot: input.workspaceRoot,
-    });
-    let result: { value: unknown } | undefined;
-    let failure: unknown;
-    const outcome = await runWorkspaceEffectChild({
-      launch,
-      signal: input.signal,
-      id: randomUUID(),
-      effect,
-      refusal: unavailable,
-      services: {
-        onEffectsIssued: async () => {},
-        complete: async () => {
-          throw unavailable('workspace_effect_protocol_invalid');
-        },
-        fail: async (error: Error) => {
-          failure = error;
-        },
-        completeScmRead: async (value: unknown) => {
-          result = { value };
-        },
-      },
-    });
-    if (outcome.failure !== undefined) throw outcome.failure;
-    if (failure) throw failure;
-    input.signal.throwIfAborted();
-    if (!outcome.settled || !result)
-      throw unavailable('workspace_effect_outcome_unknown');
-    return result.value;
-  } finally {
-    await lease.release();
-  }
+      scm,
+    } satisfies MemberScmReadEffect),
+    services: input.removeWorktree ? { removeScmWorktree: input.removeWorktree } : {},
+  });
 }
 
 /** Member child side: the same SCM handlers, confined to the member folder, with Git run directly
@@ -137,6 +133,7 @@ export async function readScmAsMember(
 export async function executeMemberScmRead(
   effect: MemberScmReadEffect,
   signal: AbortSignal,
+  services?: Readonly<{ removeScmWorktree?: MemberScmRemovalService }>,
 ): Promise<unknown> {
   const root = effect.root ?? effect.workspaceRoot;
   // isCanonicalAbsolutePathInsideRoot takes (rootPath, candidatePath).
@@ -166,6 +163,8 @@ export async function executeMemberScmRead(
         registry: registry.registry,
         accessPolicy: { kind: 'restrictedRoots', roots: [folder.cwd] },
         admittedLocalRepositoryOperation: true,
+        ...(services?.removeScmWorktree ? { admittedRemoveWorktree: (input: Parameters<MemberScmRemovalService>[0]) =>
+          services.removeScmWorktree!(input, createMemberWorkspaceReadServices()) } : {}),
       },
     );
     const handler = handlers.get(effect.method);
