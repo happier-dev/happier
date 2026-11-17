@@ -149,16 +149,23 @@ it('keeps the sidebar and header on one presence fact after Create and a facts-e
     const base = Date.now();
     const controller = createMachineFixture({ id: 'create-controller', active: true, activeAt: base, presenceProtocolVersion: 1 });
     const created = createMachineFixture({ id: 'created-machine', active: false, activeAt: base, presenceProtocolVersion: 1 });
+    const ended = createMachineFixture({ id: 'ended-machine', active: false, activeAt: base, presenceProtocolVersion: 1 });
+    const retired = ManagedMachineV1Schema.parse({
+        ...managedOperationCollection('bound').managed,
+        enrolledMachineId: ended.id, allocation: 'confirmed-absent', desired: 'delete',
+        observation: { observedAt: base, availability: 'absent' },
+    });
+    const managedByServerId = { [HOME]: [retired] };
     const options = { sourceServerId: HOME };
-    storage.getState().applyMachines([controller], true, options);
+    storage.getState().applyMachines([controller, ended], true, options);
     const read = await renderHook(() => {
         const lists = useMachineListByServerId();
         const groups = React.useMemo((): readonly ActiveSelectionMachineGroup[] => [{
             serverId: HOME, serverName: 'Home', accountScope: SCOPE, status: 'idle', machines: lists[HOME] ?? EMPTY_MACHINES,
         }], [lists]);
-        const inventory = useMachineCollection({ groups, groupedByHome: false });
+        const inventory = useMachineCollection({ groups, groupedByHome: false, managedByServerId });
         const rows = React.useMemo(() => inventory.sections.flatMap(section => section.rows), [inventory]);
-        return { inventory, counts: useMachineFleetPresence(groups), rows: useMachineCollectionPresenceRows(rows),
+        return { inventory, counts: useMachineFleetPresence(groups, managedByServerId), rows: useMachineCollectionPresenceRows(rows),
             header: useMachinePresenceSummary(HOME, created.id) };
     });
     try {
@@ -169,7 +176,7 @@ it('keeps the sidebar and header on one presence fact after Create and a facts-e
         expect(read.getCurrent().counts).toEqual({ online: 1, offline: 1, unknown: 0 });
         // A reconnect census or daemon-state publication can replace content
         // while the canonical presentation owner retains every displayed fact.
-        await act(async () => storage.getState().applyMachines([controller, created].map(machine => ({
+        await act(async () => storage.getState().applyMachines([controller, created, ended].map(machine => ({
             ...machine, daemonStateVersion: machine.daemonStateVersion + 1,
         })), true, options));
         expect(read.getCurrent().inventory).toBe(retained);

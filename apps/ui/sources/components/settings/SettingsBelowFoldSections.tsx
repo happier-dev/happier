@@ -14,7 +14,7 @@ import { SettingsSessionsBehaviorSection } from '@/components/settings/SettingsS
 import { useResolvedSettingsPageNavigation } from '@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity';
 import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
 import type { SettingsBelowFoldSectionsProps } from '@/components/settings/settingsBelowFoldSectionTypes';
-import { useMachinePresenceCounts } from '@/sync/domains/state/storage';
+import { useHomeMachineCollectionPresence } from '@/components/settings/machines/collection/useMachineCollection';
 
 function rootGroups(tree: readonly ResolvedSettingsPageNode[]): readonly ResolvedSettingsPageNode[] {
     return tree.find((node) => node.id === 'settings')?.children ?? [];
@@ -38,7 +38,7 @@ function resolveProfileAndAccountSubtitle(page: ResolvedSettingsPageNode, defaul
  */
 const SettingsMachinesRowPresence = React.memo(function SettingsMachinesRowPresence() {
     const { theme } = useUnistyles();
-    const counts = useMachinePresenceCounts();
+    const counts = useHomeMachineCollectionPresence();
     const needingYou = summarizeMachinesNeedingAttention(useMachinesNeedingAttention());
     if (needingYou) {
         return <Text testID="settings-machines-row-attention" style={{ color: theme.colors.state.attention.textForeground }} numberOfLines={1}>{needingYou.title}</Text>;

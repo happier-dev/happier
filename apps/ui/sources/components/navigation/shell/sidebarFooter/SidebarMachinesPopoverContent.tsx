@@ -1,4 +1,3 @@
-import { countMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useOpenAppSection, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -111,7 +110,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
         ...section,
         rows: section.rows.filter(row => row.kind !== 'machine' || !needsYouKeys.has(JSON.stringify([row.serverId, row.machineId]))),
     }), [collection.sections, needsYouKeys]);
-    const machineCount = countMachineFleet(model.visibleMachineGroups);
+    const machineCount = collection.machineCount;
     // Values are live only while the popover is open: one batched demand for the online machines it lists.
     const presenceRows = React.useMemo(() => collection.sections.filter(section => !section.archived).flatMap(section => section.rows), [collection.sections]);
     const demandKeys = React.useMemo(() => presenceRows
@@ -199,7 +198,8 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
             subheader={(
                 <>
                     {/* A summary that stopped answering says how old it is, with Retry, where the counts stand. */}
-                    <PopoverPresence rows={presenceRows} groups={model.visibleMachineGroups} />
+                    <PopoverPresence rows={presenceRows} groups={model.visibleMachineGroups}
+                        managedByServerId={model.managedByServerId} managedFirstAnswerPending={model.managedFirstAnswerPending} />
                     {/* With one machine there is nothing to summarise: its row is the summary. */}
                     {machineCount > 1 ? (
                         <HappierPressable
@@ -331,9 +331,10 @@ const MachinesPopoverSection = React.memo(function MachinesPopoverSection(props:
  * when the two cannot share the line.
  */
 /** The aggregate badge reads presence and held summaries without acquiring fleet-wide demand. */
-function PopoverPresence(props: Readonly<{ rows: readonly MachineCollectionRow[]; groups: ReturnType<typeof useMachinesSettingsViewModel>['visibleMachineGroups'] }>) {
+function PopoverPresence(props: Readonly<{ rows: readonly MachineCollectionRow[]; groups: Parameters<typeof useMachineFleetPresence>[0];
+    managedByServerId: Parameters<typeof useMachineFleetPresence>[1]; managedFirstAnswerPending: boolean }>) {
     const rows = useMachineCollectionPresenceRows(props.rows);
-    const counts = useMachineFleetPresence(props.groups);
+    const counts = useMachineFleetPresence(props.groups, props.managedByServerId, props.managedFirstAnswerPending);
     const machineKeys = React.useMemo(() => rows.flatMap(row => row.online && row.kind === 'machine'
         ? [{ serverId: row.serverId, machineId: row.machineId }] : []), [rows]);
     return <MachineSummaryFreshnessLine machineKeys={machineKeys} fallback={(

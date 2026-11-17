@@ -210,8 +210,7 @@ function AllMachinesIndexBody() {
     const holding = answerPending && !answered;
     const items = useMachineCollectionPresenceRows(holding ? NO_ITEMS : answeredItems);
     const presence = React.useMemo(() => partitionMachineCollectionRailRows(items, true), [items]);
-    // The headline counts the same non-archived collection the page renders.
-    const fleetCount = items.length;
+    const fleetCount = holding ? 0 : collection.machineCount;
     const searchable = items.length > SEARCH_THRESHOLD;
     const normalizedQuery = searchable && !besideList ? query.trim().toLocaleLowerCase() : '';
     // A long fleet keeps its offline machines out of the table until asked for, as the list column folds them

@@ -1,19 +1,21 @@
 import * as React from 'react';
 
-import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
-import { resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
+import { useMachinePresenceSnapshot, type MachinePresenceTarget } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { partitionMachineFleetPresence, resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
-import { selectMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
-import { partitionMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
+import { selectMachineFleet, selectVisibleMachineInventory } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { resolveMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationSelectors, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { readManagedInstallationPrompt } from '../managed/managedCreationPresentation';
+import { useManagedMachineInventory } from '../managed/useManagedMachineInventory';
 
-import { buildMachineCollection, reconcileMachineCollection, managedMachineConsentKey, machineCollectionRowKey, type MachineCollection, type MachineCollectionRow } from './machineCollectionModel';
+import { buildMachineCollection, reconcileMachineCollection, managedMachineConsentKey, machineCollectionRowKey, selectMachineCollectionMembership, type MachineCollection, type MachineCollectionRow } from './machineCollectionModel';
 
 /** Structural inventory changes rebuild the collection; presence belongs to its visible leaves. */
 export function useMachineCollection(input: Omit<Parameters<typeof buildMachineCollection>[0], 'nowMs' | 'creationOperations' | 'awaitingConsent'>): MachineCollection {
@@ -88,16 +90,79 @@ export function useMachineCollectionRowPresence(row: MachineCollectionRow): Mach
     return useMachineCollectionPresenceRows(rows)[0]!;
 }
 
-/** Aggregate presence uses the Home fleet, including enrollments whose creation receipt is archived. */
-export function useMachineFleetPresence(groups: readonly ActiveSelectionMachineGroup[]) {
-    const members = React.useMemo(() => groups.flatMap(group => selectMachineFleet(group.machines)
-        .map(machine => ({ serverId: group.serverId, scope: group.accountScope, machine }))), [groups]);
-    const readMachines = React.useCallback(() => members.map(member => member.machine), [members]);
-    const readSnapshot = React.useCallback((nowMs: number) => partitionMachineFleetPresence(members,
-        member => resolveMachineFleetPresence(member.scope, member.machine, nowMs)).counts, [members]);
-    const targets = React.useMemo(() => groups.map(group => ({ serverId: group.serverId,
-        machineIds: selectMachineFleet(group.machines).map(machine => machine.id) })), [groups]);
+type CollectionPresenceGroup = Pick<ActiveSelectionMachineGroup, 'serverId' | 'accountScope' | 'machines'>;
+type CollectionPresenceSource = Omit<CollectionPresenceGroup, 'machines'> & {
+    readMachines: () => CollectionPresenceGroup['machines'];
+    machineIds?: readonly string[];
+};
+
+function useMachineCollectionPresence(
+    sources: readonly CollectionPresenceSource[],
+    managedByServerId: Parameters<typeof buildMachineCollection>[0]['managedByServerId'],
+    managedFirstAnswerPending: boolean,
+) {
+    const readMembership = React.useMemo(() => {
+        const readers = (managedFirstAnswerPending ? [] : sources).map(source => {
+            let previous: { machines: CollectionPresenceGroup['machines']; enrolled: CollectionPresenceGroup['machines'];
+                accountScope: CollectionPresenceSource['accountScope']; count: number } | undefined;
+            return () => {
+                const machines = source.readMachines();
+                if (previous?.machines === machines) return previous;
+                const selected = selectMachineCollectionMembership(machines, managedByServerId?.[source.serverId]);
+                previous = { machines, enrolled: selectMachineFleet(selected.currentEnrolled),
+                    accountScope: source.accountScope, count: selected.count };
+                return previous;
+            };
+        });
+        return () => readers.map(read => read());
+    }, [sources, managedByServerId, managedFirstAnswerPending]);
+    const readMachines = React.useCallback(() => readMembership().flatMap(home => home.enrolled), [readMembership]);
+    const readSnapshot = React.useCallback((nowMs: number) => {
+        let total = 0;
+        let online = 0;
+        let offline = 0;
+        for (const { accountScope, enrolled, count } of readMembership()) {
+            const { counts } = partitionMachineFleetPresence(enrolled, machine => resolveMachineFleetPresence(accountScope, machine, nowMs));
+            total += count;
+            online += counts.online;
+            offline += counts.offline;
+        }
+        // Retained history and standalone creations have no current connection to classify.
+        return { online, offline, unknown: total - online - offline };
+    }, [readMembership]);
+    const targets = React.useMemo((): readonly MachinePresenceTarget[] => managedFirstAnswerPending ? [] : sources.map(source => ({
+        serverId: source.serverId, machineIds: source.machineIds,
+    })), [sources, managedFirstAnswerPending]);
     const areEqual = React.useCallback((left: ReturnType<typeof readSnapshot>, right: ReturnType<typeof readSnapshot>) =>
         left.online === right.online && left.offline === right.offline && left.unknown === right.unknown, []);
     return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areEqual);
+}
+
+/** Badge reachability is a projection of the same membership as the collection. */
+export function useMachineFleetPresence(
+    groups: readonly CollectionPresenceGroup[],
+    managedByServerId?: Parameters<typeof buildMachineCollection>[0]['managedByServerId'],
+    managedFirstAnswerPending = false,
+) {
+    const sources = React.useMemo(() => groups.map(group => ({
+        serverId: group.serverId, accountScope: group.accountScope,
+        readMachines: () => group.machines, machineIds: group.machines.map(machine => machine.id),
+    })), [groups]);
+    return useMachineCollectionPresence(sources, managedByServerId, managedFirstAnswerPending);
+}
+
+/** This Home's badges need membership and reachability without building collection rows. */
+export function useHomeMachineCollectionPresence() {
+    const scope = useActiveServerAccountScope();
+    const serverId = scope?.serverId;
+    const serverIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
+    const inventory = useManagedMachineInventory(serverIds, undefined, undefined, true);
+    const store = getStorage();
+    // The closed rail and Settings leaf subscribe to the count, so metadata and heartbeat-only
+    // changes cannot redraw them. Resolve the same exact Home for both enrollment and managed inventory.
+    const sources = React.useMemo(() => scope ? [{
+        serverId: scope.serverId, accountScope: scope,
+        readMachines: () => selectVisibleMachineInventory(resolveMachinesForActiveServerFromState(store.getState(), scope)),
+    }] : [], [scope, store]);
+    return useMachineCollectionPresence(sources, inventory.machinesByServerId, inventory.firstAnswerPending);
 }

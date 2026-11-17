@@ -9,7 +9,7 @@ import {
 import type { MachineResourceAutomaticActionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { useMachineResourceFleetAttention, type MachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
-import { useMachinePresenceCounts } from '@/sync/domains/state/storage';
+import { useHomeMachineCollectionPresence } from '@/components/settings/machines/collection/useMachineCollection';
 import { useMachinesRailSeen } from '@/sync/domains/state/machineAdministrationUiState';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -85,7 +85,7 @@ export function useMachinesRailSignal(): Readonly<{
 }> {
     const fleet = useMachineResourceFleetAttention();
     const seen = useMachinesRailSeen(fleet.accountScope);
-    const counts = useMachinePresenceCounts();
+    const counts = useHomeMachineCollectionPresence();
     const { level, signal } = React.useMemo(() => resolveMachinesRailSignal({ fleet, seen }), [fleet, seen]);
     // The one machine the tooltip names: the headline (needs you or the look shown), or the guard's latest.
     const namedKey = level === 'guard' ? 'guard' : fleet.needsYou.length === 1 || level === 'look' ? JSON.stringify(fleet.headline?.machineKey ?? null) : null;
