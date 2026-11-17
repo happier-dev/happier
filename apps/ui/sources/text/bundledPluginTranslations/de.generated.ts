@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Integration",
   "plugins.channels.surface.bindingSaveUnknownDescription": "Die Änderung wurde möglicherweise bereits gespeichert. Aktualisiere die Verknüpfungsdetails, bevor du sie erneut änderst.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "Die Änderung der Verknüpfung konnte nicht bestätigt werden",
-  "plugins.channels.surface.bindingsErrorDescription": "Aktualisiere, um erneut zu versuchen, die aktuelle Verknüpfungsrichtlinie des Accounts einzulesen.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier konnte die verknüpften Unterhaltungen nicht lesen.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Aktualisiere, um die aktuelle Verknüpfungsrichtlinie des Accounts erneut einzulesen.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Live-Aktualisierungen der Verknüpfungen sind nicht verfügbar",
   "plugins.channels.surface.bindingsRefreshing": "Details der Verknüpfungen werden aktualisiert",

@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "Gli aggiornamenti dell'associazione in tempo reale sono temporaneamente non disponibili.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Gli aggiornamenti dell'associazione in tempo reale non sono disponibili",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Aggiorna per leggere nuovamente la politica vincolante dell'account corrente.",
-  "plugins.channels.surface.bindingsErrorDescription": "Aggiorna per provare a leggere nuovamente la politica vincolante dell'account corrente.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier non è riuscito a leggere le conversazioni collegate.",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "La risorsa di associazione non ha restituito JSON .",
   "plugins.channels.surface.bindingsResourceInvalidJson": "Impossibile leggere la risorsa vincolante.",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "La risorsa vincolante ha una forma inaspettata.",

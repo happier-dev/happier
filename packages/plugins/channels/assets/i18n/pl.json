@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "Aktualizacje powiązań na żywo są tymczasowo niedostępne.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Aktualizacje powiązań na żywo są niedostępne",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Odśwież, aby ponownie przeczytać aktualne zasady powiązania Konta.",
-  "plugins.channels.surface.bindingsErrorDescription": "Odśwież, aby ponownie spróbować przeczytać aktualne zasady powiązania konta.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier nie mógł odczytać połączonych rozmów.",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "Wiążący zasób nie zwrócił JSON.",
   "plugins.channels.surface.bindingsResourceInvalidJson": "Nie można odczytać zasobu wiążącego.",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "Zasób powiązania ma nieoczekiwany kształt.",

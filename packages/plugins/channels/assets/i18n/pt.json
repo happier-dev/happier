@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "As atualizações de vinculação ao vivo estão temporariamente indisponíveis.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "As atualizações de vinculação ao vivo não estão disponíveis",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Atualize para ler novamente a política de vinculação de conta atual.",
-  "plugins.channels.surface.bindingsErrorDescription": "Atualize para tentar ler novamente a política de vinculação de conta atual.",
+  "plugins.channels.surface.bindingsErrorDescription": "O Happier não conseguiu ler as conversas vinculadas.",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "O recurso de ligação não retornou JSON .",
   "plugins.channels.surface.bindingsResourceInvalidJson": "O recurso de ligação não pôde ser lido.",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "O recurso de ligação tem uma forma inesperada.",

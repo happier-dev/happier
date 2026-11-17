@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "Les actualitzacions d'enllaç en directe no estan disponibles temporalment.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Les actualitzacions d'enllaç en directe no estan disponibles",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Actualitzeu per tornar a llegir la política de vinculació del compte actual.",
-  "plugins.channels.surface.bindingsErrorDescription": "Actualitzeu per provar de tornar a llegir la política actual d'enllaç del compte.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier no ha pogut llegir les converses vinculades.",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "El recurs d'enllaç no ha retornat JSON.",
   "plugins.channels.surface.bindingsResourceInvalidJson": "No s'ha pogut llegir el recurs vinculant.",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "El recurs d'enllaç té una forma inesperada.",

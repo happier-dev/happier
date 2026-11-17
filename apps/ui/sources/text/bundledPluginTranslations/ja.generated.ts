@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "統合",
   "plugins.channels.surface.bindingSaveUnknownDescription": "変更はすでに保存されている可能性があります。再度変更する前に、バインディングの詳細を更新してください。",
   "plugins.channels.surface.bindingSaveUnknownTitle": "バインディングの変更を確認できません",
-  "plugins.channels.surface.bindingsErrorDescription": "更新して、現在のアカウント バインド ポリシーを再度読み取ります。",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier はリンクされた会話を読み取れませんでした。",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "更新して、現在のアカウント バインディング ポリシーを再度読み取ります。",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "ライブ バインディング更新は利用できません",
   "plugins.channels.surface.bindingsRefreshing": "バインディングの詳細を更新する",

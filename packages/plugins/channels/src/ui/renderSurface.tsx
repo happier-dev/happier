@@ -9543,7 +9543,7 @@ function AccountLocalChannelsPageSurface(props: Readonly<{
         kind: 'error',
         description: t(
           'plugins.channels.surface.bindingsErrorDescription',
-          'Refresh to try reading the current Account binding policy again.',
+          'Happier couldn’t read your linked conversations.',
         ),
       };
 
@@ -13839,7 +13839,7 @@ function useDaemonChannelsResources(t: Translate) {
           kind: 'error',
           description: t(
             'plugins.channels.surface.bindingsErrorDescription',
-            'Refresh to try reading the current Account binding policy again.',
+            'Happier couldn’t read your linked conversations.',
           ),
         };
   return {

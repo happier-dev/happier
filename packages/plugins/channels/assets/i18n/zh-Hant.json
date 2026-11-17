@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "即時綁定更新暫時不可用。",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "即時綁定更新不可用",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "刷新再次閱讀目前帳號綁定政策。",
-  "plugins.channels.surface.bindingsErrorDescription": "刷新並嘗試再次讀取當前的帳戶綁定策略。",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier 無法讀取已連結的對話。",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "綁定資源未回傳JSON 。",
   "plugins.channels.surface.bindingsResourceInvalidJson": "無法讀取綁定資源。",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "綁定資源具有意外的形狀。",

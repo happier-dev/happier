@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Intégration",
   "plugins.channels.surface.bindingSaveUnknownDescription": "La modification est peut-être déjà enregistrée. Actualise les détails de la liaison avant de la modifier à nouveau.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "Impossible de confirmer le changement de liaison",
-  "plugins.channels.surface.bindingsErrorDescription": "Actualise pour essayer de lire à nouveau la stratégie de liaison de compte actuelle.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier n’a pas pu lire les conversations liées.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Actualise pour lire à nouveau la politique actuelle de liaison du compte.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Les mises à jour de liaison en direct ne sont pas disponibles",
   "plugins.channels.surface.bindingsRefreshing": "Actualisation des détails de la liaison",

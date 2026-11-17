@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Integración",
   "plugins.channels.surface.bindingSaveUnknownDescription": "Es posible que el cambio ya esté guardado. Actualice los detalles del enlace antes de cambiarlos nuevamente.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "No se pudo confirmar el cambio de enlace",
-  "plugins.channels.surface.bindingsErrorDescription": "Actualice para intentar leer nuevamente la política vinculante de cuenta actual.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier no pudo leer las conversaciones vinculadas.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Actualice para leer nuevamente la política vinculante de cuenta actual.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Las actualizaciones vinculantes en vivo no están disponibles",
   "plugins.channels.surface.bindingsRefreshing": "Detalles de encuadernación refrescantes",

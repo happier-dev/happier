@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Integração",
   "plugins.channels.surface.bindingSaveUnknownDescription": "A alteração já pode estar salva. Atualize os detalhes da vinculação antes de alterá-los novamente.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "Não foi possível confirmar a mudança da vinculação",
-  "plugins.channels.surface.bindingsErrorDescription": "Atualize para tentar ler novamente a política de vinculação de conta atual.",
+  "plugins.channels.surface.bindingsErrorDescription": "O Happier não conseguiu ler as conversas vinculadas.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Atualize para ler novamente a política de vinculação de conta atual.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "As atualizações de vinculação ao vivo não estão disponíveis",
   "plugins.channels.surface.bindingsRefreshing": "Atualizando detalhes de vinculação",

@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Integracja",
   "plugins.channels.surface.bindingSaveUnknownDescription": "Zmiana może być już zapisana. Odśwież szczegóły powiązania przed ponowną zmianą.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "Nie udało się potwierdzić zmiany powiązania",
-  "plugins.channels.surface.bindingsErrorDescription": "Odśwież, aby ponownie spróbować przeczytać aktualne zasady powiązania konta.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier nie mógł odczytać połączonych rozmów.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Odśwież, aby ponownie przeczytać aktualne zasady powiązania Konta.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Aktualizacje powiązań na żywo są niedostępne",
   "plugins.channels.surface.bindingsRefreshing": "Odświeżające detale wiązania",

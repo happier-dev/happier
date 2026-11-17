@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Integrazione",
   "plugins.channels.surface.bindingSaveUnknownDescription": "La modifica potrebbe essere già salvata. Aggiorna i dettagli di rilegatura prima di modificarli nuovamente.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "Impossibile confermare la modifica dell'associazione",
-  "plugins.channels.surface.bindingsErrorDescription": "Aggiorna per provare a leggere nuovamente la politica vincolante dell'account corrente.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier non è riuscito a leggere le conversazioni collegate.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Aggiorna per leggere nuovamente la politica vincolante dell'account corrente.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Gli aggiornamenti dell'associazione in tempo reale non sono disponibili",
   "plugins.channels.surface.bindingsRefreshing": "Aggiornamento dei dettagli di rilegatura",

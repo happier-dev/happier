@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "Live-Aktualisierungen der Verknüpfungen sind vorübergehend nicht verfügbar.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Live-Aktualisierungen der Verknüpfungen sind nicht verfügbar",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Aktualisiere, um die aktuelle Verknüpfungsrichtlinie des Accounts erneut einzulesen.",
-  "plugins.channels.surface.bindingsErrorDescription": "Aktualisiere, um erneut zu versuchen, die aktuelle Verknüpfungsrichtlinie des Accounts einzulesen.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier konnte die verknüpften Unterhaltungen nicht lesen.",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "Die Verknüpfungs-Resource hat kein JSON zurückgegeben.",
   "plugins.channels.surface.bindingsResourceInvalidJson": "Die Verknüpfungs-Resource konnte nicht gelesen werden.",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "Die Verknüpfungs-Resource hat eine unerwartete Struktur.",

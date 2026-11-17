@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Интеграция",
   "plugins.channels.surface.bindingSaveUnknownDescription": "Возможно, изменение уже сохранено. Обновите сведения о привязке, прежде чем менять их снова.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "Не удалось подтвердить изменение привязки",
-  "plugins.channels.surface.bindingsErrorDescription": "Обновите, чтобы попробовать еще раз прочитать текущую политику привязки учетной записи.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier не удалось прочитать привязанные разговоры.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Обновите, чтобы снова прочитать текущую политику привязки учетной записи.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Обновления динамических привязок недоступны.",
   "plugins.channels.surface.bindingsRefreshing": "Обновление сведений о привязке",

@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "ライブ バインディング更新は一時的に利用できなくなります。",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "ライブ バインディング更新は利用できません",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "更新して、現在のアカウント バインディング ポリシーを再度読み取ります。",
-  "plugins.channels.surface.bindingsErrorDescription": "更新して、現在のアカウント バインド ポリシーを再度読み取ります。",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier はリンクされた会話を読み取れませんでした。",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "バインディング リソースが JSON を返しませんでした。",
   "plugins.channels.surface.bindingsResourceInvalidJson": "バインディング リソースを読み取れませんでした。",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "バインディング リソースの形状が予期せぬものです。",

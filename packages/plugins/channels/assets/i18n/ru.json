@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "Обновления привязок в реальном времени временно недоступны.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Обновления динамических привязок недоступны.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Обновите, чтобы снова прочитать текущую политику привязки учетной записи.",
-  "plugins.channels.surface.bindingsErrorDescription": "Обновите, чтобы попробовать еще раз прочитать текущую политику привязки учетной записи.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier не удалось прочитать привязанные разговоры.",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "Ресурс привязки не вернул JSON.",
   "plugins.channels.surface.bindingsResourceInvalidJson": "Не удалось прочитать ресурс привязки.",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "Привязка Resource имеет неожиданную форму.",

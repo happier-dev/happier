@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "一體化",
   "plugins.channels.surface.bindingSaveUnknownDescription": "更改可能已儲存。再次更改之前刷新綁定詳細資訊。",
   "plugins.channels.surface.bindingSaveUnknownTitle": "无法确认绑定更改",
-  "plugins.channels.surface.bindingsErrorDescription": "刷新並嘗試再次讀取當前的帳戶綁定策略。",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier 無法讀取已連結的對話。",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "刷新再次閱讀目前帳號綁定政策。",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "即時綁定更新不可用",
   "plugins.channels.surface.bindingsRefreshing": "刷新綁定細節",

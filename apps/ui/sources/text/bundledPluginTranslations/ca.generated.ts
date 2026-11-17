@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Integració",
   "plugins.channels.surface.bindingSaveUnknownDescription": "És possible que el canvi ja estigui desat. Actualitza els detalls d'enquadernació abans de tornar-lo a canviar.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "No es pot confirmar el canvi del vincul",
-  "plugins.channels.surface.bindingsErrorDescription": "Actualitzeu per provar de tornar a llegir la política actual d'enllaç del compte.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier no ha pogut llegir les converses vinculades.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Actualitzeu per tornar a llegir la política de vinculació del compte actual.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Les actualitzacions d'enllaç en directe no estan disponibles",
   "plugins.channels.surface.bindingsRefreshing": "Detalls d'enquadernació actualitzants",

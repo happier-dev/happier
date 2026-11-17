@@ -1194,7 +1194,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.surface.bindingProviderFilterFallback": "Anbieterintegration",
   "plugins.channels.surface.bindingSaveUnknownDescription": "The change may already be saved. Refresh binding details before changing it again.",
   "plugins.channels.surface.bindingSaveUnknownTitle": "Could not confirm the binding change",
-  "plugins.channels.surface.bindingsErrorDescription": "Refresh to try reading the current Account binding policy again.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier couldn’t read your linked conversations.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Refresh to read the current Account binding policy again.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Live binding updates are unavailable",
   "plugins.channels.surface.bindingsRefreshing": "Refreshing binding details",

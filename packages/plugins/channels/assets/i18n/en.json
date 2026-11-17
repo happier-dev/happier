@@ -290,7 +290,7 @@
   "plugins.channels.surface.bindingsStaleDescription": "Live binding updates are temporarily unavailable.",
   "plugins.channels.surface.bindingsLiveUpdatesEndedTitle": "Live binding updates are unavailable",
   "plugins.channels.surface.bindingsLiveUpdatesEndedDescription": "Refresh to read the current Account binding policy again.",
-  "plugins.channels.surface.bindingsErrorDescription": "Refresh to try reading the current Account binding policy again.",
+  "plugins.channels.surface.bindingsErrorDescription": "Happier couldn’t read your linked conversations.",
   "plugins.channels.surface.bindingsResourceContentTypeInvalid": "The binding Resource did not return JSON.",
   "plugins.channels.surface.bindingsResourceInvalidJson": "The binding Resource could not be read.",
   "plugins.channels.surface.bindingsResourceShapeInvalid": "The binding Resource has an unexpected shape.",
