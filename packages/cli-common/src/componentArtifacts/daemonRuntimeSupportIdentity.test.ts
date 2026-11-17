@@ -5,6 +5,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  rename,
   rm,
   writeFile,
   cp,
@@ -1291,6 +1292,10 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
   it('retains one flattened self-contained daemon payload for release packaging', async () => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
+    const dependencyRootDir = await makeTempRepo();
+    await rename(join(root, 'apps/cli/node_modules'), join(dependencyRootDir, 'node_modules'));
+    await symlink(join(dependencyRootDir, 'node_modules'), join(root, 'apps/cli/node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir');
     const sourceRoot = await installCanonicalProjectionGenerator(root);
     await symlink(join(sourceRoot, 'packages/cli-common/registerSourceRuntime.mjs'),
       join(root, 'packages/cli-common/registerSourceRuntime.mjs'));
@@ -1311,8 +1316,10 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
 
     const build = () => buildCliBinaryArtifactPayload({
       repoRoot: root,
+      dependencyRootDir,
       payloadDir,
       target,
+      runCommand: fakeNativeToolchainRunCommand,
       cliProxyApiManagedRuntimeExecutablePath: prebuiltRuntimePath,
       processCustodyRuntimeExecutablePath: prebuiltCustodyPath,
       commandProbe: (command) => command === 'bun' || command === 'pnpm',

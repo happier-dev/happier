@@ -1120,6 +1120,7 @@ export async function buildCliBinaryArtifactPayload({
   cliProxyApiManagedRuntimeExecutablePath,
   processCustodyRuntimeExecutablePath,
   includeIrohNativeReleaseEvidence = false,
+  dependencyRootDir = repoRoot,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -1131,6 +1132,8 @@ export async function buildCliBinaryArtifactPayload({
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
   includeIrohNativeReleaseEvidence?: boolean;
+  /** Installed packages resolve under this root (default: repoRoot). */
+  dependencyRootDir?: string;
 }): Promise<{ executableName: string; entrypoint: string; identity: string }> {
   assertCliNativeRuntimeTargetMatchesHost(target, commandProbe);
   await rm(payloadDir, { recursive: true, force: true });
@@ -1157,6 +1160,7 @@ export async function buildCliBinaryArtifactPayload({
     // into an empty payload instead.
     preserveCompilePayloadAssets: true,
     includeIrohNativeReleaseEvidence,
+    dependencyRootDir,
   });
   writeCliBinaryArtifactRuntimeAssetBuildManifest({
     payloadDir,
