@@ -4,10 +4,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create(theme => ({
-  error: { color: theme.colors.state.danger.foreground, fontSize: 14 },
+  error: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
 }));
 
 /** State-free shared row; personal Follow owns arming and delivery. */

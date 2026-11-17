@@ -28,6 +28,8 @@ import { t } from '@/text';
 import { SCM_DIFF_SUMMARY_GENERIC_FAILURE, type ScmDiffSummaryFailurePresentation } from '@/sync/domains/scm/diffSummary/state';
 import { ScmDiffSummaryStartOptions } from '@/components/sessions/files/comparison/ScmDiffSummaryStartOptions';
 import { ScmDiffSummaryFailureNotice } from '@/components/sessions/files/comparison/ScmDiffSummaryFailureNotice';
+import { personalRunFollowOnceKeyV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { RunWorkNotifyOperation, type RunFollowRead } from '@/components/sessions/work/RunWorkNotifications';
 import { SPECIMEN_COMPARISON, SPECIMEN_START_FAILURES } from './walkthroughSpecimenFixture';
 
 /**
@@ -156,6 +158,28 @@ function StartFrame(props: Readonly<{ phone: boolean; failure: ScmDiffSummaryFai
                 start={{ onStart: noop, busy: false, disabled: Boolean(props.disabled), reason: null,
                     options: <ScmDiffSummaryStartOptions testID="commit-proposal-start-options" failure={props.failure} message={null}
                         model={{ value: { v: 1, mode: 'auto' }, onChange: noop, testID: 'commit-proposal-model-choice' }} onChooseModel={noop} onEnableExplain={noop} /> }} />
+        </View>
+    );
+}
+
+/** Writing a proposal with its Run's Notify me (V3 Notify-me scenes): off, armed, and a change that failed. */
+const NOTIFY_OUTPUT = { output: 'commitPlan' as const, comparisonId: 'comparison-1', resultId: 'result-1' };
+function notifyRead(armed: boolean, failed = false): RunFollowRead {
+    const intent = { kind: 'output_ready' as const, outputRef: { kind: 'scm_diff_summary' as const, ...NOTIFY_OUTPUT } };
+    return { status: 'ready', once: armed ? [intent] : [], pendingIntent: null,
+        errorIntent: failed ? personalRunFollowOnceKeyV1(intent) : null, change: async () => {} };
+}
+function NotifyFrame(props: Readonly<{ phone: boolean; armed: boolean; failed?: boolean }>) {
+    const read = notifyRead(props.armed, props.failed);
+    return (
+        <View style={styles.fill}>
+            {props.phone ? <ScmComparisonPhoneHeader view="commits" views={['files', 'walkthrough', 'commits']}
+                scope={{ options: SCOPE_OPTIONS, current: PENDING_SCOPE, currentLabel: t('scmComparison.scope.workingTree'), fileCount: 9, onSelect: noop }}
+                onSelectView={noop} onStartReview={noop} /> : <CommitsBar />}
+            <CommitProposalView proposal={null} phase="writing" branch="v0.3" modelLabel="Opus 5.5"
+                layout={props.phone ? 'phone' : 'wide'} actions={EDIT_ACTIONS} active={false} isGenerating
+                notify={<RunWorkNotifyOperation source={{ kind: 'execution_run', sessionId: 'session-1', runId: 'run-commit-plan' }}
+                    selectedOutput={NOTIFY_OUTPUT} read={read} />} />
         </View>
     );
 }
@@ -304,6 +328,9 @@ export const COMMITS_SPECIMEN_FRAMES: readonly CommitsSpecimenFrame[] = [
     { id: 'C6', title: 'Proposal kept · regeneration refused: model unavailable', render: (phone) => <CommitsFrame proposal={EDITING} phone={phone} actions={EDIT_ACTIONS} failure={SPECIMEN_START_FAILURES.model} /> },
     { id: 'C5g', title: 'Empty · writing stopped', render: (phone) => <StartFrame phone={phone} failure={SCM_DIFF_SUMMARY_GENERIC_FAILURE} /> },
     { id: 'C6g', title: 'Proposal kept · writing stopped', render: (phone) => <CommitsFrame proposal={EDITING} phone={phone} actions={EDIT_ACTIONS} failure={SCM_DIFF_SUMMARY_GENERIC_FAILURE} /> },
+    { id: 'C7', title: 'Writing · Notify me off', render: (phone) => <NotifyFrame phone={phone} armed={false} /> },
+    { id: 'C7a', title: 'Writing · Notify me armed', render: (phone) => <NotifyFrame phone={phone} armed /> },
+    { id: 'C7e', title: 'Writing · Notify me change failed', render: (phone) => <NotifyFrame phone={phone} armed={false} failed /> },
     { id: 'C4', title: 'WT4-C4 · every divergence', render: (phone) => (phone ? <CommitsFrame proposal={HOOK_CHANGED} phone actions={HOOK_ACTIONS} /> : <Divergences />) },
 ];
 

@@ -883,6 +883,18 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         expect(empty.tree.findByType(EmptyState).props.title).toBe('inbox.work.mentionsEmpty.title');
     });
 
+    it('leads a mention with the face of the person who wrote it, and keeps the type glyph when no author is known (lab P4-Mp)', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const { Avatar } = await import('@/components/ui/avatar/Avatar');
+        const authored: InboxItem = { ...mentionItem('m-1'), author: { name: 'Ben', avatar: { id: 'server-a:account-ben', imageUrl: null } } };
+        const screen = await renderScreen(<InboxContent model={createModel({ extraItems: [authored, mentionItem('m-2')] })} view="mentions" />, { wrapper: PagePresentation });
+        const mark = (id: string) => screen.tree.findAllByType(InboxWorkRow)
+            .find((row) => row.props.testID === `inbox.item.discussion:server-a:disc-1:${id}`)!.props.mark as React.ReactElement<{ id?: string }>;
+        expect(mark('m-1').type).toBe(Avatar);
+        expect(mark('m-1').props.id).toBe('server-a:account-ben');
+        expect(mark('m-2').type).toBe(Icon);
+    });
+
     it('tells a partial source against the view it is in: an empty tab is unavailable, never "nothing here"', async () => {
         const { InboxContent } = await import('./InboxContent');
         const retry = vi.fn();

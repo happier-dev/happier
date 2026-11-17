@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { useSessionRecapState } from '@/components/sessions/companion/summary/useSessionRecap';
+import { useSessionRecapState, type SessionRecapState } from '@/components/sessions/companion/summary/useSessionRecap';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -40,19 +40,44 @@ export const SessionWorkDigest = React.memo(function SessionWorkDigest(props: Re
 }>) {
     const address = React.useMemo(() => normalizeSessionAddress(props.serverId, props.sessionId), [props.serverId, props.sessionId]);
     const presented = useLayoutPresentationActive();
-    const { status, recap } = useSessionRecapState(address, presented);
-    const atMs = recap?.atMs ?? null;
+    const state = useSessionRecapState(address, presented);
+    const atMs = state.recap?.atMs ?? null;
     const readNextRefresh = React.useCallback((nowMs: number) => (
         atMs === null ? null : readRelativeTimeShortRefreshAtMs(atMs, nowMs)
     ), [atMs]);
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, presented && atMs !== null);
     const refresh = useDigestRefresh(props.sessionId, props.serverId);
+    return (
+        <SessionWorkDigestContent
+            state={state}
+            nowMs={nowMs}
+            refresh={refresh}
+            sessionItemById={props.sessionItemById}
+            listedQuietSessionIds={props.listedQuietSessionIds}
+            onOpenItem={props.onOpenItem}
+        />
+    );
+});
+
+/**
+ * The digest as drawn from one Recap state (the reader above, or a `/dev/work-sections` fixture): the
+ * heading's when-and-where, the Recap's own words and, when the list does not already show it, its sender's row.
+ */
+export const SessionWorkDigestContent = React.memo(function SessionWorkDigestContent(props: Readonly<{
+    state: SessionRecapState;
+    nowMs: number;
+    refresh: Readonly<{ sending: boolean; send: () => void }>;
+    sessionItemById: ReadonlyMap<string, WorkItem>;
+    listedQuietSessionIds: ReadonlySet<string>;
+    onOpenItem: (item: WorkItem) => void;
+}>) {
+    const { status, recap } = props.state;
     const workerSessionId = recap?.source === 'worker_update' ? recap.workerSessionId ?? null : null;
     const sourceItem = workerSessionId ? props.sessionItemById.get(workerSessionId) ?? null : null;
 
     // When and where it comes from, quiet beside the title (lab "Today 09:12 · from your rule").
-    const meta = recap && atMs !== null
-        ? `${formatRelativeTimeShort(atMs, nowMs)} · ${recap.source === 'synopsis' ? t('sessionWork.digest.fromMemory') : t('sessionWork.digest.latestUpdate')}`
+    const meta = recap
+        ? `${formatRelativeTimeShort(recap.atMs, props.nowMs)} · ${recap.source === 'synopsis' ? t('sessionWork.digest.fromMemory') : t('sessionWork.digest.latestUpdate')}`
         : '';
     // The Recap's own words; a status-only update is said plainly, naming the Session it is about.
     const lead = !recap ? null
@@ -72,8 +97,8 @@ export const SessionWorkDigest = React.memo(function SessionWorkDigest(props: Re
                     variant="plain"
                     accessibilityLabel={t('sessionWork.digest.refresh')}
                     tooltip={t('sessionWork.digest.refresh')}
-                    busy={refresh.sending}
-                    onPress={refresh.send}
+                    busy={props.refresh.sending}
+                    onPress={props.refresh.send}
                 />
             )}
         >

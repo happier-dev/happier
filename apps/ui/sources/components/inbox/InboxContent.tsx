@@ -15,6 +15,8 @@ import { InboxReadySessionRow } from '@/components/inbox/InboxReadySessionRow';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { SESSION_LIST_ROW_IDENTITY_METRICS } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/virtualized';
@@ -134,7 +136,10 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
         selected={props.selected} showDivider={props.showDivider} narrow={props.narrow}
         phase={item.phase ?? (item.view === 'needs_you' ? 'attention' : 'finished')} status={item.workStatus}
         time={<InboxRelativeTime timestamp={item.createdAt} />}
-        mark={<Icon name={item.focus.kind === 'execution_run' ? item.type === 'approval' ? 'hand' : 'play-circle' : ITEM_MARKS[item.type]} size={18}
+        // Who wrote it leads a written item (lab P4-Mp: the author's face); otherwise the item's type glyph.
+        mark={item.author?.avatar ? (
+            <Avatar id={item.author.avatar.id} imageUrl={item.author.avatar.imageUrl} size={SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize} />
+        ) : <Icon name={item.focus.kind === 'execution_run' ? item.type === 'approval' ? 'hand' : 'play-circle' : ITEM_MARKS[item.type]} size={18}
             color={item.view === 'needs_you' ? theme.colors.state.attention.foreground : theme.colors.text.secondary} />}
         trailingAccessory={item.producer === 'notice' ? (
             <InboxDismissRowMenu testID={`inbox.item.${item.key}.dismiss`} onDismiss={dismiss} />
