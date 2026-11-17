@@ -8,7 +8,9 @@ import { createCaptureRuntime, type CaptureRuntime } from './runtime.js';
 import { captureDatabaseDefinition } from './store/capture.js';
 import { readCapturePreference, type CaptureProjectScope } from './configuration.js';
 
-export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'runtime'> & Readonly<{ projectScope: CaptureProjectScope; physicalRootIdentity: string }>;
+export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'runtime'> & Readonly<{
+ projectScope: CaptureProjectScope; ownerAccountId: string; physicalRootIdentity: string;
+}>;
 type LocalCaptureLease = Awaited<ReturnType<typeof bindLocalCapture>>;
 type PartitionListener = (partitions: readonly string[]) => void;
 type CaptureRuntimeContext = { signal: AbortSignal; services: { storage: { daemon: DaemonDatabaseService; account?: PluginAccountStorageScope } } };
@@ -16,7 +18,7 @@ type RunningCapture = {
  runtime: CaptureRuntime;
  signal: AbortSignal;
  accountStorage: PluginAccountStorageScope | undefined;
- leases: Map<LocalCaptureLease, CaptureProjectScope>;
+ leases: Map<LocalCaptureLease, CaptureProjectScope & Readonly<{ ownerAccountId: string }>>;
  pending: Set<Promise<LocalCaptureLease>>;
 };
 
@@ -90,11 +92,12 @@ export function createCaptureBackgroundOwner() {
   databaseDefinition,
   acquireRuntime,
   async readEnabled(scope: CaptureProjectScope): Promise<boolean> { return await readCapturePreference(running?.accountStorage, scope); },
-  async stopProjectCapture(scope: CaptureProjectScope): Promise<void> {
+  /** Stops only the requesting Account's own recordings of this project. */
+  async stopProjectCapture(scope: CaptureProjectScope, ownerAccountId: string): Promise<void> {
    const state = running;
    if (!state) return;
    await Promise.allSettled([...state.pending]);
-   await Promise.all([...state.leases].filter(([, selected]) => selected.serverId === scope.serverId
+   await Promise.all([...state.leases].filter(([, selected]) => selected.ownerAccountId === ownerAccountId && selected.serverId === scope.serverId
     && selected.machineId === scope.machineId && selected.projectId === scope.projectId).map(([lease]) => lease.stopRecording()));
   },
   run: run satisfies BackgroundServiceRunner,
@@ -115,7 +118,7 @@ export function createCaptureBackgroundOwner() {
     const lease: LocalCaptureLease = { ...bound, async release() {
      try { await bound.release(); } finally { state.leases.delete(lease); }
     } };
-    state.leases.set(lease, input.projectScope);
+    state.leases.set(lease, { ...input.projectScope, ownerAccountId: input.ownerAccountId });
     return lease;
    });
    state.pending.add(acquisition);

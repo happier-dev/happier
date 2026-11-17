@@ -10,7 +10,7 @@ import { createCaptureSqliteFixture } from './testing/sqlite.js';
 
 function input(environment: Record<string, string>): PluginServiceLaunchEnvironmentInputV1 {
  return { workspace: { id: 'worktree', serverId: 'server', machineId: 'machine', rootPath: '/project' }, project: { serverId: 'server', projectId: 'project' },
-  serviceId: 'api', physicalRootIdentity: '/physical/project', executionPlacement: { mode: 'native', machineId: 'machine' }, assignedPorts: {},
+  serviceId: 'api', requester: { accountId: 'account', installationId: 'install' }, physicalRootIdentity: '/physical/project', executionPlacement: { mode: 'native', machineId: 'machine' }, assignedPorts: {},
   async readEnvironment() { return { projectedEnvironment: environment, provenance: {} }; } };
 }
 async function listener() {
@@ -25,6 +25,8 @@ describe('local capture SDK launch contribution', () => {
   const off = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => false, acquireLocalCapture: unexpected });
   expect(await off.prepare(original)).toEqual({ kind: 'unchanged' });
   const on = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => true, acquireLocalCapture: unexpected });
+  // A launch with no admitted requester has no owner, so nothing is recorded for anyone.
+  expect(await on.prepare({ ...original, requester: undefined })).toEqual({ kind: 'unchanged' });
   expect(await on.prepare({ ...original, executionPlacement: { mode: 'spawn', machineId: 'remote' } })).toEqual({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_execution_placement' });
  });
  it('groups credential-distinct URLs by upstream, binds B assignments, preserves authored OTLP and releases real sockets', async () => {
@@ -42,7 +44,7 @@ describe('local capture SDK launch contribution', () => {
   try {
    expect(result.kind).toBe('replace'); if (result.kind !== 'replace') throw new Error('Expected local capture binding');
    expect(reads).toBe(1); expect(demands[0]).toHaveLength(1); expect(JSON.stringify(demands)).not.toMatch(/p%40ss|encoded|other/);
-   expect(partitions).toEqual([JSON.stringify(['server', 'machine', 'project', 'worktree'])]);
+   expect(partitions).toEqual([JSON.stringify(['account', 'server', 'machine', 'project', 'worktree'])]);
    expect(result.replacements).toEqual({ DATABASE_URL: first.replace(`127.0.0.1:${upstream.port}`, `127.0.0.1:${slot.port}`), READ_URL: second.replace(`127.0.0.1:${upstream.port}`, `127.0.0.1:${slot.port}`) });
    expect(result.defaults).toEqual({});
    const client = createConnection(slot.port, '127.0.0.1'); await once(client, 'connect'); const response = once(client, 'data'); client.write('relay-ok'); expect((await response)[0].toString()).toBe('relay-ok'); client.destroy();

@@ -43,7 +43,7 @@ describe('settled worktree removal identity', () => {
    await vi.waitFor(() => expect(first.readRuntime()).not.toBeNull());
    const runtime = first.readRuntime()!;
    for (const partition of ['selected', 'alias', 'sibling']) await first.acquireLocalCapture({
-    enabled: true, projectScope: { serverId: 'server', machineId: 'machine', projectId: 'project' },
+    enabled: true, projectScope: { serverId: 'server', machineId: 'machine', projectId: 'project' }, ownerAccountId: 'account',
     partition, physicalRootIdentity: partition === 'sibling' ? '/physical/project-other' : '/physical/project',
     urls: [], signal: lifetime.signal,
    });

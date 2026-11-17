@@ -26,7 +26,7 @@ describe('capture demanded Resource through real public Actions', () => {
             capabilities: { queries: true, traces: true, appLlmCost: true },
         }; } } as unknown as PluginServices['deploymentDatabases'];
         const lease = await owner.acquireRuntime({ signal: lifetime.signal, services: { storage } });
-        const partition = captureSourcePartition(selectedSource);
+        const partition = captureSourcePartition(selectedSource, undefined);
         const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
             services: { storage, deploymentDatabases } });
         const options: PluginDynamicResourceInvocationOptionsV1 = { signal: consumer.signal,
@@ -70,7 +70,7 @@ describe('capture demanded Resource through real public Actions', () => {
             for (const migration of definition?.migrations ?? []) await migration.up(fixture.db);
             return fixture.db;
         } } } } });
-        const partition = captureSourcePartition(source), runtime = lease.runtime;
+        const partition = captureSourcePartition(source, 'account'), runtime = lease.runtime;
         // These are post-admission reader fixtures; ACCESS source authorization is not substituted here.
         const readers = createCaptureSelectedSourceReaders({ source, partition, runtime });
         const plugin = definePlugin({ id: 'happier.telemetry', version: '0.0.0', displayName: 'Capture Resource control',
@@ -80,7 +80,7 @@ describe('capture demanded Resource through real public Actions', () => {
             } } });
         const host = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
         let transportRefused = false;
-        const options: PluginDynamicResourceInvocationOptionsV1 = { signal: consumer.signal,
+        const options: PluginDynamicResourceInvocationOptionsV1 = { signal: consumer.signal, requesterAccount: { accountId: 'account' },
             context: { kind: 'surface', mountInstanceKey: 'selected', launchInput: { view: 'query', input: { source, id: 'older' } } },
             resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
             observeAction: unavailable,

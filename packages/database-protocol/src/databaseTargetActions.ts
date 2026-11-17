@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { DatabaseTargetsConnectScopeV1Schema, DatabaseDescriptorV1Schema } from './databaseOperations.js';
 import { DatabaseAccessSummaryV1Schema, DatabaseAgentAccessV1Schema } from './databaseAccess.js';
-import { DatabaseManualTargetV1Schema, DatabaseTargetV1Schema } from './databaseTargets.js';
+import { DatabaseManualTargetV1Schema, DatabaseTargetV1Schema, DatabaseWorktreeTargetV1Schema } from './databaseTargets.js';
 
 /** Association operands only; Saved Secret bytes stay with the existing secret/admission owner. */
 export const DatabaseTargetsConnectInputV1Schema = z.strictObject({
@@ -31,8 +31,10 @@ export const DatabaseAccessReadResultV1Schema = z.discriminatedUnion('setBy', [
         expectedRevision: z.number(), access: DatabaseAccessSummaryV1Schema }),
 ]);
 export type DatabaseAccessReadResultV1 = z.infer<typeof DatabaseAccessReadResultV1Schema>;
-/** The one writer of a Machine-local database's agent level. Environment access is written by the Environment. */
-export const DatabaseAccessSetInputV1Schema = z.strictObject({ target: DatabaseManualTargetV1Schema, agentAccess: DatabaseAgentAccessV1Schema });
+/** The one writer of a Machine-local (worktree or manual) database's agent level. Environment access is written by the Environment. */
+export const DatabaseAccessSetInputV1Schema = z.strictObject({
+    target: z.discriminatedUnion('kind', [DatabaseWorktreeTargetV1Schema, DatabaseManualTargetV1Schema]), agentAccess: DatabaseAgentAccessV1Schema,
+});
 export type DatabaseAccessSetInputV1 = z.infer<typeof DatabaseAccessSetInputV1Schema>;
 export const DatabaseAccessSetResultV1Schema = z.strictObject({ ok: z.literal(true), agentAccess: DatabaseAgentAccessV1Schema });
 export type DatabaseAccessSetResultV1 = z.infer<typeof DatabaseAccessSetResultV1Schema>;

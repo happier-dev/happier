@@ -8,7 +8,8 @@ import { createWorktreeDatabaseTargets } from './worktreeTargets.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginServiceLaunchEnvironmentInputV1 } from '@happier-dev/plugin-sdk';
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
-import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1,
+    DATABASE_TARGETS_LIST_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { plugin } from './manifest.js';
 
 // The daemon KV is the persistent boundary; discovery and Action handlers stay real.
@@ -96,22 +97,63 @@ it('resolves the discovered service original into a native operation and withdra
     });
     let connection: Awaited<ReturnType<typeof targets.resolve>>['connection'] | undefined;
     try {
-        const request = { identity, requester: 'person' as const, input: { scope } };
+        const request = { identity, storage: emptyStorage, requester: 'person' as const, input: { scope } };
         const listed = await targets.list(request);
         expect(listed.targets).toHaveLength(1);
         const target = listed.targets[0]!.target;
         const input = { operation: 'statement.run', target, mode: 'read', statement: { sql: 'SELECT label FROM selected', parameters: [] } } as const;
-        const resolved = await targets.resolve({ identity, requester: 'person', input, access: 'read' });
+        const resolved = await targets.resolve({ identity, storage: emptyStorage, requester: 'person', input, access: 'read' });
         connection = resolved.connection;
         expect(resolved.descriptor).toEqual(listed.targets[0]);
         expect(await connection.execute(input)).toMatchObject({ ok: true,
             results: [{ rows: [{ cells: [{ type: 'text', value: 'prepared-original' }] }] }] });
         if (retained.kind === 'replace') await retained.release();
-        await expect(targets.resolve({ identity, requester: 'person', input, access: 'read' }))
+        await expect(targets.resolve({ identity, storage: emptyStorage, requester: 'person', input, access: 'read' }))
             .rejects.toMatchObject({ code: 'database_target_unavailable' });
     } finally {
         await connection?.close();
         if (retained.kind === 'replace') await retained.release();
         await rm(directory, { recursive: true, force: true });
     }
+});
+
+it('stores the worktree database agent level on this Machine: Read by default, set by its owner', async () => {
+    // The daemon KV is the persistent boundary; a Map keeps its get/set contract.
+    const values = new Map<string, unknown>();
+    const kv: StorageScopeService = {
+        async get(key) { return values.has(key) ? values.get(key) as never : null; },
+        async set(key, value) { values.set(key, value); }, async delete(key) { values.delete(key); },
+        async list() { return { items: [...values.keys()].map(key => ({ key })) } as never; },
+        consistency() { return { kind: 'authoritativeSerializable' }; }, async transaction(run) { return run(kv); },
+    };
+    const stateful = { ...storage, daemon: { ...kv, async database(): Promise<never> { throw new Error('No database requested'); } } };
+    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { storage: stateful } });
+    const agent = { ...identity, agentCaller: true };
+    try {
+        const observer = kit.registration('serviceLaunchEnvironments', 'database-discovery');
+        if (!observer) throw new Error('Missing database discovery contribution');
+        const retained = await observer.prepare({
+            workspace: { id: 'selected', serverId: 'home', machineId: 'machine', rootPath: '/selected', projectKey: 'project' },
+            project: { serverId: 'home', projectId: 'project' }, requester: { accountId: 'alice', installationId: 'installation' },
+            serviceId: 'postgres', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+            async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://app:secret@localhost:5432/selected' }, provenance: {} }; },
+        });
+        try {
+            const target = { ...scope, source: { kind: 'service', serviceId: 'postgres', variable: 'DATABASE_URL' } } as const;
+            const read = (who: typeof identity) => kit.invokeAction(databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1), { target }, who);
+            const set = (agentAccess: string, who: typeof identity = identity) =>
+                kit.invokeAction(databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1), { target, agentAccess }, who);
+            expect(await read(agent)).toEqual({ setBy: 'machine', agentAccess: 'read', access: { canRead: true, canWrite: false, reason: 'database_agent_access_read_only' } });
+            expect(await set('none')).toEqual({ ok: true, agentAccess: 'none' });
+            expect(await read(identity)).toMatchObject({ setBy: 'machine', agentAccess: 'none' });
+            await expect(kit.invokeAction(databaseActionLocalIdV1(DATABASE_DESCRIBE_ACTION_ID_V1), { operation: 'describe', target }, agent))
+                .rejects.toMatchObject({ code: 'database_agent_access_none' });
+            // Another person's Account never reaches this Machine-local record.
+            await expect(set('read', { ...identity, requesterAccount: { accountId: 'bob' } }))
+                .rejects.toMatchObject({ code: 'database_target_unavailable' });
+            expect(await set('none')).toEqual({ ok: true, agentAccess: 'none' });
+            expect(values.size).toBe(1);
+            expect(JSON.stringify([...values])).not.toContain('secret');
+        } finally { if (retained.kind === 'replace') await retained.release(); }
+    } finally { await kit.dispose(); }
 });

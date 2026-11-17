@@ -20,7 +20,9 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
  return { async prepare(input) {
   const unavailable = (reason: string) => ({ kind: 'unavailable' as const, code: 'service_launch_environment_unavailable' as const, reason });
   const scope = { serverId: input.project.serverId, machineId: input.workspace.machineId, projectId: input.project.projectId };
-  if (!await options.readEnabled(scope)) return { kind: 'unchanged' };
+  // Captures belong to the admitted launch requester; an unattributed launch records nothing.
+  if (!input.requester || !await options.readEnabled(scope)) return { kind: 'unchanged' };
+  const ownerAccountId = input.requester.accountId;
   if (input.executionPlacement.machineId !== input.workspace.machineId) return unavailable('unsupported_execution_placement');
   const { projectedEnvironment: environment } = await input.readEnvironment();
   const selected: { slot: string; offer: Omit<CaptureUrlOffer, 'assignedPort'> }[] = [];
@@ -53,8 +55,8 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
   let lease: Awaited<ReturnType<typeof bindLocalCapture>>;
   try {
    lease = await options.acquireLocalCapture({ enabled: true,
-    projectScope: scope, physicalRootIdentity: input.physicalRootIdentity,
-    partition: captureSourcePartition({ kind: 'worktree', ...scope, workspaceId: input.workspace.id }),
+    projectScope: scope, ownerAccountId, physicalRootIdentity: input.physicalRootIdentity,
+    partition: captureSourcePartition({ kind: 'worktree', ...scope, workspaceId: input.workspace.id }, ownerAccountId),
     urls: selected.map(({ slot, offer }) => ({ ...offer, assignedPort: ports[slot]! })),
     ...(localOtlp ? { otlpPort: ports.otlp! } : {}), signal: options.signal ?? controller.signal });
   } catch (error) {

@@ -1,28 +1,48 @@
 import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES, LOCAL_CAPTURE_ENVIRONMENT_NAMES } from './contribution.js';
-import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-sdk/protocol';
-import { DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
-import { createCaptureActions, createCapturePublicActionProducers } from './actions.js';
+import { createCaptureActionProducers, createCaptureActions, createCapturePublicActionProducers } from './actions.js';
 import { createCaptureResourceRuntime } from './resources.js';
-import { telemetryPartition } from './telemetry/assignments.js';
+import { captureSourcePartition } from './partition.js';
 import { telemetryHealthActions } from './health.js';
 import { keyFlowConfigSchema } from './healthSchemas.js';
 import { telemetryRegressionActions } from './regression.js';
 import { TELEMETRY_REGRESSION_WORKFLOW_ID_V1, TELEMETRY_REGRESSION_WORKFLOW_V1 } from './regressionWorkflow.js';
 
-// R16 host admission owns requester access and collector placement. Reads keep
-// the existing capture projection and do not acquire write authority.
-const { clearCapture: _clear, ...captureReads } = createCapturePublicActionProducers({
+/** Local sources (the requester's own Machine and worktrees) are admitted for the Account that
+ * recorded them: the source must be on this executing Machine, and the requester's Account selects
+ * its own partition. Environment telemetry keeps R16 host admission (D39). Clear deletes data, so it
+ * is local only: a reader of shared Environment telemetry cannot clear it for the team. */
+function localCaptureOwner(machineId: string, context: PluginInvocationContext): string {
+ const accountId = context.requesterAccount?.accountId;
+ if (!accountId || context.chosenMachine?.machineId !== machineId) throw new PluginError({ code: 'capture_source_unavailable' });
+ return accountId;
+}
+
+const capture = createCapturePublicActionProducers({
  acquireRuntime: localCaptureBackground.acquireRuntime,
- async admitSource({ source }, context) {
-  if (source.kind !== 'environment') throw new PluginError({ code: 'capture_source_unavailable' });
+ async admitSource({ source }, context, actionId) {
+  if (source.kind === 'worktree') {
+   return { source, partition: captureSourcePartition(source, localCaptureOwner(source.machineId, context)) };
+  }
+  if (actionId === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1) throw new PluginError({ code: 'capture_source_unavailable' });
   const admit = context.services.deploymentDatabases?.admitTelemetryRead;
   if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
   await admit({ serverId: source.serverId, environmentId: source.environmentId });
-  return { source, partition: telemetryPartition(source.environmentId) };
+  return { source, partition: captureSourcePartition(source, undefined) };
+ },
+ async configureCapture({ project, enabled, retry }, context) {
+  const ownerAccountId = localCaptureOwner(project.machineId, context);
+  const lease = await localCaptureBackground.acquireRuntime(context);
+  try {
+   const { configure } = createCaptureActionProducers({ runtime: lease.runtime, accountStorage: context.services.storage.account,
+    stopProjectCapture: scope => localCaptureBackground.stopProjectCapture(scope, ownerAccountId) });
+   return { ok: true as const, ...await configure({ project, enabled, ...(retry ? { retry } : {}) }) };
+  } finally { await lease.release(); }
  },
 });
 
@@ -43,7 +63,7 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
   source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
   runtime: createCaptureResourceRuntime({ subscribe: localCaptureBackground.subscribe }),
  } },
- actions: { ...createCaptureActions(captureReads), ...telemetryHealthActions, ...telemetryRegressionActions, ...telemetryExceptionManifestParts.actions },
+ actions: { ...createCaptureActions(capture), ...telemetryHealthActions, ...telemetryRegressionActions, ...telemetryExceptionManifestParts.actions },
  accountCollections: telemetryExceptionManifestParts.accountCollections,
  notifications: telemetryExceptionManifestParts.notifications,
  events: telemetryExceptionManifestParts.events,

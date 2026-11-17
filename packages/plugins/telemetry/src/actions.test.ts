@@ -88,7 +88,7 @@ describe('capture Action producer bindings', () => {
         try {
             for (const migration of captureMigrations) await migration.up(fixture.db);
             const runtime = createCaptureRuntime({ database: fixture.db, normalizeStatement: createPostgresqlObservationNormalizer(), publish() {} });
-            const producers = createCaptureActionProducers({ runtime, stopProjectCapture: createCaptureBackgroundOwner().stopProjectCapture });
+            const producers = createCaptureActionProducers({ runtime, stopProjectCapture: scope => createCaptureBackgroundOwner().stopProjectCapture(scope, 'account') });
             await runtime.store.write([
                 { id: 'query', worktree: 'selected', kind: 'query', source: 'wire', at: 3, shape: 'select ?', detail: { sql: 'select ?', parameters: ['masked'] } },
                 { id: 'request', worktree: 'selected', kind: 'span', source: 'otlp', at: 2, traceId: 'trace', spanId: 'request', spanKind: 2 },
@@ -119,7 +119,7 @@ describe('capture Action producer bindings', () => {
         const fixture = createCaptureSqliteFixture(), account = accountStorageFixture();
         for (const migration of captureMigrations) await migration.up(fixture.db);
         const runtime = createCaptureRuntime({ database: fixture.db, normalizeStatement: createPostgresqlObservationNormalizer(), publish() {} });
-        const producers = createCaptureActionProducers({ runtime, accountStorage: account.storage, stopProjectCapture: createCaptureBackgroundOwner().stopProjectCapture });
+        const producers = createCaptureActionProducers({ runtime, accountStorage: account.storage, stopProjectCapture: scope => createCaptureBackgroundOwner().stopProjectCapture(scope, 'account') });
         const receiver = await runtime.acquireReceiver({ port: 0, context: { partition: 'selected' } });
         const send = (index: number) => fetch(`${receiver.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano: String(index), body: { stringValue: `log-${index}` } }] }] }] }) });
@@ -156,16 +156,16 @@ describe('capture Action producer bindings', () => {
             await vi.waitFor(() => expect(owner.readRuntime()).not.toBeNull());
             const runtime = owner.readRuntime();
             if (!runtime) throw new Error('Missing running capture runtime');
-            const producers = createCaptureActionProducers({ runtime, accountStorage: account.storage, stopProjectCapture: owner.stopProjectCapture });
+            const producers = createCaptureActionProducers({ runtime, accountStorage: account.storage, stopProjectCapture: scope => owner.stopProjectCapture(scope, 'account') });
             expect(await producers.configure({ project, enabled: true })).toEqual({ enabled: true });
-            lease = await vi.waitFor(() => owner.acquireLocalCapture({ enabled: true, projectScope: project, physicalRootIdentity: '/physical/selected', partition: 'selected', urls: [], otlpPort: 0, signal: lifetime.signal }));
+            lease = await vi.waitFor(() => owner.acquireLocalCapture({ enabled: true, projectScope: project, ownerAccountId: 'account', physicalRootIdentity: '/physical/selected', partition: 'selected', urls: [], otlpPort: 0, signal: lifetime.signal }));
             expect((await fetch(`${lease.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
             expect(await producers.configure({ project: { ...project, projectId: 'other' }, enabled: false })).toEqual({ enabled: false });
             expect((await fetch(`${lease.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
             expect(await producers.configure({ project, enabled: false })).toEqual({ enabled: false });
             expect(await owner.readEnabled(project)).toBe(false);
             await expect(fetch(`${lease.endpoint}/v1/logs`, { method: 'POST', body: '{}' })).rejects.toThrow();
-            await expect(createCaptureActionProducers({ runtime, stopProjectCapture: owner.stopProjectCapture }).configure({ project, enabled: true }))
+            await expect(createCaptureActionProducers({ runtime, stopProjectCapture: scope => owner.stopProjectCapture(scope, 'account') }).configure({ project, enabled: true }))
                 .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
         } finally { await lease?.release(); lifetime.abort(); await running; fixture.close(); account.close(); }
     });

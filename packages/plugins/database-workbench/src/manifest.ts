@@ -22,7 +22,7 @@ function manualTargets(context: PluginInvocationContext) {
 }
 
 const worktreeTargets = createWorktreeDatabaseTargets();
-const worktreeRequest = (context: PluginInvocationContext) => ({ identity: context,
+const worktreeRequest = (context: PluginInvocationContext) => ({ identity: context, storage: context.services.storage.daemon,
     requester: resolveDatabaseRequesterKindV1(context), databaseEngines: context.services.databaseEngines, signal: context.signal });
 
 function deploymentTargets(context: Pick<PluginInvocationContext['services'], 'deploymentDatabases'>) {
@@ -106,14 +106,15 @@ export const plugin = definePlugin({
                     environmentId: admitted.environment.environmentId, expectedRevision: admitted.environment.revision, access: admitted.access };
             }
             const admitted = input.target.kind === 'worktree'
-                ? worktreeTargets.admit({ input: { operation: 'describe', target: input.target }, access: 'read', ...worktreeRequest(context) })
+                ? await worktreeTargets.admit({ input: { operation: 'describe', target: input.target }, access: 'read', ...worktreeRequest(context) })
                 : await manualTargets(context).admit({ target: input.target, access: 'read',
                 requester: resolveDatabaseRequesterKindV1(context), signal: context.signal });
             return { setBy: 'machine', agentAccess: admitted.agentAccess, access: admitted.access };
         },
         async setAccess(input, context) {
-            const agentAccess = await manualTargets(context).setAccess({ target: input.target, agentAccess: input.agentAccess,
-                signal: context.signal });
+            const agentAccess = input.target.kind === 'worktree'
+                ? await worktreeTargets.setAccess({ target: input.target, agentAccess: input.agentAccess, ...worktreeRequest(context) })
+                : await manualTargets(context).setAccess({ target: input.target, agentAccess: input.agentAccess, signal: context.signal });
             return { ok: true, agentAccess };
         },
         forgetTarget(input, context) {
@@ -129,7 +130,7 @@ export const plugin = definePlugin({
                         return deploymentTargets(context).resolve(context.input, 'read');
                     }
                     if (context.input.target.kind === 'worktree') return worktreeTargets.resolve({ input: context.input, access: 'read',
-                        identity: context, requester: resolveDatabaseRequesterKindV1(context), databaseEngines: context.databaseEngines, signal: context.signal });
+                        identity: context, storage: context.daemonStorage, requester: resolveDatabaseRequesterKindV1(context), databaseEngines: context.databaseEngines, signal: context.signal });
                     return createManualDatabaseTargets({ storage: context.daemonStorage, identity: context, databaseEngines: context.databaseEngines }).resolve({
                         input: context.input, access: 'read', requester: resolveDatabaseRequesterKindV1(context),
                         secrets: context.secrets, signal: context.signal,

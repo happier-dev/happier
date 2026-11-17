@@ -51,7 +51,7 @@ export function createCaptureResourceRuntime(options: Readonly<{
                         const snapshot = await readCaptureResourceSnapshot(context, demand, invocation.signal);
                         if (!snapshot.result.ok) unsubscribe();
                         else if (!stop && !context.signal.aborted) {
-                            stop = options.subscribe(captureSourcePartition(snapshot.result.source), () => invalidate?.());
+                            stop = options.subscribe(captureSourcePartition(snapshot.result.source, context.requesterAccount?.accountId), () => invalidate?.());
                         }
                         return JSON.stringify(snapshot);
                     } catch (error: unknown) { unsubscribe(); throw error; }

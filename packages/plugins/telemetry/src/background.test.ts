@@ -48,7 +48,7 @@ describe('local capture background lifecycle', () => {
   let client: ReturnType<typeof connect> | undefined;
   try {
    expect(owner.readRuntime()).toBeNull();
-   await expect(owner.acquireLocalCapture({ enabled: true, projectScope, physicalRootIdentity: '/physical/first', partition: 'first', urls: [], signal: lifetime.signal, otlpPort: 0 }))
+   await expect(owner.acquireLocalCapture({ enabled: true, projectScope, ownerAccountId: 'account', physicalRootIdentity: '/physical/first', partition: 'first', urls: [], signal: lifetime.signal, otlpPort: 0 }))
     .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
    production = await owner.acquireRuntime({ signal: serviceLifetime.signal, services: { storage: { daemon: storage } } });
    expect(owner.readRuntime()).toBe(production.runtime);
@@ -58,7 +58,7 @@ describe('local capture background lifecycle', () => {
    const first: string[][] = [], other: string[][] = [];
    const offFirst = owner.subscribe('first', keys => first.push([...keys]));
    const offOther = owner.subscribe('other', keys => other.push([...keys]));
-   const capture = await vi.waitFor(() => owner.acquireLocalCapture({ enabled: true, projectScope, physicalRootIdentity: '/physical/first', partition: 'first', urls: [{ name: 'DATABASE_URL', original,
+   const capture = await vi.waitFor(() => owner.acquireLocalCapture({ enabled: true, projectScope, ownerAccountId: 'account', physicalRootIdentity: '/physical/first', partition: 'first', urls: [{ name: 'DATABASE_URL', original,
     upstream: { host: '127.0.0.1', port: address.port }, hostSpan: { start: 'postgresql://'.length, end: 'postgresql://'.length + upstreamAuthority.length }, assignedPort: 0 }], signal: serviceLifetime.signal, otlpPort: 0 }));
    const forwarded = new URL(capture.replacements.DATABASE_URL!);
    client = connect({ host: forwarded.hostname, port: Number(forwarded.port) });
@@ -76,9 +76,10 @@ describe('local capture background lifecycle', () => {
    await owner.readRuntime()?.ingest.settled();
    expect([...new Set(first.flat())]).toEqual(['first']);
    expect(other).toEqual([]);
-   await owner.stopProjectCapture({ ...projectScope, projectId: 'other' });
+   await owner.stopProjectCapture({ ...projectScope, projectId: 'other' }, 'account');
+   await owner.stopProjectCapture(projectScope, 'another-account');
    expect((await fetch(`${capture.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
-   await owner.stopProjectCapture(projectScope);
+   await owner.stopProjectCapture(projectScope, 'account');
    await expect(fetch(`${capture.endpoint}/v1/logs`, { method: 'POST', body: '{}' })).rejects.toThrow();
    await echo('disabled-recording');
    lifetime.abort();
@@ -87,7 +88,7 @@ describe('local capture background lifecycle', () => {
    const secondProduction = await owner.acquireRuntime({ signal: serviceLifetime.signal, services: { storage: { daemon: storage } } });
    expect(secondProduction.runtime).toBe(production.runtime);
    await secondProduction.release();
-   await expect(owner.acquireLocalCapture({ enabled: true, projectScope, physicalRootIdentity: '/physical/first', partition: 'first', urls: [], signal: serviceLifetime.signal }))
+   await expect(owner.acquireLocalCapture({ enabled: true, projectScope, ownerAccountId: 'account', physicalRootIdentity: '/physical/first', partition: 'first', urls: [], signal: serviceLifetime.signal }))
     .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
    await expect(fetch(`${capture.endpoint}/v1/logs`, { method: 'POST', body: '{}' })).rejects.toThrow();
    await echo('after-retirement');
