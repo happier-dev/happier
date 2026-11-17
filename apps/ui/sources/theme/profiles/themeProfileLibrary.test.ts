@@ -119,6 +119,39 @@ describe('theme profile library', () => {
         expect(state.records.has(ids.kept)).toBe(true);
     });
 
+    it('returns Undo for an already kept theme and repeated Apply without deleting the saved record', async () => {
+        const state = setup();
+        const authored = document(ids.first);
+        await state.library.keep({ document: authored, mode: 'dark' });
+        const keptAgain = await state.library.keep({ document: authored, mode: 'dark' });
+        expect(keptAgain.undo).toEqual(expect.any(String));
+        expect(keptAgain.change.selectionChangedModes).toEqual([]);
+        await state.library.undo(keptAgain.undo!);
+        expect(state.records.has(ids.first)).toBe(true);
+        expect(state.selection.dark).toEqual(ref(ids.first));
+
+        const appliedAgain = await state.library.select({ mode: 'dark', reference: ref(ids.first) });
+        expect(appliedAgain.undo).toEqual(expect.any(String));
+        expect(appliedAgain.change.selectionChangedModes).toEqual([]);
+        await state.library.undo(appliedAgain.undo!);
+        expect(state.selection.dark).toEqual(ref(ids.first));
+        expect(state.counts().writes).toBe(1);
+        expect(state.counts().deletes).toBe(0);
+    });
+
+    it('reports typed missing-theme and foreign or consumed Undo failures', async () => {
+        const state = setup();
+        await expect(state.library.duplicate({ reference: ref(ids.first) })).rejects.toMatchObject({ code: 'theme_not_found' });
+        await expect(state.library.select({ mode: 'dark', reference: ref(ids.first) })).rejects.toMatchObject({ code: 'theme_not_found' });
+        await expect(state.library.undo('foreign')).rejects.toMatchObject({ code: 'theme_undo_handle_unknown' });
+        await state.library.save({ document: document(ids.first) });
+        const applied = await state.library.select({ mode: 'dark', reference: ref(ids.first) });
+        await state.library.undo(applied.undo!);
+        await expect(state.library.undo(applied.undo!)).rejects.toMatchObject({ code: 'theme_undo_handle_unknown' });
+        expect(state.selection.dark).toBeNull();
+        expect(state.records.has(ids.first)).toBe(true);
+    });
+
     it('retains future version and presentation through Keep, read and duplicate', async () => {
         const state = setup();
         const retained = document(ids.first, { schemaVersion: 2, style: { radius: 'round', futurePresentation: { glow: true } } });

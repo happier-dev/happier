@@ -60,7 +60,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         const summary = find(reference);
         if (summary) assertYours(summary.source);
         const current = summary ? await artifacts.get(document.profile.id) : null;
-        if (summary && !current) throw new Error('Theme not found');
+        if (summary && !current) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
         if (current && sameContent(current.document, document)) return { result: unchanged(summary), createdRecord: undefined };
         if (current && operation === 'keep') throw new Error('Save deliberate edits before applying this theme');
         const id = current || ArtifactCreateIdV1Schema.safeParse(document.profile.id).success ? document.profile.id : context.createId();
@@ -96,7 +96,6 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
             const reference: ThemeReference = { kind: 'artifact', id: saved.result.entry!.id };
             const changed = !sameStrictJsonValue(previousSelection, reference);
             if (changed) await context.writeSelection(mode, reference);
-            if (!changed && !saved.createdRecord) return saved.result;
             const undo = recordUndo({ mode, previousSelection, appliedSelection: reference, ...(saved.createdRecord ? { createdRecord: saved.createdRecord } : {}) });
             return { ...saved.result, change: { ...saved.result.change, selectionChangedModes: changed ? [mode] : [] }, undo };
         },
@@ -111,7 +110,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         },
         duplicate: async ({ reference, name }) => {
             const document = await library.get(reference);
-            if (!document) throw new Error('Theme not found');
+            if (!document) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
             const timestamp = new Date(context.now()).toISOString();
             const copy = mergeThemeProfileDocumentEdit(document, { id: context.createId(), name: name ?? document.profile.name,
                 createdAt: timestamp, updatedAt: timestamp, source: { kind: 'yours' } });
@@ -123,17 +122,17 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
                 const record = await artifacts.get(reference.id);
                 if (record) entry = projectThemeLibraryEntry(record.document);
             }
-            if (reference && !entry) throw new Error('Theme not found');
+            if (reference && !entry) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
             const previousSelection = context.readSelection()[mode];
-            if (sameStrictJsonValue(previousSelection, reference)) return unchanged(entry);
-            await context.writeSelection(mode, reference);
-            return { entry, change: { changedIds: [], removedIds: [], selectionChangedModes: [mode] },
+            const changed = !sameStrictJsonValue(previousSelection, reference);
+            if (changed) await context.writeSelection(mode, reference);
+            return { entry, change: { changedIds: [], removedIds: [], selectionChangedModes: changed ? [mode] : [] },
                 undo: recordUndo({ mode, previousSelection, appliedSelection: reference }) };
         },
         lastUndo: () => undoState.current?.handle ?? null,
         undo: async handle => {
             const operation = undoState.current;
-            if (!operation || operation.handle !== handle) throw new Error('Theme Undo is no longer available');
+            if (!operation || operation.handle !== handle) throw new HappyError('Theme Undo is no longer available', false, { code: 'theme_undo_handle_unknown' });
             const undo = operation.context;
             let result = unchanged();
             if (undo.createdRecord) {
@@ -172,7 +171,7 @@ export function createThemeProfileSourceAdapter(context: ThemeProfileLibraryCont
             const currentSummary = context.artifacts.list().find(({ entry }) => entry.source.kind === 'store'
                 && entry.source.provenance.sourceId === source.provenance.sourceId && entry.source.provenance.itemId === source.provenance.itemId && entry.source.contributionId === source.contributionId);
             const current = currentSummary ? await context.artifacts.get(currentSummary.entry.id) : null;
-            if (currentSummary && !current) throw new Error('Theme not found');
+            if (currentSummary && !current) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
             let next = mergeThemeProfileDocumentEdit(document, { id: current?.document.profile.id ?? context.createId(),
                 ...(current ? { createdAt: current.document.profile.createdAt } : {}) });
             if (current) {
