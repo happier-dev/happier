@@ -1,6 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OwnServerDataQueryNative } from './dataQueryNative';
 import { assertOwnServerDataQuerySupportedEngine, ownServerReadOnlyRoleGuardSql, type OwnServerDataEngine } from './dataRoleGuard';
+import { postgresqlWriteRoleGuardSql } from '@happier-dev/deployment-protocol';
 
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const mysqlIdentifier = (value: string) => `\`${value.replaceAll('`', '``')}\``;
@@ -87,4 +88,65 @@ ${exists === 'absent' ? `GRANT SELECT, SHOW VIEW ON ${mysqlIdentifier(input.data
         signal: input.signal,
     });
     if (ready.exitCode !== 0 || ready.stdoutTruncated || ready.stdout.trim() !== '1') return refuse('read_role_unavailable');
+}
+
+/** The bounded write login `happier_rw` (P3 R14), called only from the reviewed bindings
+ * writer like the reader above. A non-superuser app owner is granted to it; a superuser-owned
+ * app gets DML grants on its user schemas instead. It is never a superuser, role administrator
+ * or server-file/program role, and the container administrator login never leaves the container. */
+export async function bootstrapOwnServerWriteDataRoleForHost(input: Readonly<{
+    engine: OwnServerDataEngine; database: string; port?: number; password: string; signal: AbortSignal;
+}>, native: OwnServerDataQueryNative): Promise<void> {
+    if (input.engine !== 'postgresql') {
+        return refuse('unsupported_action');
+    }
+    const passwordBase64 = Buffer.from(input.password).toString('base64');
+    const port = String(input.port ?? 5432);
+    const database = `dbname='${input.database.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
+    const setup = await native.run({ argv: ['sh', '-c',
+        'PGPASSWORD="${POSTGRES_PASSWORD:-}" exec psql -X -v ON_ERROR_STOP=1 --username="${POSTGRES_USER:-postgres}" --dbname="$1" --port="$2" -At -f -',
+        'happier-data-role', database, port], stdin: Buffer.from(`BEGIN;
+SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='happier_rw') AS role_exists \\gset
+\\if :role_exists
+SET LOCAL ROLE happier_rw;
+${postgresqlWriteRoleGuardSql}
+RESET ROLE;
+\\else
+CREATE ROLE happier_rw LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS;
+\\endif
+SELECT r.rolsuper AS owner_super, quote_ident(r.rolname) AS owner_ident
+  FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba WHERE d.datname = current_database() \\gset
+\\if :owner_super
+DO $happier_grants$
+DECLARE schema_name text;
+BEGIN
+  FOR schema_name IN SELECT nspname FROM pg_namespace
+    WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname !~ '^pg_' LOOP
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO happier_rw', schema_name);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO happier_rw', schema_name);
+    EXECUTE format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %I TO happier_rw', schema_name);
+  END LOOP;
+END
+$happier_grants$;
+\\else
+GRANT :owner_ident TO happier_rw;
+\\endif
+SET LOCAL ROLE happier_rw;
+${postgresqlWriteRoleGuardSql}
+RESET ROLE;
+SELECT convert_from(decode('${passwordBase64}','base64'),'UTF8') AS role_password \\gset
+ALTER ROLE happier_rw PASSWORD :'role_password';
+COMMIT;
+`), env: {}, signal: input.signal });
+    if (setup.stdoutTruncated || setup.exitCode !== 0) return refuse(setup.exitCode === 127 ? 'unsupported_action' : 'write_role_unavailable');
+    // This fixed readiness statement is bootstrap's login proof, not a query transport.
+    const ready = await native.run({
+        argv: ['psql', '-X', '-q', '-At', '--no-password', '--host=127.0.0.1', '--username=happier_rw',
+            `--dbname=${database}`, '--port', port, '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+        stdin: Buffer.from(`BEGIN;\n${postgresqlWriteRoleGuardSql}\nSELECT 1;\nROLLBACK;\n`),
+        env: { PGPASSWORD: input.password, PGHOSTADDR: '', PGCLIENTENCODING: 'UTF8',
+            PGOPTIONS: '-c standard_conforming_strings=on', LC_ALL: 'C' },
+        signal: input.signal,
+    });
+    if (ready.exitCode !== 0 || ready.stdoutTruncated || ready.stdout.trim() !== '1') return refuse('write_role_unavailable');
 }

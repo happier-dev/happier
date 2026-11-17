@@ -14,6 +14,7 @@ import { prepareEnvironmentSecretBindingsForLaunch } from '../../secrets/prepare
 import { acquireOwnServerDataServiceForHost, type OwnServerDataServiceHost } from './dataQueryScope';
 import { readOwnServerDatabaseEndpointForHost } from './databaseEndpoint';
 import { ownServerReadOnlyRoleGuardSql } from './dataRoleGuard';
+import { postgresqlWriteRoleGuardSql } from '@happier-dev/deployment-protocol';
 
 const refuse = (code: string): never => { throw new PluginError({ code }); };
 type Host = OwnServerDataServiceHost & Readonly<{ credentials: StoredCredentials; serverHttpBaseUrl: string }>;
@@ -25,18 +26,22 @@ type NativeConnection = PostgresqlConnection & Readonly<{ engine: 'postgresql' |
 export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
     host: Host; target: DatabaseDeploymentServiceTargetV1; environment: DeploymentEnvironmentDetailV1;
     installationId: string; context: ActionExecutorContext; signal: AbortSignal; operationId: string;
+    /** Write opens the bounded `happier_rw` login (P3 R14); reads keep `happier_ro`. */
+    access?: 'read' | 'write';
 }>): Promise<NativeConnection> {
     const { host, target, context } = input;
+    const write = input.access === 'write';
     await host.assertCurrent(context);
     const installation = readInstallationIdentityIfExistsSync();
     if (!installation || installation.installationId !== input.installationId) return refuse('target_mismatch');
     const scope = await acquireOwnServerDataServiceForHost(host, { ...target.environment,
         expectedRevision: input.environment.environment.revision, targetLinkId: target.targetLinkId,
         deploymentId: target.deploymentId, service: target.serviceId, machineId: host.machineId,
-        installationId: input.installationId }, context, input.environment);
+        installationId: input.installationId, ...(write ? { role: 'write' as const } : {}) }, context, input.environment);
     let ownsScope = true;
     try {
         if (scope.definition.database !== target.database) return refuse('target_mismatch');
+        if (write && scope.definition.engine !== 'postgresql') return refuse('unsupported_action');
         const keys = await scope.handle.readNativeEffectKeys?.({ signal: input.signal });
         if (!keys || !scope.handle.readNativeDocker) return refuse('service_admission_unavailable');
         let opened!: (connection: NativeConnection) => void;
@@ -68,10 +73,10 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                     bindings: scope.environment.content.bindings, grants: admission.grants, use: scope.use, assertCurrent: admission.assertCurrent });
                 try {
                     const password = prepared.operationalValues.get(environmentSecretBindingIdentityV1(scope.use));
-                    if (!password) return refuse('read_role_setup_required');
+                    if (!password) return refuse(write ? 'write_role_setup_required' : 'read_role_setup_required');
                     const url = new URL(`${scope.definition.engine}://127.0.0.1`);
                     url.hostname = endpoint?.host === '::1' ? '[::1]' : '127.0.0.1';
-                    url.port = String(endpoint?.port ?? containerPort); url.username = 'happier_ro'; url.password = password;
+                    url.port = String(endpoint?.port ?? containerPort); url.username = write ? 'happier_rw' : 'happier_ro'; url.password = password;
                     url.pathname = `/${encodeURIComponent(target.database)}`;
                     // postgres:17 and mysql:8.4 ship Bash and cat. This relay has
                     // no listener, SQL parser or credential in argv. Driver
@@ -84,9 +89,10 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                             + 'wait -n "$reader" "$writer"; kill "$reader" "$writer" 2>/dev/null; wait',
                         ], scope.handle.retirementSignal) };
                     const connection = await machineNativeEffectAdmission.runStage(effect, () => scope.definition.engine === 'postgresql'
-                        ? openPostgresqlConnection(url.toString(), signal, { ...transport, sessionGuardSql: ownServerReadOnlyRoleGuardSql('postgresql') })
+                        ? openPostgresqlConnection(url.toString(), signal, { ...transport,
+                            sessionGuardSql: write ? postgresqlWriteRoleGuardSql : ownServerReadOnlyRoleGuardSql('postgresql') })
                         : openMysqlConnection(url.toString(), signal, transport)).catch((error: unknown) => {
-                            if (error && typeof error === 'object' && 'code' in error && error.code === '42501') return refuse('read_role_unavailable');
+                            if (error && typeof error === 'object' && 'code' in error && error.code === '42501') return refuse(write ? 'write_role_unavailable' : 'read_role_unavailable');
                             throw error;
                         });
                     try {

@@ -39,6 +39,8 @@ export type OwnServerDataServiceHost = Pick<OwnServerDeploymentTargetHostInput,
 export type OwnServerDataServiceSelector = Readonly<{
     environmentId: string; expectedRevision: number; targetLinkId: string; deploymentId: string;
     machineId: string; installationId: string; service: string;
+    /** The data-role binding to acquire: the reader (default) or the bounded writer (P3 R14). */
+    role?: 'readOnlyPassword' | 'write';
 }>;
 
 type DataEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'> & Readonly<{
@@ -73,9 +75,10 @@ export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServ
     const { basis } = await readOwnServerDataServiceDeploymentForHost(host, selector, context, environment);
     if (!basis.services.includes(selector.service)) return refuse('target_mismatch');
     const definition = resolveOwnServerDataQueryDefinitionForHost(environment.content, selector.service, basis.bindings);
+    const role = selector.role ?? 'readOnlyPassword';
     const use = environment.content.bindings.find(binding => binding.purpose === 'dataRole'
-        && 'service' in binding && binding.service === selector.service && binding.role === 'readOnlyPassword');
-    if (!use || use.purpose !== 'dataRole') return refuse('read_role_setup_required');
+        && 'service' in binding && binding.service === selector.service && binding.role === role);
+    if (!use || use.purpose !== 'dataRole') return refuse(role === 'write' ? 'write_role_setup_required' : 'read_role_setup_required');
     await host.ensureServiceObservations?.({ environmentId: selector.environmentId, composeService: selector.service });
     const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
         serverId: host.serverId, environmentId: selector.environmentId });

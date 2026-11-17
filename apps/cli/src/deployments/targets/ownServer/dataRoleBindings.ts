@@ -15,7 +15,7 @@ import type { PrepareDataRoleBindingsForHost } from '../../secrets/prepareDeploy
 import { prepareEnvironmentSecretBindingsForLaunch } from '../../secrets/prepareEnvironmentSecretBindingsForLaunch';
 import { acquireOwnServerDataServiceForHost, resolveOwnServerDataServiceDeclarationForHost, type OwnServerDataServiceHost } from './dataQueryScope';
 import { withOwnServerDataQueryNativeForHost } from './dataQueryNative';
-import { bootstrapOwnServerReadOnlyDataRoleForHost } from './dataRoleBootstrap';
+import { bootstrapOwnServerReadOnlyDataRoleForHost, bootstrapOwnServerWriteDataRoleForHost } from './dataRoleBootstrap';
 
 type RoleJob = Extract<DeploymentChildRpcV1, { kind: 'dataRole' }>;
 type ServiceRole = Extract<EnvironmentSecretBindingV1, { purpose: 'dataRole' }> & { service: string };
@@ -45,7 +45,8 @@ export function createOwnServerDataRoleBindingsForHost(host: OwnServerDataServic
             environment = { ...current, content: candidate.content };
         }
         const scope = await acquireOwnServerDataServiceForHost(host, { ...job.input, targetLinkId: job.targetLinkId,
-            deploymentId: job.deploymentId, machineId: job.machineId, installationId: job.installationId, service: job.service }, context, environment);
+            deploymentId: job.deploymentId, machineId: job.machineId, installationId: job.installationId, service: job.service,
+            role: job.use.role }, context, environment);
         try {
             if (!isDeepStrictEqual(scope.use, job.use)) return refuse('target_mismatch');
             const signal = context.signal ?? new AbortController().signal;
@@ -58,7 +59,8 @@ export function createOwnServerDataRoleBindingsForHost(host: OwnServerDataServic
                 const password = prepared.operationalValues.get(environmentSecretBindingIdentityV1(scope.use));
                 if (!password) return refuse('secret_missing');
                 await withOwnServerDataQueryNativeForHost({ ...scope, operationId: context.actionRequestId ?? randomUUID(), signal },
-                    native => bootstrapOwnServerReadOnlyDataRoleForHost({ ...scope.definition, password, signal }, native));
+                    native => (scope.use.role === 'write' ? bootstrapOwnServerWriteDataRoleForHost : bootstrapOwnServerReadOnlyDataRoleForHost)(
+                        { ...scope.definition, password, signal }, native));
                 return { ok: true as const };
             } finally { prepared.dispose(); }
         } finally { await scope.dispose(); }

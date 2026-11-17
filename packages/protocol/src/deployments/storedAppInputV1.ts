@@ -238,7 +238,7 @@ const managedDataRoleAddress = lazyZodSchema(() => z.strictObject({ targetLinkId
 export const EnvironmentDataRoleAddressV1Schema = lazyZodSchema(() => z.union([serviceDataRoleAddress, managedDataRoleAddress]));
 export type EnvironmentDataRoleAddressV1 = z.infer<typeof EnvironmentDataRoleAddressV1Schema>;
 const serviceDataBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.literal('dataRole'),
-    role: z.literal('readOnlyPassword'), ...serviceDataRoleAddress.shape }));
+    role: z.enum(['readOnlyPassword', 'write']), ...serviceDataRoleAddress.shape }));
 const managedDataBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.literal('dataRole'),
     role: z.enum(['readOnlyPassword', 'write']), ...managedDataRoleAddress.shape }));
 export const EnvironmentSecretBindingIdentityV1Schema = lazyZodSchema(() => z.union([

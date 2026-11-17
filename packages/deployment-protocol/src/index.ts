@@ -11,3 +11,4 @@ export { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/sa
 export { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1, DeploymentBindingSavedSecretRevisionsV1Schema, EnvironmentSecretBindingRoutingV1Schema, type DeploymentBindingSavedSecretRevisionV1, type EnvironmentSecretBindingRoutingV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 export { postgresqlReadOnlyRoleGuardSql } from './secrets/postgresqlReadOnlyRole.js';
+export { postgresqlWriteRoleGuardSql } from './secrets/postgresqlWriteRole.js';

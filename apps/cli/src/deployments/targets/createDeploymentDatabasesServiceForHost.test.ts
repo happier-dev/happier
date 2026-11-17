@@ -56,9 +56,6 @@ describe('managed database attachment at the deployment owner', () => {
             }], completeness: { complete: true } });
             stored.state.environment.environment.dataEditorMode = 'managers';
             stored.state.environment.environment.capabilities.editData = true;
-            await expect(service.resolve({ operation: 'describe', target: { kind: 'deployment_service', environment,
-                deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' } }, 'write'))
-                .rejects.toMatchObject({ code: 'write_role_setup_required' });
             // A held workbench read is admitted per request from the current Environment, with no connection.
             const native = { operation: 'describe' as const, target: { kind: 'deployment_service' as const, environment,
                 deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' } };

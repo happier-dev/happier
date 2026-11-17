@@ -227,10 +227,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             const admitted = await admitTarget(request, operation);
             if (admitted.target.kind === 'deployment_service') {
                 const { target, admission, summary } = admitted;
-                if (operation === 'write') return refuse('write_role_setup_required');
+                // A write opens the bounded writer; a missing write binding refuses with `write_role_setup_required`.
                 const connection = await openOwnServerDatabaseConnectionForHost({ host: admission.host, target,
                     environment: admission.detail, installationId: admission.placement.installationId,
-                    context: admission.context, signal: input.seed.signal, operationId: input.seed.correlationId });
+                    context: admission.context, signal: input.seed.signal, operationId: input.seed.correlationId, access: operation });
                 return { descriptor: { target, engine: connection.engine, label: target.database,
                     origin: { label: admission.detail.content.name }, capabilities: builtinDatabaseCapabilities(connection.engine),
                     access: summary, placement: admission.placement }, connection };
