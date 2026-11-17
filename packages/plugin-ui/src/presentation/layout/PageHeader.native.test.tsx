@@ -4,7 +4,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 // Native layout delivery is the platform boundary; the responsive header and control stay real.
-vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' } }));
+vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false } }));
 
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { HappierPageHeader } from './PageHeader.js';
