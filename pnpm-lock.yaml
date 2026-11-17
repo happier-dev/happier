@@ -447,9 +447,6 @@ importers:
       '@happier-dev/plugins-custom-acp':
         specifier: 0.0.0
         version: link:../../packages/plugins/custom-acp
-      '@happier-dev/plugins-telemetry':
-        specifier: 0.0.0
-        version: link:../../packages/plugins/telemetry
       '@happier-dev/plugins-database-workbench':
         specifier: 0.0.0
         version: link:../../packages/plugins/database-workbench
@@ -660,6 +657,9 @@ importers:
       '@happier-dev/plugins-sentry':
         specifier: 0.0.0
         version: link:../../packages/plugins/sentry
+      '@happier-dev/plugins-telemetry':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/telemetry
       '@happier-dev/plugins-triage':
         specifier: 0.0.0
         version: link:../../packages/plugins/triage
