@@ -36,7 +36,7 @@ type AccountUsageApi = Readonly<{
 }>;
 
 /** One publication owner for all key-holding CLI quota producers. A failed
- * summary leaves accepted detail intact for the next normal write to backfill. */
+ * summary leaves accepted detail intact for the next maintenance pass. */
 export async function persistProviderAccountUsageWithDaySummaries(input: Readonly<{
   token: string; write: Parameters<typeof writeQualifiedProviderAccountUsageV4>[0]['write'];
   material?: AccountScopedCryptoMaterial; signal?: AbortSignal; nowMs: number;
@@ -46,21 +46,29 @@ export async function persistProviderAccountUsageWithDaySummaries(input: Readonl
   const result = await (input.writer ?? writeQualifiedProviderAccountUsageV4)({ token: input.token, write: input.write,
     ...(input.material ? { material: input.material } : {}), ...(input.signal ? { signal: input.signal } : {}) });
   const write = QualifiedProviderAccountUsageWriteV4Schema.parse(input.write);
+  const dailySummary = await maintainProviderAccountUsageDaySummariesForRecord({ ...input, recordId: write.recordId,
+    accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs: Math.max(input.nowMs, write.fetchedAt ?? 0) });
+  return { ...result, dailySummary };
+}
+
+/** Saved-account passes and new observations share optional maintenance and its diagnostics. */
+export async function maintainProviderAccountUsageDaySummariesForRecord(
+  input: Parameters<typeof maintainProviderAccountUsageDaySummaries>[0],
+) {
   try {
-    const dailySummary = await maintainProviderAccountUsageDaySummaries({ ...input, recordId: write.recordId,
-      accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs: Math.max(input.nowMs, write.fetchedAt ?? 0) });
+    const dailySummary = await maintainProviderAccountUsageDaySummaries(input);
     if (dailySummary.status === 'partial') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
       { phase: 'daily_summary', reason: 'content_unavailable', writtenDays: dailySummary.days, unavailableDays: dailySummary.unavailableDays.length });
     else if (dailySummary.status === 'conflict') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
       { phase: 'daily_summary', reason: 'coverage_changed', writtenDays: dailySummary.days });
     else if (dailySummary.status === 'unavailable') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
       { phase: 'daily_summary', reason: dailySummary.reason, writtenDays: dailySummary.days });
-    return { ...result, dailySummary };
+    return dailySummary;
   } catch (error) {
     input.signal?.throwIfAborted();
     const reason = readHttpStatus(error) === 401 || readHttpStatus(error) === 403 ? 'authority_unavailable' as const : 'write_failed' as const;
     logger.warnLocalFile('Provider account usage daily summary maintenance unavailable', { phase: 'daily_summary', reason, writtenDays: 0 });
-    return { ...result, dailySummary: { status: 'unavailable' as const, reason } };
+    return { status: 'unavailable' as const, reason };
   }
 }
 

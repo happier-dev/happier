@@ -9635,7 +9635,9 @@ Other reads still require an explicit range. No artificial client ceiling is use
 The same unreleased contract adds optional sealed day-summary `observedAtRange`
 (half-open provider-clock extrema), outer `clockBoundsVersion: 1`, and daemon
 request `requireClockBounds: true`. The existing daemon upgrades legacy summaries
-from complete remaining-day reads plus retained endpoints; it does not recover
+on the normal saved-account startup/due pass, even without a new observation,
+and after accepted observation publication. It uses complete remaining-day reads
+plus retained endpoints; it does not recover
 expired detail or change pace verdict semantics. The one pace owner derives
 coalesced accepted-history ranges for the actual current meter windows, including
 clock-skewed days. Legacy or missing evidence is explicitly unproven rather than

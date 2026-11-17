@@ -2,6 +2,8 @@ import { computeConnectedServiceAccessTokenFingerprint } from '../refresh/creden
 import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from './resolveConnectedServiceQuotasDaemonOptions';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
+import credentialAxios from '@/api/client/credentialAxios';
+import { buildProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { ApiClient } from '@/api/api';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { PushNotificationClient } from '@/api/pushNotifications';
@@ -17,11 +19,12 @@ import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sealNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(() => import(
+    '@/plugins/projection/registry/builtIn/locators.testkit'
+));
+
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  const { createBundledPluginPublicationFsFixture } = await import(
-    '@/plugins/projection/registry/builtIn/locators.testkit'
-  );
   // Quota tests consume source manifests, not a machine's live publication result.
   return createBundledPluginPublicationFsFixture(actual);
 });
@@ -2982,6 +2985,53 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         }
         return;
       }
+      if (recoveryMode === 'deadline_no_quota') {
+        // A saved account with no quota leaf cannot produce another observation.
+        // Its ordinary startup pass must still upgrade retained legacy evidence.
+        const complete = buildProviderAccountUsageDaySummaryV1({ recordId: previous.recordId,
+          dayStartAtMs: 0, snapshots: [previous], completeDayHistory: true });
+        const { observedAtRange: _clockBounds, ...legacy } = complete;
+        let stored: ReturnType<typeof ProviderAccountUsageDaySummaryWriteV1Schema.parse>['payload'] = {
+          v: 1, coverage: { observationCount: 1, frontier: { id: 'saved', observedAtMs: previous.fetchedAtMs } },
+          content: { t: 'plain', v: legacy },
+        };
+        let historyReads = 0;
+        const get = vi.spyOn(credentialAxios, 'get').mockImplementation(async url => {
+          const query = JSON.parse(new URL(String(url)).searchParams.get('query')!);
+          if (String(url).includes('/day-summaries')) {
+            expect(query).toMatchObject({ recordId: previous.recordId, includeMissingDays: true, requireClockBounds: true });
+            return { status: 200, data: { summaries: [{ dayStartAtMs: 0, payload: stored }],
+              missingDays: stored.clockBoundsVersion === 1 ? [] : [{ dayStartAtMs: 0, coverage: stored.coverage }] } };
+          }
+          historyReads++;
+          return { status: 200, data: { entries: [{ id: 'saved', observedAtMs: previous.fetchedAtMs,
+            record: { content: { t: 'plain', v: previous }, metadata: { fetchedAt: previous.fetchedAtMs,
+              staleAfterMs: previous.staleAfterMs, status: 'ok' }, sources: [] } }], nextCursor: null } };
+        });
+        const put = vi.spyOn(credentialAxios, 'put').mockImplementation(async (_url, body) => {
+          stored = ProviderAccountUsageDaySummaryWriteV1Schema.parse(body).payload;
+          return { status: 200, data: { success: true } };
+        });
+        onTestFinished(() => { get.mockRestore(); put.mockRestore(); });
+        const schedule = await coordinator.tickOnce();
+        expect(stored).toMatchObject({ clockBoundsVersion: 1, content: { t: 'plain', v: {
+          observedAtRange: { startAtMs: previous.observedAtMs, endAtMs: previous.observedAtMs + 1 },
+        } } });
+        expect(historyReads).toBe(1);
+        expect(put).toHaveBeenCalledTimes(1);
+        expect(schedule).toEqual({ nextAutomaticRunAfterMs: null });
+        expect(writeProviderAccountUsage).not.toHaveBeenCalled();
+        await expect(readFile(quotaInvocationMarker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        const settledReads = get.mock.calls.length;
+        for (let index = 0; index < 10; index++) { now += 60_000; await coordinator.tickOnce(); }
+        expect(get).toHaveBeenCalledTimes(settledReads);
+        coordinator.invalidateInventory({ resetQuotaSchedule: true });
+        await coordinator.tickOnce();
+        expect(historyReads).toBe(1);
+        expect(put).toHaveBeenCalledTimes(1);
+        expect(writeProviderAccountUsage).not.toHaveBeenCalled();
+        return;
+      }
       const schedule = await coordinator.tickOnce();
       if (recoveryMode === 'deadline_no_quota_recovery') {
         expect(readQuota).toHaveBeenCalledTimes(1);
@@ -3061,11 +3111,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         coordinator.invalidateInventory({ resetQuotaSchedule: true });
         await coordinator.tickOnce();
         expect(writeProviderAccountUsage).toHaveBeenCalledTimes(2);
-        return;
-      }
-      if (recoveryMode === 'deadline_no_quota') {
-        expect(schedule).toEqual({ nextAutomaticRunAfterMs: null });
-        expect(writeProviderAccountUsage).not.toHaveBeenCalled();
         return;
       }
       if (recoveryMode.startsWith('deadline_')) {

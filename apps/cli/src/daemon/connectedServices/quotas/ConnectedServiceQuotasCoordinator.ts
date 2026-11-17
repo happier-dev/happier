@@ -1,6 +1,6 @@
 import { setTimeout, clearTimeout } from 'node:timers';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
-import { persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
+import { maintainProviderAccountUsageDaySummariesForRecord, persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
 import type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
@@ -4410,6 +4410,16 @@ export class ConnectedServiceQuotasCoordinator {
         }
         const canProbe = this.shouldRunQualifiedQuotaOperation(profile, 'quota_poll');
         const { response: existing, snapshot: existingSnapshot, localSnapshot } = await this.readQualifiedAccountQuota(profile, input.signal);
+        // A reload must upgrade retained days even when no new observation is
+        // needed or this Account's plugin has no quota acquisition capability.
+        if (existing && existingSnapshot) {
+          await maintainProviderAccountUsageDaySummariesForRecord({
+            token: this.credentials.token, recordId: existing.sourceResolution.recordId,
+            accountMode: input.accountMode, nowMs: Math.max(input.now, existing.metadata.fetchedAt),
+            randomBytes: this.randomBytes, signal: input.signal,
+            ...(input.accountMode === 'e2ee' ? { material: requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial()) } : {}),
+          });
+        }
         // Register saved Accounts as well as newly settled ones. Home Refresh is
         // source-addressed, so this must not depend on provider acquisition succeeding.
         const initializedSource = !existingSnapshot

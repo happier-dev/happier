@@ -1397,8 +1397,10 @@ a half-open range of provider observation clocks, inside the existing sealed bod
 The key-holding daemon computes it from a complete read of the selected pending
 day and the retained summary endpoints. An optional outer `clockBoundsVersion: 1`
 marks this format without disclosing those clocks. The daemon requests
-`requireClockBounds: true` to upgrade legacy days through the same writer;
-completed current-format days need no raw-history scan. Retention cannot recover
+`requireClockBounds: true` to upgrade legacy days through the same writer.
+The normal saved-account startup/due pass invokes this key-holding maintainer
+even without a new observation; accepted observation publication also invokes it.
+Completed current-format days need no raw-history scan. Retention cannot recover
 deleted observations: an upgraded compacted day proves only its retained operands.
 The pace owner uses these bounds to include accepted days whose provider clocks
 reach the current meter windows, including observations outside their own windows.
