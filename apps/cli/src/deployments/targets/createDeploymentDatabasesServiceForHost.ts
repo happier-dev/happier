@@ -159,7 +159,25 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         return summarizeDatabaseAccessV1(facts);
     };
 
+    const admitTarget = async (request: DatabaseOperationInputV1, operation: DatabaseOperationClassV1) => {
+        const target = request.target;
+        if (target.kind === 'deployment_service') {
+            const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId, { nativeMember: true });
+            return { target, admission, summary: access(admission, operation) };
+        }
+        if (target.kind !== 'managed_deployment') return refuse('target_mismatch');
+        const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId);
+        const selected = selectLink(admission, target.targetLinkId);
+        if (!sameStrictJsonValue(target, { ...selected.target, database: target.database })) return refuse('target_mismatch');
+        return { target, admission, selected, summary: access(admission, operation) };
+    };
+
     return Object.freeze({
+        async admit(request, operation) {
+            const { admission, summary } = await admitTarget(request, operation);
+            const environment = admission.detail.environment;
+            return { access: summary, environment: { serverId: environment.serverId, environmentId: environment.id, revision: environment.revision } };
+        },
         async listTargets(request) {
             if (request.scope.kind !== 'environment') return { targets: [], completeness: { complete: true } };
             const admission = await readEnvironment(request.scope, undefined, { includeDataTargetLinkContent: true, nativeMember: true });
@@ -205,10 +223,9 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             return { targets, completeness };
         },
         async resolve(request, operation) {
-            const target = request.target;
-            if (target.kind === 'deployment_service') {
-                const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId, { nativeMember: true });
-                const summary = access(admission, operation);
+            const admitted = await admitTarget(request, operation);
+            if (admitted.target.kind === 'deployment_service') {
+                const { target, admission, summary } = admitted;
                 if (operation === 'write') return refuse('write_role_setup_required');
                 const connection = await openOwnServerDatabaseConnectionForHost({ host: admission.host, target,
                     environment: admission.detail, installationId: admission.placement.installationId,
@@ -217,17 +234,15 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                     origin: { label: admission.detail.content.name }, capabilities: builtinDatabaseCapabilities(connection.engine),
                     access: summary, placement: admission.placement }, connection };
             }
-            if (target.kind !== 'managed_deployment') return refuse('target_mismatch');
-            const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId);
-            const selected = selectLink(admission, target.targetLinkId);
-            if (!sameStrictJsonValue(target, { ...selected.target, database: target.database })) return refuse('target_mismatch');
-            const summary = access(admission, operation);
-            const bound = await bind(admission, selected);
+            const { target, admission, summary } = admitted;
+            const selected = admitted.selected ?? refuse('target_mismatch');
+            const bound = await bind(admission, selected, operation);
             try {
                 const resolved = await bound.runtime.open({ preparation: bound.preparation, target, access: operation,
                     placement: bound.placement }, bound.invocation);
                 const close = async () => { try { await resolved.connection.close(); } finally { bound.dispose(); } };
-                return { descriptor: { ...resolved.descriptor, target, access: summary, placement: bound.placement },
+                return { descriptor: { ...resolved.descriptor, target,
+                    automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary, placement: bound.placement },
                     connection: { engine: resolved.connection.engine, execute: resolved.connection.execute.bind(resolved.connection), close } };
             } catch (error) { bound.dispose(); throw error; }
         },

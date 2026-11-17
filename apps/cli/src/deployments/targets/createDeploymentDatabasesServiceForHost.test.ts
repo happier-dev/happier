@@ -59,11 +59,20 @@ describe('managed database attachment at the deployment owner', () => {
             await expect(service.resolve({ operation: 'describe', target: { kind: 'deployment_service', environment,
                 deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' } }, 'write'))
                 .rejects.toMatchObject({ code: 'write_role_setup_required' });
+            // A held workbench read is admitted per request from the current Environment, with no connection.
+            const native = { operation: 'describe' as const, target: { kind: 'deployment_service' as const, environment,
+                deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' } };
+            expect(await service.admit(native, 'read')).toEqual({ access: { canRead: true, canWrite: true },
+                environment: { serverId: stored.state.environment.environment.serverId, environmentId: environment.environmentId,
+                    revision: stored.state.environment.environment.revision } });
+            stored.state.environment.environment.dataEditorMode = 'off';
+            stored.state.environment.environment.capabilities.editData = false;
+            await expect(service.admit(native, 'write')).rejects.toMatchObject({ code: 'database_editing_off' });
         } finally { await owners.dispose(); }
     });
 
     it('discovers the current data Link and opens only its exact provider, project and branch', async () => {
-        const stored = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+        const stored = createDeploymentTargetRoleAdmissionFixture('branches.list');
         const pluginManifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
         const pluginId = pluginManifest.id;
         const definition = pluginManifest.contributes.deploymentTargets[0]!;

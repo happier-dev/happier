@@ -1,5 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { DatabaseAccessDecisionV1, DatabaseAccessSummaryV1, DatabaseAgentAccessV1, DatabaseOperationClassV1,
+import type { DatabaseAccessDecisionV1, DatabaseAccessSummaryV1, DatabaseAgentLevelV1, DatabaseOperationClassV1,
     DatabaseRequesterKindV1 } from '@happier-dev/database-protocol';
 
 /** Fold host-admitted caller facts once for database access; older hosts remain unavailable. */
@@ -15,7 +15,8 @@ export type DatabaseAccessInputV1 = Readonly<{
     /** Write facts from the target owner (Environment editors, worktree or Saved Secret admission). The person is
      * already admitted to read by that owner's existing read admission before any caller reaches this decision. */
     person: Readonly<{ mayWrite: boolean; editingOff: boolean }>;
-    agentAccess: DatabaseAgentAccessV1;
+    /** The D13 level. Ask vs no approval is the approval applier's input; here both write levels admit writes. */
+    agentAccess: DatabaseAgentLevelV1;
     requester: DatabaseRequesterKindV1;
     operation: DatabaseOperationClassV1;
 }>;
@@ -28,13 +29,18 @@ export function decideDatabaseAccessV1(input: DatabaseAccessInputV1): DatabaseAc
     if (input.requester === 'agent' && input.agentAccess === 'none') return { ok: false, refusal: 'database_agent_access_none' };
     if (input.operation === 'read') return { ok: true, access: highestClass(input) };
     if (!input.person.mayWrite) return refuseWrite(input);
-    // Agent write levels arrive with the approval applier's database input; until then an agent's ceiling is read.
-    if (input.requester === 'agent') return { ok: false, refusal: 'database_agent_access_read_only' };
+    if (input.requester === 'agent' && !agentMayWrite(input.agentAccess)) {
+        return { ok: false, refusal: 'database_agent_access_read_only' };
+    }
     return { ok: true, access: 'write' };
 }
 
+function agentMayWrite(level: DatabaseAgentLevelV1): boolean {
+    return level === 'readWriteAsk' || level === 'readWriteNoApproval';
+}
+
 function highestClass(input: DatabaseAccessInputV1): DatabaseOperationClassV1 {
-    return input.person.mayWrite && input.requester === 'person' ? 'write' : 'read';
+    return input.person.mayWrite && (input.requester === 'person' || agentMayWrite(input.agentAccess)) ? 'write' : 'read';
 }
 
 function refuseWrite(input: DatabaseAccessInputV1): DatabaseAccessDecisionV1 {

@@ -20,6 +20,13 @@ describe('decideDatabaseAccessV1', () => {
         ['agent', editor, 'read', 'write', { ok: false, refusal: 'database_agent_access_read_only' }],
         ['agent', reader, 'read', 'write', { ok: false, refusal: 'database_not_an_editor' }],
         ['agent', off, 'read', 'write', { ok: false, refusal: 'database_editing_off' }],
+        // D13 write levels (U3): admit agent writes up to the person's class; Ask/no-approval is the applier's input.
+        ['agent', editor, 'readWriteAsk', 'write', { ok: true, access: 'write' }],
+        ['agent', editor, 'readWriteNoApproval', 'write', { ok: true, access: 'write' }],
+        ['agent', editor, 'readWriteAsk', 'read', { ok: true, access: 'write' }],
+        ['agent', reader, 'readWriteNoApproval', 'read', { ok: true, access: 'read' }],
+        ['agent', reader, 'readWriteAsk', 'write', { ok: false, refusal: 'database_not_an_editor' }],
+        ['agent', off, 'readWriteNoApproval', 'write', { ok: false, refusal: 'database_editing_off' }],
     ] as const)('%s %o at %s %s', (requester, person, agentAccess, operation, expected) => {
         expect(decideDatabaseAccessV1({ requester, person, agentAccess, operation })).toEqual(expected);
     });
