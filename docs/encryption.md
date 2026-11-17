@@ -7579,7 +7579,9 @@ Home-administration and self-erasure routes return HTTP 409 with
 `account_erasure_transition_cleanup_pending`; this step leaves the
 Account's status and credentials unchanged, and the caller retries the same authenticated
 request. Once cleanup is ready, erasure uses the existing disable/revoke, idempotent object
-deletion, and final row-deletion sequence.
+deletion, and final row-deletion sequence. The [deployment erasure owner](deployment.md#account-erasure-03-development)
+also checks retirement and dependency closure before retirement, then purges its
+private graph after blob deletion and before Artifacts and Machines.
 Public-profile withdrawal commits with terminal disable, before external object deletion;
 pending physical cleanup retains object locators but not the public edition. An earlier
 transition-cleanup refusal leaves that edition unchanged alongside status and credentials.

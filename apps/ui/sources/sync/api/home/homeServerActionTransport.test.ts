@@ -353,7 +353,7 @@ describe('requestHomeDomain', () => {
         });
     });
 
-    it.each(['account_erasure_transition_cleanup_pending', 'account_erasure_upload_pending'])('keeps an erasure blocked by %s retryable', async code => {
+    it.each(['account_erasure_transition_cleanup_pending', 'account_erasure_upload_pending', 'account_erasure_deployment_cleanup_required'])('keeps an erasure blocked by %s retryable', async code => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
         plainCredentialsFor('account');

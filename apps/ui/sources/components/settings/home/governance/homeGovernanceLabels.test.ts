@@ -39,6 +39,12 @@ describe('homeDisplayName', () => {
 });
 
 describe('accountErasureFailureNotice', () => {
+    it('explains deployment cleanup for both self and Home erasure refusals', () => {
+        const code = 'account_erasure_deployment_cleanup_required';
+        const notice = homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code });
+        expect(notice.body).toBe('homeGovernance.errorErasureDeploymentCleanupRequired');
+        expect(accountErasureFailureNotice(new HappyError(code, true, { status: 409, kind: 'server', code }))).toEqual(notice);
+    });
     it('explains an upload refusal on both erasure surfaces without claiming retirement', () => {
         const failure = { kind: 'conflict', retryable: true, code: 'account_erasure_upload_pending' } as const;
         const notice = homeGovernanceFailureNotice(failure);

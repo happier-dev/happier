@@ -1,12 +1,26 @@
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol';
 import { parseAutomationObservationOnlyDefinitionV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
+
 import { admitDeploymentMachineInTx, type DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { AutomationValidationError } from './automationValidation';
 import { disableAutomationInTx } from './automationCrudService';
 import { acquireWorkflowPublicationLocksInTx } from '@/app/workflows/acquireWorkflowPublicationLocksInTx';
+
+/** Account erasure has admitted its retired graph. Release only that Account's
+ * Automation FK; its retained runs still follow ordinary Account erasure.
+ */
+export async function clearErasedAccountDeploymentEnvironmentReferencesInTx(tx: Tx, input: Readonly<{
+    accountId: string; environmentIds: readonly string[];
+}>): Promise<void> {
+    for (const ids of portableQueryChunks({ values: input.environmentIds, bindingsPerValue: 1, fixedBindings: 4 })) {
+        await tx.automation.updateMany({ where: { accountId: input.accountId, deploymentEnvironmentId: { in: [...ids] } },
+            data: { deploymentEnvironmentId: null, deploymentPreviewRole: null } });
+    }
+}
 
 /** Environment lifecycle withdraws its existing definitions through the Automation publication owner. */
 export async function disableDeploymentEnvironmentAutomationsInTx(tx: Tx, environmentId: string,

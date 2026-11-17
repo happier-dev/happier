@@ -169,7 +169,8 @@ export function homeGovernanceFailureNotice(
  */
 export function accountErasureFailureNotice(error: unknown): Readonly<{ title: string; body: string }> {
     if (error instanceof HappyError && (error.code === 'account_erasure_transition_cleanup_pending'
-        || error.code === 'account_erasure_upload_pending')) {
+        || error.code === 'account_erasure_upload_pending'
+        || error.code === 'account_erasure_deployment_cleanup_required')) {
         return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code });
     }
     if (error instanceof HappyError
@@ -209,6 +210,8 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.errorErasureTransitionCleanupPending');
         case 'account_erasure_upload_pending':
             return t('homeGovernance.errorErasureUploadPending');
+        case 'account_erasure_deployment_cleanup_required':
+            return t('homeGovernance.errorErasureDeploymentCleanupRequired');
         case 'home_policy_widening_unconfirmed':
             return t('homeGovernance.signInPolicy.errorWideningUnconfirmed');
         case 'home_claim_refused':

@@ -58,6 +58,8 @@ export const HomeGovernanceErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'account_erasure_transition_cleanup_pending',
   /** Private upload IO is still in progress; retry before Account retirement. */
   'account_erasure_upload_pending',
+  /** Deployment retirement or private dependency closure must finish before erasure. */
+  'account_erasure_deployment_cleanup_required',
   'account_erasure_managed_resources_review_required',
 ]));
 
@@ -105,6 +107,7 @@ export function homeGovernanceErrorHttpStatusV1(
     case 'home_iroh_needs_public_address':
     case 'team_membership_transfer_conflict':
     case 'account_erasure_incomplete':
+    case 'account_erasure_deployment_cleanup_required':
     case 'account_erasure_transition_cleanup_pending':
     case 'account_erasure_upload_pending':
     case 'account_erasure_managed_resources_review_required':

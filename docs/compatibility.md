@@ -7352,6 +7352,10 @@ HTTP 409 without disabling the Account, revoking credentials or signing out the
 self-eraser. After retirement, blob deletion or retained-locator mismatch returns
 `disabled_pending_completion` from that same owner; routes do not infer retirement
 from error codes. The existing encryption-cleanup refusal stays distinct.
+Deployment cleanup uses the same precondition path with HTTP 409
+`account_erasure_deployment_cleanup_required`. Its sole owner validates retirement
+and private dependency closure before retirement, then purges the graph after
+blob cleanup and before Artifacts and Machines; see [deployment erasure](deployment.md#account-erasure-03-development).
 A typed database failure in the final deletion transaction preserves that partial
 result after the retirement transaction committed. Revocation is immediate. An
 active Home owner resumes cleanup through `home.accounts.delete` for the same

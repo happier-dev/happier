@@ -1,5 +1,27 @@
 # Deployment
 
+## Account erasure (0.3 development)
+
+`purgeRetiredAccountDeploymentGraphInTx` owns deployment cleanup for whole-Account
+erasure. Erasure asks this owner for a read-only precondition before retirement,
+then calls its purge after external blob cleanup and before Artifacts and Machines.
+Erasure itself deletes no deployment rows.
+
+Only a solely Account-owned, dependency-closed graph is purged. Source ownership
+and audience come from the Source owner; receipt occupancy and native absence
+come from the existing receipt and teardown owners. A tombstoned Environment
+still needs complete teardown evidence for its targets. Detach-and-keep-running
+does not prove retirement. Live controller custody, in-progress work, foreign or
+Team ownership, shared content, or incoming foreign lineage refuses the purge
+without deleting part of the graph. The HTTP 409 code is
+`account_erasure_deployment_cleanup_required`; finish teardown or resolve the
+shared dependencies before retrying. Team-owned graphs and other people's history
+are never deleted or reassigned by this owner.
+
+This is an unpublished 0.3 error-contract addition. Matching Protocol, server and
+app readers deploy together; no database migration or released-version adapter
+is introduced.
+
 ## First repository deploy (0.3 development)
 
 The app's Environment Deploy gesture prepares a missing Source checkout on its

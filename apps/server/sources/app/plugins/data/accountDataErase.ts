@@ -31,6 +31,7 @@ import { eraseSessionAccessGrantsForAccountInTx, readSessionAccessGrantsForAccou
 import { eraseDiscussionAccessGrantsForAccountInTx, readDiscussionAccessGrantsForAccountErasureInTx } from "@/app/discussions/accessService";
 import { resolveDiscussionAudienceInTx } from "@/app/discussions/access";
 import { assertTeamOwnershipAllowsAccountErasureInTx } from "@/app/teams/memberships/erasurePrecondition";
+import { purgeRetiredAccountDeploymentGraphInTx } from "@/app/deployments/deploymentAccountPurge";
 import { publishAccountTeamMembershipsChangedInTx } from "@/app/teams/teamChanges";
 import { clearSessionResponsibilitiesForAccountRemovalInTx, readSessionResponsibilityRemovalSessionIdsInTx } from "@/app/session/access/sessionResponsibilityService";
 import { getWorkflowPublicationAudienceInTx } from "@/app/workflows/workflowPublicationAudience";
@@ -511,6 +512,7 @@ export type DeleteAccountForErasureResult =
             // A live, staffed Team would lose its last owner. Team ownership is
             // decided by its own owner; this composition only refuses to erase.
             | "team_owner_transfer_required"
+            | "account_erasure_deployment_cleanup_required"
             | "home_governance_forbidden"
             | "home_account_not_found";
     }>;
@@ -785,6 +787,11 @@ export async function deleteAccountForErasure(input: Readonly<{
             return { status: "rejected" as const, code: teamOwnership.code };
         }
 
+        const deploymentCleanup = await purgeRetiredAccountDeploymentGraphInTx(tx, {
+            accountId: input.accountId, preflight: true,
+        });
+        if (deploymentCleanup.status === "rejected") return deploymentCleanup;
+
         const resources = await readManagedResourceDependenciesInTx(tx, { kind: "account", accountId: input.accountId });
         if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
             return { status: "rejected" as const, code: "account_erasure_managed_resources_review_required" as const, resources };
@@ -968,6 +975,12 @@ export async function deleteAccountForErasure(input: Readonly<{
         await tx.accountPushToken.deleteMany({ where: { accountId: input.accountId } });
         await tx.accountPluginUiArtifact.deleteMany({ where: { release: { accountId: input.accountId } } });
         await tx.accountPluginRelease.deleteMany({ where: { accountId: input.accountId } });
+        const deploymentCleanup = await purgeRetiredAccountDeploymentGraphInTx(tx, { accountId: input.accountId });
+        if (deploymentCleanup.status === "rejected") {
+            // The owner validates closure before its first mutation. Earlier
+            // erasure cleanup may have committed retirement already.
+            return { status: "failed", code: deploymentCleanup.code };
+        }
         await tx.artifact.deleteMany({ where: { accountId: input.accountId } });
         await tx.uploadedFile.deleteMany({ where: { accountId: input.accountId } });
         // Manual responsibility destroys Account custody, not the native resource.

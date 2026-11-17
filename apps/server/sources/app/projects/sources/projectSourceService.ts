@@ -54,7 +54,7 @@ const unavailable = (): ProjectSourcesFailureV1 & { error: 'source_unavailable' 
 const invalid = (): ProjectSourcesFailureV1 & { error: 'source_invalid' } => ({ ok: false, error: 'source_invalid' });
 const denied = (): ProjectSourcesFailureV1 & { error: 'source_access_denied' } => ({ ok: false, error: 'source_access_denied' });
 
-function sourceFromRow(row: SourceRow) {
+export function sourceFromRow(row: SourceRow) {
     return ProjectSourceV1StoredSchema.safeParse({
         id: row.id, revision: row.revision, name: row.name,
         ...(row.repository === null ? {} : { repository: row.repository }),
@@ -65,7 +65,7 @@ function sourceFromRow(row: SourceRow) {
     });
 }
 
-function sourceOwner(source: Pick<ProjectSourceV1, 'owner' | 'createdByAccountId'>): ProjectSourceOwnerV1 {
+export function sourceOwner(source: Pick<ProjectSourceV1, 'owner' | 'createdByAccountId'>): ProjectSourceOwnerV1 {
     return source.owner ?? { kind: 'account', accountId: source.createdByAccountId };
 }
 
