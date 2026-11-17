@@ -27,6 +27,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Modal } from '@/modal';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 import { PromptFolderFieldRow, PromptTagsFieldRow } from '@/components/settings/prompts/shared/PromptOrganizationFields';
@@ -80,6 +81,8 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
     assertCurrent: assertEditingAccountCurrent });
   const meta = usePromptLibraryEntryMeta(props.artifactId, { header: documentRef.current?.artifact.header ?? null });
   const [isLoading, setIsLoading] = React.useState<boolean>(Boolean(props.artifactId));
+  const [loadFailed, setLoadFailed] = React.useState(false);
+  const [readAttempt, setReadAttempt] = React.useState(0);
   const titleField = usePromptEditorDraftField('');
   const markdownField = usePromptEditorDraftField('');
   const folderField = usePromptEditorDraftField('');
@@ -176,6 +179,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
     setEditingScope(null);
     applyArtifactState(null);
     setIsLoading(true);
+    setLoadFailed(false);
 
     (async () => {
       try {
@@ -186,7 +190,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
         retirement = context.accountLifetime.onRetire(() => {
           if (cancelled) return;
           accountRef.current = null; documentRef.current = null; revisionRef.current = null;
-          setEditingScope(null); applyArtifactState(null); setIsLoading(false);
+          setEditingScope(null); applyArtifactState(null); setIsLoading(false); setLoadFailed(true);
         });
         context.assertCurrent();
         setEditingScope({ serverId: context.serverId, accountId: context.accountId });
@@ -206,7 +210,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
           applyArtifactState(props.artifactId);
         }
       } catch {
-        if (!cancelled) { accountRef.current = null; setEditingScope(null); }
+        if (!cancelled) { accountRef.current = null; setEditingScope(null); setLoadFailed(true); }
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -216,7 +220,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
       cancelled = true;
       controller.abort(); retirement?.dispose(); context?.dispose();
     };
-  }, [applyArtifactState, props.artifactId, targetServerId, targetActiveAccountId]);
+  }, [applyArtifactState, props.artifactId, targetServerId, targetActiveAccountId, readAttempt]);
 
   React.useEffect(() => {
     if (!props.artifactId || loadedArtifactIdRef.current !== props.artifactId) return;
@@ -403,6 +407,16 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
         menuActions={menuActions}
       />
 
+      {loadFailed ? (
+        <SurfaceStateCard
+          testID="promptDoc.readFailed"
+          kind="error"
+          size="page"
+          title={t('artifacts.browser.loadFailedTitle')}
+          reason={t('artifacts.browser.loadFailedBody')}
+          action={{ label: t('common.retry'), onPress: () => setReadAttempt(attempt => attempt + 1) }}
+        />
+      ) : <>
       {conflict ? (
         <View testID="promptDoc.conflict" style={styles.conflict}>
           <SurfaceFreshnessLine
@@ -463,7 +477,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
           </View>
         </SectionContentRow>
       </ItemGroup>
-
+      </>}
     </ItemList>
   );
 });

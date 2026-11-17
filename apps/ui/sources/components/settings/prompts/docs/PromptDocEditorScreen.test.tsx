@@ -14,6 +14,8 @@ import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } fr
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { PromptDocEditorScreen } from './PromptDocEditorScreen';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { MarkdownCodeEditorField } from '@/components/ui/markdown/editor/MarkdownCodeEditorField';
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), preventRemove: false }));
 const modal = vi.hoisted(() => ({ alert: vi.fn() }));
 
@@ -64,6 +66,43 @@ async function home(records: readonly PromptLibraryRecordV1[] = []) {
 }
 
 describe('PromptDocEditorScreen', () => {
+  it('shows a failed document read and retries instead of presenting an editable blank document', async () => {
+    let refusedArtifactId: string | null = null;
+    let readRefused = false;
+    catalog = createPromptLibraryCatalogBoundary();
+    fixture = await createPlainArtifactHomeFixture('https://prompt-doc-read-failure.test', {
+      handleRequest: async (path, init) => {
+        if (refusedArtifactId && path === `/v1/artifacts/${refusedArtifactId}` && (init?.method ?? 'GET') === 'GET') {
+          readRefused = true;
+          return Response.json({ error: 'not_found' }, { status: 404 });
+        }
+        return catalog.handle(path, init);
+      },
+    });
+    const id = await createPromptDoc({ title: 'Saved instructions', markdown: 'Keep this content.' });
+    refusedArtifactId = id;
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={id} />);
+    await vi.waitFor(() => expect(readRefused).toBe(true));
+    await vi.waitFor(() => expect(screen.findByTestId('promptDoc.readFailed')).not.toBeNull());
+    expect(screen.findByTestId('promptDoc.title')).toBeNull();
+    expect(screen.findByTestId('promptDoc.editor')).toBeNull();
+    expect(screen.findByTestId('promptDoc.save')?.props.disabled).toBe(true);
+    refusedArtifactId = null;
+    await act(async () => { screen.findByType(SurfaceStateCard).props.action.onPress(); });
+    await vi.waitFor(() => expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Saved instructions'));
+    expect(screen.findByType(MarkdownCodeEditorField).props.value).toBe('Keep this content.');
+    expect(screen.findByTestId('promptDoc.readFailed')).toBeNull();
+  });
+
+  it('opens a new empty document without a read error', async () => {
+    await home();
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={null} />);
+    await vi.waitFor(() => expect(screen.findByTestId('promptDoc.title')?.props.editable).toBe(true));
+    expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('');
+    expect(screen.findByType(MarkdownCodeEditorField).props.value).toBe('');
+    expect(screen.findByTestId('promptDoc.readFailed')).toBeNull();
+  });
+
   it('exports the saved Markdown through the editor menu without changing its unsaved draft', async () => {
     const f = await home();
     const markdown = '# Saved instructions\n\nReview the change.\n';
