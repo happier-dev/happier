@@ -312,6 +312,23 @@ describe('metro.config.js (web)', () => {
         }
     });
 
+    it('crawls a dependency generation tree while still pruning nested package-private copies', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const isBlocked = (candidate: string) => blockList.some(
+            (pattern: unknown) => pattern instanceof RegExp && pattern.test(candidate),
+        );
+        // The real path behind a generation-managed checkout's linked node_modules.
+        const generation = resolve(repoRoot, '.deps/node_modules/g0mwkj013b-67804c41');
+        expect(isBlocked(resolve(generation, 'node_modules/react/index.js'))).toBe(false);
+        expect(isBlocked(resolve(generation, 'apps/ui/node_modules/expo-router/build/index.js'))).toBe(false);
+        expect(isBlocked(resolve(generation, 'node_modules/foo/node_modules/bar/index.js'))).toBe(true);
+    });
+
     it('keeps Expo default workspace watch folders in local development', () => {
         const uiDir = getUiDir();
         const repoRoot = resolve(uiDir, '..', '..');
