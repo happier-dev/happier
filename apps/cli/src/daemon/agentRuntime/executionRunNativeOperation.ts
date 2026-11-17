@@ -41,7 +41,15 @@ export function createExecutionRunNativeOperationOwner(input: Readonly<{
                         async dispose() {},
                     };
                     if (isHostRequesterUnrestrictedOwner(requester)) {
-                        identity = await input.machine.readMemberFolderOwner(cwd) ?? identity;
+                        const folderOwner = await input.machine.readMemberFolderOwner(cwd);
+                        // The launch carries the requester's own secrets; under another person's
+                        // OS account that person could read them. Their folder runs only as them.
+                        if (folderOwner && (folderOwner.requester.serverId !== identity.requester.serverId
+                            || folderOwner.requester.accountId !== identity.requester.accountId)) {
+                            throw new PluginError({ code: 'credential_scope_denied', retryable: false,
+                                message: "A Run cannot use your credentials in another person's member folder" });
+                        }
+                        identity = folderOwner ?? identity;
                     }
                     signal.throwIfAborted();
                     let material: AgentLaunchOperationMaterialization | undefined;

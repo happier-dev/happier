@@ -70,7 +70,8 @@ const result = await executeAgentLaunchPayload(payload, { agentHome: ${JSON.stri
       const caller = new AbortController();
       const owner = createExecutionRunNativeOperationOwner({ ingress: { signal: caller.signal },
         agentIsolation: nativeOperation.agentIsolation,
-        resolveRequesterIdentity: async () => ({ kind: 'owner_person', requester: { ...requesterIdentity.requester, accountId: 'requester-account' } }),
+        // The same person's own member folder; another person's folder is refused before preparation.
+        resolveRequesterIdentity: async () => ({ kind: 'owner_person', requester: requesterIdentity.requester }),
         machine: { readMemberFolderOwner: async () => requesterIdentity,
           prepareNativeOperation: async input => {
             expect(input.requesterIdentity).toEqual(requesterIdentity);

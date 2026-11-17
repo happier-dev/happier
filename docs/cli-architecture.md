@@ -2861,6 +2861,11 @@ as `credential_scope_denied` before any Git. This is a consistency guard: clone
 writes a new directory with this Machine's hosting credentials, and Git cannot
 check ownership of a directory that does not yet exist. The refusal protects no
 other person and is not a credential or security boundary.
+A native Run started by an admitted Manage requester or the custodian in a member
+folder runs as that member only when the folder is the requester's own. In
+another person's member folder `executionRunNativeOperation.ts` refuses it as
+`credential_scope_denied` before any preparation, because the launch carries the
+requester's own secrets and that person's OS account could read them.
 Development-source member checkout removal calls the same host
 `projectCheckoutRemoval.ts` owner through the existing private child bridge.
 The original requester's Account projection and containing operation stay in

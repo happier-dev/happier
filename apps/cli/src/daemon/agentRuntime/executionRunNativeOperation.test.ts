@@ -97,3 +97,24 @@ it('cancels a pending native preparation with the containing start and refuses r
     await owner.disposeNativeOperation().catch(() => undefined);
     expect(() => owner.prepareNativeOperation('/member/workspace', new AbortController().signal, 'late')).toThrow();
 });
+
+it("refuses an unrestricted requester's Run in another person's member folder before any native preparation", async () => {
+    const lifetime = new AbortController();
+    const requester = { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' };
+    const folderMember = { kind: 'isolated' as const, separationRequired: true,
+        requester: { ...requester, accountId: 'folder-member' } };
+    let prepared = false;
+    const owner = createExecutionRunNativeOperationOwner({ ingress: { signal: lifetime.signal },
+        agentIsolation: { read: () => ({ enabled: true, status: { kind: 'effective' as const, platform: 'linux' as const }, workspaceRoots: [] }) },
+        resolveRequesterIdentity: async () => ({ kind: 'owner_person', requester }),
+        // The requester's launch secrets would run under the member's OS account,
+        // where that other person can read them; the folder owner is the OS boundary.
+        machine: { readMemberFolderOwner: async () => folderMember,
+            async prepareNativeOperation() { prepared = true; throw new Error('must not prepare'); } },
+    });
+    try {
+        await expect(owner.prepareNativeOperation('/members/folder-member/project', lifetime.signal, 'owner-run'))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        expect(prepared).toBe(false);
+    } finally { await owner.disposeNativeOperation().catch(() => undefined); }
+});
