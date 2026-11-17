@@ -847,9 +847,17 @@ export async function readDeploymentLinkPreparationHttpPurpose(tx: Tx, binding: 
             if (environmentContent) return true;
             // Inventory comparison opens existing Link content in the admitted owner scope.
             // The Artifact route still owns requester access and Account-mode disclosure.
-            return await tx.deploymentTargetLink.findFirst({ where: {
+            if (await tx.deploymentTargetLink.findFirst({ where: {
                 ...deploymentTargetLinkInventoryWhere({ scope: admission.owner }), contentArtifactId: existingId,
-            }, select: { id: true } }) !== null;
+            }, select: { id: true } }) !== null) return true;
+            // An approved replay re-reads the Link content its pre-approval run prepared under the
+            // original binding: the requester's own not-yet-linked Link publication in this owner scope.
+            if (admission.owner.kind === 'account' && admission.owner.accountId !== binding.accountId) return false;
+            return await tx.artifact.findFirst({ where: { id: existingId, accountId: binding.accountId, deletedAt: null,
+                kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, deploymentTargetLinks: { none: {} },
+                ...(admission.owner.kind === 'team'
+                    ? { grants: { some: { teamId: admission.owner.teamId, accessLevel: 'admin' } } } : {}) },
+                select: { id: true } }) !== null;
         }
         if (method === 'GET' && proof.body === undefined
             && (artifact[2] === undefined || artifact[2] === 'grants' || artifact[2] === 'recipients')) return matches({ id });

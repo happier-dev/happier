@@ -737,6 +737,17 @@ describe('reviewed create preparation authority', () => {
             const existingRead = await app.inject({ method: 'GET', url: existingPath,
                 headers: headers(proof(undefined, existingPath, actionId, 'GET')) });
             expect(existingRead.statusCode, 'Link compares provider content already listed in its admitted owner scope').toBe(200);
+            // An approved replay re-reads the Link content its first, pre-approval run prepared. That
+            // not-yet-linked publication is the requester's own content in this job's owner scope.
+            const prepareReplayRead = async (grantTeamId: string) => {
+                const prepared = await f.artifact(f.actor.id, 'deployment-target-link.v1');
+                await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: grantTeamId, accessLevel: 'admin',
+                    createdByAccountId: f.actor.id }), artifactId: prepared.contentArtifactId } });
+                const preparedPath = `/v1/artifacts/${prepared.contentArtifactId}`;
+                return await app.inject({ method: 'GET', url: preparedPath, headers: headers(proof(undefined, preparedPath, actionId, 'GET')) });
+            };
+            expect((await prepareReplayRead(owner.teamId)).statusCode, 'prepared Link content in this owner scope').toBe(200);
+            expect((await prepareReplayRead(otherOwner.teamId)).statusCode, 'prepared Link content for another Team').toBe(401);
             const existingGrantPath = `${existingPath}/access/grants`;
             const existingGrants = await app.inject({ method: 'GET', url: existingGrantPath,
                 headers: headers(proof(undefined, existingGrantPath, actionId, 'GET')) });
