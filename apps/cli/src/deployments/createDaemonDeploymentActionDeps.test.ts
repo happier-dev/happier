@@ -20,7 +20,8 @@ import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TEARDOWN_STEPS_V1,
     DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentProviderTeardownContentV1Schema, DeploymentPlatformContentV1Schema,
@@ -826,9 +827,12 @@ describe('installed deployment storage and target composition', () => {
     });
     it('retains validated top-level owner causes with the deployment failure code', () => {
         const failureCause = { phase: 'deployment.artifact.create', errorClass: 'Error', errorCode: null, httpStatus: 503 };
-        expect(projectDeploymentFailure('create_failed', { failureCause, message: 'private-server-message' }))
+        const failure = projectDeploymentFailure('create_failed', { failureCause, message: 'private-server-message' });
+        expect(ActionExecuteFailureSchema.parse(failure))
             .toEqual({ ok: false, errorCode: 'create_failed', error: 'create_failed', failureCause,
                 details: { requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) } });
+        expect(readActionOutputDiagnostic({ ...failure })).toMatchObject({ failureCause });
+        expect(JSON.stringify(failure)).not.toContain('private-server-message');
     });
     it.each([
         ['off', 'compact', 'deployment_access_denied'],
