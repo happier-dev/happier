@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
+import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
@@ -58,16 +59,17 @@ async function createScenario(): Promise<{
             disabledSurfaces: [],
             disabledPlacements: [],
             approvalRequiredSurfaces: ['mcp'],
+            toolExposureModes: { mcp: 'direct' },
           },
         },
       },
     },
   });
 
-  const metadataCiphertextBase64 = encryptLegacyBase64(
-    { path: workspaceDir, host: 'e2e', name: 'external-mcp-title-approvals', createdAt: Date.now() },
-    secret,
-  );
+  // Creation time belongs to the Session row, not the metadata privacy namespaces.
+  const metadata = { path: workspaceDir, host: 'e2e', name: 'external-mcp-title-approvals' };
+  expect(createSessionOwnerMetadataV1({ metadata })).toMatchObject({ ok: true });
+  const metadataCiphertextBase64 = encryptLegacyBase64(metadata, secret);
   const { sessionId } = await createSessionWithCiphertexts({
     baseUrl: serverBaseUrl,
     token: auth.token,
@@ -89,6 +91,20 @@ async function createScenario(): Promise<{
   });
 
   const person = await connectUiPersonActionClient({ serverUrl: serverBaseUrl, accountSecret: secret });
+  try {
+    const control = await person.executeConfirmed('session.title.set', { sessionId, title: 'Ordinary person title' }, {
+      surface: 'ui', authority: 'present_user', serverId: person.serverId, actionCaller: { kind: 'host' },
+    });
+    if (!control.ok) throw new Error(`Ordinary Session title refused (${control.errorCode}; cause=${JSON.stringify(control.failureCause)})`);
+    expect(control.result).toMatchObject({ ok: true });
+  } catch (error) {
+    await person.close();
+    await transport.close().catch(() => {});
+    await client.close().catch(() => {});
+    await cliLaunch.cleanup?.();
+    await server.stop();
+    throw error;
+  }
 
   return {
     person,
@@ -143,8 +159,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       const decideCall = await scenario.person.executeConfirmed('approval.request.decide', { artifactId: titlePayload.artifactId, decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', serverId: scenario.person.serverId, actionCaller: { kind: 'host' },
       });
-      expect(decideCall.ok).toBe(true);
-      if (!decideCall.ok) throw new Error(`Person approval refused (${decideCall.errorCode})`);
+      if (!decideCall.ok) throw new Error(`Person approval refused (${decideCall.errorCode}; cause=${JSON.stringify(decideCall.failureCause)})`);
       const decidePayload = decideCall.result;
       expect(decidePayload).toEqual(expect.objectContaining({
         ok: true,
@@ -199,8 +214,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       const decideCall = await scenario.person.executeConfirmed('approval.request.decide', { artifactId: actionPayload.artifactId, decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', serverId: scenario.person.serverId, actionCaller: { kind: 'host' },
       });
-      expect(decideCall.ok).toBe(true);
-      if (!decideCall.ok) throw new Error(`Person approval refused (${decideCall.errorCode})`);
+      if (!decideCall.ok) throw new Error(`Person approval refused (${decideCall.errorCode}; cause=${JSON.stringify(decideCall.failureCause)})`);
       const decidePayload = decideCall.result;
       expect(decidePayload).toEqual(expect.objectContaining({
         ok: true,
