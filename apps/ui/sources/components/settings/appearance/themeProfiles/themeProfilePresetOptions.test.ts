@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 
 import type { ThemePresetSourceOption } from './themeProfilePresetOptions';
-import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId, readThemePresetSourceReferenceId, resolveThemePresetSourcePreferredMode, themeProfileDraftMatchesPresetSource } from './themeProfilePresetOptions';
+import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId, readThemePresetSourceReferenceId, resolveCustomThemeSourceLabel, resolveThemePresetSourcePreferredMode, themeProfileDraftMatchesPresetSource } from './themeProfilePresetOptions';
 import type { ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeLibraryEntry } from '@happier-dev/protocol/account/settings/themeProfiles';
 
@@ -27,6 +27,11 @@ const source = (sourceProfile: ThemeProfileV1): ThemePresetSourceOption => ({
 });
 
 describe('themeProfilePresetOptions', () => {
+    it('labels a built-in source without presenting it as an authored theme', () => {
+        expect(resolveCustomThemeSourceLabel({ kind: 'built-in', presetId: 'premiumDark' }, {
+            sourceYours: 'Authored', sourceStore: 'Store', sourcePlugin: 'Plugin',
+        })).toBe(t('settingsAppearance.themeProfiles.builtInTheme'));
+    });
     it('round-trips tagged route references and reads released Artifact routes', () => {
         const references = [
             { kind: 'artifact', id: 'theme-header' },

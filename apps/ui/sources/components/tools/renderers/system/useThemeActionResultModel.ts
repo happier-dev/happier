@@ -12,6 +12,8 @@ import type { ThemeActionCardPresentation, TranscriptThemeTry } from '@/componen
 import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultPhase, ThemeResultTheme } from '@/components/tools/renderers/system/themeActionResultViewTypes';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
+import { resolveCustomThemeSourceLabel } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
+import { t } from '@/text';
 
 type Kept = ThemeActionOutput<typeof THEME_ACTION_IDS.keep>;
 type Applied = ThemeActionOutput<typeof THEME_ACTION_IDS.apply>;
@@ -63,10 +65,15 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const selected = input.options.find(option => option.id === currentOptionKey)?.call ?? input.replayTry;
     const previewEntry = React.useMemo(() => selected ? projectTryEntry(selected) : null, [selected]);
     const entry = outcome.kind === 'kept' ? outcome.output.entry : previewEntry ?? facts.entry;
-    const options = React.useMemo(() => input.options.map(option => ({
-        key: option.id, name: option.call.input.document.profile.name, description: '',
-        miniature: projectTryEntry(option.call).miniature,
-    })), [input.options]);
+    const sourceYours = t('settingsAppearance.themeProfiles.sourceYours');
+    const sourceStore = t('settingsAppearance.themeProfiles.sourceStore');
+    const sourcePlugin = t('settingsAppearance.themeProfiles.sourcePlugin');
+    const options = React.useMemo(() => input.options.map(option => {
+        const entry = projectTryEntry(option.call);
+        return { key: option.id, name: entry.name,
+            description: resolveCustomThemeSourceLabel(entry.source, { sourceYours, sourceStore, sourcePlugin }),
+            miniature: entry.miniature };
+    }), [input.options, sourceYours, sourceStore, sourcePlugin]);
     const invoke = execute;
     const perform = React.useCallback((operation: ThemeResultOperation, effect: () => Promise<void>) => {
         setBusy(operation); setFailure(null); retryOperation.current = effect;

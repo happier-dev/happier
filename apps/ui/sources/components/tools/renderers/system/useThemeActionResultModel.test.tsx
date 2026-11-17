@@ -16,6 +16,7 @@ import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 import { projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import { useThemeActionResultModel } from './useThemeActionResultModel';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { t } from '@/text';
 
 // Count the real third-party parser to catch card-owned CSS work.
 vi.mock('css-tree/lib/parser', async (importOriginal) => {
@@ -76,6 +77,7 @@ describe('theme proposal card controller', () => {
         });
         expect(vi.mocked(parse).mock.calls.length, 'the card consumes the preview owner table without parsing CSS').toBe(parsesBeforeCard);
         expect(hook.getCurrent()?.options?.map(option => option.miniature.mode)).toEqual(['dark', 'dark', 'dark']);
+        expect(hook.getCurrent()?.options?.map(option => option.description)).toEqual(Array(3).fill(t('settingsAppearance.themeProfiles.sourceYours')));
         hook.getCurrent()!.onEdit!();
         expect(edit).toHaveBeenCalledWith({ kind: 'document', document: presentation.options.at(-1)!.call.input.document });
         presented = false;

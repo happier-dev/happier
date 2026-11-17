@@ -66,6 +66,7 @@ export function resolveCustomThemeSourceLabel(
     labels: Readonly<{ sourceYours: string; sourceStore: string; sourcePlugin: string }>,
     pluginNames?: ReadonlyMap<string, string>,
 ): string {
+    if (source?.kind === 'built-in') return t('settingsAppearance.themeProfiles.builtInTheme');
     if (source?.kind === 'store') return labels.sourceStore;
     if (source?.kind === 'plugin') return pluginNames?.get(source.pluginId) ?? labels.sourcePlugin;
     return labels.sourceYours;
