@@ -18,14 +18,14 @@ import { postgresqlWriteRoleGuardSql } from '@happier-dev/deployment-protocol';
 
 const refuse = (code: string): never => { throw new PluginError({ code }); };
 type Host = OwnServerDataServiceHost & Readonly<{ credentials: StoredCredentials; serverHttpBaseUrl: string }>;
-type NativeConnection = PostgresqlConnection & Readonly<{ engine: 'postgresql' | 'mysql' }>;
+type NativeConnection = PostgresqlConnection & Readonly<{ engine: 'postgresql' | 'mysql'; database: string }>;
 
 /** The existing native owner supplies the selected generation and Docker launch.
  * PostgreSQL can consume its observed loopback binding. Private engines borrow
  * the same Docker stream and keep their login on the container's loopback. */
 export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
-    host: Host; target: DatabaseDeploymentServiceTargetV1; environment: DeploymentEnvironmentDetailV1;
-    installationId: string; context: ActionExecutorContext; signal: AbortSignal; operationId: string;
+    host: Host; target: Omit<DatabaseDeploymentServiceTargetV1, 'database'> & { database?: string }; environment: DeploymentEnvironmentDetailV1;
+    installationId: string; context: ActionExecutorContext; signal: AbortSignal; operationId: string; expectedRevision?: number;
     /** Write opens the bounded `happier_rw` login (P3 R14); reads keep `happier_ro`. */
     access?: 'read' | 'write';
 }>): Promise<NativeConnection> {
@@ -35,12 +35,12 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
     const installation = readInstallationIdentityIfExistsSync();
     if (!installation || installation.installationId !== input.installationId) return refuse('target_mismatch');
     const scope = await acquireOwnServerDataServiceForHost(host, { ...target.environment,
-        expectedRevision: input.environment.environment.revision, targetLinkId: target.targetLinkId,
+        expectedRevision: input.expectedRevision ?? input.environment.environment.revision, targetLinkId: target.targetLinkId,
         deploymentId: target.deploymentId, service: target.serviceId, machineId: host.machineId,
         installationId: input.installationId, ...(write ? { role: 'write' as const } : {}) }, context, input.environment);
     let ownsScope = true;
     try {
-        if (scope.definition.database !== target.database) return refuse('target_mismatch');
+        if (target.database !== undefined && scope.definition.database !== target.database) return refuse('target_mismatch');
         if (write && scope.definition.engine !== 'postgresql') return refuse('unsupported_action');
         const keys = await scope.handle.readNativeEffectKeys?.({ signal: input.signal });
         if (!keys || !scope.handle.readNativeDocker) return refuse('service_admission_unavailable');
@@ -77,7 +77,7 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                     const url = new URL(`${scope.definition.engine}://127.0.0.1`);
                     url.hostname = endpoint?.host === '::1' ? '[::1]' : '127.0.0.1';
                     url.port = String(endpoint?.port ?? containerPort); url.username = write ? 'happier_rw' : 'happier_ro'; url.password = password;
-                    url.pathname = `/${encodeURIComponent(target.database)}`;
+                    url.pathname = `/${encodeURIComponent(scope.definition.database)}`;
                     // postgres:17 and mysql:8.4 ship Bash and cat. This relay has
                     // no listener, SQL parser or credential in argv. Driver
                     // cancellation borrows it under the admitted generation's
@@ -97,7 +97,7 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                         });
                     try {
                         signal.throwIfAborted();
-                        opened({ engine: scope.definition.engine, execute: (request, requestSignal) => machineNativeEffectAdmission.runStage(effect,
+                        opened({ engine: scope.definition.engine, database: scope.definition.database, execute: (request, requestSignal) => machineNativeEffectAdmission.runStage(effect,
                             () => connection.execute(request, requestSignal ?? signal)), close: async () => { finish(); await work; } });
                         await lifetime;
                     } finally { await connection.close(); }

@@ -20,16 +20,12 @@ import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerpr
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { databaseActionMetadata, DATABASE_OPERATION_ACTION_INPUT_SCHEMAS_V1, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import { databaseActionMetadata, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-
-// The statement's conditional approval reads its schema across the Machine RPC boundary.
-const databaseSchemaRpc = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: databaseSchemaRpc }));
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -44,10 +40,11 @@ const { getStorage } = await import('@/sync/domains/state/storageStore');
 const pageItems = (result: unknown) => (result as Readonly<{ value: Readonly<{ items: readonly unknown[] }> }>).value.items;
 
 describe('deployment scoped read transport', () => {
-    beforeEach(async () => { await homes.reset(); databaseSchemaRpc.mockReset(); });
+    beforeEach(async () => { await homes.reset(); });
     afterEach(() => standardCleanup());
 
-    it('reads database size through the scoped semantic Actions using the receipt target and its Machine placement', async () => {
+    it.each(['deployment_service', 'deployment_service_disabled'] as const)('retains %s database subjects through scoped semantic Actions and reads native size', async kind => {
+        const disabled = kind === 'deployment_service_disabled';
         const serverIdentityId = 'srv_database_size';
         const serverId = await homes.addHome({ name: 'Database size', serverUrl: 'https://database-size.test',
             serverIdentityId, accountId: 'account-owner', currentAccount: true, active: false });
@@ -60,12 +57,20 @@ describe('deployment scoped read transport', () => {
             definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['postgres'],
             data: [{ service: 'postgres', engine: 'postgres' as const }] } };
         const environmentRef = { serverId, projectSourceId: detail.environment.projectSourceId, environmentId: detail.environment.id };
-        const selected: DatabaseDescriptorV1 = { target: { kind: 'deployment_service', environment: environmentRef,
+        const runtimeLink = createDeploymentTargetLinkHeaderV1({ id: 'runtime-link', environmentId: detail.environment.id,
+            activeDeploymentId: 'serving-receipt', machines: ['member'],
+            members: [{ machineId: 'member', installationId: 'member-installation', state: 'active' }] });
+        const runtimeMember = runtimeLink.members[0]!;
+        const native: DatabaseDescriptorV1 = { target: { kind: 'deployment_service', environment: environmentRef,
             targetLinkId: 'runtime-link', deploymentId: 'serving-receipt', serviceId: 'postgres', database: 'receipt-database' },
             engine: 'postgresql', label: 'Postgres', origin: { label: 'Active deployment' }, capabilities: [],
-            placement: { serverId, accountId: 'account-owner', machineId: 'member', installationId: 'member-installation' },
+            placement: { serverId, accountId: 'account-owner', machineId: runtimeMember.machineId, installationId: runtimeMember.installationId },
             automationSubject: { ok: true, subject: { kind: 'database', serverId,
                 target: { kind: 'environment', environmentId: detail.environment.id, service: 'postgres', database: 'receipt-database' } } } };
+        const selected = native;
+        const targets = [selected];
+        homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+            environment: detail.environment, targetLinks: [runtimeLink] } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const writer = await captureLazyActionAccountContext(serverId);
         try { await writer.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
@@ -76,12 +81,11 @@ describe('deployment scoped read transport', () => {
         homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true, items: [{ environment: detail.environment }],
             artifacts: [projectArtifactBoundaryReadRow(stored)], nextCursor: null } });
         const listLocalId = databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1);
-        const runLocalId = databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
         const projection = { ...EMPTY_PLUGIN_UI_PROJECTION,
-            actionsById: Object.fromEntries([DATABASE_TARGETS_LIST_ACTION_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1].map(id => {
+            actionsById: Object.fromEntries([DATABASE_TARGETS_LIST_ACTION_ID_V1].map(id => {
                 const localId = databaseActionLocalIdV1(id);
                 const metadata = databaseActionMetadata[id];
-                const machineId = id === DATABASE_TARGETS_LIST_ACTION_ID_V1 ? 'controller' : 'member';
+                const machineId = 'controller';
                 return [`${DATABASE_PLUGIN_ID_V1}/${localId}`, { ...PluginProjectedActionV2Schema.parse({
                     title: metadata.title, dangerLevel: metadata.dangerLevel, readOnly: metadata.readOnly,
                     placementBindings: metadata.placementBindings,
@@ -94,36 +98,49 @@ describe('deployment scoped read transport', () => {
                         executionOrigin: { serverIdentityId, materializationRef: {
                             machineId, pluginId: DATABASE_PLUGIN_ID_V1, materializationId: 'database-materialization' } } } }];
             })) };
-        const withdraw = publishCommittedAppShellPluginUiProjection(() => projection);
-        databaseSchemaRpc.mockImplementation(async (request: { method: string }) => {
-            if (request.method !== RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) throw new Error('Unexpected Machine RPC');
-            return { ok: true, inputSchema: DATABASE_OPERATION_ACTION_INPUT_SCHEMAS_V1[DATABASE_STATEMENT_RUN_ACTION_ID_V1].jsonSchema };
-        });
+        const withdraw = publishCommittedAppShellPluginUiProjection(() => disabled ? EMPTY_PLUGIN_UI_PROJECTION : projection);
         const invocations: unknown[] = [];
+        const sizeInputs: unknown[] = [];
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.invoke', tokenEpoch: 0,
             machineId: 'controller', installationId: 'controller-installation',
-            additionalMachines: [{ machineId: 'member', installationId: 'member-installation' }],
+            additionalMachines: [{ machineId: runtimeMember.machineId, installationId: runtimeMember.installationId }],
             execute: (value, context) => {
                 invocations.push(context.envelope);
                 expect(context.requesterAccountContext.token).toBe(writer.credentials.token);
                 const input = value as { action: { localId: string } };
-                return input.action.localId === listLocalId ? { targets: [selected], completeness: { complete: true } }
-                    : { ok: true, operation: 'statement.run', results: [{ columns: [{ name: 'size_bytes', nativeType: 'text', semanticType: 'text' }],
-                        rows: [{ cells: [{ type: 'text', value: '4096' }] }], completeness: { complete: true } }] };
+                expect(input.action.localId).toBe(listLocalId);
+                return { targets, completeness: { complete: true } };
             } });
+        await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.data.size', tokenEpoch: 0,
+            machineId: runtimeMember.machineId, installationId: runtimeMember.installationId,
+            additionalMachines: [{ machineId: 'controller', installationId: 'controller-installation' }],
+            execute: (value, context) => {
+                invocations.push(context.envelope);
+                sizeInputs.push(value);
+                return { ok: true, size: { service: 'postgres', deploymentId: 'serving-receipt',
+                    size: { status: 'available', bytes: 4096, measurement: 'database_bytes', observedAtMs: 1 },
+                    growth: { status: 'unavailable', reason: 'previous_sample_required' } } };
+            } });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const transport = createDeploymentReadTransport(lifetime);
         try {
-            const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
-                isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
-            const page = await createDeploymentReadTransport(lifetime).listDataServicePage!(lifetime.scope, {}, { signal: new AbortController().signal });
-            expect(page, JSON.stringify(page.ok ? page.value.items[0]?.databaseSizes : page)).toMatchObject({ ok: true, value: { items: [{ databaseSizes: [{ service: 'postgres',
-                deploymentId: 'serving-receipt', size: { status: 'available', bytes: 4096 } }] }] } });
-            expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
-                postgres: selected.automationSubject,
-            } }] } });
-            expect(invocations).toMatchObject([{ target: { kind: 'machine', machineId: 'controller' }, input: {
-                action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: listLocalId }, input: { scope: { kind: 'environment', environment: environmentRef } } } },
-            { target: { kind: 'machine', machineId: 'member' }, input: { action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: runLocalId },
-                input: { operation: 'statement.run', mode: 'read', target: selected.target } } }]);
+            const page = await transport.listDataServicePage!(lifetime.scope, {}, { signal: new AbortController().signal });
+                expect(page, JSON.stringify({ page, sizeInputs })).toMatchObject({ ok: true, value: { items: [{ databaseSizes: [{ service: 'postgres',
+                    deploymentId: 'serving-receipt', size: { status: 'available', bytes: 4096 } }] }] } });
+                expect(sizeInputs).toMatchObject([{ environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+                    service: 'postgres', targetLinkId: 'runtime-link', deploymentId: 'serving-receipt',
+                    machineId: runtimeMember.machineId, installationId: runtimeMember.installationId }]);
+                if (!disabled) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
+                    postgres: selected.automationSubject,
+                } }] } });
+                expect(invocations).toMatchObject(disabled ? [
+                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
+                ] : [
+                    { target: { kind: 'machine', machineId: 'controller' }, input: {
+                        action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: listLocalId } } },
+                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
+                ]);
             expect(homes.requests.filter(request => request.path === '/v1/actions/action.invoke').every(request => request.serverId === serverId)).toBe(true);
         } finally { withdraw(); }
     });

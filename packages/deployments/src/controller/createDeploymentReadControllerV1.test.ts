@@ -77,10 +77,12 @@ describe('deployment demand read controller', () => {
         const link = detail.targetLinks[0]!.targetLink;
         let bytes = 4096;
         let now = 1000;
-        const native = vi.fn(async () => ({ ok: true, operation: 'statement.run', results: [{
-            columns: [{ name: 'size_bytes', nativeType: 'text', semanticType: 'text' }],
-            rows: [{ cells: [{ type: 'text', value: String(bytes) }] }], completeness: { complete: true },
-        }] }));
+        const native = vi.fn(async () => ({ ok: true, operation: 'stats.read', observation: {
+            v: 1, observedAtMs: now, engineId: 'postgresql', scope: { database: 'receipt-database' },
+            intervalBasis: { bindingKey: 'selected', databaseIdentity: 'receipt-database', selectionKey: 'size' },
+            status: 'available', group: 'size', coverage: { status: 'complete' }, completeness: { complete: true },
+            data: { bytes: String(bytes), measurement: 'database_bytes' },
+        } }));
         const environment = { ...base.environment, runtimeTargetLinkId: link.id };
         const target: DatabaseDescriptorV1 = { target: { kind: 'deployment_service', environment: { serverId: environment.serverId,
             projectSourceId: environment.projectSourceId, environmentId: environment.id }, targetLinkId: link.id,

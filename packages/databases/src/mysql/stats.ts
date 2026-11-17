@@ -1,6 +1,5 @@
 import type { DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
 import type { DatabaseStatsSqlPlanV1 } from '../stats.js';
-import { compileDatabaseSizeV1 } from '../size.js';
 import { statsSqlPlan, statsText, statsCounter, statsNumber, statsBoolean, statsOptional, statsShape, statsRelation, statsSize, statsJsonObject, statsJsonArray } from '../stats.js';
 export function compileMysqlStatsV1(operation: DatabaseStatsReadV1): DatabaseStatsSqlPlanV1 {
     const parameters: (string | number)[] = [];
@@ -13,7 +12,13 @@ export function compileMysqlStatsV1(operation: DatabaseStatsReadV1): DatabaseSta
         return `${schema} = DATABASE()`;
     };
     if (operation.group === 'indexAdvice') return { status: 'unavailable', reason: 'unsupported_group' };
-    if (operation.group === 'size') return compileDatabaseSizeV1('mysql', operation);
+    if (operation.group === 'size') {
+        const selected = operation.selection.relation;
+        const predicate = selected ? `TABLE_SCHEMA = ${bind(selected.schema)} AND TABLE_NAME = ${bind(selected.name)}` : 'TABLE_SCHEMA = DATABASE()';
+        return statsSqlPlan('mysql', operation, { sql: `SELECT CAST(COALESCE(SUM(DATA_LENGTH + INDEX_LENGTH),0) AS CHAR) AS size_bytes,
+            CAST(COALESCE(SUM(DATA_LENGTH),0) AS CHAR) AS table_bytes, CAST(COALESCE(SUM(INDEX_LENGTH),0) AS CHAR) AS index_bytes
+            FROM information_schema.tables WHERE ${predicate}`, parameters }, rows => statsSize(rows[0] ?? {}, 'table_bytes_estimate'));
+    }
     if (operation.group === 'statements') {
         const key = "CONCAT(s.SCHEMA_NAME, ':', s.DIGEST)";
         const predicate = operation.selection.statementKey === undefined ? '' : ` AND ${key} = ${bind(operation.selection.statementKey)}`;

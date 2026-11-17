@@ -1,10 +1,10 @@
 import { DeploymentPendingDeployStoredIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DatabaseTargetsListResultV1Schema, type DatabaseTargetsListResultV1,
     type AutomationDatabaseSubjectReadV1 } from '@happier-dev/database-protocol';
 import {
-    DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
+    DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentDataSizeResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
     DeploymentDomainListResultV1Schema, DeploymentDomainPageResultV1Schema, DeploymentDataPageResultV1Schema,
     type DeploymentDataPageSuccessV1,
@@ -26,7 +26,9 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
-    readDeploymentDatabaseSizesV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+    deploymentDataTargetOperands, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
@@ -160,22 +162,40 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const row = readDeploymentEnvironmentArtifactV1(environment, artifact?.status === 'fulfilled' ? artifact.value : null);
                 if (!row.ok) { coverage = 'partial'; continue; }
                 const previous = previousById.get(environment.id);
+                // Optional workbench discovery supplies managed logical database subjects.
+                const databaseTargetsRequest = (async () => {
+                    if (!environment.controllerMachineId) throw Object.assign(new Error('active_deployment_required'), { code: 'active_deployment_required' });
+                    return DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
+                        action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
+                        input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
+                            projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
+                    }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
+                })();
                 let databaseTargets: DatabaseTargetsListResultV1 | undefined;
-                // The host's active receipt supplies the exact database and execution placement.
-                const databaseSizes = await readDeploymentDatabaseSizesV1({ environment, content: row.content,
-                    previous: previous?.databaseSizes,
-                    readTargets: async () => {
-                        if (!environment.controllerMachineId) throw Object.assign(new Error('active_deployment_required'), { code: 'active_deployment_required' });
-                        databaseTargets = DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
-                            action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
-                            input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
-                                projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
-                        }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
-                        return databaseTargets;
-                    },
-                    run: (input, placement) => execute('action.invoke', {
-                        action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) }, input,
-                    }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: placement.machineId } }) });
+                try { databaseTargets = await databaseTargetsRequest; } catch { coverage = 'partial'; }
+                const databaseSizes: DeploymentDatabaseSizeV1[] = [];
+                const data = row.content.template?.data ?? [];
+                const metadata = selectedMetadata ?? (data.length > 0
+                    ? await readEnvironmentMetadata(scope, environment.id, options) : null);
+                const runtimeTargetLink = metadata?.ok ? selectDeploymentRuntimeTargetLinkV1({
+                    environment: metadata.value.environment,
+                    targetLinks: metadata.value.targetLinks.map(targetLink => ({ targetLink })),
+                }) : null;
+                const nativeTarget = deploymentDataTargetOperands({ environment,
+                    runtimeTargetLink });
+                for (const service of data) {
+                    const unavailable = (reason: string): DeploymentDatabaseSizeV1 => ({ service: service.service,
+                        size: { status: 'unavailable', reason }, growth: { status: 'unavailable', reason } });
+                    if (!nativeTarget || !runtimeTargetLink?.activeDeploymentId) {
+                        databaseSizes.push(unavailable(metadata && !metadata.ok ? metadata.failure.code : 'active_deployment_required')); continue;
+                    }
+                    const measured = DeploymentDataSizeResultV1Schema.safeParse(await execute(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
+                        { ...home, ...nativeTarget, deploymentId: runtimeTargetLink.activeDeploymentId,
+                            service: service.service, previous: previous?.databaseSizes?.find(size => size.service === service.service) },
+                        { signal: options.signal }));
+                    databaseSizes.push(measured.success && measured.data.ok ? measured.data.size
+                        : unavailable(measured.success ? measured.data.error : 'invalid_response'));
+                }
                 const databaseSubjects = Object.fromEntries<AutomationDatabaseSubjectReadV1>((databaseTargets?.targets ?? []).flatMap<readonly [string, AutomationDatabaseSubjectReadV1]>(descriptor => {
                     const target = descriptor.target;
                     if (!descriptor.automationSubject) return [];
