@@ -780,7 +780,18 @@ function OAuthProviderReturnBody() {
         fireAndForget((async () => {
             if (resolvedPurpose === GITHUB_APP_MANIFEST_SETUP_PURPOSE) {
                 const pendingSetup = consumePendingGitHubAppManifestSetup();
-                if (!pendingSetup || !resolvedRegistrationId || resolvedManifestCreated !== '1' || error) {
+                const created = Boolean(resolvedRegistrationId) && resolvedManifestCreated === '1' && !error;
+                if (created && !pendingSetup) {
+                    // The Home stored the App; only this browser lacks the record of which
+                    // administration tree started the setup, so it cannot open the App itself.
+                    await Modal.alertAsync(
+                        t('identityAdministration.githubManifestCreatedTitle'),
+                        t('identityAdministration.githubManifestCreatedElsewhere'),
+                    );
+                    safeReplace('/settings');
+                    return;
+                }
+                if (!pendingSetup || !resolvedRegistrationId || !created) {
                     await Modal.alertAsync(t('common.error'), t('identityAdministration.error'));
                     safeReplace('/settings');
                     return;

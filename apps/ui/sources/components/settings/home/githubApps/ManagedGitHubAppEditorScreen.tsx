@@ -35,6 +35,8 @@ import type { HomeAdministrationContext } from '../governance/homeAdministration
 import { useManagedGitHubApps, useManagedGitHubAppsClient } from './useManagedGitHubApps';
 import type { ManagedGitHubAppSurface } from './managedGitHubAppSurface';
 import {
+    GITHUB_APP_FIELDS_REQUIRED,
+    GITHUB_MANIFEST_FIELDS_REQUIRED,
     ManagedGitHubAppFailureRecovery,
     managedGitHubAppFailureMessage,
 } from './ManagedGitHubAppFailure';
@@ -182,7 +184,7 @@ export const ManagedGitHubAppEditorContent = React.memo(function ManagedGitHubAp
     const save = React.useCallback(async (): Promise<boolean> => {
         if (operationInFlightRef.current !== null || revisionConflict || !props.surface.mutationsAvailable) return false;
         if (validateManagedGitHubAppDraft(draft, !props.registrationId)) {
-            setError(t('identityAdministration.githubRequired'));
+            setError(GITHUB_APP_FIELDS_REQUIRED);
             return false;
         }
         const operationIdentity = Symbol('save-managed-github-app');
@@ -269,7 +271,7 @@ export const ManagedGitHubAppEditorContent = React.memo(function ManagedGitHubAp
     const startManifestSetup = React.useCallback(async (): Promise<boolean> => {
         if (operationInFlightRef.current !== null || !props.surface.mutationsAvailable) return false;
         if (!manifestAppName.trim() || (manifestForOrganization && !manifestOrganization.trim())) {
-            setError(t('identityAdministration.required')); return false;
+            setError(GITHUB_MANIFEST_FIELDS_REQUIRED); return false;
         }
         const operationIdentity = Symbol('start-managed-github-app-manifest');
         operationInFlightRef.current = operationIdentity;

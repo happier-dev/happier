@@ -23,6 +23,9 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { HomeAdministrationSection } from '../governance/HomeAdministrationSection';
 import type { ManagedGitHubAppSurface } from './managedGitHubAppSurface';
 import {
+    GITHUB_INSTALLATION_ID_REQUIRED,
+    GITHUB_INSTALLATION_IDS_REQUIRED,
+    GITHUB_ORGANIZATION_ID_REQUIRED,
     ManagedGitHubAppFailureRecovery,
     managedGitHubAppFailureMessage,
 } from './ManagedGitHubAppFailure';
@@ -96,8 +99,14 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
         if (!props.surface.mutationsAvailable || pending !== null) return;
         const githubInstallationId = installationId.trim();
         const githubOrganizationId = organizationId.trim();
-        if (!/^[1-9][0-9]*$/u.test(githubInstallationId) || !/^[1-9][0-9]*$/u.test(githubOrganizationId)) {
-            setError(t('identityAdministration.githubRequired')); return;
+        const installationMissing = !/^[1-9][0-9]*$/u.test(githubInstallationId);
+        const organizationMissing = !/^[1-9][0-9]*$/u.test(githubOrganizationId);
+        if (installationMissing || organizationMissing) {
+            setNotice(null);
+            setError(installationMissing && organizationMissing
+                ? GITHUB_INSTALLATION_IDS_REQUIRED
+                : installationMissing ? GITHUB_INSTALLATION_ID_REQUIRED : GITHUB_ORGANIZATION_ID_REQUIRED);
+            return;
         }
         setPending('verify'); setError(null); setNotice(null);
         try {
@@ -109,7 +118,11 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
                 if (!await openExternalUrl(value.authorizeUrl)) {
                     consumePendingGitHubAppVerification(registration.id);
                     setError('github_verification_open_failed');
+                    return;
                 }
+                // GitHub opens beside this page; say where the verification continues so the
+                // finished request does not read like nothing happened.
+                setNotice(t('identityAdministration.githubVerificationOpened'));
             };
             const result = await client.execute('identity.githubApps.verifyInstallation', {
                 owner, registrationId: registration.id,
@@ -152,6 +165,10 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
             }
             refresh();
         } finally { setPending(null); }
+    };
+    const editVerificationId = (setValue: (value: string) => void) => (value: string) => {
+        setValue(value);
+        setError(null);
     };
     const busy = pending !== null || !props.surface.mutationsAvailable;
     const directoryRoute = props.surface.routes.directory;
@@ -346,11 +363,13 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
                 </ItemGroup>
             ) : null}
             <SettingSection section={settings.sectionRefs.verification}>
-                <ItemGroup title={t('identityAdministration.githubVerifyInstallation')}>
-                    <SettingRow setting={settings.settings.githubInstallationId} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="github-installation-id" accessibilityLabel={t('identityAdministration.githubInstallationId')} value={installationId} editable={props.surface.mutationsAvailable} keyboardType="number-pad" onChangeText={setInstallationId} />} />
-                    <SettingRow setting={settings.settings.githubOrganizationId} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="github-organization-id" accessibilityLabel={t('identityAdministration.githubOrganizationId')} value={organizationId} editable={props.surface.mutationsAvailable} keyboardType="number-pad" onChangeText={setOrganizationId} />} />
+                <ItemGroup title={t('identityAdministration.githubVerifyInstallation')} description={t('identityAdministration.githubVerifyInstallationHint')}>
+                    <SettingRow setting={settings.settings.githubInstallationId} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="github-installation-id" accessibilityLabel={t('identityAdministration.githubInstallationId')} value={installationId} editable={props.surface.mutationsAvailable} keyboardType="number-pad" onChangeText={editVerificationId(setInstallationId)} />} />
+                    <SettingRow setting={settings.settings.githubOrganizationId} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="github-organization-id" accessibilityLabel={t('identityAdministration.githubOrganizationId')} value={organizationId} editable={props.surface.mutationsAvailable} keyboardType="number-pad" onChangeText={editVerificationId(setOrganizationId)} />} />
                 </ItemGroup>
-                <ItemGroup surface="none">
+                {/* One place answers the press: the opened-on-GitHub notice, an approval wait, or the
+                    failure, with its recovery row when one exists. */}
+                <ItemGroup surface="none" description={notice ?? (error ? managedGitHubAppFailureMessage(error) : undefined)}>
                     <SectionButtonRow>
                         <SettingAnchor setting={settings.settings.verify}>
                             <RoundButton
@@ -366,15 +385,9 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
                             />
                         </SettingAnchor>
                     </SectionButtonRow>
+                    {error ? <ManagedGitHubAppFailureRecovery code={error} surface={props.surface} /> : null}
                 </ItemGroup>
             </SettingSection>
-            {notice ? <ItemGroup><Item testID="github-app-notice" title={notice} showChevron={false} /></ItemGroup> : null}
-            {error ? (
-                <ItemGroup description={managedGitHubAppFailureMessage(error)}>
-                    <Item title={t('identityAdministration.error')} showChevron={false} />
-                    <ManagedGitHubAppFailureRecovery code={error} surface={props.surface} />
-                </ItemGroup>
-            ) : null}
             <SettingSection section={settings.sectionRefs.actions}>
                 <ItemGroup title={t('identityAdministration.actions')}><SettingRow setting={settings.settings.edit} testID="github-app-edit" disabled={busy} onPress={() => router.push(props.surface.routes.edit(registration.id))} /></ItemGroup>
             </SettingSection>
