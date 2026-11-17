@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { ProjectCommandFileFactV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
@@ -24,6 +24,12 @@ type Family = Readonly<{
     subcommand?: string;
     /** PowerShell flags are case-insensitive. */
     caseInsensitive?: boolean;
+    /** A launcher-local working directory, not a shell `cd`. */
+    cwd?: readonly string[];
+    /** Explicit configuration or preload files also contribute to consent. */
+    inputs?: readonly string[];
+    bun?: boolean;
+    directoryEntry?: string;
     /** How the runtime resolves a path operand to the file it runs (extensions, folder `main`, index). */
     resolution?: Resolution;
 }>;
@@ -37,18 +43,20 @@ type Resolution = Readonly<{ extensions: readonly string[]; recordEvery: boolean
 const NODE_RESOLUTION: Resolution = { extensions: ['.js', '.json', '.node'], recordEvery: false };
 const TYPESCRIPT_RESOLUTION: Resolution = { extensions: ['.js', '.json', '.node', '.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.jsx'], recordEvery: true };
 
-const SHELL: Family = { inline: ['-c'], valued: ['-o', '+o', '-O', '+O'] };
-const NODE: Family = { resolution: NODE_RESOLUTION, inline: ['-e', '-p', '--eval', '--print'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--max-old-space-size', '--stack-size', '--inspect-port', '--title'] };
+const SHELL: Family = { inline: ['-c'], valued: ['-o', '+o', '-O', '+O', '--rcfile', '--init-file'], inputs: ['--rcfile', '--init-file'] };
+const NODE: Family = { resolution: NODE_RESOLUTION, inline: ['-e', '-p', '--eval', '--print'], inputs: ['-r', '--require', '--import', '--loader', '--experimental-loader'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--max-old-space-size', '--stack-size', '--inspect-port', '--title'] };
 const FAMILIES: Readonly<Record<string, Family>> = {
     sh: SHELL, bash: SHELL, zsh: SHELL, dash: SHELL, ksh: SHELL, fish: SHELL,
     source: { inline: [] }, '.': { inline: [] },
-    node: NODE, tsx: { ...NODE, subcommand: 'watch', resolution: TYPESCRIPT_RESOLUTION },
+    node: NODE, tsx: { ...NODE, subcommand: 'watch', resolution: TYPESCRIPT_RESOLUTION, valued: [...NODE.valued!, '--tsconfig'], inputs: [...NODE.inputs!, '--tsconfig'] },
     // deno runs the exact operand; it does not resolve extensions or folders.
-    deno: { ...NODE, subcommand: 'run', resolution: undefined }, bun: { ...NODE, subcommand: 'run', resolution: TYPESCRIPT_RESOLUTION },
-    python: { inline: ['-c', '-m'], valued: ['-W', '-X'] },
-    ruby: { inline: ['-e'], valued: ['-r', '-I', '-C'] },
+    deno: { inline: ['eval'], subcommand: 'run', valued: ['-c', '--config', '--import-map', '--lock', '--env-file'], inputs: ['-c', '--config', '--import-map', '--lock', '--env-file'] },
+    bun: { ...NODE, subcommand: 'run', resolution: TYPESCRIPT_RESOLUTION, bun: true, cwd: ['--cwd'], valued: [...NODE.valued!, '--cwd', '--config', '-c', '--preload', '--tsconfig-override'], inputs: [...NODE.inputs!, '--config', '-c', '--preload', '--tsconfig-override'] },
+    python: { inline: ['-c', '-m'], valued: ['-W', '-X'], directoryEntry: '__main__.py' },
+    ruby: { inline: ['-e'], valued: ['-r', '-I', '-C'], cwd: ['-C'] },
     perl: { inline: ['-e', '-E'] },
     php: { inline: ['-r'], valued: ['-d', '-c'], script: ['-f'] },
+    // PowerShell resolves -File before applying -WorkingDirectory (unlike bun --cwd).
     pwsh: { inline: ['-command', '-c', '-encodedcommand', '-ec', '-e'], script: ['-file', '-f'], caseInsensitive: true,
         valued: ['-executionpolicy', '-ep', '-configurationname', '-workingdirectory', '-wd', '-windowstyle', '-outputformat', '-of', '-inputformat', '-if', '-settingsfile', '-custompipename', '-version', '-v'] },
 };
@@ -81,6 +89,11 @@ export type LiteralCommandLines = string | readonly (string | Readonly<{ command
 function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLines) {
     const files = new Set<string>();
     const packageOperands = new Map<string, Resolution>();
+    const addOperand = (file: string, resolution: Resolution) => {
+        // One command may run the same path through both Node and a TS runtime.
+        // Preserve the wider candidate set regardless of segment order.
+        if (!packageOperands.get(file)?.recordEvery) packageOperands.set(file, resolution);
+    };
     const within = (path: string) => {
         const local = relative(root, path);
         return local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local) ? local : undefined;
@@ -125,21 +138,53 @@ function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLi
             const family = familyOf(program);
             if (!family) continue;
             const normalize = (flag: string) => family.caseInsensitive ? flag.toLowerCase() : flag;
+            const shellCwd = segmentCwd;
             let operand = index + 1;
-            if (family.subcommand !== undefined && tokens[operand] === family.subcommand) operand += 1;
+            let subcommandSeen = false;
+            let optionsEnded = false;
             while (operand < tokens.length) {
                 const token = tokens[operand]!;
-                const flag = normalize(token);
-                if (family.inline.includes(flag)) break;
-                if (family.script?.includes(flag)) { if (tokens[operand + 1] !== undefined) add(tokens[operand + 1]!); break; }
-                if (token.startsWith('-') || token.startsWith('+') && family === SHELL) {
-                    operand += family.valued?.includes(flag) ? 2 : 1;
+                const equal = token.indexOf('=');
+                const flag = normalize(equal < 0 ? token : token.slice(0, equal));
+                if (!optionsEnded && !subcommandSeen && token === family.subcommand) { subcommandSeen = true; operand += 1; continue; }
+                if (!optionsEnded && (family.inline.includes(flag) || family.inline.some(inline => inline.length === 2 && token.startsWith(inline) && token.length > 2))) break;
+                if (token === '-') break; // stdin, not the following argument
+                if (!optionsEnded && token === '--') { optionsEnded = true; operand += 1; continue; }
+                if (!optionsEnded && family.script?.includes(flag)) { if (tokens[operand + 1] !== undefined) add(tokens[operand + 1]!); break; }
+                if (!optionsEnded && (token.startsWith('-') || token.startsWith('+') && family === SHELL)) {
+                    const value = equal < 0 ? tokens[operand + 1] : token.slice(equal + 1);
+                    if (value !== undefined && family.cwd?.includes(flag) && !value.startsWith('~')) segmentCwd = resolve(segmentCwd, value);
+                    if (value !== undefined && family.inputs?.includes(flag)) {
+                        // Bare module specifiers are not checkout-relative paths.
+                        if (!NODE.inputs!.includes(flag) || /[\\/]/.test(value) || value.startsWith('.')) {
+                            const input = add(value);
+                            if (input && NODE.inputs!.includes(flag) && family.resolution) addOperand(input, family.resolution);
+                        }
+                    }
+                    operand += equal < 0 && family.valued?.includes(flag) ? 2 : 1;
                     continue;
                 }
+                if (family.bun) {
+                    add('bunfig.toml');
+                    if (!/[\\/]/.test(token) && !token.startsWith('.')) {
+                        // Bun searches ancestor packages and bins too, even when a local file exists.
+                        const runtimeCwd = segmentCwd;
+                        for (;;) {
+                            add('package.json');
+                            add(`node_modules/.bin/${token}`);
+                            const parent = dirname(segmentCwd);
+                            if (parent === segmentCwd || within(parent) === undefined) break;
+                            segmentCwd = parent;
+                        }
+                        segmentCwd = runtimeCwd;
+                    }
+                }
                 const file = add(token);
-                if (file && family.resolution) packageOperands.set(file, family.resolution);
+                if (file && family.directoryEntry) add(`${token}/${family.directoryEntry}`);
+                if (file && family.resolution) addOperand(file, family.resolution);
                 break;
             }
+            segmentCwd = shellCwd;
         }
     }
     return { files, packageOperands };
@@ -192,7 +237,12 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
     // because adding one would take precedence and must ask again. Other runtimes record all.
     const sub = (folder: string, name: string) => folder === '.' ? name : `${folder}/${name}`;
     const resolveOperand = async (operand: string, resolution: Resolution): Promise<string | null> => {
-        const asFile = (path: string) => path === '.' ? [] : [path, ...resolution.extensions.map(extension => `${path}${extension}`)];
+        const asFile = (path: string) => {
+            if (path === '.') return [];
+            const substituted = resolution === TYPESCRIPT_RESOLUTION && /\.(?:[mc]?js|jsx)$/.test(path)
+                ? ['.ts', '.tsx', '.mts', '.cts'].map(extension => path.replace(/\.[^.]+$/, extension)) : [];
+            return [path, ...substituted, ...resolution.extensions.map(extension => `${path}${extension}`)];
+        };
         const asIndex = (folder: string) => resolution.extensions.map(extension => sub(folder, `index${extension}`));
         const tried: LiteralCommandFileFactV1[] = [];
         const first = async (candidates: readonly string[]): Promise<'found' | 'missing' | Readonly<{ refused: string }>> => {
