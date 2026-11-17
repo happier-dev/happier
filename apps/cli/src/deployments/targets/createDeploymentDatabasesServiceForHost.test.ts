@@ -14,15 +14,16 @@ import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRo
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/deployment-neon/src/manifest';
 
 describe('managed database attachment at the deployment owner', () => {
-    it('admits telemetry on its collector using the captured requester and the same Environment data decision', async () => {
+    it('admits telemetry by R16 even when database agent access is off, and refuses withdrawn access or another collector', async () => {
         const stored = createDeploymentTargetRoleAdmissionFixture('inspect');
         stored.state.environment.environment.controllerMachineId = 'app-machine';
         stored.state.environment.environment.telemetryMachineId = stored.host.machineId;
+        stored.state.environment.environment.dataAgentAccess = 'none';
         const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
         const service = createDeploymentDatabasesServiceForHost({ seed: {
             plugin: { id: 'happier.telemetry', version: '0.0.0' }, contribution: { id: 'key-flows-read', qualifiedId: 'happier.telemetry/actions/key-flows-read' },
             occurrenceId: 'telemetry', correlationId: 'telemetry-admission', surface: 'cli', signal: new AbortController().signal,
-            approvalContext: { ...stored.request.context, authority: 'present_user' }, isOccurrenceCurrent: () => true,
+            approvalContext: { ...stored.request.context, surface: 'agent', authority: 'present_user' }, isOccurrenceCurrent: () => true,
         }, contributes: { deploymentTargets: [], activationTargets: [] }, targetRegistrations: [], readHost: async () => stored.host,
             createServices: owners.createServices, resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy });
         try {

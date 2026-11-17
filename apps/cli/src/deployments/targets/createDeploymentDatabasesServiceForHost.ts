@@ -177,7 +177,6 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
     return Object.freeze({
         async admitTelemetryRead(request) {
             const admission = await readEnvironment({ kind: 'environment', environment: request }, undefined, { nativeMember: true });
-            access(admission, 'read');
             const environment = admission.detail.environment;
             if (environment.telemetryMachineId !== admission.host.machineId) return refuse('machine_unavailable');
             return { environment: { serverId: environment.serverId, environmentId: environment.id, revision: environment.revision },

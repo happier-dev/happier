@@ -2691,7 +2691,9 @@ do not store it. For a Team Environment without a collector, setup offers the
 existing collector App deployment when no always-on Team Machine is known. It
 does not implicitly select a personal Machine. Teammates read through the
 existing transport under the Environment's data principals; collector Machine
-ownership is separate from that read authority.
+ownership is separate from that read authority. The Environment's R16 access
+list authorizes telemetry reads once; database agent access settings govern
+database operations and add no telemetry read gate.
 
 OTLP header values follow the [exporter configuration specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/);
 resource attribute separators follow the [Resource SDK encoding specification](https://opentelemetry.io/docs/specs/otel/resource/sdk/).
