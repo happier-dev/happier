@@ -122,8 +122,8 @@ describe('saved source finite native producer binding', () => {
         await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig: automatic,
             heartbeatContributionId: 'health-heartbeat' })).resolves.toEqual(automatic);
     });
-    it('dispatches a declared contributed kind using its saved selector and lends the source to that producer', async () => {
-        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'server', controllerMachineId: 'observer' });
+    it('dispatches a contributed check on its saved observer even when the Environment app has another controller', async () => {
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'server', controllerMachineId: 'app-machine' });
         const kind = { pluginId: 'com.example.health', localId: 'external-health' };
         const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
             subject: { kind: 'environment', environmentId: environment.id },

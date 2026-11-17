@@ -3,6 +3,7 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { describe, expect, it } from 'vitest';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import type { HealthCheckSourceConfigV1 } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { plugin } from '../../../../../packages/plugins/machine-services/src/manifest';
@@ -12,6 +13,50 @@ import { createSavedHealthChecksHost } from './savedHealthChecks';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 describe('explicit saved heartbeat enrollment', () => {
+    it('previews contributed checks from their saved observer or selected Machine and keeps built-ins on the app controller', async () => {
+        const caller = { pluginId: 'happier.machine.services', machineId: 'configure-machine', materializationId: 'installed' };
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'server', controllerMachineId: 'app-machine' });
+        const subject = { kind: 'environment' as const, environmentId: environment.id };
+        const sourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
+        const alerts = { channels: [], phases: ['open' as const] };
+        let source: HealthCheckSourceConfigV1 = { v: 1, subject, alerts, checks: [{ checkId: 'flow',
+            kind: { pluginId: 'com.example.health', localId: 'route' }, binding: { kind: 'healthCheck' },
+            config: {}, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
+        let configured = true;
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server',
+            resolveAdoptedDefinitionSet() { throw new Error('Preview must not scan adopted sources'); },
+            readObserver: () => null, openDomainArtifact: async () => null,
+            readSavedSource: (id, signal) => readSavedHealthCheckSourceForHost({ sourceInstanceId: id, signal }, {
+                async list() { return { sets: [], healthSources: configured ? [{ sourceInstanceId, revision: 'saved-revision', enabled: true,
+                    source, observer: { machineId: 'collector', machineInstallationId: 'collector-installation', pluginId: caller.pluginId,
+                        materializationId: 'installed' }, automationId: 'saved-health', triggerId: '11111111-1111-4111-8111-111111111111' }] : [] }; },
+            }),
+        });
+        const seed = { plugin: { id: caller.pluginId, version: '0.0.0' }, occurrenceId: 'active', correlationId: 'collector-preview',
+            contribution: { id: 'health/setup', qualifiedId: `${caller.pluginId}/actions/health/setup` }, surface: 'agent',
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveCurrentPluginMaterializationRef: () => caller } satisfies PluginInvocationServicesSeed;
+        // The Environment Action is the host transport boundary; selection and
+        // saved-source codecs execute at their real owners.
+        const actions = { async execute() { return { ok: true, environment, targetLinks: [] }; } } as unknown as ActionsService;
+        const services = host.bind(seed, { actions, http: createUnavailablePluginServices().http });
+        if (!services) throw new Error('Missing health service');
+        const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { healthChecks: services } });
+        try {
+            expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).toMatchObject({
+                testContext: { machineId: 'collector' }, destinationSelectionContext: { machineId: 'collector' } });
+            configured = false;
+            expect(await kit.invokeAction('health/setup', { ...source, mode: 'preview' })).toMatchObject({
+                destinationSelectionContext: { machineId: 'configure-machine' } });
+            source = { ...source, checks: [{ ...source.checks[0]!, kind: { pluginId: caller.pluginId, localId: 'http' },
+                config: { endpoint: 'https://example.test', expectStatus: 200 } }] };
+            expect(await kit.invokeAction('health/setup', { ...source, mode: 'preview' })).toMatchObject({
+                destinationSelectionContext: { machineId: 'app-machine' } });
+            configured = true;
+            expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).toMatchObject({
+                testContext: { machineId: 'app-machine' }, destinationSelectionContext: { machineId: 'app-machine' } });
+        } finally { await kit.dispose(); }
+    });
     it('previews first Configure defaults without enrollment and preserves saved Off and automatic investigation', async () => {
         const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
         let settingsReads = 0;

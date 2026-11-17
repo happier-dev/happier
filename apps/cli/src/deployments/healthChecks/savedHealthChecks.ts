@@ -180,7 +180,9 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         sourceConfig.alerts = { channels: channels ?? [], phases: ['open', 'recovered'] };
                     }
                     signal.throwIfAborted();
-                    const machineId = environment?.environment.controllerMachineId ?? retained?.observer?.machineId ?? caller.machineId;
+                    const usesControllerProbe = sourceConfig.checks === undefined || sourceConfig.checks.some(builtin);
+                    const machineId = environment && usesControllerProbe ? environment.environment.controllerMachineId
+                        : retained?.observer?.machineId ?? caller.machineId;
                     const testContext = retained && machineId && retained.source.alerts !== undefined
                         && createCanonicalJsonSigningInput(sourceConfig.alerts) === createCanonicalJsonSigningInput(retained.source.alerts)
                         ? { serverId: input.serverId, machineId, sourceInstanceId: retained.sourceInstanceId, expectedSourceRevision: retained.revision } : undefined;
@@ -341,7 +343,11 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     };
                     if (subject.kind === 'environment') {
                         const environment = await readEnvironment(subject.environmentId, signal);
-                        if (environment.environment.controllerMachineId !== observer.machineId) {
+                        // Built-in endpoint/Domain probes run from the Environment controller.
+                        // Contributed checks own their saved observer placement (for example a
+                        // collector); the adopted source already admits that observer.
+                        if (environment.environment.controllerMachineId !== observer.machineId
+                            && checks.some(check => !contributions.has(check.checkId))) {
                             return unavailable('health_check_subject_mismatch');
                         }
                         const domains = new Map<string, Promise<Awaited<ReturnType<typeof readDomain>>>>();
