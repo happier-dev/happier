@@ -352,7 +352,7 @@ describe('Machine vitals Machine admission', () => {
             }
         } finally { releaseOverview(); }
     });
-    it('keeps the slow-fact tick budget across normal Overview watch re-arms', async () => {
+    it('keeps Overview extras fresh on every selected tick across watch re-arms', async () => {
         const { sampler, handlers, reads } = await sampledSetup();
         let cursor = initialTime;
         for (let cycle = 0; cycle < 9; cycle++) {
@@ -364,7 +364,9 @@ describe('Machine vitals Machine admission', () => {
             if (!result.changed) throw new Error('Expected Overview samples');
             cursor = result.samples.at(-1)!.sampledAt;
         }
-        expect(reads.filter(input => input.overviewExtras).map(input => input.sampledAt)).toEqual([initialTime + 2_000, initialTime + 18_000]);
+        expect(reads.filter(input => input.overviewExtras).map(input => input.sampledAt)).toEqual(
+            Array.from({ length: 9 }, (_, index) => initialTime + (index + 1) * 2_000),
+        );
     });
 
     it.each([false, true])('serves the real minute sample between Overview re-arms (summary demand: %s)', async (summary) => {

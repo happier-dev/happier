@@ -29,11 +29,12 @@ describe('language intelligence registered Machine transport', () => {
   const roots: string[] = [];
   afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
-  it('settles the registered LSP watch after its finite 25 second window', async () => {
+  it('keeps the registered LSP watch parked until transport cancellation', async () => {
     vi.useFakeTimers();
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-lsp-finite-watch-'));
     roots.push(rootPath);
     const host = createLanguageServerHost({ readCurrentContributionRegistry: () => null });
+    const controller = new AbortController();
     const handlers = new Map<string, RpcHandler>();
     registerLanguageIntelligenceHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, rootPath, { host });
     const watch = handlers.get(RPC_METHODS.DAEMON_LSP_WATCH)!;
@@ -41,16 +42,18 @@ describe('language intelligence registered Machine transport', () => {
       const initial = DaemonLspWatchResponseSchema.parse(await watch({ rootPath }));
       if (initial.status !== 'ok') throw new Error('Missing initial LSP watch snapshot');
       let settled = false;
-      const pending = Promise.resolve(watch({ rootPath, sinceRevision: initial.revision })).then(response => {
+      const pending = Promise.resolve(watch({ rootPath, sinceRevision: initial.revision }, { signal: controller.signal })).then(response => {
         settled = true;
         return DaemonLspWatchResponseSchema.parse(response);
       });
       await vi.advanceTimersByTimeAsync(24_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
-      expect(await pending).toMatchObject({ status: 'ok', revision: initial.revision });
+      expect(settled).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
-    } finally { await host.dispose(); vi.useRealTimers(); }
+      controller.abort();
+      expect(await pending).toEqual({ status: 'error', errorCode: 'cancelled' });
+    } finally { controller.abort(); await host.dispose(); vi.useRealTimers(); }
   });
 
   it('preserves the filesystem admission cause through every strict LSP response reader', async () => {
@@ -136,7 +139,7 @@ describe('language intelligence registered Machine transport', () => {
       for (const [handler, kind] of [[format, 'format'], [imports, 'organizeImports']] as const) {
         expect(await handler(createTargetedActionRpcRequestV1({ rootPath, path: 'a.ts',
           operation: { kind, files: [{ ...files[0], renameTo: 'moved.ts' }] } }, { kind: 'machine', machineId: 'machine' }), context))
-          .toMatchObject({ status: 'error', errorCode: 'invalid_request' });
+          .toMatchObject({ ok: false, errorCode: 'invalid_request' });
         expect(await readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('old');
         await expect(readFile(join(rootPath, 'moved.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
       }
@@ -190,7 +193,7 @@ describe('language intelligence registered Machine transport', () => {
         expect(await invoke(RPC_METHODS.DAEMON_LSP_CODE_ACTION_APPLY, { rootPath, path: 'moved.ts', operation: { kind: 'codeAction',
           expectedHash: hash('old'), action: { serverId: 'fixture/server', title: 'Stale fix', hasCommand: false,
             range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, files: [] },
-        } })).toMatchObject({ status: 'error', errorCode: 'stale_query' });
+        } })).toMatchObject({ ok: false, errorCode: 'stale_query' });
         expect(await readFile(join(rootPath, 'moved.ts'), 'utf8')).toBe('next');
 
         // The preview host obtains the real opaque code Action. Applying it
