@@ -13,6 +13,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../.
 import { createAuthenticatedTestApp } from '../../../../../server/sources/app/api/testkit/sqliteFastify';
 import { accountRoutes } from '../../../../../server/sources/app/api/routes/account/accountRoutes';
 import { artifactsRoutes } from '../../../../../server/sources/app/api/routes/artifacts/artifactsRoutes';
+import { registerSessionListingRoutes } from '../../../../../server/sources/app/api/routes/session/registerSessionListingRoutes';
 import { createPromptBundleInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { createSkillActionExecuteV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
@@ -43,6 +44,8 @@ afterAll(async () => { await database?.close(); });
 
 it('records captured vendor evidence through strict host projection, authenticated daemon HTTP and Server row CAS in SQLite', async () => {
     const account = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 7 } });
+    await db.session.create({ data: { id: captured.assistant.session_id, tag: 'skill-usage', accountId: account.id,
+        encryptionMode: 'plain', metadata: '{}' } });
     for (const key of PromptLibraryCatalogKeyV1Schema.options) {
         await db.userKVStore.create({ data: { accountId: account.id, key: buildPromptLibraryPhysicalKeyV1(key), version: 0,
             value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: emptyPromptLibraryRecordV1(key) })) } });
@@ -80,6 +83,7 @@ it('records captured vendor evidence through strict host projection, authenticat
     });
     accountRoutes(server);
     artifactsRoutes(server);
+    registerSessionListingRoutes(server);
     const sockets = new Server(server.server, { path: '/v1/updates' });
     sockets.use((socket, next) => {
         const token: unknown = socket.handshake.auth.token;
@@ -177,7 +181,9 @@ it('records captured vendor evidence through strict host projection, authenticat
         expect(await readPersisted()).toEqual({ revision: 1, value: { v: 1, lastUsedAt: { [skillId]: now } } });
         expect(await readList()).toMatchObject({ usageObservedSince: now, items: [{ skillId, lastUsedAt: now }] });
         expect(rowOutcomes).toContainEqual({ method: 'POST', status: 'updated' });
-        await vi.waitFor(() => expect(wakes).toContainEqual(expect.objectContaining({ body: { t: 'account-change' } })));
+        await vi.waitFor(() => expect(wakes).toContainEqual(expect.objectContaining({ body: expect.objectContaining({
+            t: 'account-change', entityIds: [buildPromptLibraryPhysicalKeyV1('skill-usage')],
+        }) })));
         await projectRuntimeTranscriptEvent({ ...projection, event: { ...event, sequence: 2 } });
         expect(await readInSession()).toMatchObject({ ok: true, result: { skillId, lastUsedAt: now } });
         expect((await readPersisted()).revision).toBe(1);

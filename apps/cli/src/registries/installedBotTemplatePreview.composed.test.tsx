@@ -91,7 +91,8 @@ const { createPlainArtifactHomeFixture } = await import('../../../ui/sources/dev
 const { createPromptLibraryCatalogBoundary } = await import('../../../ui/sources/dev/testkit/harness/promptLibraryCatalogBoundary');
 const { setServerProfileIdentityForUrl } = await import('../../../ui/sources/sync/domains/server/serverProfiles');
 const { renderScreen } = await import('../../../ui/sources/dev/testkit/render/renderScreen');
-const { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('../../../ui/sources/dev/testkit/fixtures/machineFixtures');
+const { publishMachineInventoryForTest } = await import('../../../ui/sources/dev/testkit/harness/machinePresence');
+const { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createHydratedPlainMachineFixture } = await import('../../../ui/sources/dev/testkit/fixtures/machineFixtures');
 const { InjectedAuthProvider } = await import('../../../ui/sources/auth/context/AuthContext');
 const { TokenStorage } = await import('../../../ui/sources/auth/storage/tokenStorage');
 const { storage } = await import('../../../ui/sources/sync/domains/state/storage');
@@ -155,11 +156,9 @@ it('acquires an installed plugin template for Store preview and offers unavailab
   const scope = { serverId: account.serverId, accountId: account.accountId };
   await storage.getState().activateSettingsScope(scope);
   storage.getState().applySettingsForScope(scope, storage.getState().settings, 1);
-  const admittedMachine = { ...machine, kind: 'persistent' as const, revokedAt: null, replacedByMachineId: null,
-    installationId: machineRow.installationId, access: machineRow.access };
-  storage.setState({ profileScope: scope, machines: { [machine.id]: admittedMachine },
-    machineListByServerId: { ...storage.getState().machineListByServerId, [account.serverId]: [admittedMachine] },
-    machineListStatusByServerId: { ...storage.getState().machineListStatusByServerId, [account.serverId]: 'idle' } });
+  const admittedMachine = { ...createHydratedPlainMachineFixture({ id: machine.id, accountId: account.accountId, machine }),
+    kind: 'persistent' as const, revokedAt: null, replacedByMachineId: null };
+  await publishMachineInventoryForTest(scope, [admittedMachine]);
   const credentials = await TokenStorage.getCredentialsForServerUrl(home.home.serverUrl);
   const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
     <BotTemplateRecipientScreen source={templateSource} serverId={home.home.id} />

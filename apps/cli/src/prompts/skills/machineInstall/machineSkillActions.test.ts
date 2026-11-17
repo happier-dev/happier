@@ -232,7 +232,8 @@ describe('machine skill service through real Account HTTP and SQLite CAS', () =>
       const guest = { ...credentials, token: `e30.${Buffer.from(JSON.stringify({ sub: 'guest-account' })).toString('base64url')}.signature` };
       expect(await machine.createMachineSkillActionExecutor({ credentials: guest })({ actionId: 'skills.machine.install',
         input: { skillId: 'skill', machineId: 'machine', agents: [agentId] }, context: { surface: 'ui', serverId: 'srv_home', authority: 'present_user' } }))
-        .toMatchObject({ ok: false, errorCode: 'machine_skill_custodian_required' });
+        // Manage-capable execution (79c2a2e81d4) rejects credentials outside the captured Account scope.
+        .toMatchObject({ ok: false, errorCode: 'scope-retired' });
       expect(readLinks().value.links).toHaveLength(1);
       const effect = machine.createMachineSkillActionExecutor({ credentials });
       const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'srv_home', serverApiUrl: base,

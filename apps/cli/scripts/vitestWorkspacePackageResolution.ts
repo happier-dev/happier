@@ -18,4 +18,6 @@ export const workspacePackageOptimizationExcludes = workspacePackages.map((works
 export const workspacePackageSourcesPlugin = createWorkspacePackageSourcesPlugin(
     workspacePackages,
     'happier-cli-workspace-package-sources',
+    // CLI composed tests consume authored host surfaces, including host-only UI exports.
+    { exportConditions: ['happier-source'] },
 );

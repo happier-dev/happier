@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AccountArtifact, AccountArtifactHeader } from '@/api/artifacts/accountArtifactStore';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { FIRST_PARTY_SKILLS_V1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
 import { createSkillStore } from '../store/skillStore';
 import { resolveRunnerSkills, type ResolveRunnerSkillsInput } from './resolveRunnerSkills';
 import { readAppliedSessionSkillDelivery, reapplySessionSkills } from './reapplySessionSkills';
@@ -41,6 +42,8 @@ async function fixture() {
       nativeRoots: { user: [['.native']] } } } } },
     accountSnapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [
+        ...FIRST_PARTY_SKILLS_V1.map(skill => ({ id: `off-${skill.skillId}`, skillId: skill.skillId,
+          target: { t: 'allMachines' as const }, enabled: false, createdAt: 1, updatedAt: 1 })),
         { id: 'rule', skillId: 'library', target: { t: 'allMachines' }, enabled: true, createdAt: 1, updatedAt: 1 },
       ] } } }], tombstones: [], diagnostics: [] } },
   };

@@ -12,7 +12,7 @@ import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secret
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import * as gh from '@/capabilities/deps/gh';
+import * as gh from '@happier-dev/cli-common/agents/gh';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../server/sources/testkit/lightSqliteHarness';
 import { db } from '../../../server/sources/storage/db';
 import { inTx } from '../../../server/sources/storage/inTx';
@@ -156,7 +156,7 @@ describe('registry native GitHub credentials after Machine admission', () => {
       const read = readRegistryConnectedAccountTokenV1({ source, operationContext, controller: plugins.controller });
       if (scenario === 'custodian' || scenario === 'custodian-missing-role' || scenario === 'manage') {
         await expect(read).resolves.toEqual({ value: 'native-registry-fixture', origin: 'https://api.github.com' });
-        expect(native).toHaveBeenCalledWith({ hostname: 'github.com', signal: expect.any(AbortSignal) }, undefined);
+        expect(native).toHaveBeenCalledWith({ hostname: 'github.com', signal: expect.any(AbortSignal) });
       } else if (scenario === 'foreign-token') {
         await expect(read).rejects.toMatchObject({ status: { state: 'auth_failed' } });
         expect(native).not.toHaveBeenCalled();

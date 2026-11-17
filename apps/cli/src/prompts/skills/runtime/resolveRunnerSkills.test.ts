@@ -4,7 +4,6 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { CLAUDE_PLUGIN } from '@happier-dev/plugins-claude/manifest';
 import { projectAgentPreflightSessionControlsCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 import { installEmptyProjectAccountRowsHttpBoundary } from '@/testkit/http/projectAccountRows';
-import { setImmediate } from 'node:timers/promises';
 import retained from '../../../../../../packages/protocol/fixtures/0.2-retained-skill-path.json';
 import retainedFrontmatter from '../../../../../../packages/protocol/fixtures/0.2-retained-skill-frontmatter.json';
 import { PromptBundleBodyV1Schema, readSkillBundleContentV1, validatePromptBundleBodyV1AgainstSchemaId } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
@@ -434,6 +433,8 @@ describe('runner skill resolution', () => {
     const broken = bundle('broken', 'broken');
     const off = bundle('off', 'off');
     const started: string[] = [];
+    let allReadsStarted!: () => void;
+    const readsStarted = new Promise<void>(resolve => { allReadsStarted = resolve; });
     let releasing = false;
     const pending = new Map<string, { resolve: (artifact: AccountArtifact | null) => void; reject: (error: Error) => void }>();
     // Artifact reads are the persistence boundary. Selection, content decoding,
@@ -443,6 +444,7 @@ describe('runner skill resolution', () => {
       read: id => {
         if (releasing) return Promise.resolve(null);
         started.push(id);
+        if (started.length === 3) allReadsStarted();
         return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); });
       },
     };
@@ -458,7 +460,7 @@ describe('runner skill resolution', () => {
     const work = resolveRunnerSkills(input, { artifacts, ensureSessionDir: content => ensureSkillSessionDirHttp(content,
       { target: { pid: process.pid, httpPort: Number(new URL(url).port), controlToken: 'parallel-test' } }) });
     try {
-      await setImmediate();
+      await readsStarted;
       expect(started).toEqual(['older', 'newer', 'broken']);
       pending.get('newer')!.resolve(newer);
       pending.get('broken')!.reject(new Error('Artifact transport unavailable'));

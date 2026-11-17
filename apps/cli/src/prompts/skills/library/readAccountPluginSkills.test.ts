@@ -11,6 +11,8 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { pluginSkillIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
+import { FIRST_PARTY_SKILLS_V1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { resolvePluginMachineExecutionOrigin } from '@/plugins/runtime/resolvePluginMachineExecutionOrigin';
@@ -79,7 +81,7 @@ describe('Account plugin skill sources', () => {
         expect.objectContaining({ skillId: 'happier:happier' }),
       ]) });
       const page = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(raw);
-      expect(page.items).toHaveLength(3);
+      expect(page.items.map(item => item.skillId)).toEqual(['written', 'registry', ...FIRST_PARTY_SKILLS_V1.map(skill => skill.skillId)]);
       const names = await readSkillLibraryCatalog({ ...store, readPluginSkills,
         list: async () => ({ coverage: 'complete', items: artifacts.map(artifact => ({ ...artifact, artifactId: artifact.id })) }) });
       expect(names.map(item => item.id)).toEqual(expect.arrayContaining(['written', 'registry', 'happier:happier']));
@@ -119,6 +121,7 @@ describe('Account plugin skill sources', () => {
     const unrelatedManifest = definePlugin({ id: 'com.acme.unrelated', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
       skills: { check: { directory: './skills/check' } } }).manifest;
     const machine = { id: 'source-A', kind: 'persistent', active: true, activeAt: Date.now(), revokedAt: null, replacedByMachineId: null,
+      managedMachineRef: null, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER };
     // Only HTTP and Socket.IO transports are substituted. Declarations,
     // current schemas, source selection, packaged reads and P3 remain real.
@@ -145,6 +148,18 @@ describe('Account plugin skill sources', () => {
     // Materialization rows the Home serializes; it honours the canonical plugin filter like the server owner.
     const inventoryRead = { rows: 0 };
     vi.spyOn(axios, 'post').mockImplementation(async (url, input, config) => {
+      if (String(url) === `${base}/v1/machines/read-batch`) {
+        const request = MachineReadBatchRequestV1Schema.parse(input);
+        expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+        expect(config?.headers?.Accept).toBe('application/json;happier-machine-projection=host-facts');
+        const rows = request.machineIds.filter(id => id === machine.id || scaledUnrelated && unrelatedMachineIds.includes(id))
+          .map(id => ({ ...machine, id, active: !offline, activeAt: offline ? 0 : machine.activeAt }));
+        machineRead.rows += rows.length;
+        return { data: MachineReadBatchResponseV1Schema.parse({ results: request.machineIds.map(machineId => {
+          const row = rows.find(candidate => candidate.id === machineId);
+          return row ? { machineId, status: 'found', machine: row } : { machineId, status: 'not_found' };
+        }) }) };
+      }
       expect(String(url)).toBe(`${base}/v1/plugins/availability/materializations/read`);
       const request = PluginAvailabilityMaterializationsReadActionInputV1Schema.parse(input);
       expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);

@@ -21,7 +21,8 @@ describe('skill library name inventory', () => {
       artifact('skill-lint', 'skills.skill_md_v1', '---\nname: lint\ndescription: Checks changes\n---\nUse it.'),
       artifact('generic', 'bundle.generic_v1', '---\nname: ignored\n---\nGeneral bundle.'),
     ] }) };
-    await expect(readSkillLibraryItems(store)).resolves.toEqual([{ id: 'skill-lint', name: 'lint' }, { id: 'happier:happier', name: 'happier' }]);
+    await expect(readSkillLibraryItems(store)).resolves.toEqual([{ id: 'skill-lint', name: 'lint' },
+      ...FIRST_PARTY_SKILLS_V1.map(skill => ({ id: skill.skillId, name: skill.name }))]);
     await expect(readSkillLibraryItems({ list: async () => ({ coverage: 'partial', items: [] }) }))
       .rejects.toMatchObject({ code: 'catalog_unavailable' });
   });
@@ -35,7 +36,8 @@ describe('skill library name inventory', () => {
     const store = { read: async () => null, list: async (options?: Readonly<{ cursor?: string; limit?: number }>) =>
       options?.cursor === 'next' ? { coverage: 'complete' as const, items: [artifact('second')] }
         : { coverage: 'complete' as const, items: [artifact('first')], nextCursor: 'next' } };
-    await expect(readSkillLibraryItems(store)).resolves.toEqual([{ id: 'first', name: 'first' }, { id: 'second', name: 'second' }, { id: 'happier:happier', name: 'happier' }]);
+    await expect(readSkillLibraryItems(store)).resolves.toEqual([{ id: 'first', name: 'first' }, { id: 'second', name: 'second' },
+      ...FIRST_PARTY_SKILLS_V1.map(skill => ({ id: skill.skillId, name: skill.name }))]);
     await expect(readSkillLibraryInventory(store)).resolves.toMatchObject([{ artifactId: 'first' }, { artifactId: 'second' }]);
     await expect(readSkillLibraryInventory({ ...store, list: async options => options?.cursor
       ? { coverage: 'partial', items: [] } : { coverage: 'complete', items: [artifact('first')], nextCursor: 'next' } }))
