@@ -2383,7 +2383,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                                     if (!context) throw new Error('Native lifecycle lost admitted invocation services');
                                     const bytes = await context.services.fs.readFile({ root: 'workspace', relativePath: 'pixi.toml' });
                                     expect(new TextDecoder().decode(bytes)).toBe(configContent);
-                                    if (nativeObservation === 'failed') throw new Error('Native resource inspection is unavailable');
+                                    if (nativeObservation === 'failed') throw Object.assign(new Error('Native resource inspection is unavailable'), { code: 'EIO' });
                                     return { phase: nativeObservation === 'unknown' ? 'unknown' as const
                                         : nativeStopped ? 'stopped' as const : 'running' as const, readiness: 'not_reported' as const, endpoint: null };
                                 },
@@ -2610,13 +2610,20 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                     expect(h.owner.readRetainedSemanticCustodyCount()).toBeGreaterThan(0);
                     expect(environmentObservation.signal?.aborted).toBe(false);
                     registry = await activateRegistry();
-                    for (const uncertainty of ['failed', 'unknown'] as const) {
-                        nativeObservation = uncertainty;
-                        await expect(handle.stop()).rejects.toMatchObject({ code: 'plugin_managed_server_termination_incomplete' });
-                        expect(h.owner.listProjectServices()).toEqual([handle]);
-                        expect(stoppedResources).toEqual([nativeInstance, nativeInstance]);
-                        expect(environmentObservation.signal?.aborted).toBe(false);
-                    }
+                    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+                    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+                    try {
+                        for (const uncertainty of ['failed', 'unknown'] as const) {
+                            nativeObservation = uncertainty;
+                            await expect(handle.stop()).rejects.toMatchObject({ code: 'plugin_managed_server_termination_incomplete' });
+                            if (uncertainty === 'failed') expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                                phase: 'project_service.stop.recover', errorCode: 'EIO',
+                            }));
+                            expect(h.owner.listProjectServices()).toEqual([handle]);
+                            expect(stoppedResources).toEqual([nativeInstance, nativeInstance]);
+                            expect(environmentObservation.signal?.aborted).toBe(false);
+                        }
+                    } finally { diagnostic.mockRestore(); }
                     nativeObservation = 'known';
                     nativeStopped = false;
                     await expect(handle.stop()).rejects.toMatchObject({ code: 'plugin_managed_server_termination_incomplete' });

@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment, type PreparedProjectLaunchInput } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
@@ -572,7 +574,10 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                             if (observation.phase === 'stopped') return { status: 'stopped' };
                             if (observation.phase !== 'running') return { status: 'termination_incomplete' };
                             return await current.lifecycle.stop(candidate, options);
-                        } catch { return { status: 'termination_incomplete' }; }
+                        } catch (error) {
+                            logger.warnLocalFile('[local-service] Stop recovery failed', projectActionFailureCauseV1(error, 'project_service.stop.recover', { allowUnknownErrorCode: false }));
+                            return { status: 'termination_incomplete' };
+                        }
                         finally { await current.release(); }
                     },
                 } };
