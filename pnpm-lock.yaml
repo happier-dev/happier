@@ -726,6 +726,12 @@ importers:
       '@types/tmp':
         specifier: ^0.2.6
         version: 0.2.6
+      '@xterm/addon-unicode-graphemes':
+        specifier: 0.4.0
+        version: 0.4.0
+      '@xterm/headless':
+        specifier: 6.0.0
+        version: 6.0.0
       ajv:
         specifier: ^8.17.1
         version: 8.17.1
@@ -10804,6 +10810,9 @@ packages:
     peerDependencies:
       '@xterm/xterm': ^5.0.0
 
+  '@xterm/addon-unicode-graphemes@0.4.0':
+    resolution: {integrity: sha512-9+/CqwbKcnlkJU4d3wIgO+wjsL8f6vyz+UwUWLu6nADQz8Gr8ONqGCJfdDjIdI+yYZLABQqQy47FzEM6AWELjw==}
+
   '@xterm/addon-web-links@0.11.0':
     resolution: {integrity: sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==}
     peerDependencies:
@@ -10813,6 +10822,9 @@ packages:
     resolution: {integrity: sha512-xCnfMBTI+/HKPdRnSOHaJDRqEpq2Ugy8LEj9GiY4J3zJObo3joylIFaMvzBwbYRg8zLtkO0KQaStCeSfoaI2/w==}
     peerDependencies:
       '@xterm/xterm': ^5.0.0
+
+  '@xterm/headless@6.0.0':
+    resolution: {integrity: sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw==}
 
   '@xterm/xterm@5.5.0':
     resolution: {integrity: sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A==}
@@ -24132,6 +24144,8 @@ snapshots:
     dependencies:
       '@xterm/xterm': 5.5.0
 
+  '@xterm/addon-unicode-graphemes@0.4.0': {}
+
   '@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0)':
     dependencies:
       '@xterm/xterm': 5.5.0
@@ -24139,6 +24153,8 @@ snapshots:
   '@xterm/addon-webgl@0.18.0(@xterm/xterm@5.5.0)':
     dependencies:
       '@xterm/xterm': 5.5.0
+
+  '@xterm/headless@6.0.0': {}
 
   '@xterm/xterm@5.5.0': {}
 

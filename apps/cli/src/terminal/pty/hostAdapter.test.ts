@@ -5,7 +5,7 @@ import { encodeTerminalPasteInput } from '@happier-dev/protocol';
 import type { Disposable, PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from './provider';
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/controlTypes';
 import { createPtyTerminalHostAdapter } from './hostAdapter';
-import { createVirtualTerminalScreen } from './virtualTerminalScreen';
+import { createTerminalScreen, loadTerminalScreenModel } from './terminalScreen';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 class FakePtyProcess implements PtyProcess {
@@ -82,15 +82,85 @@ function createFakeProviderWithProcess(factory: () => FakePtyProcess) {
   return { provider, processes, spawnCalls };
 }
 
-describe('createVirtualTerminalScreen', () => {
-  it('tracks clear-screen and cursor-position terminal writes', () => {
-    const screen = createVirtualTerminalScreen({ cols: 20, rows: 4 });
+describe('createTerminalScreen', () => {
+  const createScreen = async (size: Readonly<{ cols: number; rows: number }>) => createTerminalScreen(await loadTerminalScreenModel(), size);
+
+  it('overwrites stale footer cells when Claude redraws a Japanese composer', async () => {
+    const screen = await createScreen({ cols: 40, rows: 24 });
+
+    // Reduced from Claude Code 2.1.319's real 40-column PTY output: the
+    // Japanese row overwrites the footer before an absolute-column erase.
+    screen.write('\u001b[2;21H◐ medium · /effort');
+    screen.write(`\u001b[H❯ これでいくわないす\r\n  ほで書類の保存場所わかるか？\u001b[32G\u001b[K\r\n  今回の元動画との馴染ませる方法をのこ\r\n  しといてくれへんかmdで\r\n${'─'.repeat(40)}`);
+
+    expect((await screen.capture()).text).toBe(`❯ これでいくわないす\n  ほで書類の保存場所わかるか？\n  今回の元動画との馴染ませる方法をのこ\n  しといてくれへんかmdで\n${'─'.repeat(40)}`);
+  });
+
+  it('wraps wide characters by terminal columns and keeps combining marks on their base', async () => {
+    const screen = await createScreen({ cols: 5, rows: 3 });
+    screen.write('abc界e');
+    screen.write('\u0301');
+    expect(await screen.capture()).toMatchObject({ text: 'abc界\né', cursor: { x: 1, y: 1 } });
+
+    screen.write('\u001b[Habcd界');
+    expect(await screen.capture()).toMatchObject({ text: 'abcd\n界', cursor: { x: 2, y: 1 } });
+  });
+
+  it('clears both cells of a wide character when overwriting or erasing either half', async () => {
+    const screen = await createScreen({ cols: 8, rows: 3 });
+    screen.write('a界b\r\u001b[3GX');
+    expect((await screen.capture()).text).toBe('a Xb');
+    screen.write('\r界b\r\u001b[1K');
+    expect((await screen.capture()).text).toBe('  bb');
+    screen.write('\r界\r\u001b[2G\u001b[K');
+    expect((await screen.capture()).text).toBe('');
+  });
+
+  it('reflows a wide character a narrower width would cut in half', async () => {
+    const screen = await createScreen({ cols: 5, rows: 3 });
+    screen.write('abc界');
+    screen.resize(4, 3);
+    expect((await screen.capture()).text).toBe('abc\n界');
+  });
+
+  it('keeps an emoji modifier on its base across writes and cursor overwrites', async () => {
+    const screen = await createScreen({ cols: 5, rows: 3 });
+    screen.write('👍\u0301');
+    screen.write('🏽XYZ');
+    expect(await screen.capture()).toMatchObject({ text: '👍́🏽XYZ', cursor: { x: 5, y: 0 } });
+
+    screen.write('\u001b[3GX');
+    expect((await screen.capture()).text).toBe('👍́🏽XYZ');
+  });
+
+  it('keeps a standalone emoji modifier and the text after it', async () => {
+    // Its width is not settled: string-width (Claude's renderer) clusters it with the letter
+    // before it, terminals give it its own cells. Only the text is asserted.
+    const screen = await createScreen({ cols: 5, rows: 3 });
+    screen.write('a🏽X');
+    expect((await screen.capture()).text).toBe('a🏽X');
+  });
+
+  it.each([
+    ['❤', '\ufe0f', '❤️'],
+    ['1', '\ufe0f\u20e3', '1️⃣'],
+  ])('updates cell width when %s gains an emoji presentation', async (base, marks, glyph) => {
+    const screen = await createScreen({ cols: 5, rows: 3 });
+    screen.write(base);
+    screen.write(`${marks}XYZ`);
+    expect(await screen.capture()).toMatchObject({ text: `${glyph}XYZ`, cursor: { x: 5, y: 0 } });
+    screen.write('\u001b[3GX');
+    expect((await screen.capture()).text).toBe(`${glyph}XYZ`);
+  });
+
+  it('tracks clear-screen and cursor-position terminal writes', async () => {
+    const screen = await createScreen({ cols: 20, rows: 4 });
 
     screen.write('old line');
     screen.write('\u001b[2J\u001b[H> ready');
     screen.write('\u001b[2;3Hbox');
 
-    expect(screen.capture()).toEqual({
+    expect(await screen.capture()).toMatchObject({
       text: '> ready\n  box',
       cursor: { x: 5, y: 1 },
     });

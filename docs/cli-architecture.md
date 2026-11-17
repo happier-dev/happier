@@ -7652,6 +7652,14 @@ channels and exits when the holder closes that connection.
   In a placed Session this Agent is the target's primary holder at the placement's
   primary address (not a workspace-client stream). Windows (ConPTY) is not yet held:
   an unplaced Windows terminal Agent still runs on the in-runner node-pty provider.
+- The PTY host's screen model is `@xterm/headless` (`terminal/pty/terminalScreen.ts`,
+  scrollback 0, grapheme-cluster cell widths), loaded by the first PTY Session of a
+  process. It is fed raw bytes and `capture()` resolves after everything written before
+  it is parsed. Captures carry `styledText` (the visible rows with SGR attributes, the
+  `capture-pane -p -e` shape), so style evidence such as Claude's dim placeholder works
+  on this host too; submit verification keeps reading the plain text. The recorded Claude
+  streams in `terminal/pty/__fixtures__/claude-tui/` pin its decisions to tmux's
+  (`terminalScreen.claudeParity.test.ts`).
 - One spawn owner: the ACP transport (`AcpBackend`) starts its Agent through
   `spawnSupervisedPluginProcess` like every Exec launch (detached POSIX group,
   stdout/stderr read by ACP and not retained by the supervisor), and Stop and

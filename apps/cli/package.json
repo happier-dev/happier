@@ -381,6 +381,8 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.7",
     "@types/tmp": "^0.2.6",
+    "@xterm/addon-unicode-graphemes": "0.4.0",
+    "@xterm/headless": "6.0.0",
     "ajv": "^8.17.1",
     "archiver": "^7.0.1",
     "axios": "^1.13.2",

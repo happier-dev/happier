@@ -40,6 +40,13 @@ export function normalizeCapturedScreen(text: string): string {
   return lines.join('\n');
 }
 
+/** Drops trailing rows that hold nothing but whitespace and control sequences (the pane padding). */
+function trimTrailingBlankRows(rawText: string): string {
+  const rows = rawText.split('\n');
+  while (rows.length > 0 && stripTerminalControlSequences(rows[rows.length - 1]!).trim() === '') rows.pop();
+  return rows.join('\n');
+}
+
 export function buildTerminalControlCapture(params: Readonly<{
   rawText: string;
   hostKind: TerminalHostKind;
@@ -51,7 +58,7 @@ export function buildTerminalControlCapture(params: Readonly<{
     // Raw capture with styling preserved (when the host produced any): SGR dim is the only honest
     // discriminator between Claude Code's empty-composer suggestion placeholder and a typed draft
     // (ported S-8 / QA-B F6). Parsers normalize internally; `text` stays the canonical stripped form.
-    ...(params.rawText.includes('\u001b[') ? { styledText: params.rawText } : {}),
+    ...(params.rawText.includes('\u001b[') ? { styledText: trimTrailingBlankRows(params.rawText) } : {}),
     ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
     capturedAtMs: params.capturedAtMs,
     hostKind: params.hostKind,

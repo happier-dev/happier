@@ -33,7 +33,7 @@ import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/run
 import type { Disposable, PtyProcess, PtyProvider } from './provider';
 import { createNodePtyProvider } from './provider';
 import { delay } from '@/utils/time';
-import { createVirtualTerminalScreen, type VirtualTerminalScreen } from './virtualTerminalScreen';
+import { createTerminalScreen, loadTerminalScreenModel, type TerminalScreen } from './terminalScreen';
 import { resolveSessionProcessPtyTarget, type SessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
 import { startHeldAgentPtyProcess } from './holderProcess';
 import { createTerminalNativeLaunch } from './nativeLaunch';
@@ -46,7 +46,7 @@ const POST_WRITE_LIVENESS_DELAY_MS = 25;
 type PtyTerminalHostSession = {
   pty: PtyProcess;
   disposables: Disposable[];
-  screen: VirtualTerminalScreen;
+  screen: TerminalScreen;
   ended: boolean;
   disposed: boolean;
   exitCode?: number;
@@ -198,6 +198,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       }
     }
     session.disposables = [];
+    session.screen.dispose();
   }
 
   function writeToSession(session: PtyTerminalHostSession, data: string): boolean {
@@ -224,9 +225,9 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
     if (!session || session.ended) {
       throw new Error('PTY terminal host is not alive');
     }
-    const firstInput = session.screen.capture();
+    const firstInput = await session.screen.capture();
     await delay(inputStabilityDelayMs);
-    const currentInput = session.screen.capture();
+    const currentInput = await session.screen.capture();
     return {
       stable: firstInput.text === currentInput.text
         && firstInput.cursor.x === currentInput.cursor.x
@@ -265,11 +266,12 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
         if (session.ended) return { status: 'host_dead', recoverable: false };
-        const screen = session.screen.capture();
+        const screen = await session.screen.capture();
         return {
           status: 'captured',
           capture: buildTerminalControlCapture({
-            rawText: screen.text,
+            // The styled rows when any cell carries an attribute (SGR dim tells Claude's placeholder from a draft).
+            rawText: screen.styledText ?? screen.text,
             cursor: screen.cursor,
             hostKind: 'windows_console',
             capturedAtMs: now(),
@@ -321,7 +323,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         unsetEnvKeys: opts.unsetEnvKeys,
       });
       const term = spawnEnv.TERM ?? 'xterm-256color';
-      const screen = createVirtualTerminalScreen({ cols, rows });
+      const screen = createTerminalScreen(await loadTerminalScreenModel(), { cols, rows });
       let pty: PtyProcess;
       let startHeldDelivery: (() => void) | undefined;
       if (heldAgent) {
@@ -362,10 +364,13 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         ended: false,
         disposed: false,
       };
-      session.disposables.push(pty.onData((data) => {
-        if (nativeLaunch) nativeLaunch.consume(Buffer.from(String(data ?? '')), bytes => screen.write(bytes.toString('utf8')));
-        else screen.write(String(data ?? ''));
-      }));
+      // Bytes when the PTY offers them: the screen model decodes UTF-8 itself, across chunk boundaries.
+      const onOutput = (data: Buffer | string) => {
+        const bytes = typeof data === 'string' ? Buffer.from(data) : data;
+        if (nativeLaunch) nativeLaunch.consume(bytes, output => screen.write(output));
+        else screen.write(bytes);
+      };
+      session.disposables.push(pty.onDataBytes ? pty.onDataBytes(onOutput) : pty.onData(onOutput));
       session.disposables.push(pty.onExit((event) => {
         nativeLaunch?.finish();
         session.ended = true;
@@ -498,11 +503,11 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
               ?? promptSubmitVerification.verifyAfterSubmit
             )({
               promptText,
-              screenText: session.screen.capture().text,
+              screenText: (await session.screen.capture()).text,
             }),
             verifyAfterSubmit: async ({ promptText }) => promptSubmitVerification.verifyAfterSubmit({
               promptText,
-              screenText: session.screen.capture().text,
+              screenText: (await session.screen.capture()).text,
             }),
           }
           : {}),
