@@ -26,6 +26,7 @@ export function connectUiActionClient(params: Readonly<{
 
 export function connectUiPersonActionClient(params: Readonly<{
     serverUrl: string;
+    addressAnchorUrl?: string;
     accountSecret: Uint8Array;
 }>): ReturnType<typeof connectUiActionClient>;
 

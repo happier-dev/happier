@@ -99,10 +99,12 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
 /** Sign in as the person through the UI's Account flow, never a terminal bearer. */
 export async function connectUiPersonActionClient(params: Readonly<{
     serverUrl: string;
+    addressAnchorUrl?: string;
     accountSecret: Uint8Array;
 }>): ReturnType<typeof connectUiActionClient> {
     const credentials = await authGetTokenAtEndpoint({
         endpointUrl: params.serverUrl,
+        addressAnchorUrl: params.addressAnchorUrl,
         secret: params.accountSecret,
         requireKeyChallengeV2: true,
         requireExistingAccount: true,

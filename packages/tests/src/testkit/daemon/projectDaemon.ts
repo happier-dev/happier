@@ -83,7 +83,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
             machineKeys: [auth.accountMachineKey] });
         },
         async executeViaVoiceSpawn(input: unknown) {
-          const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl, accountSecret: auth.accountSigningSeed });
+          const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
+            addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed });
           try { return await ui.executeVoiceSpawn(input, randomUUID()); }
           finally { await ui.close(); }
         },
@@ -93,7 +94,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
             actionRequestId: randomUUID(), ...context });
         },
         async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
-          const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl, accountSecret: auth.accountSigningSeed });
+          const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
+            addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed });
           try {
             return await ui.executeConfirmed(actionId, input, { ...context, surface: 'ui', authority: 'present_user',
               actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: serverId,
