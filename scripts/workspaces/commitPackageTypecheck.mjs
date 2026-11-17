@@ -7,8 +7,9 @@
 //   node scripts/workspaces/commitPackageTypecheck.mjs <commit>...     (each against its first parent)
 //
 // Each package's authored source project (`tsconfig.json`) is compiled by the canonical compiler
-// owner (runTypeScriptCli.mjs, with its declaration preparation) inside ONE persistent worktree per
-// host and repository. The worktree keeps the compiler's incremental and declaration state between
+// owner (runTypeScriptCli.mjs, with its declaration preparation), followed by the package's own
+// declaration emit (TS2883/TS7056 are declaration-emit diagnostics a `--noEmit` check hides), inside
+// ONE persistent worktree per host and repository. The worktree keeps the compiler's incremental and declaration state between
 // checks and is moved to each tree with `git read-tree --reset -u`; its dependencies are installed by
 // the canonical dependency refresh that hstack-exec runs for the admitted payload. Results are cached
 // per (tree, package): a tree's diagnostics are a function of its bytes, so a moved HEAD is just
@@ -28,6 +29,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -168,24 +170,62 @@ export function packageTypecheckRows(result, cwd, rootDir) {
   return rows;
 }
 
-function compilePackage(worktree, dir, env) {
-  const cwd = join(worktree, dir);
+/** One compiler run through the worktree's canonical compiler owner, its output parsed into rows. */
+function runPackageCompiler(worktree, cwd, args, env) {
   const output = mkdtempSync(join(tmpdir(), 'happier-commit-typecheck-'));
   const descriptors = [openSync(join(output, 'stdout'), 'w'), openSync(join(output, 'stderr'), 'w')];
-  const started = Date.now();
   try {
     // Regular files, not pipes: a compiler descendant can keep a pipe open after the compiler exits.
-    const result = spawnSync(process.execPath, [join(worktree, 'scripts/workspaces/runTypeScriptCli.mjs'),
-      '--noEmit', '-p', 'tsconfig.json', '--pretty', 'false'], { cwd, env, stdio: ['ignore', ...descriptors] });
+    const result = spawnSync(process.execPath, [join(worktree, 'scripts/workspaces/runTypeScriptCli.mjs'), ...args, '--pretty', 'false'],
+      { cwd, env, stdio: ['ignore', ...descriptors] });
     const stdout = readFileSync(join(output, 'stdout'), 'utf8');
     const stderr = readFileSync(join(output, 'stderr'), 'utf8');
-    return { rows: packageTypecheckRows({ ...result, stdout, stderr }, cwd, worktree), ms: Date.now() - started,
+    return { rows: packageTypecheckRows({ ...result, stdout, stderr }, cwd, worktree),
       failure: `exit=${result.status ?? 'none'} signal=${result.signal ?? 'none'}${result.error ? ` error=${result.error.code}` : ''}`,
       tail: stderr.split(/\r?\n/u).filter(line => line.startsWith('[typecheck-')).slice(-3) };
   } finally {
     for (const descriptor of descriptors) closeSync(descriptor);
     rmSync(output, { recursive: true, force: true });
   }
+}
+
+/** The declaration-emit project for a package whose authored project publishes declarations (its build
+ * emits them), or null. Type roots stay the package's own: an extending config elsewhere would otherwise
+ * look for `types` beside itself (TS2688), as the declaration preparation owner also pins them. */
+function declarationProject(cwd, state) {
+  const ts = createRequire(import.meta.url)('typescript');
+  const configPath = join(cwd, 'tsconfig.json');
+  const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic() {} });
+  if (parsed?.options.declaration !== true || parsed.options.noEmit === true) return null;
+  return { extends: configPath, compilerOptions: {
+    noEmit: false, declaration: true, emitDeclarationOnly: true, noCheck: true, declarationMap: false, sourceMap: false,
+    incremental: true, outDir: join(state, 'out'), declarationDir: join(state, 'out'), tsBuildInfoFile: join(state, 'tsbuildinfo'),
+    typeRoots: ts.getEffectiveTypeRoots(parsed.options, { getCurrentDirectory: () => cwd }),
+  } };
+}
+
+/**
+ * A package's source typecheck plus its declaration emit. `--noEmit` reports declaration diagnostics
+ * (TS2883 non-portable inferred type, TS7056 type too large to serialize) only when the program has
+ * no other error, so a package carrying any known error never shows them (2026-11-17: TS2883 escaped
+ * twice). The second run emits the authored project's declarations with `noCheck`, so it adds only
+ * declaration diagnostics, into this host's commit-typecheck state (incremental there), resolving
+ * workspace dependencies through the declarations the first run prepared, as the package build does.
+ */
+function compilePackage(worktree, dir, env) {
+  const cwd = join(worktree, dir);
+  const started = Date.now();
+  const checked = runPackageCompiler(worktree, cwd, ['--noEmit', '-p', 'tsconfig.json'], env);
+  const state = join(worktree, '..', 'declarations', dir.replaceAll('/', '__'));
+  const config = checked.rows && declarationProject(cwd, state);
+  if (!config) return { ...checked, ms: Date.now() - started };
+  mkdirSync(state, { recursive: true });
+  const project = join(state, 'tsconfig.json');
+  writeFileSync(project, JSON.stringify(config));
+  const declarationStarted = Date.now();
+  const declared = runPackageCompiler(worktree, cwd, ['-p', project], env);
+  return { ...(declared.rows ? { rows: [...checked.rows, ...declared.rows] } : declared), ms: Date.now() - started,
+    declarationMs: Date.now() - declarationStarted };
 }
 
 /** The app's own finite source typecheck (its `typecheck:source:finite` compiler step, without the
@@ -218,7 +258,8 @@ function compileApp(worktree, dir, env) {
 }
 const compileScope = (worktree, dir, env) => (isAppScope(dir) ? compileApp : compilePackage)(worktree, dir, env);
 
-const resultCachePath = (state, treeId, dir) => join(state, 'results', treeId, `${dir.replaceAll('/', '__')}.json`);
+// `declarations`: package rows include declaration emit; earlier rows (source check only) are not comparable.
+const resultCachePath = (state, treeId, dir) => join(state, 'results', treeId, `${dir.replaceAll('/', '__')}${isAppScope(dir) ? '' : '.declarations'}.json`);
 
 /** Rows per (tree, package) from the result cache, compiling the missing ones in the warm worktree, or, with
  * `remote`, taking them from a worker (`remote(treeId, dirs, side)` -> Map of rows or null per package).
@@ -285,7 +326,7 @@ function treeTypechecker({ repo, state, env, log, compile = compileScope, bootst
     for (const dir of missing) {
       const compiled = compile(worktree, dir, compileEnv);
       timings.push({ side, step: dir, ms: compiled.ms, complete: Boolean(compiled.rows) });
-      log(`[commit-package-typecheck] ${side} ${dir} ${(compiled.ms / 1000).toFixed(1)}s ${compiled.rows ? `${compiled.rows.length} diagnostics` : `incomplete ${compiled.failure} ${compiled.tail?.join(' | ') ?? ''}`}`);
+      log(`[commit-package-typecheck] ${side} ${dir} ${(compiled.ms / 1000).toFixed(1)}s${compiled.declarationMs === undefined ? '' : ` (declaration emit ${(compiled.declarationMs / 1000).toFixed(1)}s)`} ${compiled.rows ? `${compiled.rows.length} diagnostics` : `incomplete ${compiled.failure} ${compiled.tail?.join(' | ') ?? ''}`}`);
       rows.set(dir, compiled.rows);
       if (compiled.rows) store(dir, compiled);
     }
@@ -593,11 +634,14 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
       const ssh = workerSsh(repo, worker, env);
       if (!ssh) { log(`[rolling-head-typecheck] worker ${worker}: no SSH target in this checkout's execution projection`); continue; }
       const sshCommand = `ssh -F '${ssh.config.replaceAll("'", "'\\''")}' -o BatchMode=yes -o ConnectTimeout=20`;
-      const init = spawnSync('sh', ['-c', `${sshCommand} "$1" "git init --quiet --bare -b rolling '${remoteRepo}' >/dev/null"`, 'sh', ssh.alias], { encoding: 'utf8' });
+      // Every tree is a parentless commit, so each push replaces the ref. A worker whose system git sets
+      // core.sharedRepository makes init write receive.denyNonFastForwards=true, which rejected every push
+      // after the first (nl3, 2026-11-17 14:18Z onward: ~60 s lost per tree before falling back to nl1).
+      const init = spawnSync('sh', ['-c', `${sshCommand} "$1" "git init --quiet --bare -b rolling '${remoteRepo}' >/dev/null && git -C '${remoteRepo}' config receive.denyNonFastForwards false"`, 'sh', ssh.alias], { encoding: 'utf8' });
       const push = init.status === 0 && spawnSync('git', ['push', '--quiet', '--force', `${ssh.alias}:${remoteRepo}`, `${commit}:refs/heads/rolling`],
         { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommand } });
       if (!push || push.status !== 0) {
-        log(`[rolling-head-typecheck] worker ${worker} unreachable for ${side}: ${(init.stderr || push?.stderr || '').trim().split('\n').at(-1) ?? ''}`);
+        log(`[rolling-head-typecheck] worker ${worker} unreachable for ${side}: ${((init.status === 0 ? push?.stderr : init.stderr) || '').trim().split('\n').at(-1) ?? ''}`);
         continue;
       }
       const run = spawnSync(join(repo, 'apps/stack/bin/hstack-exec'), [`--target=${worker}`, '--', 'node', 'scripts/workspaces/commitPackageTypecheck.mjs',
