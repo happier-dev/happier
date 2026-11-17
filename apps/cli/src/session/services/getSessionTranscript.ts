@@ -8,6 +8,7 @@ import { projectExternalShareableTranscriptPage } from './transcript/projectExte
 import type { TranscriptDirection, TranscriptScope } from './transcript/semanticTranscriptItem';
 import { resolveSessionTransportContext, type ResolveSessionTransportContextResult } from './resolveSessionTransportContext';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 type GetSessionTranscriptErrorResult = Extract<SessionTranscriptGetResult, Readonly<{ ok: false }>>;
 
@@ -46,6 +47,8 @@ type GetSessionTranscriptParams = Readonly<{
   projection?: 'externalShareableV1';
   callerPluginId?: string | null;
   signal?: AbortSignal;
+  /** This Session's record, read fresh by the same caller operation; replaces the transcript's own record read. */
+  session?: RawSessionRecord;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>;
 
@@ -108,6 +111,7 @@ export async function getSessionTranscript(
     usage: 'read',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
+    ...(params.session ? { session: params.session } : {}),
     ...(params.resolveAuthorizationHeaders
       ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
       : {}),

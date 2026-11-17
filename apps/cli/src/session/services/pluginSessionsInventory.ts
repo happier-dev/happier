@@ -757,6 +757,8 @@ export function createPluginSessionsInventory(
                   const page = await getSessionTranscript({
                     credentials: session.credentials,
                     idOrPrefix: sessionId,
+                    // The first page reuses this wake's fresh summary read; later pages of the same wake too.
+                    session: session.raw,
                     limit: SESSION_MESSAGE_WATCH_PAGE_LIMIT,
                     cursor,
                     direction: 'after',

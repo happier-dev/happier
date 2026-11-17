@@ -89,6 +89,11 @@ export async function resolveSessionTransportContext(params: Readonly<{
      * keep their own fresh authenticated read.
      */
     usage?: 'read';
+    /**
+     * This exact Session's record, read fresh by the same caller operation moments ago (for example a
+     * watch wake's summary read). It replaces the selector's own record read; signed requests ignore it.
+     */
+    session?: RawSessionRecord;
 }>): Promise<ResolveSessionTransportContextResult> {
     const resolutionStartedAt = performance.now();
     let phaseStartedAt = resolutionStartedAt;
@@ -138,7 +143,11 @@ export async function resolveSessionTransportContext(params: Readonly<{
         throw error;
     }).then(currentness => { phase('account_currentness', resolutionStartedAt); return currentness; });
     const lookupStartedAt = performance.now();
-    const sessionLookup = resolveSessionIdOrPrefix({
+    const knownSession = params.session && !params.resolveAuthorizationHeaders && params.session.id === params.idOrPrefix
+        ? params.session : null;
+    const sessionLookup = knownSession
+        ? Promise.resolve<ResolveSessionIdResult>({ ok: true, sessionId: knownSession.id, rawSession: knownSession })
+        : resolveSessionIdOrPrefix({
         reason: params.reason,
         credentials: params.credentials,
         idOrPrefix: params.idOrPrefix,

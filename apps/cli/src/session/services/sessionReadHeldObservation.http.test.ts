@@ -70,6 +70,19 @@ describe('Session reads borrow the held Account observation', () => {
     });
   });
 
+  it('reuses the caller operation\'s fresh Session record instead of reading it again', async () => {
+    await withHeldObservation(async count => {
+      const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata: '{}' });
+      for (let index = 0; index < 3; index += 1) {
+        await expect(getSessionTranscript({ credentials, idOrPrefix: sessionId, cursor: '0', direction: 'after', session,
+          serverFeaturesSnapshot: { status: 'unsupported', reason: 'endpoint_missing' } }))
+          .resolves.toMatchObject({ ok: true, sessionId });
+      }
+      expect(count(`/v2/sessions/${sessionId}`)).toBe(0);
+      expect(count(`/v1/sessions/${sessionId}/messages`)).toBe(3);
+    });
+  });
+
   it('projects plugin Session summaries without a fresh currentness witness per read', async () => {
     await withHeldObservation(async count => {
       const inventory = createPluginSessionsInventory({
