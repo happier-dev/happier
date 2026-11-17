@@ -7,6 +7,7 @@ import { expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
   EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
   EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -22,7 +23,6 @@ import { createIsolatedFakeClaudeControlShim, waitForFakeClaudeUserText } from '
 import { addFriend, fetchAccountId, setUsername } from '../../src/testkit/socialFriends';
 import { fetchJson } from '../../src/testkit/http';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { waitFor } from '../../src/testkit/timing';
 
 it('TH.J4 admits Check now by the current custodian of another creator’s Machine and preserves wrong-signer and revoked-epoch refusals', async () => {
   const image = process.env.HAPPIER_TEST_SANDBOX_IMAGE;
@@ -90,14 +90,23 @@ it('TH.J4 admits Check now by the current custodian of another creator’s Machi
     const acquired = ManagedMachineActionOutputSchemasV1['machines.managed.acquire'].parse(creation.result);
     managedId = acquired.managedId;
     const input = { homeId: fixture.serverId, managedId };
-    await waitFor(async () => {
-      const row = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(
-        await act(custodian, 'machines.managed.get', input)));
-      return row.allocation === 'bound';
-    }, { context: 'Real Docker allocation binds before custodian Check now' });
+    let allocation: { state: string; errorCode?: string } | undefined;
+    if (acquired.operation) {
+      const observed = ActionOperationGetV1ResponseSchema.parse(await act(creator, 'action.operations.get', {
+        serverId: fixture.serverId, machineId: controller.machineId,
+        operationId: acquired.operation.operationId, waitForTerminal: true,
+      }));
+      expect(observed.kind).toBe('found');
+      if (observed.kind !== 'found') throw new Error('The accepted allocation operation is unavailable');
+      allocation = { state: observed.operation.state, errorCode: observed.operation.error?.errorCode };
+    }
+    const bound = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(
+      await act(custodian, 'machines.managed.get', input)));
+    expect(bound.allocation, JSON.stringify(allocation)).toBe('bound');
     // The original regression used the creator's retained job when the
     // custodian inspected a resource whose creator was another Account.
-    expect(await custodian.execute('machines.managed.inspect', input)).toMatchObject({ ok: true });
+    expect(await custodian.execute('machines.managed.inspect', input,
+      { actionRequestId: 'c80d9b41-6e84-4f13-bc93-814c65f8b671' })).toMatchObject({ ok: true });
     console.info('TH.J4 current custodian Check now passed through the real CLI and controller');
     const actionId = 'machines.managed.inspect';
     const tokenEpoch = readCredentialEpochFromToken(custodian.auth.token);
