@@ -69,6 +69,7 @@ describe('CLI test global setup', () => {
             delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
         }
         vi.restoreAllMocks();
+        vi.unstubAllEnvs();
         syncBuiltinESMExports();
         vi.doUnmock('node:child_process');
         vi.resetModules();
@@ -370,6 +371,8 @@ describe('CLI test global setup', () => {
 
         await writeFile(holderSource, 'fn main() { serve_ops_socket(); }\n');
         // Two lanes' runs on one host: the second waits for the first build instead of queueing its own.
+        // Public preparation runs before payload admission, where waiting on a publication lock is allowed.
+        vi.stubEnv('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED', '1');
         await Promise.all([prepareNativeCustody(projectRoot, runCommand, options), prepareNativeCustody(projectRoot, runCommand, options)]);
         expect(holderBuilds() - before).toBe(3);
     });
