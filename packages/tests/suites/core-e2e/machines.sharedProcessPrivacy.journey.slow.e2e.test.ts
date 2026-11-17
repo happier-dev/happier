@@ -5,12 +5,13 @@ import { afterEach, expect, it } from 'vitest';
 import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import { MachineProcessesAnswerV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { MachineWorkSummaryV1Schema } from '@happier-dev/protocol/machines/machineWorkSummaryV1';
-import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineAccessGrantsListResponseV1Schema, MachineAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { TerminalStreamReadResponseSchema, decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { addFriend, setUsername } from '../../src/testkit/socialFriends';
 import { waitFor } from '../../src/testkit/timing';
 
 let fixture: ProjectDaemonFixture | undefined;
@@ -27,16 +28,29 @@ it.skipIf(process.platform === 'win32')('L12.J20.J53 shares work counts while ke
   console.info(JSON.stringify({ journey: 'L12.J20.J53', testDir }));
   postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
   console.info(JSON.stringify({ journey: 'L12.J20.J53', postgresContainerId: postgres.containerId }));
-  fixture = await startProjectDaemonFixture({ testDir, serverEnv: { ...process.env, DATABASE_URL: postgres.homeDatabaseUrl } });
+  fixture = await startProjectDaemonFixture({ testDir, serverEnv: { ...process.env, DATABASE_URL: postgres.homeDatabaseUrl,
+    HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: '1', HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: '1' } });
   const owner = await fixture.createAccount('custodian');
   const member = await fixture.createAccount('member');
   const observer = await fixture.createAccount('observer');
   const machine = await fixture.enrollDaemon(owner);
+  const ownerId = readAccountIdFromToken(owner.credentials.token);
+  if (!ownerId) throw new Error('Machine custodian Account identity unavailable');
+  await setUsername(fixture.server.baseUrl, owner.credentials.token, 'privacy_custodian');
   for (const account of [member, observer]) {
-    expect(await owner.executeAsPerson('machines.access.grant.set', { ...machine.target,
-      principal: { kind: 'account', accountId: readAccountIdFromToken(account.credentials.token) }, level: 'admin' }))
-      .toMatchObject({ ok: true });
+    const accountId = readAccountIdFromToken(account.credentials.token);
+    if (!accountId) throw new Error('Machine recipient Account identity unavailable');
+    await setUsername(fixture.server.baseUrl, account.credentials.token, `privacy_${account.name}`);
+    await addFriend(fixture.server.baseUrl, owner.credentials.token, accountId);
+    await addFriend(fixture.server.baseUrl, account.credentials.token, ownerId);
+    const granted = await owner.executeAsPerson('machines.access.grant.set', { ...machine.target,
+      principal: { kind: 'account', accountId }, level: 'admin' });
+    expect(granted, JSON.stringify(granted)).toMatchObject({ ok: true });
+    if (!granted.ok) throw new Error(`Machine share refused (${granted.errorCode})`);
+    expect(MachineAccessMutationResultV1Schema.parse(granted.result)).toMatchObject({ kind: 'saved' });
   }
+  const prepared = await owner.executeAsPerson('machines.access.prepareKeys', machine.target);
+  expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true, result: { kind: 'prepared' } });
   const memberId = readAccountIdFromToken(member.credentials.token);
   const observerId = readAccountIdFromToken(observer.credentials.token);
   async function workSummary() {
@@ -66,8 +80,9 @@ it.skipIf(process.platform === 'win32')('L12.J20.J53 shares work counts while ke
   let byteOffset = 0;
   let controlCursor: number | undefined;
   await waitFor(async () => {
-    const result = await member.execute('machines.terminal.read', { ...terminalTarget, byteOffset, controlCursor });
-    if (!result.ok) throw new Error(`Member terminal read refused (${result.errorCode})`);
+    const result = await member.executeAsPerson('machines.terminal.read', { ...terminalTarget, byteOffset,
+      ...(controlCursor === undefined ? {} : { controlCursor }) });
+    if (!result.ok) throw new Error(`Member terminal read refused (${result.errorCode}); phase=${result.failureCause?.phase ?? 'unreported'}; causeCode=${result.failureCause?.errorCode ?? 'unreported'}`);
     const stream = TerminalStreamReadResponseSchema.parse(result.result);
     if (!stream.ok) throw new Error(`Member terminal stream unavailable (${stream.code})`);
     output += stream.frames.filter(frame => frame.t === 'bytes')
@@ -78,7 +93,7 @@ it.skipIf(process.platform === 'win32')('L12.J20.J53 shares work counts while ke
   }, { context: 'real member PTY output' });
   const workerPid = Number(await readFile(pidFile, 'utf8'));
   async function processes(account: typeof owner) {
-    const result = await account.execute('machines.processes.list', { ...machine.target, scope: 'happier', view: 'tree' });
+    const result = await account.executeAsPerson('machines.processes.list', { ...machine.target, scope: 'happier', view: 'tree' });
     if (!result.ok) throw new Error(`Process view refused (${result.errorCode})`);
     return MachineProcessesAnswerV1Schema.parse(result.result);
   }
@@ -98,8 +113,12 @@ it.skipIf(process.platform === 'win32')('L12.J20.J53 shares work counts while ke
   expect(hidden.state).toBe('live');
   expect(hidden.owners.flatMap(row => row.members).some(process => process.pid === workerPid)).toBe(false);
   expect(hidden.othersWork?.count).toBeGreaterThan(0);
-  expect(await observer.execute('machines.terminal.read', { ...terminalTarget, byteOffset: 0 }))
-    .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+  const observerRead = await observer.executeAsPerson('machines.terminal.read', { ...terminalTarget, byteOffset: 0 });
+  if (!observerRead.ok) throw new Error(`Observer terminal read Action refused (${observerRead.errorCode})`);
+  const deniedStream = TerminalStreamReadResponseSchema.parse(observerRead.result);
+  expect(deniedStream.ok).toBe(false);
+  if (deniedStream.ok) throw new Error('Observer received another person\'s terminal stream');
+  expect(deniedStream.code).toBe('terminal_forbidden');
   const summary = await workSummary();
   expect(summary).toMatchObject({ kind: 'current', requesters: expect.arrayContaining([
     expect.objectContaining({ accountId: memberId, terminals: 1 }),
