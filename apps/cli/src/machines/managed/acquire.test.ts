@@ -4746,7 +4746,7 @@ describe('managed acquisition durable custody', () => {
         expect(recovered).toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 0 } } });
         expect(native.effects()).toBe(1);
     });
-    it.each(['status', 'schema', 'transport'] as const)('persists typed controller admission failure through the real HTTP and operation owners (%s)', async category => {
+    it.each(['status', 'schema', 'transport', 'oversized-headers'] as const)('persists typed controller admission failure through the real HTTP and operation owners (%s)', async category => {
         const homeId = 'srv_native_currentness_task';
         const native = nativeFixture({ credentialPurposes: [] });
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', resource: {
@@ -4760,6 +4760,8 @@ describe('managed acquisition durable custody', () => {
             if (request.url?.endsWith('/context')) {
                 failedReads++;
                 if (category === 'transport') { request.socket.destroy(); return; }
+                // Node's parser answers an oversized proof header itself, with no body.
+                if (category === 'oversized-headers') { response.writeHead(431).end(); return; }
                 response.writeHead(category === 'status' ? 500 : 200, { 'Content-Type': 'application/json' });
                 response.end(JSON.stringify(category === 'status'
                     ? { code: 'P2024', message: 'private database diagnostic', token: 'private-server-token' }
@@ -4794,18 +4796,22 @@ describe('managed acquisition durable custody', () => {
                 } });
             const result = await operations.handlers.getV2({ operationId: `typed-currentness-${category}`, waitForTerminal: true });
             expect(result).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
-                errorCode: category === 'status' ? 'P2024' : category === 'transport' ? 'ECONNRESET' : 'managed_controller_request_failed',
-                details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/context', category,
-                    ...(category === 'status' ? { status: 500, code: 'P2024' } : category === 'schema' ? { status: 200 } : { code: 'ECONNRESET' }) },
+                errorCode: category === 'status' ? 'P2024' : category === 'transport' ? 'ECONNRESET'
+                    : category === 'oversized-headers' ? 'request_headers_too_large' : 'managed_controller_request_failed',
+                details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/context',
+                    category: category === 'oversized-headers' ? 'status' : category,
+                    ...(category === 'status' ? { status: 500, code: 'P2024' } : category === 'schema' ? { status: 200 }
+                        : category === 'oversized-headers' ? { status: 431, code: 'request_headers_too_large' } : { code: 'ECONNRESET' }) },
             } } });
             expect(JSON.stringify(result)).not.toMatch(/private-|database diagnostic/);
             expect(warning).toHaveBeenCalledWith('[MANAGED MACHINE] Controller request failed', {
                 managedId: retained.id,
                 operationId: `typed-currentness-${category}`,
                 path: '/v1/machines/managed/controller/context',
-                category,
-                httpStatus: category === 'transport' ? null : category === 'status' ? 500 : 200,
-                code: category === 'status' ? 'P2024' : category === 'transport' ? 'ECONNRESET' : null,
+                category: category === 'oversized-headers' ? 'status' : category,
+                httpStatus: category === 'transport' ? null : category === 'status' ? 500 : category === 'oversized-headers' ? 431 : 200,
+                code: category === 'status' ? 'P2024' : category === 'transport' ? 'ECONNRESET'
+                    : category === 'oversized-headers' ? 'request_headers_too_large' : null,
                 requestId: 'fresh-retry',
             });
             expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private-|database diagnostic/);

@@ -6,6 +6,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_S
 import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
   EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { MANAGED_POLICY_PROOF_HEADER } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import axios from './credentialAxios';
 
 it('sends a large signed mutation through the default HTTP parser without oversized proof headers', async () => {
@@ -139,6 +140,40 @@ it('reads a receipt with first-Store-deploy proof sizes through the default pars
       proxy: false, headers: signedHeaders('/source'),
     })).rejects.toMatchObject({ code: 'credential_request_redirect_refused' });
     expect(secondHopRequests).toBe(0);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+it('sends an accepted-input wake policy proof through the default parser without an oversized header', async () => {
+  // The proof embeds the original Action authorization; this opaque size is the observed 431 on a guest wake.
+  const proof = 'p'.repeat(maxHeaderSize + 2000);
+  const body = { homeId: 'home', managedId: 'managed' };
+  let largestHeader = 0;
+  let received: unknown;
+  let leaked: unknown;
+  const server = createServer(async (request, response) => {
+    largestHeader = Math.max(...request.rawHeaders.map(value => Buffer.byteLength(value)));
+    leaked = request.headers[MANAGED_POLICY_PROOF_HEADER];
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    received = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    response.setHeader('content-type', 'application/json');
+    response.end('{}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing listener');
+  try {
+    const result = await axios.post(`http://127.0.0.1:${address.port}/v1/machines/managed/controller/prepare-policy`, body,
+      { proxy: false, headers: { Authorization: 'Bearer synthetic', [MANAGED_POLICY_PROOF_HEADER]: proof } });
+    expect(result.status).toBe(200);
+    expect(largestHeader).toBeLessThan(maxHeaderSize);
+    expect(leaked).toBeUndefined();
+    const decoded = decodeExternalActionHttpBodyV1(received);
+    expect(decoded?.body).toEqual(body);
+    expect(decoded?.headers[MANAGED_POLICY_PROOF_HEADER]).toBe(proof);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

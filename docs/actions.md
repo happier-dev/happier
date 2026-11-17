@@ -10300,7 +10300,9 @@ credentials cannot use that raw transport. A keyholder who deliberately exports
 or grants access to a private Artifact can still disclose its raw contents.
 
 Signed HTTP requests in 0.3 development carry the existing execution authorization,
-Machine signature, target and optional child proofs in a closed V1 JSON frame,
+Machine signature, target and optional child proofs in a closed V1 JSON frame
+(an installed controller's managed-policy proof, which embeds the original Action
+authorization, uses the same frame as its only member),
 identified by `x-happier-action-body: v1` for mutations. Signed GET reads use POST
 at the original URL with `x-happier-action-body: get-v1` and the same frame without
 a logical body. Home derives these read routes from the original GET routes,

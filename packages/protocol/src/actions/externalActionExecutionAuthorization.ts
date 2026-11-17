@@ -42,6 +42,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { readExternalActionBindingAuthority } from './externalActionBindingAuthority.js';
+import { MANAGED_POLICY_PROOF_HEADER } from '../machines/managed/managedPolicyV1.js';
 export { readExternalActionBindingAuthority } from './externalActionBindingAuthority.js';
 export type { ExternalActionBindingAuthorityProjectionV1 } from './externalActionBindingAuthority.js';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -59,18 +60,20 @@ const externalActionHttpAuthorizationHeaders = {
   target: EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
   deploymentChild: EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER,
   reviewedChild: EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
+  // Installed-controller policy requests embed the original Action authorization, beyond header limits.
+  managedPolicyProof: MANAGED_POLICY_PROOF_HEADER,
 } as const;
 export const EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1: readonly string[] = Object.values(externalActionHttpAuthorizationHeaders);
 const ExternalActionHttpBodyV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  authorization: z.strictObject({
+  authorization: z.union([z.strictObject({
     executionAuthorization: z.string().check(z.minLength(1)),
     machineSignature: z.string().check(z.minLength(1)),
     effectActionId: z.string().check(z.minLength(1)),
     target: z.string().check(z.minLength(1)),
     deploymentChild: z.optional(z.string().check(z.minLength(1))),
     reviewedChild: z.optional(z.string().check(z.minLength(1))),
-  }),
+  }), z.strictObject({ managedPolicyProof: z.string().check(z.minLength(1)) })]),
   body: z.optional(z.unknown()),
 }));
 
@@ -93,8 +96,8 @@ export function decodeExternalActionHttpBodyV1(value: unknown): Readonly<{
   if (!frame.success) return null;
   const headers: Record<string, string> = {};
   for (const [field, header] of Object.entries(externalActionHttpAuthorizationHeaders)) {
-    const proof = frame.data.authorization[field as keyof typeof externalActionHttpAuthorizationHeaders];
-    if (proof !== undefined) headers[header] = proof;
+    const proof: unknown = Reflect.get(frame.data.authorization, field);
+    if (typeof proof === 'string') headers[header] = proof;
   }
   return { headers, body: frame.data.body };
 }

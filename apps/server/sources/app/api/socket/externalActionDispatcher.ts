@@ -918,9 +918,9 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             if (finiteWake.kind === 'submitted-unknown') return { kind: 'submitted_unknown', cause: { reason: 'managed_wake_unconfirmed' } };
             if (finiteWake.kind === 'unavailable') return createPlacementError({ code: 'target_unavailable',
                 refusalBranch: 'finite_wake_unavailable', requestId: request.envelope.requestId, machineId,
-                ...(finiteWake.reason === undefined ? {} : { failureCause: {
+                ...((finiteWake.reason ?? finiteWake.controllerErrorCode) === undefined ? {} : { failureCause: {
                     phase: 'machines.managed.wake', errorClass: 'Error', errorCode: 'target_unavailable',
-                    nativeErrorReason: finiteWake.reason, httpStatus: null,
+                    nativeErrorReason: finiteWake.reason ?? finiteWake.controllerErrorCode, httpStatus: null,
                 } }),
             });
         }

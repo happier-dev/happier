@@ -991,6 +991,15 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { restoreFetch?.(); restoreEnv(envBefore); await app.close(); }
     });
 
+    it('names the controller refusal when the installed controller cannot prepare the wake', async () => {
+        const test = await setup();
+        const prepared = await prepareManagedFiniteActionWake({ io: new Server(), signal: new AbortController().signal,
+            actionOrigin: test.actionOrigin,
+            forwardRpc: async () => ({ ok: true as const, result: { ok: false, errorCode: 'request_headers_too_large',
+                error: 'request_headers_too_large' } }) });
+        expect(prepared).toEqual({ kind: 'unavailable', controllerErrorCode: 'request_headers_too_large' });
+    });
+
     it('admits one finite wake once and uses local cancellation at each transport step', async () => {
         const test = await setup();
         let sourceCurrent = true;

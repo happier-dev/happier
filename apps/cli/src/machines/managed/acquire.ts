@@ -1,5 +1,5 @@
-import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { prepareManagedOpaquePresetAcquireV1 } from '@happier-dev/cli-common/machines/managed';
@@ -7,6 +7,7 @@ import { createExternalActionRequesterServerRequestHeaders } from '@/api/externa
 import { projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-common/machines/managed';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import axios from '@/api/client/credentialAxios';
+import { readHttpStatus } from '@/api/client/httpStatusError';
 import { MachineProvisionerSnapshotResultV1Schema, readMachineProvisionerSessionPlacementV1, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isExternalActionManagedWakeRootV1, readExternalActionManagedRetryGuestCliV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { redactManagedMachineCredentialReferences, ManagedMachineFullV1Schema, ManagedMachineV1Schema,
@@ -312,6 +313,10 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             // Rejected HTTP responses use the same code/status parser; transport
             // failures retain their machine-readable code without request details.
             if (axios.isAxiosError<unknown>(error) && error.response) return error.response;
+            // The credential client refuses some statuses (e.g. 431) as a coded status error without an Axios response.
+            const refusedStatus = readHttpStatus(error);
+            if (refusedStatus !== null) throw requestFailure(path, 'status', refusedStatus,
+                error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined, managedId);
             throw requestFailure(path, 'transport', undefined, axios.isAxiosError(error) ? error.code : undefined, managedId);
         });
         if (response.status < 200 || response.status >= 300) {

@@ -35,7 +35,9 @@ import { hasManagedWakeAuthority, readManagedWakeTargetBindingInTx } from './man
 import { readManagedWakeSessionsInTx, readPendingManagedWakeTargetsInTx, readPendingManagedWakeInputTarget } from './managedWakePlacement';
 
 type FiniteWakePreparation = Readonly<{ kind: 'not-needed' | 'ready'; isCurrent(): Promise<boolean> }>
-    | Readonly<{ kind: 'unavailable'; reason?: Extract<ReturnType<typeof resolveManagedWakeAvailabilityV1>, { kind: 'unavailable' }>['reason'] }>
+    | Readonly<{ kind: 'unavailable'; reason?: Extract<ReturnType<typeof resolveManagedWakeAvailabilityV1>, { kind: 'unavailable' }>['reason'];
+        /** The installed controller's own refusal code, so the Action result names why it could not wake. */
+        controllerErrorCode?: string }>
     | Readonly<{ kind: 'submitted-unknown' }>;
 
 /** One original finite root may disclose custody only to its current installed controller. */
@@ -150,8 +152,8 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
         });
         if (!result.ok) return { kind: unknown ? 'submitted-unknown' : 'unavailable' };
         const failure = ActionExecuteFailureSchema.safeParse(result.result);
-        if (failure.success) return { kind: ['outcome_uncertain', 'native_intent_unconfirmed'].includes(failure.data.errorCode)
-            ? 'submitted-unknown' : 'unavailable' };
+        if (failure.success) return ['outcome_uncertain', 'native_intent_unconfirmed'].includes(failure.data.errorCode)
+            ? { kind: 'submitted-unknown' } : { kind: 'unavailable', controllerErrorCode: failure.data.errorCode };
         const output = result.result && typeof result.result === 'object' && 'ok' in result.result && result.result.ok === true
             && 'result' in result.result ? ManagedIntentResultSchema.safeParse(result.result.result) : null;
         if (!output?.success || output.data.kind !== 'accepted' || output.data.managedId !== wakeTarget.managedId) return { kind: 'submitted-unknown' };

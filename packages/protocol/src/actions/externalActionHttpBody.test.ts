@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
   EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
   EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from './externalActionApi.js';
+import { MANAGED_POLICY_PROOF_HEADER } from '../machines/managed/managedPolicyV1.js';
 import { decodeExternalActionHttpBodyV1, encodeExternalActionHttpBodyV1 } from './externalActionExecutionAuthorization.js';
 
 const headers = {
@@ -31,4 +32,12 @@ it('rejects unknown transport fields and incomplete proof frames', () => {
     expect(decodeExternalActionHttpBodyV1(invalid)).toBeNull();
   }
   expect(encodeExternalActionHttpBodyV1({}, {})).toBeNull();
+});
+
+it('frames an installed controller policy proof alone, and never together with an Action proof', () => {
+  const policy = { [MANAGED_POLICY_PROOF_HEADER]: 'synthetic-policy-proof' };
+  const body = { managedId: 'managed' };
+  expect(decodeExternalActionHttpBodyV1(encodeExternalActionHttpBodyV1({ ...policy, authorization: 'unrelated-bearer' }, body)))
+    .toEqual({ headers: policy, body });
+  expect(encodeExternalActionHttpBodyV1({ ...headers, ...policy }, body)).toBeNull();
 });
