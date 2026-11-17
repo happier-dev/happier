@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -6,6 +8,8 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { TaskResourceV1Schema, TaskResourcesListResponseV1Schema, TaskResourceMutateRequestV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
 
 const homes = createHomeGovernanceHarness();
+// The confirmation dialog is a platform boundary; Action admission and dispatch stay real.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
@@ -79,6 +83,83 @@ describe('internal Task Action captured Account authority', () => {
             expect(hook.getCurrent().readiness.get('team:core')).toEqual(readiness);
             expect(homes.requests.filter(request => request.path.includes('/recipients/'))).toHaveLength(0);
             expect(homes.requests.filter(request => request.path === '/v1/tasks/other/shared/grants')).toHaveLength(1);
+        } finally { await hook.unmount(); }
+    });
+    it.each([false, true])('publishes acknowledged Task readiness after Send keys (commit succeeds: %s)', async succeeds => {
+        const { default: nacl } = await import('tweetnacl');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { createLegacyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const { signAccountContentKeyBindingV1 } = await import('@happier-dev/protocol/crypto/accountContentKeyBindingV1');
+        const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint');
+        const { summarizeResourceRecipientReadinessV1 } = await import('@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1');
+        const { TaskAccessGrantsListResponseV1Schema, TaskAccessRecipientCensusResponseV1Schema,
+            TaskRecipientKeyEnvelopeCommitInputV1Schema, TaskRecipientKeyEnvelopeCommitResponseV1Schema } = await import('@happier-dev/protocol/actions/internalTaskActions');
+        const secret = new Uint8Array(32).fill(17);
+        const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }), secret: encodeBase64(secret, 'base64url') };
+        const url = `https://task-send-keys-${succeeds}.test`;
+        const serverId = await homes.addHome({ name: 'Task keys', serverUrl: url, accountId: 'owner', currentAccount: true,
+            accountEncryptionMode: 'e2ee', credentials });
+        homes.answer(serverId, '/v1/account/encryption/currentness', { body: createLegacyAccountEncryptionCurrentnessFixture({ secret }) });
+        await restoreHome(serverId, url);
+        const { sync } = await import('@/sync/sync');
+        const encryption = sync.encryption;
+        if (!encryption) throw new Error('Expected restored E2EE Account');
+        const key = nacl.randomBytes(32);
+        const ownerEnvelope = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+        const signing = nacl.sign.keyPair();
+        const peerKey = nacl.box.keyPair();
+        const fingerprint = computeContentPublicKeyFingerprint(peerKey.publicKey);
+        let peerEnvelope: string | null = null;
+        const address = { ownerAccountId: 'owner', taskId: 'shared' };
+        const recipients = () => TaskAccessRecipientCensusResponseV1Schema.parse({ ...address, access: 'owner', encryptionMode: 'e2ee',
+            dataEncryptionKey: ownerEnvelope, callerDataEncryptionKey: ownerEnvelope, recipients: [
+                { recipientAccountId: 'peer', contentKey: { status: 'available', accountSigningPublicKey: Buffer.from(signing.publicKey).toString('hex'),
+                    contentPublicKey: encodeBase64(peerKey.publicKey, 'base64'), contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({
+                        accountSigningSecretKey: signing.secretKey, contentPublicKey: peerKey.publicKey }), 'base64') },
+                    contentPublicKeyFingerprint: fingerprint, encryptedDataKey: peerEnvelope, recipientContentPublicKeyFingerprint: peerEnvelope ? fingerprint : null },
+                { recipientAccountId: 'plain-peer', contentKey: { status: 'unavailable', reason: 'plain_account' }, contentPublicKeyFingerprint: null,
+                    encryptedDataKey: null, recipientContentPublicKeyFingerprint: null },
+            ] });
+        const readiness = () => summarizeResourceRecipientReadinessV1('e2ee', recipients().recipients);
+        homes.answer(serverId, 'GET /v1/tasks/owner/shared/grants', { select: () => ({ body: TaskAccessGrantsListResponseV1Schema.parse({
+            ...address, access: 'owner', grants: [{ principal: { kind: 'team', teamId: 'core' }, accessLevel: 'view',
+                createdByAccountId: 'owner', createdAt: 1, display: { name: 'Core' }, readiness: readiness() }],
+        }) }) });
+        const { createUiTaskResourceCrypto } = await import('@/sync/encryption/taskResourceCrypto');
+        const crypto = createUiTaskResourceCrypto(encryption, { serverId, accountId: 'owner' });
+        homes.answer(serverId, 'GET /v1/tasks/owner/shared', { body: TaskResourceV1Schema.parse({ ...address,
+            access: 'owner', encryptionMode: 'e2ee', encryptedDataKey: ownerEnvelope, version: 1,
+            content: { t: 'encrypted', k: 'task', c: await crypto.seal({ id: 'shared', title: 'Shared task', done: false, createdAt: 1, updatedAt: 1 }, key) },
+        }) });
+        homes.answer(serverId, 'POST /v1/tasks/owner/shared/recipients/census', { select: () => ({ body: recipients() }) });
+        homes.answer(serverId, 'POST /v1/tasks/owner/shared/recipients/commit', { select: input => {
+            const commit = TaskRecipientKeyEnvelopeCommitInputV1Schema.parse(input);
+            if (!succeeds) return { status: 403, body: { error: 'task_access_forbidden' } };
+            peerEnvelope = commit.recipientKeyEnvelopes.find(row => row.recipientAccountId === 'peer')?.encryptedDataKey ?? null;
+            return { body: TaskRecipientKeyEnvelopeCommitResponseV1Schema.parse({ appliedRecipientAccountIds: ['peer'], skippedRecipientAccountIds: [] }) };
+        } });
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { useTaskShareController } = await import('@/components/sharing/tasks/useTaskShareController');
+        const { createTaskShareAdapter } = await import('@/components/sharing/tasks/taskShareAdapter');
+        const hook = await renderHook(() => useTaskShareController({ ...address, scope: { serverId, accountId: 'owner' } }), {
+            wrapper: props => React.createElement(InjectedAuthProvider, { credentials, children: props.children }),
+        });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().sendKeys).toBeTypeOf('function'));
+            expect(hook.getCurrent().readiness.get('team:core')).toMatchObject({ readyCount: 0, pendingCount: 1 });
+            const grantReads = homes.requests.filter(request => request.path === '/v1/tasks/owner/shared/grants').length;
+            await act(async () => { hook.getCurrent().sendKeys?.(); });
+            await vi.waitFor(() => expect(homes.requests.filter(request => request.path === '/v1/tasks/owner/shared/recipients/commit')).toHaveLength(1));
+            await vi.waitFor(() => expect(hook.getCurrent().sendingKeys).toBe(false));
+            const current = hook.getCurrent();
+            expect(current.readiness.get('team:core')).toEqual(readiness());
+            expect(homes.requests.filter(request => request.path === '/v1/tasks/owner/shared/grants')).toHaveLength(grantReads + (succeeds ? 1 : 0));
+            const adapter = createTaskShareAdapter({ ...current, readOnly: false });
+            const { t } = await import('@/text');
+            expect(adapter.principalTags?.(current.model.grants[0]!.principal)).toEqual(succeeds
+                ? [t('status.ready'), t('shareSheet.tasks.readiness.homeManaged')]
+                : [t('shareSheet.tasks.readiness.membersKeysPending', { count: 1 }), t('shareSheet.tasks.readiness.homeManaged')]);
         } finally { await hook.unmount(); }
     });
     it('captures credentials once rather than reevaluating the live bearer through an admitted read', async () => {

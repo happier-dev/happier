@@ -413,13 +413,21 @@ export function useTaskShareController(
       context,
     ).catch(() => null);
     if (current.current !== identity) return;
-    setSendingKeys(false);
     const parsed = result?.ok
       ? InternalTaskPrepareOutputSchema.safeParse(result.result)
       : null;
-    if (!(parsed?.success && parsed.data.status === 'prepared'))
+    if (parsed?.success && parsed.data.status === 'prepared') {
+      const grants = await execute('tasks.internal.grants', address, context).catch(
+        () => null,
+      );
+      if (current.current !== identity) return;
+      applyAccess(grants);
+      setNotice(undefined);
+    } else {
       setNotice(presentTaskShareFailure(failureCode(result)));
-  }, [actionScope, address, context, execute, identity]);
+    }
+    setSendingKeys(false);
+  }, [actionScope, address, applyAccess, context, execute, identity]);
 
   const actions = React.useMemo<ShareSheetActions>(
     () => ({
