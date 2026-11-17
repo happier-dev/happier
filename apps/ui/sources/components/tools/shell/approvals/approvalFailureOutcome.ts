@@ -1,4 +1,5 @@
 import type { ActionExecuteFailure} from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { listActionSpecs } from '@happier-dev/protocol/actions';
@@ -207,7 +208,10 @@ export function presentApprovalFailureOutcome(approval: ApprovalRequest, failure
             : serviceStartFailure ? resolveReasonCopy({ kind: 'localServiceAction', ...serviceStartFailure,
                 serviceName: serviceStartFailure.serviceName ?? undefined }).body
                     : approval.actionId === 'doc.edit.propose' && approval.status === 'outcome_unknown'
-                ? t('artifacts.browser.proposal.publicationUnknown') : presented.reason,
+                ? t('artifacts.browser.proposal.publicationUnknown')
+                // The Home refused the signed request before any effect: its cause, said once.
+                : presented.reason ?? (failure.failureCause && readActionFailureCauseV1(failure.failureCause).phase === 'execution_authorization'
+                    ? t('approvals.failureNotAuthorized') : null),
         message: presented.message,
         code: presented.code,
         technicalDetails,

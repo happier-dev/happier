@@ -506,7 +506,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // A confidential entry that did not happen is said here, from its durable record, in the entry's own words.
   const recordedFill = parsed.kind === 'built_in' ? readConfidentialFillSettlement(parsed.request) : null;
   const fillNotEntered = recordedFill !== null && recordedFill.status !== 'filled';
-  const statusNamesOutcome = displayStatus === 'outcome_unknown';
+  const statusNamesOutcome = displayStatus === 'outcome_unknown' || displayStatus === 'not_run';
   // The shared outcome owns the summary: executor prose already sits in Technical details, so it never
   // leads here; "no reason" is said only when nothing was recorded.
   const failureSummary = executionFailure === null ? undefined : failureOutcome

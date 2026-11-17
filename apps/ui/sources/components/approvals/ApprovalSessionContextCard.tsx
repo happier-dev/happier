@@ -129,7 +129,9 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     return (
         <ItemGroup
             title={t('detailPages.approval.contextTitle')}
-            description={t(guard ? 'detailPages.approval.requesterGuardDescription' : 'detailPages.approval.contextDescription')}
+            // The description promises a session only when one asked.
+            description={t(guard ? 'detailPages.approval.requesterGuardDescription'
+                : sessionTitle || sessionResolving ? 'detailPages.approval.contextDescription' : 'detailPages.approval.contextDescriptionNoSession')}
         >
         <SectionContentRow>
         <View style={styles.card}>

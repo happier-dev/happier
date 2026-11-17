@@ -20,6 +20,7 @@ export function formatApprovalStatusLabel(status: string): string {
         case 'outcome_unknown': return t('automations.detail.runMeta.dispatchState.outcomeUnknown');
         case 'canceled': return t('approvals.status.canceled');
         case 'not_entered': return t('approvals.status.notEntered');
+        case 'not_run': return t('approvals.status.notRun');
         default: return status;
     }
 }
@@ -63,7 +64,8 @@ export function resolveApprovalDisplayStatus(
     if (fill && fill.status !== 'filled') {
         return fill.status === 'refused' ? 'not_entered' : fill.status === 'unknown' ? 'outcome_unknown' : 'canceled';
     }
-    return failure ? 'failed' : request.status;
+    // A request refused before its effect was attempted did not fail: nothing ran.
+    return failure ? failure.effectAttempted === false ? 'not_run' : 'failed' : request.status;
 }
 
 /** The tab's status: from the loaded request when this device holds its body, else the stored header's. */

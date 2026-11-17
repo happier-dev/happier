@@ -1777,6 +1777,7 @@ const enApprovals = {
   failureNamed: ({ action }: { action: string }) => `Couldn't finish: ${action}`,
   pluginChangeDaemonUnavailable: 'Happier couldn’t reach the Machine to change its plugins, so nothing changed.',
   failureNotRun: 'Request not run',
+  failureNotAuthorized: "This Home didn’t accept the request, so nothing ran.",
   failureFileWrite: "Couldn't write the file",
   failureFileRead: "Couldn't read the file",
   failureFileOther: "Couldn't finish the file operation",
@@ -1837,6 +1838,7 @@ const enApprovals = {
     failed: 'Failed',
     canceled: 'Canceled',
     notEntered: 'Not entered',
+    notRun: "Not run",
     expired: 'Expired',
   },
 };

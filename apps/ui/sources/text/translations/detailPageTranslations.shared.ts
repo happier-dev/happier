@@ -87,6 +87,7 @@ export const detailPageTranslationsEnglish = { en: {
             homeUnavailableTitle: 'Home unavailable',
             contextTitle: 'Requested by',
             contextDescription: 'The session and agent that asked for this.',
+            contextDescriptionNoSession: 'Who asked for this.',
             sessionOnHome: ({ home }) => `A session on ${home}`,
             sessionElsewhere: 'A session that isn’t on this device',
             requesterYou: 'You',

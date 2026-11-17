@@ -40,7 +40,7 @@ function buildRequest(variant: string, serverId: string, accountId: string, arti
   const actionArgs = two
     ? {
         action: { pluginId: 'happier.deploy.fly', localId: 'deploy' },
-        input: { app: 'harbor-ledger', region: 'ams' },
+        input: { app: 'harbor-ledger', region: 'ams', configPath: '/home/reviewer/.happier/workspaces/harbor-ledger/packages/deploy/environments/production/fly.toml' },
       }
     : { channelId: 'release-alerts' };
   const paths = two ? ['input.apiToken', 'input.registryPassword'] : ['secret'];

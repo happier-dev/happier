@@ -1575,7 +1575,7 @@ describe('ApprovalDetailScreen', () => {
     expect(await reasonOf('executor_failed')).toBe('approvals.failureNoReason');
   });
 
-  it('keeps an executor diagnostic in Technical details, never as the summary of a refused request', async () => {
+  it('says a refused request did not run, with its cause, and keeps the executor diagnostic in Technical details', async () => {
     const artifact = await createDaemonRoutedApprovalArtifact();
     // The Home's header refusal (`externalActionHeaderRefusalFailure`): nothing ran, and its prose is a diagnostic.
     // A request without automatic checks: the refusal settles on the person's approval alone.
@@ -1593,7 +1593,9 @@ describe('ApprovalDetailScreen', () => {
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
     const failure = approvalItem(screen, 'approvals.execution-failure');
 
-    expect(failure?.props.title).toBe('approvals.failureNotRun');
+    // Refused before any effect: a neutral "Not run", and the row says why, once.
+    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.notRun');
+    expect(failure?.props.title).toBe('approvals.failureNotAuthorized');
     expect(failure?.props.subtitle).toBeUndefined();
   });
 
