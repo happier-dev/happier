@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import parse from 'css-tree/lib/parser';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { THEME_ACTION_IDS, ThemeActionInputSchemas, ThemeActionOutputSchemas,
     type ThemeActionId, type ThemeActionInput, type ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
@@ -12,6 +13,13 @@ import { readThemeActionCardPresentation } from '@/components/sessions/transcrip
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 import { projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import { useThemeActionResultModel } from './useThemeActionResultModel';
+import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+
+// Count the real third-party parser to catch card-owned CSS work.
+vi.mock('css-tree/lib/parser', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('css-tree/lib/parser')>();
+    return { default: vi.fn(actual.default) };
+});
 
 describe('theme proposal card controller', () => {
     it('tries A/B/A without writes, keeps only A, then Undo/Redo replay preserves siblings and raw presentation', async () => {
@@ -34,7 +42,10 @@ describe('theme proposal card controller', () => {
         }
         const messages = [];
         for (const name of ['A', 'B', 'C']) {
-            const input = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn].parse({ document: themeActionDocument(name),
+            const parsed = parseThemeProfileDocument({ ...themeActionDocument(name).raw,
+                css: `.dark [data-surface="composer"] { height: ${name === 'A' ? 12 : 28}px; }` });
+            if (!parsed.ok) throw new Error('Invalid CSS proposal');
+            const input = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn].parse({ document: parsed.document,
                 mode: 'dark', origin: { kind: 'agent' }, group: 'options' });
             const output = await execute(THEME_ACTION_IDS.tryOn, input);
             messages.push(createToolCallMessageFixture({ id: name, tool: makeToolCall({ id: name, name: 'mcp__happier__action_execute',
@@ -47,13 +58,25 @@ describe('theme proposal card controller', () => {
         if (!presentation) throw new Error('Missing card');
         const distribute = vi.fn();
         const edit = vi.fn();
+        const readSurfaceStyles = () => {
+            const current = state.owner.read();
+            return current?.document ? prepareThemeProfileCss(current.document.profile)[current.mode] : undefined;
+        };
+        // The preview owner prepares its retained body before the card consumes the fact.
+        readSurfaceStyles();
+        const parsesBeforeCard = vi.mocked(parse).mock.calls.length;
         const hook = await renderHook(() => useThemeActionResultModel(presentation,
-            { preview: state.owner, entry: null, created: true, here: 'here', onUseOtherDevices: distribute, onEdit: edit }, execute));
+            { preview: state.owner, entry: null, created: true, here: 'here', surfaceStyles: readSurfaceStyles(),
+                onUseOtherDevices: distribute, onEdit: edit }, execute));
+        expect(vi.mocked(parse).mock.calls.length, 'the card consumes the preview owner table without parsing CSS').toBe(parsesBeforeCard);
+        expect(hook.getCurrent()?.options?.map(option => option.miniature.mode)).toEqual(['dark', 'dark', 'dark']);
         hook.getCurrent()!.onEdit!();
         expect(edit).toHaveBeenCalledWith({ kind: 'document', document: presentation.options.at(-1)!.call.input.document });
         for (const key of ['A', 'B', 'A']) {
             await act(async () => hook.getCurrent()!.onTryOption(key));
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ theme: { name: key }, currentOptionKey: key, busy: null }));
+            expect(hook.getCurrent()?.theme.miniature.mode).toBe('dark');
+            expect(hook.getCurrent()?.theme.surfaceStyles?.composer?.root?.base.height).toBe(key === 'A' ? 12 : 28);
         }
         expect(state.writes()).toBe(writesBefore);
         await act(async () => hook.getCurrent()!.onKeep());

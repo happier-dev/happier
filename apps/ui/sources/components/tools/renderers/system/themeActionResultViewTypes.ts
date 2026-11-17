@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import type { ThemeSurfaceStyleTable } from '@/theme/css/types';
 import type {
   ThemeMiniatureData,
   ThemeProfileMode,
@@ -16,6 +17,8 @@ export type ThemeResultTheme = Readonly<{
   name: string;
   mode: ThemeProfileMode;
   miniature: ThemeMiniatureData;
+  /** Transient supported styles from the retained opened/preview body; never part of its header. */
+  surfaceStyles?: ThemeSurfaceStyleTable;
   /** True for a theme the agent made in this turn; false for a change to an existing theme. */
   created: boolean;
 }>;
@@ -86,6 +89,7 @@ export type ThemeActionResultViewProps = Readonly<{
   currentOptionKey?: string | null;
   /** B4: the miniature of what this device showed before, for the before → after comparison. */
   before?: ThemeMiniatureData | null;
+  beforeSurfaceStyles?: ThemeSurfaceStyleTable;
   /** Human surface names the CSS reshapes ("session list", "composer"), from `affectedSurfaces`. */
   reshapes?: readonly string[];
   coverage?: ThemeResultCoverage | null;

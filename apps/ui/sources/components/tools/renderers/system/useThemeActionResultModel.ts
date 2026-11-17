@@ -27,9 +27,20 @@ export type ThemeActionCardFacts = Readonly<{
     appliedTheme?: Pick<ThemeResultTheme, 'name' | 'mode' | 'miniature'>;
     created: boolean;
     here: string;
+    /** Selected preview/opened-detail table, already prepared by its runtime owner. */
+    surfaceStyles?: ThemeResultTheme['surfaceStyles'];
+    /** Facts of the prior selection from the existing opened/runtime owner, never persisted by the card. */
+    before?: Readonly<{ miniature: ThemeResultTheme['miniature']; surfaceStyles?: ThemeResultTheme['surfaceStyles'] }>;
     onEdit?: (target: ThemeActionCardEdit) => void;
     onUseOtherDevices?: (theme: ThemeDevicePickerInput['theme']) => void;
 }>;
+
+/** A card previews the Action's chosen appearance without changing the library header. */
+function projectTryEntry(call: TranscriptThemeTry) {
+    return projectThemeLibraryEntry({ ...call.input.document,
+        profile: { ...call.input.document.profile, assetAppearance: call.input.mode },
+    });
+}
 
 /** Card-local presentation and replay data; every effect goes through the existing Action front door. */
 export function useThemeActionResultModel(input: ThemeActionCardPresentation, facts: ThemeActionCardFacts,
@@ -46,11 +57,11 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const [failure, setFailure] = React.useState<Extract<ThemeResultPhase, { kind: 'failed' }> | null>(null);
     const retryOperation = React.useRef<(() => Promise<void>) | null>(null);
     const selected = input.options.find(option => option.id === currentOptionKey)?.call ?? input.replayTry;
-    const previewEntry = React.useMemo(() => selected ? projectThemeLibraryEntry(selected.input.document) : null, [selected]);
+    const previewEntry = React.useMemo(() => selected ? projectTryEntry(selected) : null, [selected]);
     const entry = outcome.kind === 'kept' ? outcome.output.entry : previewEntry ?? facts.entry;
     const options = React.useMemo(() => input.options.map(option => ({
         key: option.id, name: option.call.input.document.profile.name, description: '',
-        miniature: projectThemeLibraryEntry(option.call.input.document).miniature,
+        miniature: projectTryEntry(option.call).miniature,
     })), [input.options]);
     const invoke = execute;
     const perform = React.useCallback((operation: ThemeResultOperation, effect: () => Promise<void>) => {
@@ -117,8 +128,11 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
             ? outcome.previous === 'preview' ? { kind: 'reverted' } : { kind: 'undone', restoredName: null }
             : { kind: outcome.kind === 'kept' ? 'kept' : 'applied' });
     const coverage = outcome.kind === 'preview' ? outcome.output.coverage : null;
-    return { theme: { name: display.name, mode: display.mode, miniature: display.miniature,
+    return { theme: { name: display.name, mode: selected?.input.mode ?? display.mode,
+        miniature: previewEntry?.miniature ?? display.miniature,
+        surfaceStyles: outcome.kind === 'preview' && preview?.previewRef === outcome.output.previewRef ? facts.surfaceStyles : undefined,
         created: facts.created }, phase, busy, here: facts.here,
+        before: facts.before?.miniature, beforeSurfaceStyles: facts.before?.surfaceStyles,
         options, currentOptionKey, coverage,
         reshapes: coverage?.affectedSurfaces.map(address => address.surface),
         hides: coverage?.hides.map(hidden => hidden.address.surface),
