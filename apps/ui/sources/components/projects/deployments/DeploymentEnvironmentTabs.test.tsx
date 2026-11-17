@@ -2429,6 +2429,38 @@ describe('Environment → Settings: checks, backups, previews', () => {
     }
   });
 
+  it('keeps Backups to configuration where a Database page owns the backup operations, and links to it (owner 2026-11-17)', async () => {
+    const id = 'project-deployments.environment.settings.backups';
+    const base = createDeploymentEnvironmentDetailV1();
+    const template = {
+      templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17', ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } },
+      definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+      services: ['database'], data: [{ engine: 'postgres' as const, version: '17', service: 'database', port: 5432 }],
+    };
+    const withPage = createDeploymentEnvironmentDetailV1({ content: { ...base.content, backup, template } });
+    const openDatabase = vi.fn();
+    const view = await renderTab('settings', withPage, {}, { onOpenDatabase: openDatabase });
+    try {
+      expect(await view.settle(`${id}.database.database`)).not.toBeNull();
+      expect(view.screen.findByTestId(`${id}.sources`)).not.toBeNull();
+      expect(view.screen.findByTestId(`${id}.schedule`)).not.toBeNull();
+      // The operations and the history live on the Database page only.
+      expect(view.screen.findByTestId(`${id}.status`)).toBeNull();
+      expect(view.screen.findByTestId(`${id}.drill`)).toBeNull();
+      await view.screen.pressByTestIdAsync(`${id}.database.database`);
+      expect(openDatabase.mock.calls).toEqual([['database']]);
+    } finally { await view.screen.unmount(); view.controller.retire(); }
+
+    // Without a Database page (no template data) the operations have no other home and stay here.
+    const withoutPage = createDeploymentEnvironmentDetailV1({ content: { ...base.content, backup } });
+    const plain = await renderTab('settings', withoutPage, {}, { onOpenDatabase: openDatabase });
+    try {
+      expect(await plain.settle(`${id}.status`)).not.toBeNull();
+      expect(plain.screen.findByTestId(`${id}.drill`)).not.toBeNull();
+      expect(plain.screen.findByTestId(`${id}.database.database`)).toBeNull();
+    } finally { await plain.screen.unmount(); plain.controller.retire(); }
+  });
+
   it('says nothing is set up for an unconfigured backup, and names the pull request and template of a preview', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = createDeploymentEnvironmentDetailV1({

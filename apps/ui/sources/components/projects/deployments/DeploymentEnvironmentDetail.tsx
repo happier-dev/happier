@@ -1310,6 +1310,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               lifetime={props.lifetime ?? null}
               editing={environmentEditing}
               onAddDatabase={openAddDatabase}
+              onOpenDatabase={props.onOpenDatabase ?? null}
               onOpenMachineServices={(machineId) => router.push(machinePageHref({
                 door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services' },
               }) as never)}

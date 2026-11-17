@@ -39,6 +39,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { t } from '@/text';
 
 import { useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
+import { databaseEngineTitle } from './databasePresentation';
 import type { DeploymentRetainedBackup } from './deploymentRestore';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { DeploymentTabState } from './DeploymentTabState';
@@ -123,6 +124,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       onOpenMachineServices?: ((machineId: string) => void) | null;
       /** Opens Add a database for an Environment with nothing to back up yet. */
       onAddDatabase?: (() => void) | null;
+      /** Pushes one database's page (P9), where its backup operations live; absent where no page can open. */
+      onOpenDatabase?: ((database: string) => void) | null;
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -568,6 +571,7 @@ type SectionProps = Readonly<{
   editing?: DeploymentEnvironmentEditing | null;
   /** Opens Add a database for an Environment with nothing to back up yet. */
   onAddDatabase?: (() => void) | null;
+  onOpenDatabase?: ((database: string) => void) | null;
   testID: string;
 }>;
 
@@ -654,14 +658,18 @@ function BackupRows(props: SectionProps) {
     lifetime={lifetime} actions={{ configureBackup: actions.configureBackup,
       addBackupSchedule: actions.addBackupSchedule,
       prepareConfigurationDefaults: editing.actions.prepareConfigurationDefaults ?? actions.prepareConfigurationDefaults }} /> : null;
-  // One section, read top-down: what is copied, where, when and for how long, then the copies and what you do with
-  // them. Restore is the section's action (lab d7 `Backups`); history stays on the Database page (P9).
+  // Owner 2026-11-17: where a Database page exists it owns the backup operations (back up, restore, drill, saved
+  // copies) and history (P9); this section keeps the configuration and links there. Without one, the operations have
+  // no other home and stay here.
+  const databases = props.onOpenDatabase ? props.detail.content.template?.data ?? [] : [];
+  const operationsHere = databases.length === 0;
+  // Read top-down: what is copied, where, when and for how long, then (here only) the copies and what you do with them.
   const configSection = (children: React.ReactNode, restore = false) => (
     <ItemGroup
       testID={props.testID}
       title={t('projects.deployments.sectionBackups')}
       description={t('projects.deployments.sectionBackupsDescription')}
-      action={restore && props.onRestore ? (
+      action={restore && operationsHere && props.onRestore ? (
         <SectionActionButton
           testID={`${props.testID}.restore.open`}
           title={t('projects.deployments.restoreAction')}
@@ -707,7 +715,8 @@ function BackupRows(props: SectionProps) {
         actions={actions} review={props.review ?? null} onChanged={editing?.onChanged ?? noop}
         machineName={props.machineName} testID={props.testID}
       />
-      <DeploymentBackupScheduleRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
+      <DeploymentBackupScheduleRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID}
+        drill={operationsHere} />
       <DeploymentBackupRetentionRows
         key={`${backup.configRevision}:${props.detail.environment.revision}`}
         detail={props.detail} configuration={backup} label={retentionLabel(backup.retention)}
@@ -723,8 +732,12 @@ function BackupRows(props: SectionProps) {
           copy="setting"
         />
       ) : null}
+      {databases.map(data => (
+        <Item key={data.service} testID={`${props.testID}.database.${data.service}`} title={databaseEngineTitle(data)}
+          subtitle={t('projects.deployments.databaseBackupsDescription')} onPress={() => props.onOpenDatabase?.(data.service)} />
+      ))}
       {/* The owner-approved missed/failed notice: an overdue unstarted run first, then a latest backup that failed. */}
-      <Item
+      {operationsHere ? <Item
         testID={`${props.testID}.status`}
         title={t('projects.deployments.databaseLastBackup')}
         detail={backupFacts.facts?.status === 'ready'
@@ -739,8 +752,8 @@ function BackupRows(props: SectionProps) {
           <StatusDot size={6} color={attention.missed ? theme.colors.state.warning.foreground : theme.colors.state.danger.foreground} />
         ) : undefined}
         mode="info"
-      />
-      {props.lifetime && props.review && props.detail.environment.capabilities.role === 'manager' ? (
+      /> : null}
+      {operationsHere && props.lifetime && props.review && props.detail.environment.capabilities.role === 'manager' ? (
         <DeploymentBackupControls
           key={`${props.lifetime.scope.serverId}:${props.lifetime.scope.accountId}:${props.detail.environment.id}:${props.detail.environment.revision}:${props.detail.runtimeTargetLink?.activeDeploymentId}:${backup.configRevision}`}
           detail={props.detail} configuration={backup} lifetime={props.lifetime}
@@ -750,7 +763,7 @@ function BackupRows(props: SectionProps) {
         />
       ) : null}
       {/* The copy the serving deploy kept before its migration is one of the saved copies; Restore above opens it. */}
-      {props.onRestore && props.retainedBackup ? (
+      {operationsHere && props.onRestore && props.retainedBackup ? (
         <Item
           testID={`${props.testID}.restore`}
           title={props.retainedBackup.versionLabel

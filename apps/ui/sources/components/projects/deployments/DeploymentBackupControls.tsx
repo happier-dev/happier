@@ -776,6 +776,8 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   configuration: DeploymentBackupConfigurationV1;
   actions: ActionsFactory | null;
+  /** False where a Database page owns the restore drill (owner 2026-11-17). */
+  drill: boolean;
   testID: string;
 }>) {
   const { actions } = props;
@@ -838,7 +840,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
       diagnosticCode={failure.code} diagnosticDetail={failure.detail}
       action={{ label: t('common.retry'), onPress: () => setReads(count => count + 1) }} /> : null}
     {/* Environment Settings' one restore-drill door (VISUAL-136 E3: Backup controls no longer draw a second one). */}
-    <DeploymentRestoreDrillRow serverId={props.detail.environment.serverId} testID={`${props.testID}.drill`} />
+    {props.drill ? <DeploymentRestoreDrillRow serverId={props.detail.environment.serverId} testID={`${props.testID}.drill`} /> : null}
     </>
   );
 }

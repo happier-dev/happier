@@ -63,7 +63,7 @@ it('opens the canonical restore-drill starter for this Home without starting a r
     destinationRef: SFTP_BACKUP_DESTINATION_REF_V1, occurrenceId: 'sftp', config: {}, credentialBindings: [],
     sources: [{ kind: 'volume', sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' }],
     ownership: { environmentId: detail.environment.id, prefix: '' }, retention: { kind: 'keepEverything' } });
-  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration}
+  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration} drill
     actions={null} testID="backups" />);
   try {
     await screen.pressByTestIdAsync('backups.drill');
@@ -85,7 +85,7 @@ it('shows a failed schedule read with its code, request id and Retry, not a bare
   const backupScheduleSets = vi.fn(async () => { throw new HappyError('internal_error', false,
     { code: 'internal_error', requestId: '5b2057fb-request' }); });
   const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration}
+  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration} drill
     actions={{ backupScheduleSets } as never} testID="backups" />);
   try {
     const card = () => screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'backups.schedule.failed');
@@ -250,7 +250,7 @@ it('shows the saved custom schedule for the stable Environment before a deployme
   } });
   const { createDeploymentActions } = await import('./deploymentActions');
   const actions = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
-  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration}
+  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration} drill
     actions={actions} testID="backups" />);
   try {
     await vi.waitFor(() => expect(screen.findAllByType(Item).find(row => row.props.testID === 'backups.schedule')?.props.subtitle)
