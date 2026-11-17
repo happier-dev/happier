@@ -10,11 +10,7 @@ function scan(sql: string, observe?: Readonly<{ token?(token: PostgresqlLexicalT
     return { tokens, ranges };
 }
 
-export function postgresqlStatementRanges(sql: string): readonly PostgresqlStatementRange[] {
-    const ranges: PostgresqlStatementRange[] = [];
-    psqlInputScanner('statements', { statement: range => ranges.push(range) }).write(sql, true);
-    return ranges;
-}
+export { postgresqlStatementRanges } from '../statements.js';
 
 export function normalizePostgresqlStatement(sql: string, observe?: Readonly<{ token?(token: PostgresqlLexicalToken): void }>): NormalizedDatabaseStatement {
     const { tokens, ranges } = scan(sql, observe);

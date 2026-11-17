@@ -12,6 +12,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./statements": {
+      "happier-source": "./src/statements.ts",
+      "types": "./dist/statements.d.ts",
+      "default": "./dist/statements.js"
+    },
     "./postgresql": {
       "happier-source": "./src/postgresql/index.ts",
       "types": "./dist/postgresql/index.d.ts",
