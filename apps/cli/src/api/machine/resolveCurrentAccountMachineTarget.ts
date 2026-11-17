@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema, type ExternalActionMachineBootstrapV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -117,7 +118,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
       headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers,
         ...(params.projection === 'hostFacts' ? { Accept: 'application/json;happier-machine-projection=host-facts' } : {}) },
       timeout: 20_000,
-      ...(exactId === undefined ? {} : { validateStatus: (status: number) => status === 404 || status >= 200 && status < 300 }),
+      ...(exactId === undefined ? {} : { validateStatus: acceptsCurrentAccountMachinePublicationStatus }),
       ...(params.signal ? { signal: params.signal } : {}),
     };
     const batch = !params.authorization && demandedIds !== undefined && exactId === undefined;
@@ -129,65 +130,107 @@ export async function listCurrentAccountMachines(params: Readonly<{
     if (projection && !await projection.isCurrent()) throw new Error('Requester Machine inventory authority retired');
     const data = batch ? MachineReadBatchResponseV1Schema.parse(response.data).results
       .flatMap(result => result.status === 'found' ? [result.machine] : []) : response.data;
-    const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(exactId === undefined ? data
-      : response.status === 404 ? [] : [z.object({ machine: ACCOUNT_MACHINE_ROW_SCHEMA }).parse(response.data).machine]);
-    if (!inventory.success) throw new Error('invalid machine inventory');
-    const rows = demandedIds === undefined ? inventory.data : inventory.data.filter(row => demandedIds.has(row.id));
-    let accountMode: Promise<'plain' | 'e2ee' | 'unknown'> | undefined;
-    const readAccountMode = (credentials: StoredCredentials) => accountMode ??= readAccountEncryptionModeOnce({ credentials, request: () => axios.get(
-      `${serverHttpBaseUrl}/v1/account/encryption`, { headers: { Authorization: `Bearer ${credentials.token}` },
-        timeout: 20_000, ...(params.signal ? { signal: params.signal } : {}) },
-    ) }).then(mode => mode.kind === 'resolved' ? mode.mode : 'unknown' as const).catch(() => 'unknown' as const);
-    const namedMachines = await Promise.all(rows.map(async (row) => {
-      let metadata: ReturnType<typeof StoredMachinePublishedMetadataV1Schema.parse> | undefined;
-      if (params.projection !== 'hostFacts' && params.credentials && row.metadata && (!row.access || row.access.accessState === 'ready')) {
-        try {
-          const declaredMode = row.access?.resourceMode ?? row.storageMode;
-          const expectedAccountMode = declaredMode === 'plain' || declaredMode === 'e2ee' ? declaredMode : await readAccountMode(params.credentials);
-          const codec = resolvePublishedMachineContentCodec({ credentials: params.credentials, machineId: row.id,
-            expectedAccountMode, access: row.access, publishedDataEncryptionKey: row.dataEncryptionKey,
-            machineKind: row.kind, installationId: typeof row.installationId === 'string' ? row.installationId : null,
-            runnerContentKeyBinding: row.runnerContentKeyBinding });
-          const decoded = StoredMachinePublishedMetadataV1Schema.safeParse(codec.decodeStored(row.metadata));
-          if (decoded.success) metadata = decoded.data;
-        } catch {
-          // Unavailable or inconsistent content is unknown, never a plain fallback.
-          params.signal?.throwIfAborted();
-        }
-      }
-      params.signal?.throwIfAborted();
-      const nameMetadata = params.projection === 'hostFacts' ? null
-        : metadata ?? (params.credentials ? null : readMachineNameMetadata(row.metadata));
-      return {
-        host: nameMetadata?.host,
-        machine: {
-          id: row.id, label: readMachineName(nameMetadata) ?? row.id, kind: row.kind, active: row.active,
-          managedMachineRef: row.managedMachineRef,
-          ...(row.managedInputRuntime !== undefined ? { managedInputRuntime: row.managedInputRuntime } : {}),
-          installationId: row.installationId,
-          revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
-          ...(row.activeAt === undefined ? {} : { activeAt: row.activeAt }),
-          ...(row.presenceProtocolVersion === undefined ? {} : { presenceProtocolVersion: row.presenceProtocolVersion }),
-          ...(metadata ? { platform: metadata.platform, homeDir: metadata.homeDir, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
-          ...(metadata?.agentInventory ? { agentInventory: metadata.agentInventory } : {}),
-          ...(row.access ? { access: row.access } : {}),
-          ...(row.sharedWithTeamScope ? { sharedWithTeamScope: row.sharedWithTeamScope } : {}),
-          ...(params.projection !== 'hostFacts' && row.devcontainerChild ? { devcontainerChild: row.devcontainerChild } : {}),
-          ...(params.projection === 'hostFacts' || row.operationProtocolCapabilities === undefined ? {} : { operationProtocolCapabilities: row.operationProtocolCapabilities }),
-          ...(params.projection === 'hostFacts' || row.operationProtocolCapabilitiesRevision === undefined ? {} : { operationProtocolCapabilitiesRevision: row.operationProtocolCapabilitiesRevision }),
-        },
-      };
-    }));
-    if (params.projection === 'hostFacts') return namedMachines.map(({ machine }) => machine);
-    const names = resolveMachineDisplayNameParts(namedMachines.map(({ host, machine }) => ({ id: machine.id, name: machine.label, host })));
-    return namedMachines.map(({ machine }) => {
-      const name = names.get(machine.id)!;
-      return { ...machine, label: name.hint ? `${name.name} · ${name.hint}` : name.name };
-    });
+    return await projectCurrentAccountMachineInventory({ ...params, serverHttpBaseUrl },
+      exactId === undefined ? data : readCurrentAccountMachinePublicationRows(response), demandedIds);
   } catch (error) {
     params.signal?.throwIfAborted();
-    throw Object.assign(new Error('The current machine inventory is unavailable.'), { code: 'machine_inventory_unavailable', cause: error });
+    throw machineInventoryUnavailable(error);
   }
+}
+
+function acceptsCurrentAccountMachinePublicationStatus(status: number): boolean {
+  return status === 404 || status >= 200 && status < 300;
+}
+
+function machineInventoryUnavailable(error: unknown) {
+  return Object.assign(new Error('The current machine inventory is unavailable.'), { code: 'machine_inventory_unavailable', cause: error });
+}
+
+function readCurrentAccountMachinePublicationRows(publication: Readonly<{ status: number; data: unknown }>): unknown {
+  return publication.status === 404 ? [] : [z.object({ machine: ACCOUNT_MACHINE_ROW_SCHEMA }).parse(publication.data).machine];
+}
+
+/** Project one authenticated full publication without another admission read. */
+export async function readCurrentAccountMachineHostFactsFromPublication(params: Readonly<{
+  publication: Promise<Readonly<{ status: number; data: unknown }>>;
+  machineId: string;
+  serverHttpBaseUrl: string;
+  signal?: AbortSignal;
+}>): Promise<readonly CurrentAccountMachineInventoryItem[]> {
+  params.signal?.throwIfAborted();
+  try {
+    const publication = await params.publication;
+    params.signal?.throwIfAborted();
+    if (!acceptsCurrentAccountMachinePublicationStatus(publication.status))
+      throw createHttpStatusError(publication.status, 'Machine inventory publication request failed');
+    return await projectCurrentAccountMachineInventory({ projection: 'hostFacts', serverHttpBaseUrl: params.serverHttpBaseUrl,
+      ...(params.signal ? { signal: params.signal } : {}) }, readCurrentAccountMachinePublicationRows(publication), new Set([params.machineId]));
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    throw machineInventoryUnavailable(error);
+  }
+}
+
+async function projectCurrentAccountMachineInventory(
+  params: Pick<Parameters<typeof listCurrentAccountMachines>[0], 'credentials' | 'projection' | 'signal'>
+    & Readonly<{ serverHttpBaseUrl: string }>,
+  data: unknown,
+  demandedIds?: ReadonlySet<string>,
+): Promise<readonly CurrentAccountMachineInventoryItem[]> {
+  const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(data);
+  if (!inventory.success) throw new Error('invalid machine inventory');
+  const rows = demandedIds === undefined ? inventory.data : inventory.data.filter(row => demandedIds.has(row.id));
+  let accountMode: Promise<'plain' | 'e2ee' | 'unknown'> | undefined;
+  const readAccountMode = (credentials: StoredCredentials) => accountMode ??= readAccountEncryptionModeOnce({ credentials, request: () => axios.get(
+    `${params.serverHttpBaseUrl}/v1/account/encryption`, { headers: { Authorization: `Bearer ${credentials.token}` },
+      timeout: 20_000, ...(params.signal ? { signal: params.signal } : {}) },
+  ) }).then(mode => mode.kind === 'resolved' ? mode.mode : 'unknown' as const).catch(() => 'unknown' as const);
+  const namedMachines = await Promise.all(rows.map(async (row) => {
+    let metadata: ReturnType<typeof StoredMachinePublishedMetadataV1Schema.parse> | undefined;
+    if (params.projection !== 'hostFacts' && params.credentials && row.metadata && (!row.access || row.access.accessState === 'ready')) {
+      try {
+        const declaredMode = row.access?.resourceMode ?? row.storageMode;
+        const expectedAccountMode = declaredMode === 'plain' || declaredMode === 'e2ee' ? declaredMode : await readAccountMode(params.credentials);
+        const codec = resolvePublishedMachineContentCodec({ credentials: params.credentials, machineId: row.id,
+          expectedAccountMode, access: row.access, publishedDataEncryptionKey: row.dataEncryptionKey,
+          machineKind: row.kind, installationId: typeof row.installationId === 'string' ? row.installationId : null,
+          runnerContentKeyBinding: row.runnerContentKeyBinding });
+        const decoded = StoredMachinePublishedMetadataV1Schema.safeParse(codec.decodeStored(row.metadata));
+        if (decoded.success) metadata = decoded.data;
+      } catch {
+        // Unavailable or inconsistent content is unknown, never a plain fallback.
+        params.signal?.throwIfAborted();
+      }
+    }
+    params.signal?.throwIfAborted();
+    const nameMetadata = params.projection === 'hostFacts' ? null
+      : metadata ?? (params.credentials ? null : readMachineNameMetadata(row.metadata));
+    return {
+      host: nameMetadata?.host,
+      machine: {
+        id: row.id, label: readMachineName(nameMetadata) ?? row.id, kind: row.kind, active: row.active,
+        managedMachineRef: row.managedMachineRef,
+        ...(row.managedInputRuntime !== undefined ? { managedInputRuntime: row.managedInputRuntime } : {}),
+        installationId: row.installationId,
+        revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
+        ...(row.activeAt === undefined ? {} : { activeAt: row.activeAt }),
+        ...(row.presenceProtocolVersion === undefined ? {} : { presenceProtocolVersion: row.presenceProtocolVersion }),
+        ...(metadata ? { platform: metadata.platform, homeDir: metadata.homeDir, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),
+        ...(metadata?.agentInventory ? { agentInventory: metadata.agentInventory } : {}),
+        ...(row.access ? { access: row.access } : {}),
+        ...(row.sharedWithTeamScope ? { sharedWithTeamScope: row.sharedWithTeamScope } : {}),
+        ...(params.projection !== 'hostFacts' && row.devcontainerChild ? { devcontainerChild: row.devcontainerChild } : {}),
+        ...(params.projection === 'hostFacts' || row.operationProtocolCapabilities === undefined ? {} : { operationProtocolCapabilities: row.operationProtocolCapabilities }),
+        ...(params.projection === 'hostFacts' || row.operationProtocolCapabilitiesRevision === undefined ? {} : { operationProtocolCapabilitiesRevision: row.operationProtocolCapabilitiesRevision }),
+      },
+    };
+  }));
+  if (params.projection === 'hostFacts') return namedMachines.map(({ machine }) => machine);
+  const names = resolveMachineDisplayNameParts(namedMachines.map(({ host, machine }) => ({ id: machine.id, name: machine.label, host })));
+  return namedMachines.map(({ machine }) => {
+    const name = names.get(machine.id)!;
+    return { ...machine, label: name.hint ? `${name.name} · ${name.hint}` : name.name };
+  });
 }
 
 /** Only a returned original Machine can establish permanent cleanup unavailability; absence proves nothing. */

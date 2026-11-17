@@ -23,7 +23,8 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
-import { resolveExternalActionRootInvocationAuthority, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, resolveExternalActionRootInvocationAuthority, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import {
   ExternalActionExecutionAuthorizationRequestV1Schema,
@@ -309,6 +310,11 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     let malformedReply = false;
     let issued = 0;
     let sourcePublicationReads = 0;
+    const sourcePublicationProjections: unknown[] = [];
+    let publicationState: 'current' | 'missing' | 'revoked' | 'replaced' = 'current';
+    let publicationStatus = 200;
+    let accountModeReply: 'plain' | 'invalid' | 'throw' = 'plain';
+    const accountModeError = new Error('Fixture Account mode read failed');
     const inspectionInputs: unknown[] = [];
     let currentnessChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>> | undefined;
     try {
@@ -325,7 +331,9 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       const installation = await readOrCreateInstallationIdentity();
       const machinePublication = () => ({ ...ExternalActionMachineBootstrapV1Schema.parse({
         id: source.machineId, kind: 'persistent', active: true, installationId: installation.installationId,
-        revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+        revokedAt: publicationState === 'revoked' ? 1 : null,
+        replacedByMachineId: publicationState === 'replaced' ? 'replacement-machine' : null,
+        dataEncryptionKey: null, runnerContentKeyBinding: null,
         ...(custodian === undefined ? {} : { access: {
           custodian: { accountId: custodian, displayName: 'Source owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
         } }),
@@ -343,12 +351,24 @@ describe('createDaemonMachineBootstrapRuntime', () => {
           return { status: 200, data: { content: { t: 'plain', v: {} }, version: 0 } };
         }
         if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+        if (url.endsWith('/v1/account/encryption')) {
+          if (accountModeReply === 'throw') throw accountModeError;
+          return { status: 200, data: accountModeReply === 'invalid' ? {} : { mode: 'plain', updatedAt: 0 } };
+        }
         if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
           mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
         } };
         if (url.endsWith('/v1/machines')) return { status: 200, data: [machinePublication()] };
         if (url.endsWith(`/v1/machines/${source.machineId}`)) {
           sourcePublicationReads++;
+          sourcePublicationProjections.push(options?.headers?.Accept);
+          if (publicationState === 'missing') return { status: 404, data: { error: 'not_found' } };
+          if (publicationStatus !== 200) {
+            // Mirror Axios' genuine response-status boundary for each requested projection.
+            if (options?.validateStatus && !options.validateStatus(publicationStatus))
+              throw createHttpStatusError(publicationStatus, 'Fixture Machine publication refused');
+            return { status: publicationStatus, data: { error: 'access_denied' } };
+          }
           return { status: 200, data: { machine: {
             ...machinePublication(), storageMode: 'plain', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
           } } };
@@ -429,6 +449,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       // The original-Account dispatcher reads one publication for admission;
       // Inspect must not surround that decision with extra custody reads.
       expect(sourcePublicationReads - issued).toBe(0);
+      expect(sourcePublicationProjections).not.toContain('application/json;happier-machine-projection=host-facts');
       expect(await inspect({ source: { ...source, serverId }, signal })).toMatchObject({ document: { status: 'valid' } });
       expect(issued).toBe(2);
       expect(sourcePublicationReads - issued).toBe(0);
@@ -446,9 +467,35 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         [undefined, 'admission_unavailable'],
       ] as const) {
         custodian = unproved;
+        const readsBeforeRefusal = sourcePublicationReads;
         await expect(inspect({ source, signal })).rejects.toMatchObject({ code: errorCode });
+        expect(sourcePublicationReads - readsBeforeRefusal).toBe(1);
+        expect(issued).toBe(2);
       }
       custodian = accountId;
+      for (const unavailable of ['missing', 'revoked', 'replaced'] as const) {
+        publicationState = unavailable;
+        const readsBeforeRefusal = sourcePublicationReads;
+        await expect(inspect({ source, signal })).rejects.toMatchObject({ code: 'admission_unavailable' });
+        expect(sourcePublicationReads - readsBeforeRefusal).toBe(1);
+        expect(issued).toBe(2);
+      }
+      publicationState = 'current';
+      const dispatchAtHome = () => dispatchOriginalAccountAction({ actionId: 'projects.inspect',
+        input: { workspace: { serverId: source.serverId, workspaceId: source.id, machineId: source.machineId, rootPath: source.rootPath },
+          read: { kind: 'execution', command: { usage: 'script', name: 'check' } } },
+        requestId: 'source-publication-refusal', target: { kind: 'machine', machineId: source.machineId }, credentials,
+        serverHttpBaseUrl, serverIdentityId: homeId, authority: 'account_automation', signal,
+      });
+      publicationStatus = 403;
+      await expect(dispatchAtHome()).rejects.toMatchObject({ code: 'machine_inventory_unavailable', cause: { response: { status: 403 } } });
+      accountModeReply = 'invalid';
+      await expect(dispatchAtHome()).resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+      accountModeReply = 'throw';
+      await expect(dispatchAtHome()).rejects.toBe(accountModeError);
+      expect(issued).toBe(2);
+      accountModeReply = 'plain';
+      publicationStatus = 200;
       await expect(inspect({ source: { ...source, serverId: 'wrong-home' }, signal })).rejects.toMatchObject({ code: 'target_mismatch' });
       const cancellation = new AbortController(); cancellation.abort();
       await expect(inspect({ source, signal: cancellation.signal })).rejects.toMatchObject({ code: 'cancelled' });

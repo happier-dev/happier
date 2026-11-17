@@ -86,7 +86,7 @@ import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
-import { listCurrentAccountMachines, type CurrentAccountMachineInventoryItem } from '@/api/machine/resolveCurrentAccountMachineTarget';
+import { listCurrentAccountMachines, readCurrentAccountMachineHostFactsFromPublication, type CurrentAccountMachineInventoryItem } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { resolveOriginalAccountMachineTarget } from '@/api/machine/originalAccountTarget';
 import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import { hasStoredSessionCredentialProvenance, type StoredCredentials } from '@/persistence';
@@ -637,26 +637,35 @@ export async function readExternalActionInstalledMachineResult(input: Readonly<{
   signal?: AbortSignal;
 }>): Promise<Readonly<{ ok: true; machine: InstalledMachine }>
   | Readonly<{ ok: false; details: z.infer<typeof ExternalActionInstalledMachineUnavailableSchema> }>> {
-  const publication = await axios.get<unknown>(`${normalizeServerHttpBaseUrl(input.serverHttpBaseUrl)}/v1/machines/${encodeURIComponent(input.machineId)}`, {
+  return projectExternalActionInstalledMachineResult(input.machineId, await readExternalActionMachinePublication(input));
+}
+
+function readExternalActionMachinePublication(input: Parameters<typeof readExternalActionInstalledMachineResult>[0]) {
+  return axios.get<unknown>(`${normalizeServerHttpBaseUrl(input.serverHttpBaseUrl)}/v1/machines/${encodeURIComponent(input.machineId)}`, {
     headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...input.headers },
     ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
   });
+}
+
+function projectExternalActionInstalledMachineResult(machineId: string,
+  publication: Readonly<{ status: number; data: unknown }>,
+): Awaited<ReturnType<typeof readExternalActionInstalledMachineResult>> {
   const raw = publication.data && typeof publication.data === 'object' && 'machine' in publication.data
     ? publication.data.machine : null;
   const installed = z.looseObject({ ...ExternalActionMachineBootstrapV1Schema.shape,
     installationPublicKey: z.nullish(z.string().check(z.base64())),
   }).safeParse(raw);
   if (publication.status < 200 || publication.status >= 300)
-    return { ok: false, details: { machineId: input.machineId, status: publication.status, reason: 'http_refused' } };
+    return { ok: false, details: { machineId, status: publication.status, reason: 'http_refused' } };
   if (!installed.success)
-    return { ok: false, details: { machineId: input.machineId, status: publication.status, reason: 'invalid_publication' } };
+    return { ok: false, details: { machineId, status: publication.status, reason: 'invalid_publication' } };
   if (!installed.data.installationId)
-    return { ok: false, details: { machineId: input.machineId, status: publication.status, reason: 'installation_missing' } };
-  const reason = installed.data.id !== input.machineId ? 'machine_mismatch'
+    return { ok: false, details: { machineId, status: publication.status, reason: 'installation_missing' } };
+  const reason = installed.data.id !== machineId ? 'machine_mismatch'
     : installed.data.kind !== 'persistent' ? 'machine_not_persistent'
       : installed.data.revokedAt !== null ? 'installation_revoked'
         : installed.data.replacedByMachineId !== null ? 'installation_replaced' : null;
-  if (reason) return { ok: false, details: { machineId: input.machineId, status: publication.status, reason } };
+  if (reason) return { ok: false, details: { machineId, status: publication.status, reason } };
   return { ok: true, machine: { ...installed.data, installationId: installed.data.installationId } };
 }
 
@@ -1019,6 +1028,11 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   // These passive reads already have the exact target and authenticated requester. Join them
   // before interpreting mode/ownership, minting authority or disclosing material.
   const target = input.target;
+  const needsInventory = target.kind === 'machine' && !input.executeOnRequester && !machines && !workflow && !scopedController;
+  const needsInstalled = target.kind === 'machine' && requiresMachineProof && input.serverIdentityId && !workflow && !scopedController;
+  const publicationRead = target.kind === 'machine' && needsInventory && needsInstalled
+    ? phase('installed_machine', () => readExternalActionMachinePublication({ serverHttpBaseUrl: homeUrl,
+      machineId: target.machineId, headers, ...(input.signal ? { signal: input.signal } : {}) })) : undefined;
   const [modeRead, inventoryRead, installedRead] = await Promise.allSettled([
     workflowMode ? Promise.resolve(workflowMode) : workflowBinding ? Promise.resolve(workflowBinding.accountEncryptionMode
       ? { kind: 'resolved' as const, mode: workflowBinding.accountEncryptionMode }
@@ -1026,12 +1040,18 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       : phase('account_mode', () => readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
       headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
     }) })),
-    target.kind === 'machine' && !input.executeOnRequester && !machines && !workflow && !scopedController
-      ? phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
-        credentials: input.credentials, machineIds: [target.machineId], projection: 'hostFacts', serverHttpBaseUrl: homeUrl,
-        ...(input.signal ? { signal: input.signal } : {}) })) : machines,
-    input.target.kind === 'machine' && requiresMachineProof && input.serverIdentityId && !workflow && !scopedController
-      ? readInstalledPublication(input.target.machineId) : undefined,
+    target.kind === 'machine' && needsInventory
+      ? phase('machine_inventory', () => publicationRead
+        ? readCurrentAccountMachineHostFactsFromPublication({ publication: publicationRead, machineId: target.machineId, serverHttpBaseUrl: homeUrl,
+          ...(input.signal ? { signal: input.signal } : {}) })
+        : listCurrentAccountMachines({ token: input.credentials.token,
+          credentials: input.credentials, machineIds: [target.machineId], projection: 'hostFacts', serverHttpBaseUrl: homeUrl,
+          ...(input.signal ? { signal: input.signal } : {}) })) : machines,
+    target.kind === 'machine' && needsInstalled
+      ? publicationRead ? publicationRead.then(publication => {
+        const installed = projectExternalActionInstalledMachineResult(target.machineId, publication);
+        return installed.ok ? installed.machine : null;
+      }) : readInstalledPublication(target.machineId) : undefined,
   ]);
   // Preserve mode refusal/error precedence while settling all passive reads.
   if (modeRead.status === 'rejected') throw modeRead.reason;
