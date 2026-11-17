@@ -5,6 +5,24 @@ import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 import { buildPendingNavigationFromSource, isPendingNavigationRequestAnswerable, selectPendingNavigationTarget } from './buildPendingNavigationFromSource';
 
 describe('pending navigation projection', () => {
+    it('counts another pending session from an archived destination and clears it when the request settles', () => {
+        const archived = createSessionFixture({ id: 'archived', serverId: 'a', archivedAt: 15 });
+        const pending = createSessionFixture({ id: 'pending', serverId: 'a', active: true,
+            agentState: { requests: { approval: { tool: 'Bash', arguments: {}, createdAt: 10 } } } });
+        let source: ActivityAttentionSource = { isDataReady: true, sessionsById: { archived, pending },
+            sessionListRowsByServerId: { a: Object.fromEntries([archived, pending].map(s => [s.id, buildSessionListRenderableFromSession(s)])) },
+            ordinarySessionListMembershipByServerId: { a: ['archived', 'pending'] },
+            sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {}, activeServerId: 'a' };
+        const read = () => buildPendingNavigationFromSource({ source, nowMs: 20,
+            excluding: { serverId: 'a', sessionId: 'archived' } }).map(candidate => candidate.address.sessionId);
+        expect(read()).toEqual(['pending']);
+        const settled = createSessionFixture({ ...pending, agentState: { requests: {} } });
+        source = { ...source, sessionsById: { archived, pending: settled },
+            sessionListRowsByServerId: { a: { archived: buildSessionListRenderableFromSession(archived),
+                pending: buildSessionListRenderableFromSession(settled) } } };
+        expect(read()).toEqual([]);
+    });
+
     it('excludes inactive native dialogs from the summary count while retaining Action approval grants', () => {
         const inactive = createSessionFixture({ id: 'inactive', serverId: 'a', active: false,
             agentState: { requests: { dialog: { tool: 'AskUserQuestion', kind: 'user_action',
