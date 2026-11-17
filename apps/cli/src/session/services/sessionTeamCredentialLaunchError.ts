@@ -44,7 +44,7 @@ export class SessionTeamCredentialLaunchUnavailableError extends Error {
   // Launch and catalog decisions always supply their exact code and phase.
   constructor(readonly code: TeamCredentialLaunchFailureCode = 'team_credential_provider_selection_not_current',
     readonly phase: TeamCredentialLaunchFailurePhase = 'binding', cause?: unknown) {
-    super(code);
+    super(`The Team credential could not be used (${code}). Choose an available credential for this Session.`);
     // The runner may fail before its webhook. Its existing stderr cause record
     // must retain this closed refusal independently of the process exit code.
     this.failureCause = { code, phase: 'authentication', failureReason: 'unknown',
