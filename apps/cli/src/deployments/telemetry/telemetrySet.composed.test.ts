@@ -61,7 +61,7 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
                 daemonState: encodePlainMachineStoredContent(MachinePublishedDaemonStateV1Schema.parse({ status: 'running' })),
                 metadata: encodePlainMachineStoredContent({ host: 'collector', homeDir: '/home/collector', platform: 'linux',
                     happyCliVersion: 'test', happyHomeDir: '/home/collector/.happier',
-                    rolesV1: { active: roleOn ? ['happier.database-capture/telemetry'] : [] } }) } } };
+                    rolesV1: { active: roleOn ? ['happier.telemetry/telemetry'] : [] } }) } } };
             const row = rows.get(decodeURIComponent(new URL(url).pathname.split('/').at(-1)!));
             return row ? { status: 200, data: row } : originalGet(url, config);
         });

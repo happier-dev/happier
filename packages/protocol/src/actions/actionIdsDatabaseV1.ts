@@ -23,15 +23,15 @@ export const DATABASE_STATS_ENABLE_ACTION_ID_V1 = 'happier.database/actions/stat
 export const DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1 = 'happier.database/actions/insights/findings/list' as const;
 export const DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1 = 'happier.database/actions/insights/findings/read' as const;
 export const DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1 = 'happier.database/actions/insights/brief/build' as const;
-export const DATABASE_CAPTURE_STATUS_ACTION_ID_V1 = 'happier.database-capture/actions/capture/status' as const;
-export const DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/queries/list' as const;
-export const DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1 = 'happier.database-capture/actions/capture/query/get' as const;
-export const DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/traces/list' as const;
-export const DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1 = 'happier.database-capture/actions/capture/trace/get' as const;
-export const DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/logs/list' as const;
-export const DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/endpoints/list' as const;
-export const DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 = 'happier.database-capture/actions/capture/clear' as const;
-export const DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 = 'happier.database-capture/actions/capture/configure' as const;
+export const DATABASE_CAPTURE_STATUS_ACTION_ID_V1 = 'happier.telemetry/actions/capture/status' as const;
+export const DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 = 'happier.telemetry/actions/capture/queries/list' as const;
+export const DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1 = 'happier.telemetry/actions/capture/query/get' as const;
+export const DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 = 'happier.telemetry/actions/capture/traces/list' as const;
+export const DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1 = 'happier.telemetry/actions/capture/trace/get' as const;
+export const DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1 = 'happier.telemetry/actions/capture/logs/list' as const;
+export const DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 = 'happier.telemetry/actions/capture/endpoints/list' as const;
+export const DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 = 'happier.telemetry/actions/capture/clear' as const;
+export const DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/configure' as const;
 
 export const DATABASE_ACTION_IDS_V1 = [
     DATABASE_TARGETS_LIST_ACTION_ID_V1,

@@ -70,7 +70,7 @@ describe('producer-backed database Action declarations', () => {
 
     it('keeps the canonical capture identity equal to its real owning occurrence invocation', async () => {
         const localId = databaseActionLocalIdV1(DATABASE_CAPTURE_STATUS_ACTION_ID_V1);
-        const plugin = definePlugin({ id: 'happier.database-capture', version: '0.0.0',
+        const plugin = definePlugin({ id: 'happier.telemetry', version: '0.0.0',
             actions: { [localId]: { title: 'Capture identity fixture', surfaces: ['plugin'], readOnly: true,
                 run: (_input, context) => context.contribution.qualifiedId } },
         });

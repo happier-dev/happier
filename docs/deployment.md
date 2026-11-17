@@ -2575,7 +2575,7 @@ subset. Purpose materialization and fact resolution still require their owning
 runtime producers; schema acceptance alone does not make them executable.
 
 Production telemetry is being implemented for 0.3 development. The standalone
-`happier.database-capture/telemetry` Machine role runs the collector only;
+`happier.telemetry/telemetry` Machine role runs the collector only;
 workspace-local capture belongs to the existing workspaces role. The host Action
 `deployments.environments.telemetry.set` selects the collector and writes its
 Machine ID together with the Environment bindings. Its ingest bearer is an

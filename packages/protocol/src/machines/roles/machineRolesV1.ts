@@ -22,7 +22,7 @@ export type CoreMachineRoleIdV1 = typeof CORE_MACHINE_ROLE_IDS_V1[number];
 export const CoreMachineRoleIdV1Schema = lazyZodSchema(() => z.enum(CORE_MACHINE_ROLE_IDS_V1));
 
 /** The production collector is the capture plugin's opt-in standalone role. */
-export const DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 = 'happier.database-capture/telemetry';
+export const DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 = 'happier.telemetry/telemetry';
 export const DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 = [{ id: DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, defaultActive: false }] as const;
 
 /** The one typed refusal a Machine returns for work owned by an inactive role. */
