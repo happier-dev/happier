@@ -132,6 +132,8 @@ import {
 import type { AgentStateResponseTargetDispatch } from '@/agent/permissions/agentStateRequestStore';
 import { readExecutionRunParentSessionPermissionResponseTarget } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import { buildRunScopedExecutionPermissionRequestId } from '@/agent/executionRuns/policy/runScopedExecutionPermissionHandler';
+import { readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
+import { isAgentStructuredQuestionRequest } from '@/agent/permissions/requestKind';
 import { emitBridgeLifecycleHookEventBestEffort } from '@/agent/runtime/bridges/_shared/emitBridgeLifecycleHookEventBestEffort';
 import type {
   ReviewCommentHostActionCandidate,
@@ -1401,7 +1403,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const controller = opts.runId ? this.controllers.get(opts.runId) : null;
       if (controller?.kind === 'backend') {
         if (controller.currentInputPermissionRequestStore) return controller.currentInputPermissionRequestStore.store;
-        if (controller.currentInputTurn || runScope === null) return null;
+        if (runScope === null) return null;
       }
       return runScope === null ? opts.getPermissionRequestStore?.() ?? null : this.resolvePermissionRequestStore();
     };
@@ -1604,7 +1606,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         if (!controller || controller.kind !== 'backend' || controller.cancelled
           || controller.controllerOccurrenceId !== opts.controllerOccurrenceId) return [];
         return (readPermissionStore()?.listOutstandingRequests?.() ?? []).filter((request) => {
-          const target = readExecutionRunParentSessionPermissionResponseTarget(request.responseTarget);
+          const target = readExecutionRunParentSessionPermissionResponseTarget(request.responseTarget)
+            ?? (isAgentStructuredQuestionRequest(request) ? null : readRunScopedExecutionPermissionRequestIdentity(request.requestId));
           return target !== null && target.runId === opts.runId && target.controllerOccurrenceId === controller.controllerOccurrenceId;
         }).map(request => ({ requestId: request.requestId, createdAt: request.createdAt,
           ...(request.nativeChoices === undefined ? {} : { nativeChoices: request.nativeChoices }) }));

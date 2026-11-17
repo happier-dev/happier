@@ -34,6 +34,7 @@ export function withExecutionRunRuntimeIdentityPublication(params: Readonly<{
 
   return wrapExecutionRunHostRuntime({
     readPermissionCapability: () => params.runtime.permissionCapability,
+    readPendingPermissionRequests: () => params.runtime.readPendingPermissionRequests?.bind(params.runtime),
     readInteraction: () => params.runtime.interaction,
     readExecuteAction: () => params.runtime.executeAction?.bind(params.runtime),
     readToolNormalizationSource: () => params.runtime.toolNormalizationSource,

@@ -115,6 +115,20 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
           });
           if (!requestId) throw new Error('Expected the real parent pending question occurrence');
           const pending = fixture.session.getAgentStateSnapshot()?.requests?.[requestId];
+          if (kind === 'question') {
+            const observed = ExecutionRunGetResponseSchema.parse(await fixture.rpc.invokeLocal(
+              SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId }, { verifiedPeerAuthority: 'present_user' }));
+            expect(observed.run.attention).toBeUndefined();
+          }
+          if (kind === 'approval') {
+            phase = 'run_permission_attention';
+            await vi.waitFor(async () => {
+              const observed = ExecutionRunGetResponseSchema.parse(await fixture.rpc.invokeLocal(
+                SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId }, { verifiedPeerAuthority: 'present_user' }));
+              expect(observed.run.attention).toMatchObject({ kind: 'permission_required', requestIds: [requestId],
+                requests: [{ requestId, createdAt: pending?.createdAt, nativeChoices: pending?.nativeChoices }] });
+            });
+          }
           const answer = (note?: string) => fixture.session.rpcHandlerManager.handleRequest({
             method: `${fixture.session.sessionId}:${kind === 'question' ? RPC_METHODS.SESSION_USER_ACTION_ANSWER : RPC_METHODS.SESSION_PERMISSION_RESPOND}`,
             params: kind === 'question' ? { id: requestId, approved: true, answers: { color: ['Blue'] },

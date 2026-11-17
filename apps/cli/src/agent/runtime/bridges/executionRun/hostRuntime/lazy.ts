@@ -168,6 +168,7 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
 
   return wrapExecutionRunHostRuntime({
     readPermissionCapability: () => permissionCapability ?? undefined,
+    readPendingPermissionRequests: () => resolvedRuntime?.readPendingPermissionRequests?.bind(resolvedRuntime),
     readInteraction: () => resolvedRuntime?.interaction,
     readExecuteAction: () => async (actionId, input, actionRequestId) => {
       const runtime = await resolveRuntime();

@@ -8,6 +8,7 @@ import type {
 export type ExecutionRunHostRuntimeWrapper = Readonly<{
   passthrough?: Readonly<Record<string, unknown>>;
   readPermissionCapability: () => ExecutionRunPermissionCapability | undefined;
+  readPendingPermissionRequests: () => ExecutionRunHostRuntime['readPendingPermissionRequests'];
   readInteraction: () => ExecutionRunInteractionV1 | undefined;
   readExecuteAction: () => ExecutionRunHostRuntime['executeAction'];
   readToolNormalizationSource: () => ExecutionRunHostRuntime['toolNormalizationSource'];
@@ -39,6 +40,9 @@ export function wrapExecutionRunHostRuntime(
     ...(wrapper.passthrough ?? {}),
     get permissionCapability() {
       return wrapper.readPermissionCapability();
+    },
+    get readPendingPermissionRequests() {
+      return wrapper.readPendingPermissionRequests();
     },
     get interaction() {
       return wrapper.readInteraction();

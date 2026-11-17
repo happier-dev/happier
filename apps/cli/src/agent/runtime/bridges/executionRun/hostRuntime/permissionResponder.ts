@@ -27,6 +27,7 @@ export function withExecutionRunPermissionResponder(
 
   return wrapExecutionRunHostRuntime({
     readPermissionCapability: () => 'responds',
+    readPendingPermissionRequests: () => runtime.readPendingPermissionRequests?.bind(runtime),
     readInteraction: () => runtime.interaction,
     readExecuteAction: () => runtime.executeAction?.bind(runtime),
     readToolNormalizationSource: () => runtime.toolNormalizationSource,

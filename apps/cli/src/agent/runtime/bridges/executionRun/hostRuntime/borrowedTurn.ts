@@ -15,6 +15,7 @@ export function borrowExecutionRunRuntimeTurn(
     };
     return wrapExecutionRunHostRuntime({
         readPermissionCapability: () => runtime.permissionCapability,
+        readPendingPermissionRequests: () => runtime.readPendingPermissionRequests?.bind(runtime),
         readInteraction: () => runtime.interaction,
         readExecuteAction: () => runtime.executeAction?.bind(runtime),
         readToolNormalizationSource: () => runtime.toolNormalizationSource,
