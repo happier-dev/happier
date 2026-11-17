@@ -811,11 +811,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
             && !(contributes.inputTypes ?? []).some((type) => type.pluginId === pluginId)
             && !(contributes.dragSources ?? []).some((source) => source.pluginId === pluginId)
             && !(contributes.dropTargets ?? []).some((dropTarget) => dropTarget.pluginId === pluginId)) continue;
-        const activationSource = accountActivationSources?.sourcesByPluginId.get(pluginId)
-            ?? (target ? resolveCommittedActivationSource(target, { recordActivatedManifestAuthority: false }) : null);
-        let candidateSourceCustody = activationSource?.sourceAuthority
-            ? resolvePluginSourceCustody(activationSource.sourceAuthority)
+        // An unchanged retained component still owns its admitted source. A
+        // committed package is only a source candidate for plugins being replaced.
+        const retainedSourceCustody = params?.pluginIds !== undefined && !params.pluginIds.includes(pluginId)
+            ? retainedActivationRegistryLeases.find(lease => lease.pluginIds.has(pluginId))
+                ?.registry.readPluginSourceCustody(pluginId) ?? null
             : null;
+        const activationSource = retainedSourceCustody ? null : accountActivationSources?.sourcesByPluginId.get(pluginId)
+            ?? (target ? resolveCommittedActivationSource(target, { recordActivatedManifestAuthority: false }) : null);
+        let candidateSourceCustody = retainedSourceCustody ?? (activationSource?.sourceAuthority
+            ? resolvePluginSourceCustody(activationSource.sourceAuthority)
+            : null);
         // Client-only declarations have no daemon module to resolve or load,
         // but use the same admitted package/development custody as executable
         // peers. A bundled id alone never establishes source authority.

@@ -6,6 +6,9 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createMachineLiveStreamCaptureRegistry } from '@/daemon/peer/mediation/stream/captureRegistry';
 import { logger } from '@/ui/logger';
+import { evaluateManifestPluginDevelopmentCandidate } from '@/plugins/authoring/sourceModule';
+import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
+import { bindPluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
 
 it('keeps declared reads across retained activation replacement and identifies an undeclared ref without its payload', async () => {
@@ -98,4 +101,78 @@ it('resolves the named capture producer for another mounted plugin and retains c
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, { ...request,
             reference: { kind: 'plugin', source: { pluginId: 'acme.producer', localId: 'missing' } } })).toMatchObject({ ok: false, code: 'capture_source_unavailable' });
     } finally { await fixture.dispose(); }
+});
+
+it('keeps a mounted development caller current when its capture producer is replaced', async () => {
+    const viewer = createPluginManifestV2Fixture({ id: 'acme.capture-viewer',
+        entrypoints: { daemon: './daemon.mjs', development: './daemon.mjs' } });
+    const producer = createPluginManifestV2Fixture({ id: 'acme.capture-producer',
+        entrypoints: { daemon: './daemon.mjs', development: './daemon.mjs' }, contributes: { captureSources: [{
+        id: 'screen', displayName: 'Capture', streamFamily: 'screen', supportedCodecs: ['image.mjpeg'],
+    }] } });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [viewer, producer].map(manifest => ({
+        manifest, files: { 'daemon.mjs': `export const manifest = ${JSON.stringify(manifest)};
+            export function activate(api) { ${manifest.id === producer.id
+                ? "api.captureSources.register('screen', { async start() { return { stop() {} }; } });" : ''} }` },
+    })) });
+    let incumbent: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let successor: typeof incumbent;
+    try {
+        const graphs = await Promise.all([viewer, producer].map(async manifest => {
+            const rootPath = fixture.committed.generations.get(manifest.id)!.rootPath;
+            const source = await resolveLocalPathPluginSource({ locator: rootPath });
+            if (!source.ok) throw new Error('Missing authored development source');
+            const authority = bindPluginRuntimeSourceAuthority({
+                custody: { kind: 'development', registeredRootId: source.pluginRootPath },
+                resolvedRoot: source.pluginRootPath, observedRevision: 1,
+            });
+            if (authority.kind !== 'development') throw new Error('Missing development authority');
+            const candidate = await evaluateManifestPluginDevelopmentCandidate({ source, sourceAuthority: authority });
+            return [manifest.id, candidate.graph] as const;
+        }));
+        incumbent = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir: fixture.happyHomeDir, contributes: fixture.registry.contributes,
+            generationAuthority: fixture.committed, pluginIds: [viewer.id, producer.id],
+            preparedDevelopmentActivationGraphsByPluginId: new Map(graphs),
+        });
+        let current = incumbent;
+        const rpc = new RpcHandlerManager({ scopePrefix: 'capture-machine', encryptionMode: 'plain', logger: () => {} });
+        registerDaemonContributionRegistryProjectionHandler(rpc, {
+            resolveRuntimeRegistry: async () => current, resolveInstalledPackages: async () => [],
+            resolveCaptureRegistry: () => capture,
+            resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_capture', machineId: 'capture-machine' }),
+        });
+        const capture = createMachineLiveStreamCaptureRegistry();
+        const callerOccurrence = incumbent.readPluginOccurrenceId?.(viewer.id);
+        if (!callerOccurrence) throw new Error('Missing mounted caller occurrence');
+        const request = { machineId: 'capture-machine', callerPluginId: viewer.id, expectedCallerOccurrenceId: callerOccurrence,
+            reference: { kind: 'plugin', source: { pluginId: producer.id, localId: 'screen' } } };
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, request)).toMatchObject({ ok: true });
+        const retained = incumbent.retainPluginActivationComponent?.(viewer.id);
+        if (!retained) throw new Error('Missing retained caller activation');
+        successor = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir: fixture.happyHomeDir, contributes: incumbent.contributes,
+            generationAuthority: fixture.committed, pluginIds: [producer.id],
+            retainedActivationRegistryLeases: [retained],
+            preparedDevelopmentActivationGraphsByPluginId: new Map(graphs.filter(([id]) => id === producer.id)),
+        });
+        current = successor;
+        await incumbent.dispose();
+        const replacement = await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, request);
+        expect(replacement, JSON.stringify(replacement)).toMatchObject({ ok: true,
+            source: { sourceId: 'plugin:acme.capture-producer/screen',
+                sourceOccurrenceId: expect.any(String) } });
+        expect(capture.resolve({ sourceId: 'plugin:acme.capture-producer/screen' })).toMatchObject({ ok: true,
+            source: { plugin: { occurrenceId: successor.readPluginOccurrenceId?.(producer.id) } } });
+        expect(successor.readPluginOccurrenceId?.(viewer.id)).toBe(callerOccurrence);
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, { ...request,
+            expectedCallerOccurrenceId: 'retired' })).toMatchObject({ ok: false, code: 'plugin_occurrence_stale' });
+        expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_UI_CAPTURE_SOURCE_READ, { ...request,
+            reference: { kind: 'plugin', source: { pluginId: 'acme.unknown', localId: 'screen' } } })).toMatchObject({
+                ok: false, code: 'capture_source_unavailable' });
+    } finally {
+        await successor?.dispose();
+        await incumbent?.dispose();
+        await fixture.dispose();
+    }
 });
