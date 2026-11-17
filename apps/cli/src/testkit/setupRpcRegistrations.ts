@@ -8,6 +8,9 @@ import { registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinit
 import { registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
+import { registerDaemonMachineAdminAccessRpcHandlers } from '@/rpc/handlers/daemonMachineAdminAccess';
+import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 import { createUnavailableActionTransportDeps } from './actionTransportDeps';
 
@@ -17,6 +20,7 @@ export const SETUP_RPC_REGISTRATION_ACTION_IDS = Object.freeze([
     ...ACTION_ID_FAMILIES_V1.project_definitions,
     ...ACTION_ID_FAMILIES_V1.managed_machines,
     ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
+    ...ACTION_ID_FAMILIES_V1.machine_admin_access,
     ...ACTION_ID_FAMILIES_V1.local_services_inventory,
     ...ACTION_ID_FAMILIES_V1.local_services_launcher,
     ...ACTION_ID_FAMILIES_V1.local_services_preview,
@@ -31,6 +35,17 @@ export async function withSetupRpcRegistrations<T>(
     const executor = createActionExecutor(createUnavailableActionTransportDeps());
     const manager = new RpcHandlerManager({ scopePrefix: 'setup-census', encryptionMode: 'plain' });
     const localServices = createLocalServicesDaemonRuntime({ machineId: 'setup-census', startLoop: false });
+    const operations = createHostActionOperationRuntime({ machineId: 'setup-census', resolveAccountId: async () => 'account' });
+    // As in the administrator desired-policy fixture, native OS IO is the boundary;
+    // registration must not inspect the host or perform an elevated effect.
+    const unavailableNativeIo = async (): Promise<never> => { throw new Error('Unexpected native administrator IO in registration census'); };
+    const adminAccess = createDaemonMachineAdminAccessRoutes({
+        target: () => ({ serverId: 'home', machineId: 'setup-census', installationId: 'installation', custodianAccountId: 'account' }),
+        getMachineClient: () => null,
+        nativeDependencies: { platform: 'linux', execFile: unavailableNativeIo,
+            fileSystem: { lstat: unavailableNativeIo, readFile: unavailableNativeIo } },
+        spawnElevation: () => { throw new Error('Unexpected elevation in registration census'); },
+    });
     const registration = registerMachineRpcHandlers({ rpcHandlerManager: manager,
         handlers: {
             spawnSession: async () => ({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Unused process boundary' }),
@@ -44,6 +59,12 @@ export async function withSetupRpcRegistrations<T>(
         },
     });
     try {
+        registerDaemonMachineAdminAccessRpcHandlers(manager, {
+            ...adminAccess,
+            captureMetadataPort: () => ({ read: async () => ({ status: 'unavailable' }),
+                compareAndSwap: async () => ({ status: 'unavailable' }) }),
+            runActionOperation: operations.runActionOperation,
+        });
         registerProjectDefinitionHandlers({ rpcHandlerManager: manager, machineId: 'setup-census', actionExecutor: executor });
         registerProjectFiniteRpcHandlers(manager, { machineId: 'setup-census', serverId: 'home' });
         registerScmHandlers(manager, process.cwd(), { machineId: 'setup-census' });
