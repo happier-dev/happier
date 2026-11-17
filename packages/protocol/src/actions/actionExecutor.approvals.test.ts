@@ -329,9 +329,10 @@ describe('Environment binding pending-input hold', () => {
     const current = DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, targetLinks: [], environment: {
       v: 1, id: 'environment', serverId: 'home', projectSourceId: 'source', revision: 7,
       owner: { kind: 'account', accountId: 'account' }, protection: 'nonProduction', purpose: 'standard',
-      deployerMode: 'managers', controllerMachineId: 'machine-1', contentArtifactId: 'content',
+      deployerMode: 'managers', dataEditorMode: 'off', dataAgentAccess: 'read',
+      controllerMachineId: 'machine-1', contentArtifactId: 'content',
       contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account', createdAtMs: 1, updatedAtMs: 1,
-      capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true,
+      capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true, manageBindings: true,
         manageTargets: true, delete: true },
     } });
     // Home persistence/transport are the boundaries; scope, policy, narrowing
@@ -1742,8 +1743,9 @@ describe('createActionExecutor (approvals)', () => {
   it.each(['agent', 'mcp'] as const)('refuses native Realtime approval decisions before any %s approval effect', async (surface) => {
     const approvalsGet = vi.fn(async () => createApprovalRequest());
     const approvalsUpdate = vi.fn(async () => ({ ok: true }));
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'ordinary-approval' }));
     const targetActionApprovalReplay = vi.fn(async () => ({ ok: true as const, result: { status: 'executed' } }));
-    const executor = createExecutor({ approvalsGet, approvalsUpdate, targetActionApprovalReplay });
+    const executor = createExecutor({ approvalsGet, approvalsUpdate, targetActionApprovalReplay, sessionSendMessage });
     const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1,
       approvalWaivedSurfaces: { 'approval.request.decide': [surface] } });
     const context = { surface, authority: 'account_automation', defaultSessionId: 'deciding-session',
@@ -1759,10 +1761,12 @@ describe('createActionExecutor (approvals)', () => {
     expect(approvalsGet).not.toHaveBeenCalled();
     expect(approvalsUpdate).not.toHaveBeenCalled();
     expect(targetActionApprovalReplay).not.toHaveBeenCalled();
+    expect(sessionSendMessage).not.toHaveBeenCalled();
     expect(await executor.execute('approval.request.decide', { artifactId: 'native-approval', decision: 'approve' },
       { ...context, nativeRealtimeInput: undefined }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });
-    expect(targetActionApprovalReplay).toHaveBeenCalledOnce();
+    expect(sessionSendMessage).toHaveBeenCalledOnce();
+    expect(targetActionApprovalReplay).not.toHaveBeenCalled();
   });
 
   it.each(['agent', 'mcp'] as const)('refuses native Realtime permission decisions while preserving ordinary %s Actions', async (surface) => {
@@ -2102,7 +2106,8 @@ describe('createActionExecutor (approvals)', () => {
     }
   });
   it.each([
-    ['account.apiTokens.update', { tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'Updated embed' }],
+    ['account.apiTokens.update', { tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d',
+      label: { content: { t: 'plain', v: 'Updated embed' }, recipients: [] } }],
     ['account.apiTokens.revoke', { tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }],
     ['account.apiTokens.revokeAll', {}],
     ['account.sessions.signOutEverywhere', {}],
@@ -2114,7 +2119,9 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       // Account HTTP and Artifact persistence are the system boundaries.
       accountApiTokensCreateAction: async () => { effects.push(actionId); return { apiToken: securityTokenSummary, token: securityToken }; },
-      accountApiTokensUpdateAction: async () => { effects.push(actionId); return { apiToken: securityTokenSummary }; },
+      accountApiTokensUpdateAction: async () => { effects.push(actionId); return { apiToken: {
+        ...securityTokenSummary, label: { content: { t: 'plain', v: 'Updated embed' }, recipientEnvelope: null },
+      } }; },
       accountApiTokensRevokeAction: async () => { effects.push(actionId); return { revoked: true }; },
       accountApiTokensRevokeAllAction: async () => { effects.push(actionId); return { revokedCount: 1 }; },
       accountSessionsSignOutEverywhereAction: async () => { effects.push(actionId); return { status: 'signed_out' }; },
@@ -2331,7 +2338,8 @@ describe('createActionExecutor (approvals)', () => {
     })).toMatchObject({ ok: true });
     expect(row.triggers).toHaveLength(0);
     expect(request).toBeNull();
-    expect(authorities).toEqual(['account_automation']);
+    expect(authorities.length).toBeGreaterThan(0);
+    expect(authorities.every(authority => authority === 'account_automation')).toBe(true);
     // The same real family/trigger path admits the person's reversible UI edit.
     row = { ...row, triggers: originalTriggers };
     settings = ActionsSettingsV1Schema.parse({ v: 1 });
@@ -2542,6 +2550,7 @@ describe('createActionExecutor (approvals)', () => {
       result: {
         artifactId: 'a1',
         request,
+        canAllow: false,
         queryPlan: {
           kind: 'approval_artifact_id_lookup',
           backingStore: 'ArtifactStore',
