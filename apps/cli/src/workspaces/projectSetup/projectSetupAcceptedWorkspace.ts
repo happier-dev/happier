@@ -6,6 +6,7 @@ import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from 
 
 export type ProjectSetupWorkspaceAddress = Readonly<WorkspaceAddressV1>;
 export type ProjectSetupAcceptedAssociation = Readonly<{ workspace: WorkspaceRefV1; project: Readonly<{ serverId: string; projectId: string }> }>;
+export type ProjectSetupAcceptedWorkspace = Readonly<{ workspace: WorkspaceRefV1; project: ProjectSetupAcceptedAssociation['project'] | null }>;
 type ProjectSetupAcceptedWorkspaceInput = ProjectAccountRowsInput & Readonly<{
     address: Omit<ProjectSetupWorkspaceAddress, 'workspaceId'> & Readonly<{ workspaceId?: string }>;
     serverId: string;
@@ -13,6 +14,10 @@ type ProjectSetupAcceptedWorkspaceInput = ProjectAccountRowsInput & Readonly<{
     signal?: AbortSignal;
 }>;
 
+export function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAcceptedWorkspaceInput & Readonly<{
+    allowUnassociated: true;
+    allowProjectless: true;
+}>): Promise<ProjectSetupAcceptedWorkspace | null>;
 export function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAcceptedWorkspaceInput & Readonly<{
     allowUnassociated: true;
 }>): Promise<ProjectSetupAcceptedAssociation | null>;
@@ -24,7 +29,8 @@ export function resolveProjectSetupAcceptedWorkspace(input: ProjectAccountRowsIn
 }>): Promise<ProjectSetupAcceptedAssociation>;
 export async function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAcceptedWorkspaceInput & Readonly<{
     allowUnassociated?: true;
-}>): Promise<ProjectSetupAcceptedAssociation | null> {
+    allowProjectless?: true;
+}>): Promise<ProjectSetupAcceptedWorkspace | null> {
     const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
     if (!await isServerProfileHomeIdentity(input.serverId, input.address.serverId)) return fail('server_scope_mismatch');
     const homeServerId = await resolveServerProfileHomeIdentityId(input.serverId) ?? input.serverId;
@@ -58,6 +64,7 @@ export async function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAc
     }
     const workspace = resolved.ref;
     if (!workspace.projectKey) {
+        if (input.allowProjectless) return { workspace, project: null };
         if (input.allowUnassociated && input.address.workspaceId === undefined) return null;
         return fail('project_workspace_unavailable');
     }

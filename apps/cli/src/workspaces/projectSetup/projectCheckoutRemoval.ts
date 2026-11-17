@@ -8,7 +8,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createProjectFiniteAction, type ProjectFiniteActionRuntime } from './projectFiniteAction';
-import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
+import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import type { ProjectSetupOperationContext } from './projectSetupExecution';
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -23,7 +23,7 @@ export function requireProjectCheckoutRemovalOperation(context: ActionExecutorCo
 }
 
 export type ProjectCheckoutRemoval = Readonly<{
-    association: ProjectSetupAcceptedAssociation | null;
+    association: ProjectSetupAcceptedWorkspace | null;
     cleanup: 'completed' | 'skipped' | 'unassociated';
     settle(removalKind: WorktreeRemovedEventV1['removalKind']): void;
 }>;
@@ -40,7 +40,7 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
     /** Supplied only by the selected backend from its retained physical registration. */
     missingWorktree?: Parameters<NonNullable<BackendRuntimeContext['beforeFilesystemMutation']>>[0];
     /** Already accepted by the containing owner before its Account rows retire. */
-    association?: ProjectSetupAcceptedAssociation | null;
+    association?: ProjectSetupAcceptedWorkspace | null;
     skipCleanup?: boolean;
     unattended?: boolean;
 }>): Promise<ProjectCheckoutRemoval> {
@@ -56,7 +56,7 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
     const association = input.association !== undefined ? input.association : await resolveProjectSetupAcceptedWorkspace({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
         address: { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: input.worktreePath },
-        allowUnassociated: true, signal: operation.signal,
+        allowUnassociated: true, allowProjectless: true, signal: operation.signal,
     });
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
     try {
@@ -66,9 +66,10 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
             throw new RpcError('workspace_root_in_use', 'workspace_root_in_use');
         }
     } finally { await lease.release(); }
-    let cleanup: ProjectCheckoutRemoval['cleanup'] = association ? 'completed' : 'unassociated';
-    if (association && !input.skipCleanup && !input.missingWorktree) {
-        const result = await createProjectFiniteAction(runtime, ingress, { operation, association,
+    let cleanup: ProjectCheckoutRemoval['cleanup'] = association?.project ? 'completed' : 'unassociated';
+    if (association?.project && !input.skipCleanup && !input.missingWorktree) {
+        const result = await createProjectFiniteAction(runtime, ingress, { operation,
+            association: { workspace: association.workspace, project: association.project },
             ...(input.unattended ? { requireRememberedConsent: true } : {}) })({
             actionId: 'projects.prepare', input: { workspace: workspaceAddressFromRefV1(association.workspace), phase: 'teardown' },
             context: input.context,
@@ -79,7 +80,7 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
                 || failure.data.errorCode === 'project_setup_effect_changed')) cleanup = 'skipped';
             else throw createRpcCallError(failure.data);
         }
-    } else if (association) cleanup = 'skipped';
+    } else if (association?.project) cleanup = 'skipped';
     return { association, cleanup,
         settle(removalKind) {
             publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' }, payload: {

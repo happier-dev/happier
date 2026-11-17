@@ -2356,6 +2356,40 @@ describe('authenticated finite Project Action owner', () => {
         await authority.releaseAllRetainedBootstraps();
     });
 
+    it('preserves the accepted projectless Workspace in the settled removal fact', async () => {
+        const h = await harness({ version: 1, workspace: { teardown: [{ kind: 'command', command: 'true' }] } });
+        delete h.workspaceRefs[0]!.projectKey;
+        const plugin = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
+        releaseRequesterContexts.push(() => plugin.dispose());
+        const facts: HostEventEnvelopeV1[] = [];
+        const subscription = plugin.registry.stableEventsBroker!.subscribeHost({
+            target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
+            isCurrent: () => true, listener: event => { facts.push(event); },
+        });
+        releaseRequesterContexts.push(async () => { await subscription.dispose(); });
+        await access(h.root);
+        const accepted = await h.operationRuntime.observeExecution({ actionId: 'scm.worktree.remove',
+            input: { cwd: h.root, worktreePath: h.root, confirmed: true }, actionRequestId: 'remove-projectless',
+            execute: async operation => {
+                const removal = await prepareProjectCheckoutRemoval({ runtime: { ...h.runtime,
+                    requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: h.context, hostHomeServerIdentityId: 'home' }) },
+                    ingress: h.context, operation, worktreePath: h.root,
+                    context: { authority: 'present_user', surface: 'rpc', serverId: 'home' } });
+                await rm(h.root, { recursive: true });
+                removal.settle('deleted');
+                return { ok: true, result: {} };
+            } });
+        expect(accepted).toMatchObject({ ok: true });
+        expect(h.spawned).toEqual([]);
+        await expect(access(h.root)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect.poll(() => facts.length).toBe(1);
+        expect(facts[0]).toMatchObject({ payload: { kind: 'worktreeRemoved', removal: {
+            workspace: { workspaceId: 'accepted', rootPath: h.root }, project: null,
+            operationId: 'operation', outcome: 'removed', removalKind: 'deleted',
+        } } });
+    });
+
     it('retains the second teardown failure and original redacted review on the removal operation', async () => {
         const h = await harness({ version: 1, environmentVariables: [{ name: 'PRIVATE_URL', kind: 'config', required: true }],
             workspace: { teardown: [{ kind: 'command', command: 'echo first' }, { kind: 'command', command: 'echo second' }] } });

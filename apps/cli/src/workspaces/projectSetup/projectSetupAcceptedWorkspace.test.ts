@@ -49,6 +49,9 @@ describe('preparation accepted workspace association', () => {
         await expect(resolveProjectSetupAcceptedWorkspace(launch)).resolves.toBeNull();
         await expect(resolveProjectSetupAcceptedWorkspace({ ...input, address: { ...launch.address, workspaceId: key.id } }))
             .rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+        await expect(resolveProjectSetupAcceptedWorkspace({ ...launch, allowProjectless: true })).resolves.toMatchObject({
+            workspace: { id: key.id, rootPath: '/ordinary-folder' }, project: null,
+        });
     });
 
     it('uses the requester Home row and refuses a caller-swapped Machine or directory', async () => {
