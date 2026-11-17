@@ -142,6 +142,8 @@ model Account {
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
     RelationshipsTo        UserRelationship[]         @relation("RelationshipsTo")
     Artifact               Artifact[]
+    requestedReviewEligibility ReviewRequestedReviewerAccount[]
+    reviewVerdicts         ReviewVerdict[]
     AccountPluginIntent    AccountPluginIntent[]
     AccountPluginRelease   AccountPluginRelease[]
     PluginMachineMaterialization PluginMachineMaterialization[]
@@ -3667,6 +3669,8 @@ model ReviewMetadata {
 }
 
 model Artifact {
+    requestedReviewers ReviewRequestedReviewer[]
+    reviewVerdicts ReviewVerdict[]
     resourceSpaceMemberships ResourceSpaceMembership[]
     reviewMetadata ReviewMetadata?
     deploymentDomains DeploymentDomain[]
@@ -3725,6 +3729,49 @@ model ResourceSpaceMembership {
     @@id([accountId, spaceId, resourceKind, resourceId])
     @@index([accountId, resourceKind, resourceId])
     @@index([resourceId])
+}
+
+/// A requested Principal and its admission-time eligible people for one Review round.
+model ReviewRequestedReviewer {
+    id String @id @default(cuid())
+    reviewId String
+    review Artifact @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+    roundOrdinal Int
+    principalKey String
+    principal Json
+    required Boolean
+    createdAt DateTime @default(now())
+    eligibleAccounts ReviewRequestedReviewerAccount[]
+
+    @@unique([reviewId, roundOrdinal, principalKey])
+    @@index([reviewId, roundOrdinal])
+}
+
+/// Eligibility is recorded once by request admission, never inferred from a later Team roster.
+model ReviewRequestedReviewerAccount {
+    requestId String
+    request ReviewRequestedReviewer @relation(fields: [requestId], references: [id], onDelete: Cascade)
+    accountId String
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@id([requestId, accountId])
+    @@index([accountId, requestId])
+}
+
+/// Each person owns one replaceable verdict per round; prose uses the Review's key.
+model ReviewVerdict {
+    reviewId String
+    review Artifact @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+    roundOrdinal Int
+    accountId String
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    verdict String
+    content Json?
+    revision Int @default(1)
+    submittedAt DateTime @default(now())
+
+    @@id([reviewId, roundOrdinal, accountId])
+    @@index([accountId, reviewId])
 }
 
 model DeploymentEnvironment {
