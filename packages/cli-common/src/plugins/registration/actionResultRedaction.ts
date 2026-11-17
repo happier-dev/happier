@@ -1,6 +1,8 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectTargetActionDiagnosticIssue, type TargetActionDiagnosticConfidentiality } from './actionDiagnosticRedaction.js';
 
+const isJsonArray = (candidate: JsonValue): candidate is readonly JsonValue[] => Array.isArray(candidate);
+
 /**
  * Projects already-admitted JSON through the invocation's existing redactor.
  * Admission remains with the Action/MCP owner. An iterative work list preserves
@@ -19,7 +21,6 @@ export function redactPluginInvocationResultData(
     type PendingRedaction =
         | Readonly<{ kind: 'array'; source: readonly JsonValue[]; destination: JsonValue[]; path: readonly string[] }>
         | Readonly<{ kind: 'record'; source: Readonly<Record<string, JsonValue>>; destination: Record<string, JsonValue>; path: readonly string[] }>;
-    const isJsonArray = (candidate: JsonValue): candidate is readonly JsonValue[] => Array.isArray(candidate);
     const root: PendingRedaction = isJsonArray(value)
         ? { kind: 'array', source: value, destination: [], path: [] }
         : { kind: 'record', source: value, destination: {}, path: [] };
@@ -67,7 +68,7 @@ export function redactPluginInvocationResultData(
  * so the leaf becomes the plain text carrying the redacted string. Text leaves keep their shape.
  */
 function projectRedactedTypedLeaf(candidate: JsonValue, redact: (value: string) => string): JsonValue | undefined {
-    if (Array.isArray(candidate) || candidate === null || typeof candidate !== 'object') return undefined;
+    if (isJsonArray(candidate) || candidate === null || typeof candidate !== 'object') return undefined;
     const { type, value } = candidate;
     if (typeof type !== 'string' || typeof value !== 'string') return undefined;
     if (type === 'text' && Object.keys(candidate).length === 2) return undefined;
