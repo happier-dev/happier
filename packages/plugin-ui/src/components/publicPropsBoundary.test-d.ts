@@ -352,7 +352,9 @@ type _AuthorSelectionTilesPropKeysAreCurated = Assert<IsEqual<keyof SelectionTil
   | 'maximumColumns'
   | 'minimumTileWidth'
   | 'subtitleLines'
+  | 'descriptionPlacement'
   | 'renderOptionFooter'
+  | 'renderOptionAccessory'
   | 'accessibilityLabel'
   | 'accessibilityLabelKey'
   | 'testID'
@@ -375,6 +377,7 @@ type _AuthorSelectionTilesOptionKeysAreCurated = Assert<IsEqual<keyof SelectionT
   | 'testID'
   | 'preview'
   | 'previewEdge'
+  | 'span'
   | 'disabled'
 >>;
 
