@@ -56,6 +56,8 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
             ...(data.definitionId === undefined ? {} : { definitionId: data.definitionId }),
             consent: data.consent ?? { vendorRecipe: false },
             ...(data.force === undefined ? {} : { force: data.force }),
+            ...(actionId === 'machines.agents.install' && data.waitForTerminal !== undefined
+              ? { waitForTerminal: data.waitForTerminal } : {}),
           });
           return completeActionResult(await deps.machineAgentInstallStart({
             ...request, machineId: String(data.machineId),

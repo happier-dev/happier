@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
 import fastify from 'fastify';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -17,6 +18,73 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+it('returns the catalog terminal failure when a finite caller waits for installation', async () => {
+  const handlers = new Map<string, RpcHandler>();
+  const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [],
+    readRegistry: () => ({ agents: [{ id: 'fixture', runtimeSpec: { id: 'fixture', title: 'Fixture', binaryName: 'fixture',
+      sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none',
+      manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false } }] }) });
+  registerMachineAgentInstallJobRpcHandlers({ owner,
+    rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+  try {
+    const result = DaemonAgentInstallStartResponseSchema.parse(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({
+      agentId: 'fixture', intent: 'install', consent: { vendorRecipe: true }, waitForTerminal: true,
+    }));
+    expect(result).toMatchObject({ ok: false, errorCode: 'native_effect_failed',
+      details: { outcome: { kind: 'failed', code: 'install_not_available' } } });
+    expect(owner.list('custodian')).toMatchObject({ ok: true, jobs: [{ done: true,
+      outcome: { kind: 'failed', code: 'install_not_available' } }] });
+  } finally { await owner.shutdown(); }
+});
+
+it.skipIf(process.platform === 'win32')('cancels a waiting finite install through the existing catalog job signal', async () => {
+  const home = await createTempDir('happier-finite-agent-cancel-');
+  const handlers = new Map<string, RpcHandler>();
+  let downloading!: () => void;
+  const download = new Promise<void>(resolve => { downloading = resolve; });
+  const server = createServer((_request, response) => {
+    response.writeHead(200); response.write('partial'); downloading();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing catalog download fixture address');
+  const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [],
+    env: { HOME: home, HAPPIER_HOME_DIR: home, PATH: '' },
+    readRegistry: () => ({ agents: [{ id: 'fixture-cancel', runtimeSpec: {
+      id: 'fixture-cancel', title: 'Fixture cancel', binaryName: 'fixture-cancel', sourcePreferenceDefault: 'managed-first',
+      managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/cancel', binaryName: 'fixture-cancel' },
+      manualInstallKind: 'none', manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false,
+    } }] }),
+    // Only external release metadata is substituted; download, cancellation and cleanup stay real.
+    installerDeps: { fetchGitHubLatestRelease: async () => ({ assets: [{
+      name: `fixture-cancel-${process.platform}-${process.arch}`, browser_download_url: `http://127.0.0.1:${address.port}/binary`,
+      digest: `sha256:${'0'.repeat(64)}`,
+    }] }) },
+  });
+  const controller = new AbortController();
+  const context: RpcHandlerContext = { signal: controller.signal, verifyMachineAdmissionCurrent: async () => true,
+    machineAdmission: { actorAccountId: 'custodian', custodianAccountId: 'custodian', machineId: 'machine',
+      installationId: 'installation', role: 'manage', encryptionMode: 'plain' } };
+  registerMachineAgentInstallJobRpcHandlers({ owner,
+    rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+  try {
+    const waiting = handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture-cancel', intent: 'install',
+      consent: { vendorRecipe: true }, waitForTerminal: true }, context);
+    await Promise.race([download, Promise.resolve(waiting).then(result => {
+      throw new Error(`Finite install settled before its download: ${JSON.stringify(result)}`);
+    })]);
+    expect(owner.list('custodian')).toMatchObject({ ok: true, jobs: [{ done: false }] });
+    controller.abort();
+    expect(DaemonAgentInstallStartResponseSchema.parse(await waiting)).toMatchObject({ ok: false, errorCode: 'cancelled',
+      details: { outcome: { kind: 'failed', code: 'cancelled' } } });
+    expect(owner.list('custodian')).toMatchObject({ ok: true, jobs: [{ done: true, outcome: { code: 'cancelled' } }] });
+  } finally {
+    await owner.shutdown(); server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await removeTempDir(home);
+  }
+});
 
 it.each(['linux', 'darwin', 'win32'] as const)('admits member install with machine execution when separate users are off on %s', async platform => {
   const handlers = new Map<string, RpcHandler>();

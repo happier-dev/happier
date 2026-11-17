@@ -1,5 +1,10 @@
 import * as React from 'react';
 import { actionInputOptionValueKey } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
+import type { MachineSetupAgentOffer } from '@/components/settings/machines/managed/machineSetupItems';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import type { ActionFieldOption } from '@/components/sessions/actions/ActionInputFields';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { EMPTY_INPUT_OPTIONS, type InputFieldOptionsState } from '@/components/sessions/actions/inputFieldOptionsStore';
@@ -28,6 +33,31 @@ export function useMachineSetupRecipeOptions(target: StoreSoftwareTarget | null 
     const declarationTarget = React.useMemo(() => target ? { scope: target.scope, machine: null } : null, [target?.scope]);
     const admission = useInstalledScope({ scope: declarationTarget?.scope ?? null, machine: null });
     return useAdmittedMachineSetupRecipeOptions(declarationTarget, demand, admission);
+}
+
+/** Inert catalog choices use the captured Account's declarations, without Machine probes or installation. */
+export function useMachineSetupAgentOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand) {
+    const { scope } = useInstalledScope({ scope: target?.scope ?? null, machine: null });
+    const reader = usePluginAccountAvailabilityReader(scope, undefined, { enabled: demand.presented });
+    const held = React.useMemo<{ current: readonly MachineSetupAgentOffer[] | null }>(() => ({ current: null }),
+        [scope?.accountId, scope?.serverId]);
+    const offers = React.useMemo(() => {
+        if (!scope) return null;
+        if (!demand.presented) return held.current;
+        if (!reader || reader.readInstalledPlugins().kind !== 'available') return null;
+        const entries = new Map<string, MachineSetupAgentOffer>(getResolvedAgentCatalogEntries({ enabledAgentIds: [] }).map(entry => [entry.qualifiedId, {
+            agentId: entry.qualifiedId, title: entry.title, ...(entry.subtitle ? { description: entry.subtitle } : {}), icon: entry.iconName,
+        } satisfies MachineSetupAgentOffer]));
+        for (const selection of reader.readCurrentAccountExecutionDeclarations()) {
+            for (const agent of selection.manifest.contributes?.agents ?? []) {
+                const agentId = buildQualifiedPluginContributionKey({ pluginId: selection.manifest.id, localId: agent.id });
+                if (!entries.has(agentId)) entries.set(agentId, { agentId, title: resolvePluginLocalizedStringV2Text(agent.title),
+                    ...(agent.description ? { description: resolvePluginLocalizedStringV2Text(agent.description) } : {}) });
+            }
+        }
+        return held.current = retainDeep(held.current ?? [], [...entries.values()]);
+    }, [scope, reader, demand.presented, held]);
+    return { offers };
 }
 
 /** Installed already admitted its Account; recipe names consume that same lifetime. */

@@ -9,6 +9,7 @@ export type MachineAgentInstallActionInputById = {
         machineId: string;
         intent: 'install' | 'update';
         definitionId?: string | undefined;
+        waitForTerminal?: boolean | undefined;
         force?: boolean | undefined;
         consent?: undefined | {
             vendorRecipe: boolean;
@@ -33,6 +34,25 @@ export type MachineAgentInstallActionInputById = {
 export type MachineAgentInstallActionResultById = {
     readonly "machines.agents.install": {
         ok: false;
+        errorCode: 'cancelled' | 'native_effect_failed';
+        error: string;
+        details: {
+            jobId: string;
+            outcome: {
+                kind: 'failed';
+                code: 'archive_expanded_byte_limit' | 'cancelled' | 'consent_required' | 'download_failed' | 'in_use' | 'install_failed' | 'install_not_available' | 'not_managed' | 'rate_limited' | 'timeout' | 'unsupported_platform' | 'update_not_available' | 'verification_failed';
+                stepId: string;
+                message: string;
+                guideUrl?: string | undefined;
+                failureCause?: ActionFailureCauseV1 | undefined;
+            } | {
+                kind: 'succeeded';
+                version: null | string;
+                checksum?: 'not_published' | 'verified' | undefined;
+            };
+        };
+    } | {
+        ok: false;
         errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
     } | {
@@ -41,6 +61,25 @@ export type MachineAgentInstallActionResultById = {
         executionScope?: 'machine' | 'member' | undefined;
     };
     readonly "machines.agents.uninstall": {
+        ok: false;
+        errorCode: 'cancelled' | 'native_effect_failed';
+        error: string;
+        details: {
+            jobId: string;
+            outcome: {
+                kind: 'failed';
+                code: 'archive_expanded_byte_limit' | 'cancelled' | 'consent_required' | 'download_failed' | 'in_use' | 'install_failed' | 'install_not_available' | 'not_managed' | 'rate_limited' | 'timeout' | 'unsupported_platform' | 'update_not_available' | 'verification_failed';
+                stepId: string;
+                message: string;
+                guideUrl?: string | undefined;
+                failureCause?: ActionFailureCauseV1 | undefined;
+            } | {
+                kind: 'succeeded';
+                version: null | string;
+                checksum?: 'not_published' | 'verified' | undefined;
+            };
+        };
+    } | {
         ok: false;
         errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;

@@ -6,7 +6,7 @@ import {
   type MachineSetupPlanResultV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
-import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { isMachineSetupRecipeItemV1, type MachinePresetItemV1, type MachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupPresetReferenceV1, MachineSetupSourceEntryV1, MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -68,7 +68,7 @@ export type MachineSetupReviewIntent =
   | Readonly<{ kind: 'stop'; sourceKey: string; name: string }>
   | Readonly<{
       kind: 'remove';
-      item: Exclude<MachinePresetItemV1, { kind: 'app' }>;
+      item: MachineSetupRecipeItemV1;
     }>;
 
 type Prepared =
@@ -428,7 +428,7 @@ export function useMachineSetup(
 }
 export type MachineSetupState = ReturnType<typeof useMachineSetup>;
 
-type SetupItem = Exclude<MachinePresetItemV1, { kind: 'app' }>;
+type SetupItem = MachineSetupRecipeItemV1;
 type RecipeStatus = MachineSetupPlanResultV1['support'][number]['status'];
 export type MachineSetupRecipeRow = Readonly<{
     key: string;
@@ -489,7 +489,7 @@ export function readMachineSetupRecipes(
     const rows: MachineSetupRecipeRow[] = [];
     sources.forEach(({ source, sourceIndex, presetName }) => {
         (source.setup.items ?? []).forEach((item, itemIndex) => {
-            if (item.kind === 'app') return;
+            if (!isMachineSetupRecipeItemV1(item)) return;
             const ref = item.selection.ref;
             if (rows.some(row => sameRef(row.ref, ref))) return;
             const checked = plan.support.find(entry => entry.sourceIndex === sourceIndex && entry.itemIndex === itemIndex);

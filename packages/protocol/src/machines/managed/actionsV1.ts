@@ -1,5 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { GuestCliIdentityV1Schema } from '../../features/payload/capabilities/guestCliIdentityV1.js';
+import { MachinesAgentsInstallInputSchema } from '../../daemon/agentInstallJobs.js';
 export * from './managedInstallationV1.js';
 export { waitForMachineSetupOperationV1 } from '../setup/waitForMachineSetupOperationV1.js';
 import * as mini from '../../zodRuntimePolicy.js';
@@ -123,6 +124,8 @@ export type MachineSetupRemovalPlanV1 = z.infer<typeof MachineSetupRemovalPlanV1
  * deploymentActionsV1 has initialized when it loads Machine setup back.
  */
 export const MachineSetupAppChildV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+  z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('machines.agents.install'),
+    input: MachinesAgentsInstallInputSchema }),
   z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.environments.create'),
     input: deploymentActions.DeploymentEnvironmentCreateInputV1Schema }),
   z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.templates.instantiate'),

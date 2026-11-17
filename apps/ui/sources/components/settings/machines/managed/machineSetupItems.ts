@@ -7,10 +7,11 @@ import { listMachineSetupAdaptersV1, type BuiltinNativeToolchainAdapterV1 } from
 type Items = readonly MachinePresetItemV1[];
 export type MachineSetupItemKind = MachinePresetItemV1['kind'];
 
-/** Apply order the editor presents: setup and software first, then apps. */
+/** Apply order the editor presents: setup, software, Agents, then Apps. */
 const GROUP_ORDER: readonly MachineSetupItemKind[] = [
   'setupRecipe',
   'softwareRecipe',
+  'agent',
   'app',
 ];
 
@@ -101,6 +102,9 @@ export function machineSetupAdapters(): readonly BuiltinNativeToolchainAdapterV1
   return [...byId.values()];
 }
 
+/** Catalog Agent identity and presentation for inert preset authoring. */
+export type MachineSetupAgentOffer = Readonly<{ agentId: string; title: string; description?: string; icon?: string }>;
+
 /** Declared Setup recipes an item is named from: native value, title, purpose and mark. */
 export type MachineSetupRecipeOffer = Readonly<{ value: InputOptionValue; label: string; description?: string | null; icon?: string }>;
 
@@ -117,8 +121,15 @@ const sameRecipe = (value: InputOptionValue, ref: MachineRecipeReferenceV1) => !
 export function machineSetupItemPresentation(
   item: MachinePresetItemV1,
   offers: readonly MachineSetupRecipeOffer[] | null,
+  agents: readonly MachineSetupAgentOffer[] | null = null,
 ): Readonly<{ title: string; description?: string; icon?: string; offered: boolean | null }> {
   if (item.kind === 'app') return { title: item.definition.name, offered: null };
+  if (item.kind === 'agent') {
+    const offer = agents?.find(agent => agent.agentId === item.agentId);
+    return offer ? { title: offer.title, ...(offer.description ? { description: offer.description } : {}),
+      ...(offer.icon ? { icon: offer.icon } : {}), offered: true }
+      : { title: item.agentId, offered: agents === null ? null : false };
+  }
   const ref = item.selection.ref;
   if (!offers) return { title: ref.recipeId, offered: null };
   const exact = offers.find((offer) => isSameActionInputOptionValue(offer.value, ref));
@@ -128,9 +139,9 @@ export function machineSetupItemPresentation(
 }
 
 const itemIdentity = (item: MachinePresetItemV1) => item.kind === 'app'
-  ? readMachineSetupAppIdentityV1(item) : readMachineSetupRecipeIdentityV1(item.selection.ref);
+  ? readMachineSetupAppIdentityV1(item) : item.kind === 'agent' ? `agent:${item.agentId}` : readMachineSetupRecipeIdentityV1(item.selection.ref);
 
-/** Recipe revisions and App pins retain one identity in the preset's single item list. */
+/** Recipes, Agents and App pins retain one identity in the preset's single item list. */
 export function containsMachineSetupItem(setup: MachineSetupV1 | undefined, item: MachinePresetItemV1): boolean {
   const identity = itemIdentity(item);
   return identity !== undefined && (setup?.items ?? []).some(entry => itemIdentity(entry) === identity);

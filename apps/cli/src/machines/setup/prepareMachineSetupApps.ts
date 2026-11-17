@@ -25,6 +25,9 @@ export type MachineSetupAppPreparationHost = Readonly<{
   readAppRuntime?(context: ActionExecutorContext): AppRuntime | null;
 }>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+const agentInstallInput = (machineId: string, agentId: string) => ({
+  machineId, agentId, intent: 'install' as const, waitForTerminal: true, consent: { vendorRecipe: true },
+});
 
 async function observeApps(input: MachineSetupLocalPlanInputV1, plan: MachineSetupLocalPlanResultV1,
   context: ActionExecutorContext, host: MachineSetupAppPreparationHost): Promise<AppObservation[]> {
@@ -71,6 +74,9 @@ async function prepareApp(input: MachineSetupLocalPlanInputV1, plan: MachineSetu
   child: MachineSetupAppChildV1, context: ActionExecutorContext, host: MachineSetupAppPreparationHost):
   Promise<MachineSetupAppReviewV1 | ActionExecuteFailure | null> {
   const item = plan.sources[child.sourceIndex]?.setup.items?.[child.itemIndex];
+  if (child.actionId === 'machines.agents.install') return item?.kind === 'agent'
+    && sameStrictJsonValue(child.input, agentInstallInput(input.machineId, item.agentId))
+    ? null : failure('machine_setup_app_plan_changed');
   if (item?.kind !== 'app' || child.input.serverId !== input.homeId) return failure('machine_setup_app_plan_changed');
   if (child.actionId === 'deployments.templates.instantiate') {
     const selected = child.input;
@@ -137,6 +143,16 @@ export async function prepareMachineSetupApps(input: MachineSetupLocalPlanInputV
   context: ActionExecutorContext, host: MachineSetupAppPreparationHost): Promise<MachineSetupLocalPlanResultV1 | ActionExecuteFailure> {
   const apps = await observeApps(input, plan, context, host);
   if (context.signal?.aborted) return failure('cancelled');
+  const agentIds = new Set<string>();
+  const agents = plan.sources.flatMap((source, sourceIndex) => (source.setup.items ?? []).flatMap((item, itemIndex) => {
+    if (item.kind !== 'agent' || agentIds.has(item.agentId)) return [];
+    agentIds.add(item.agentId);
+    return [{ sourceIndex, itemIndex, agentId: item.agentId }];
+  }));
+  const candidates = [...apps, ...agents].sort((a, b) => a.sourceIndex - b.sourceIndex || a.itemIndex - b.itemIndex);
+  const address = (value: { sourceIndex: number; itemIndex: number }) => `${value.sourceIndex}:${value.itemIndex}`;
+  const positions = new Map(candidates.map((candidate, index) => [address(candidate), index]));
+  const effects = new Set([...apps.filter(app => app.kind === 'new'), ...agents].map(address));
   const children: MachineSetupAppChildV1[] = [...input.appChildren ?? []];
   if (input.mode === 'effects' && input.appChildren === undefined) {
     for (const app of apps.filter(app => app.kind === 'new')) {
@@ -162,18 +178,20 @@ export async function prepareMachineSetupApps(input: MachineSetupLocalPlanInputV
       children.push({ sourceIndex: app.sourceIndex, itemIndex: app.itemIndex,
         actionId: 'deployments.templates.instantiate', input: selected });
     }
+    for (const agent of agents) children.push({ sourceIndex: agent.sourceIndex, itemIndex: agent.itemIndex,
+      actionId: 'machines.agents.install', input: agentInstallInput(input.machineId, agent.agentId) });
+    children.sort((a, b) => a.sourceIndex - b.sourceIndex || a.itemIndex - b.itemIndex);
   }
   let prior = -1;
   for (const child of children) {
-    const index = apps.findIndex(app => app.sourceIndex === child.sourceIndex && app.itemIndex === child.itemIndex);
+    const index = positions.get(address(child)) ?? -1;
     if (index <= prior) return failure('machine_setup_app_plan_changed');
     prior = index;
   }
-  const executable = input.mode === 'effects' ? children.filter(child => apps.some(app => app.kind === 'new'
-    && app.sourceIndex === child.sourceIndex && app.itemIndex === child.itemIndex)) : [];
+  const executable = input.mode === 'effects' ? children.filter(child => effects.has(address(child))) : [];
   if ((input.appChildren !== undefined || context.externalActionExecutionAuthorization?.binding.actionId === 'machines.setup.apply')
     && input.mode === 'effects'
-    && apps.filter(app => app.kind === 'new').length !== executable.length) return failure('machine_setup_app_preparation_unavailable');
+    && effects.size !== executable.length) return failure('machine_setup_app_preparation_unavailable');
   const reviews: MachineSetupAppReviewV1[] = [];
   for (const child of executable) {
     const prepared = await prepareApp(input, plan, child, context, host);
@@ -182,8 +200,12 @@ export async function prepareMachineSetupApps(input: MachineSetupLocalPlanInputV
   }
   if (context.signal?.aborted) return failure('cancelled');
   const preparedApps = new Set(reviews.map(app => `${app.sourceIndex}:${app.itemIndex}`));
+  const preparedAgents = new Set(executable.flatMap(child => child.actionId === 'machines.agents.install' ? [child.input.agentId] : []));
   return { ...plan, ...(input.appChildren === undefined && !children.length ? {} : { appChildren: executable, appReviews: reviews }),
-    support: plan.support.map(entry => preparedApps.has(`${entry.sourceIndex}:${entry.itemIndex}`)
-      ? { sourceIndex: entry.sourceIndex, itemIndex: entry.itemIndex, status: 'drifted' as const } : entry),
+    support: plan.support.map(entry => {
+      const item = plan.sources[entry.sourceIndex]?.setup.items?.[entry.itemIndex];
+      return preparedApps.has(address(entry)) || item?.kind === 'agent' && preparedAgents.has(item.agentId)
+        ? { sourceIndex: entry.sourceIndex, itemIndex: entry.itemIndex, status: 'drifted' as const } : entry;
+    }),
     ...(plan.review ? { review: { ...plan.review, apps } } : {}) };
 }

@@ -65,11 +65,17 @@ it('names Software and attached recipes from Account declarations without requir
       packageAssets: [],
       uiArtifacts: [],
     });
+    const { PLUGIN_MANIFEST: qwenManifest } = await import('../../../../../../packages/plugins/qwen/src/manifest');
+    const agentManifest = { ...qwenManifest, id: 'example.preset-agent' };
+    const agentResponse = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...response,
+      intent: { ...response.intent, pluginId: agentManifest.id, desiredVersion: agentManifest.version },
+      release: { ...response.release, ref: { pluginId: agentManifest.id, version: agentManifest.version }, normalizedManifest: agentManifest },
+    });
     replacePluginAccountAvailabilityProjection({
       scope: account.accountLifetime.scope,
       snapshot: {
         availabilityCursor: 1,
-        intentReads: [{ pluginId: PLUGIN_MANIFEST.id, response }],
+        intentReads: [{ pluginId: PLUGIN_MANIFEST.id, response }, { pluginId: agentManifest.id, response: agentResponse }],
         materializations: [],
         snapshots: [],
       },
@@ -112,6 +118,20 @@ it('names Software and attached recipes from Account declarations without requir
       await flushHookEffects();
       expect(mounted.getCurrent().recipe.state).toBe(ready);
       expect(machineReads).toBe(0);
+      // The same captured Account declares selectable Agents without requiring a Machine.
+      const { useMachineSetupAgentOptions } = await import('./storeSoftware');
+      const agents = await renderHook(() => useMachineSetupAgentOptions(target, { presented: true }));
+      try {
+        expect(agents.getCurrent().offers).toEqual(expect.arrayContaining([
+          expect.objectContaining({ agentId: 'example.preset-agent/qwen', title: expect.any(String) }),
+        ]));
+        const selected = agents.getCurrent().offers!.find(offer => offer.agentId === 'example.preset-agent/qwen')!;
+        const { addMachineSetupItem } = await import('@/components/settings/machines/managed/machineSetupItems');
+        expect(addMachineSetupItem(undefined, { kind: 'agent', agentId: selected.agentId })).toEqual({ ok: true,
+          setup: { items: [{ kind: 'agent', agentId: selected.agentId }] } });
+        expect(machineReads).toBe(0);
+      } finally { await agents.unmount(); }
+
     } finally {
       await mounted.unmount();
     }

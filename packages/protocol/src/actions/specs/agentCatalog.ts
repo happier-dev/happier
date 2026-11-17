@@ -9,7 +9,7 @@ import { AgentsAcpBackendsDeleteInputV1Schema, AgentsAcpBackendsDeleteOutputV1Sc
 import { z } from '../../zodRuntimePolicy.js';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD, MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStartOutputSchema, MachinesAgentsSignInStatusInputSchema, AgentSignInStatusResponseSchema, MachinesAgentsSignInCancelInputSchema, MachinesAgentsSignInCancelOutputSchema } from '../../daemon/agentSignIn.js';
 import { MachinesAgentsListInputSchema, MachinesAgentsListOutputSchema } from '../../capabilities/machineAgentInventory.js';
-import { AgentAcquireJobIntentSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema } from '../../daemon/agentInstallJobs.js';
+import { AgentAcquireJobIntentSchema, MachinesAgentsInstallInputSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema } from '../../daemon/agentInstallJobs.js';
 import { AcpBackendApprovalInputSchema, projectAcpBackendApprovalInput } from './acpBackendApproval.js';
 import { AgentsBackendsListOutputSchema } from '../agentBackendInventory.js';
 import { BackendTargetKeySchema } from '../../backends/targets/backendTargetRef.js';
@@ -271,15 +271,7 @@ function createAgentCatalogActionSpecs() {
     placements: [],
     bindings: { mcpToolName: 'machines_agents_install', sdkMethod: 'machines.agents.install.start', rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_START },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: lazyZodSchema(() => z.extend(z.omit(DaemonAgentInstallStartRequestSchema, { expectedDefinitionVersion: true }), {
-      machineId: z.string().check(z.minLength(1)),
-      intent: AgentAcquireJobIntentSchema,
-      consent: z.optional(DaemonAgentInstallStartRequestSchema.shape.consent),
-    }).check(z.overwrite(input => ({ ...input,
-      // The install approval covers the vendor installer. Normalize before
-      // review so its captured operand and admitted job carry the same consent.
-      consent: { vendorRecipe: true },
-    })))),
+    inputSchema: MachinesAgentsInstallInputSchema,
     outputSchema: DaemonAgentInstallStartResponseSchema,
     cli: { acceptsServerId: true, inputSchema: MachineAgentInstallCliInputSchema,
       flagAliases: [{ path: 'machineId', aliases: ['--machine'] }],

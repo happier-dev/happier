@@ -74,11 +74,21 @@ export const DaemonAgentInstallStartRequestSchema = lazyZodSchema(() => z.strict
   intent: AgentInstallJobIntentSchema,
   consent: AgentInstallJobConsentSchema,
   force: z.optional(z.boolean()),
+  /** Finite callers keep the admitted call open until the catalog job settles. */
+  waitForTerminal: z.optional(z.boolean()),
 }));
+/** One Action operand shared by direct installation and Machine Setup children. */
+export const MachinesAgentsInstallInputSchema = lazyZodSchema(() => z.extend(
+  z.omit(DaemonAgentInstallStartRequestSchema, { expectedDefinitionVersion: true }), {
+    machineId: z.string().check(z.minLength(1)), intent: AgentAcquireJobIntentSchema,
+    consent: z.optional(AgentInstallJobConsentSchema),
+  }).check(z.overwrite(input => ({ ...input, consent: { vendorRecipe: true } }))));
 export const DaemonAgentInstallStartResponseSchema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), jobId: z.string().check(z.minLength(1)),
     executionScope: AgentInstallJobSchema.shape.executionScope }),
   DaemonAgentInstallErrorSchema,
+  z.strictObject({ ok: z.literal(false), errorCode: z.enum(['native_effect_failed', 'cancelled']), error: z.string(),
+    details: z.strictObject({ jobId: z.string().check(z.minLength(1)), outcome: AgentInstallJobOutcomeSchema }) }),
 ]));
 export const DaemonAgentInstallReadRequestSchema = lazyZodSchema(() => z.strictObject({
   jobId: z.string().check(z.minLength(1)), cursor: z.number().check(z.int(), z.nonnegative()),

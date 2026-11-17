@@ -117,7 +117,8 @@ export async function prepareMachineSetupAcceptedAppRuns(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<MachineSetupSourceFactsMapV1 | null> {
   const facts: MachineSetupSourceFactsMapV1 = {};
-  if (!params.input.appChildren?.length) return facts;
+  const appChildren = params.input.appChildren?.filter(child => child.actionId !== 'machines.agents.install');
+  if (!appChildren?.length) return facts;
   const authorization = params.context.externalActionExecutionAuthorization;
   const account = authorization?.requesterAccountProjection;
   const executor = authorization?.requesterAccountExecutor;
@@ -138,7 +139,7 @@ export async function prepareMachineSetupAcceptedAppRuns(params: Readonly<{
     const readSource = setupSourceReader(params.localSources);
     // One authenticated Run read covers every reviewed app in this settlement.
     // Native stage preparation already rejects duplicate canonical app intents.
-    for (const child of params.input.appChildren) {
+    for (const child of appChildren) {
       const source = readSource(params.input.sources[child.sourceIndex]);
       const item = source?.setup.items?.[child.itemIndex];
       if (item?.kind !== 'app') return null;

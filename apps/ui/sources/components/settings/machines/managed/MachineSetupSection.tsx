@@ -463,6 +463,7 @@ function MachineSetupAppAddresses(props: Readonly<{
 export const MACHINE_SETUP_ITEM_GROUP_TITLE = {
   setupRecipe: 'machinePresets.setup.itemsGroupSetup',
   softwareRecipe: 'machinePresets.setup.itemsGroupSoftware',
+  agent: 'settingsAgents.title',
   app: 'machinePresets.setup.itemsGroupApps',
 } as const satisfies Record<MachineSetupItemKind, string>;
 
@@ -472,6 +473,7 @@ export function machineSetupItemReadRow(item: MachinePresetItemV1, presented: Re
   const title = presented.title;
   return {
     icon: <StoreItemMark size={20} facts={item.kind === 'app' ? { kind: 'app', title }
+      : item.kind === 'agent' ? { kind: 'agent', title, iconToken: presented.icon ?? null }
       : { kind: 'software', title, bundledPluginId: item.selection.ref.pluginId, iconToken: presented.icon ?? null }} />,
     title,
     // An App's saved addresses follow where it lives, so a read-only preset still says where the App is reached.

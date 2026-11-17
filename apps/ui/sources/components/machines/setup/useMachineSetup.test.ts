@@ -144,3 +144,14 @@ describe('readMachineSetupRecipes', () => {
     ).toHaveLength(0);
   });
 });
+
+
+it('keeps Agent preset items out of recipe readers without losing adjacent recipes', () => {
+  const agent = { kind: 'agent' as const, agentId: 'acme.coding/reviewer' };
+  const source = { kind: 'direct' as const, setup: { items: [agent, item(docker)] } };
+  const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 1, exclusions: [], sources: [source],
+    support: [{ sourceIndex: 0, itemIndex: 1, status: 'satisfied' }] });
+  expect(readMachineSetupRecipes(plan, [{ sourceIndex: 0, source }], null)).toMatchObject([
+    { key: '0.1', item: item(docker), ref: docker, status: 'satisfied' },
+  ]);
+});

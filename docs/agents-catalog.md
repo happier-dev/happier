@@ -2381,6 +2381,16 @@ the configured Action approval policy. Direct low-level installer calls retain
 their explicit consent requirement. Terminal observation uses the same status
 and cancellation Actions rather than a second local install-job client.
 
+In development source, Machine Setup presets declare catalog Agents with
+`{ kind: 'agent', agentId }`. The target Plan lowers each distinct Agent to a
+`machines.agents.install` child in the existing combined Run, using the same
+catalog and vendor-recipe approval operand as a direct install. These finite
+children set `waitForTerminal: true`: the admitted START call waits on its local
+job owner and returns a typed catalog failure or cancellation when the job
+settles. The containing Run therefore observes installation failure rather than
+success at job creation. Cancellation signals the existing job owner; this adds
+no separate installer, job store, or recovery service.
+
 Jobs and their recent history live in daemon memory. Closing an app surface or disconnecting
 its caller does not own the running operation. The module-scope app store in
 `apps/ui/sources/agents/machineAgents/installJobs/` keeps subscriptions, admission and cursor

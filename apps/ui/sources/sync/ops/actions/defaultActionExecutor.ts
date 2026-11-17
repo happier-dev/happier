@@ -4013,10 +4013,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return await executeAgentSignInLifecycle({ machineId, serverId: accountContext.serverId, agentId,
         lifetime: accountContext.accountLifetime, signal }, 'restart', terminalId);
     },
-    machineAgentInstallStart: async ({ machineId, signal, ...request }) => {
+    machineAgentInstallStart: async ({ machineId, signal, context, ...request }) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       accountContext.assertCurrent();
       throwIfAborted(signal);
+      if (request.waitForTerminal) {
+        if (!context) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+        const result = await executeMachineOwnedAction({ actionId: 'machines.agents.install', context,
+          input: { machineId, agentId: request.agentId, intent: request.intent, consent: request.consent,
+            ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }),
+            ...(request.force === undefined ? {} : { force: request.force }), waitForTerminal: true } });
+        return readActionFailureEnvelope(result) ?? DaemonAgentInstallStartResponseSchema.parse(result);
+      }
       const scope = accountContext.accountLifetime.scope;
       const item = request.intent === 'update' && request.definitionId === undefined
         ? readCurrentMachineUpdateItem(scope, machineId, { kind: 'agent-cli', agentId: request.agentId }) : null;

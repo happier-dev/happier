@@ -29,7 +29,8 @@ export { buildMachineSetupTargetApplyInput } from '@happier-dev/protocol/machine
 /** Authored apps and their reviewed children both require the Setup app flow. */
 export function machineSetupTargetHasApps(target: MachineSetupApplyTargetV1): boolean {
   return Boolean(target.appChildren?.length)
-    || target.sources.some(source => source.kind !== 'accountPresetOpaque' && source.setup.items?.some(item => item.kind === 'app'));
+    || target.sources.some(source => source.kind !== 'accountPresetOpaque'
+      && source.setup.items?.some(item => item.kind === 'app' || item.kind === 'agent'));
 }
 
 /** Resolve native placement from the admitted exact leaf or the incumbent Run owner. */

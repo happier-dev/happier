@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { isMachineSetupRecipeItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { omitBlankSoftwareInputs, SoftwareInputFields } from '@/components/store/StoreSoftwareInputs';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
@@ -34,7 +34,7 @@ export function MachineSetupRecipeInputs(props: Readonly<{
         <SectionContentRow><SoftwareInputFields fields={row.fields} draft={row.input} testID={`${props.testID}.${row.index}`}
             pickerContext={pickerContext}
             onPatch={patch => props.onChange({ ...props.setup, items: props.setup.items?.map((item, index) =>
-                index !== row.index || item.kind === 'app' ? item : { ...item, selection: { ...item.selection,
+                index !== row.index || !isMachineSetupRecipeItemV1(item) ? item : { ...item, selection: { ...item.selection,
                     inputs: omitBlankSoftwareInputs({ ...row.input, ...patch }) ?? {},
                 } }) })} /></SectionContentRow>
     </ItemGroup>)}</>;

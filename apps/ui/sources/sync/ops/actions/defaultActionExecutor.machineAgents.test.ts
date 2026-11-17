@@ -509,6 +509,23 @@ describe('UI machine Agent inventory Action transport', () => {
             definitionId: 'registry-definition' })?.jobId).toBe('registry-job');
     });
 
+    it('retains a finite catalog install failure through the exact Home Action receiver', async () => {
+        const serverId = await addHome({ name: 'Finite Install Home', serverUrl: 'https://finite-install.test', accountId: 'alice',
+            serverIdentityId: 'srv_finite_install', currentAccount: true });
+        const refusal = { ok: false as const, errorCode: 'native_effect_failed', error: 'Agent installation failed.',
+            details: { jobId: 'finite-job', outcome: { kind: 'failed', code: 'rate_limited', stepId: 'cli.acme/helper',
+                message: 'External download refused.' } } };
+        harness.answer(serverId, '/v1/actions/machines.agents.install', { select: body => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            expect(request.input).toMatchObject({ machineId: 'machine-1', agentId: 'acme/helper',
+                intent: 'install', waitForTerminal: true, consent: { vendorRecipe: true } });
+            return { body: { v: 1, actionId: 'machines.agents.install', requestId: request.requestId, execution: refusal } };
+        } });
+        expect(await createDefaultActionExecutor().execute('machines.agents.install', {
+            machineId: 'machine-1', agentId: 'acme/helper', intent: 'install', waitForTerminal: true,
+        }, { surface: 'ui', authority: 'present_user', serverId })).toMatchObject(refusal);
+    });
+
     it.each(['install', 'update'] as const)('starts a %s job on the captured Home with explicit vendor consent', async (intent) => {
         const serverId = await addHome({ name: 'Setup Home', serverUrl: 'https://setup.test', accountId: 'alice',
             serverIdentityId: 'srv_install_observation', currentAccount: true });

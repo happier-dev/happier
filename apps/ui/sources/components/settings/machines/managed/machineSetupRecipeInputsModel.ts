@@ -1,4 +1,4 @@
-import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { isMachineSetupRecipeItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { machineRecipeInputConstraintsSatisfiedV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { compilePluginJsonSchema, describePluginJsonSchemaValueIssues, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
@@ -10,7 +10,7 @@ export function readMachineSetupRecipeInputState(setup: MachineSetupV1, projecti
     options: Readonly<{ suppliedInputKeys?: readonly string[] }> = {}) {
     const supplied = new Set(options.suppliedInputKeys);
     const rows = (setup.items ?? []).flatMap((item, index) => {
-        if (item.kind === 'app') return [];
+        if (!isMachineSetupRecipeItemV1(item)) return [];
         const ref = item.selection.ref;
         const recipe = projection?.machineRecipesById[`${ref.pluginId}/${ref.recipeId}`];
         if (!recipe || recipe.definition.revision !== ref.revision) return [];

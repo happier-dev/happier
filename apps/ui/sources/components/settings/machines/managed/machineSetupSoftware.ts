@@ -1,5 +1,5 @@
 import { MachineSetupCombinedPlanResultV1Schema, MachineSetupRemoveInputV1Schema, type MachineSetupCombinedPlanResultV1, type MachineSetupPlanUnavailableTargetV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { isMachineSetupRecipeItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { machineSetupItemKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -50,7 +50,7 @@ export async function prepareMachineSetupSoftwareApplyInput(params: SoftwarePlan
     const targets: MachineSetupReviewTarget[] = [];
     const unavailableTargets: MachineSetupPlanUnavailableTargetV1[] = [];
     const detaching = params.intent === 'remove';
-    const detachedKeys = new Set(detaching ? (params.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)]) : []);
+    const detachedKeys = new Set(detaching ? (params.setup.items ?? []).filter(isMachineSetupRecipeItemV1).map(machineSetupItemKeyV1) : []);
     for (const target of params.targets) {
         const row = observed.plan.targets.find(row => row.homeId === target.homeId && row.machineId === target.machineId);
         if (!row) return fail('managed_response_invalid');
@@ -60,11 +60,11 @@ export async function prepareMachineSetupSoftwareApplyInput(params: SoftwarePlan
         // retained and reviewed by the keyholding resolver after resolve.
         const attachedKeys = new Set(detaching ? plan.sources.flatMap(source =>
             source.kind === 'direct' || source.kind === 'accountPresetOpaque' ? []
-                : (source.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)])) : []);
+                : (source.setup.items ?? []).filter(isMachineSetupRecipeItemV1).map(machineSetupItemKeyV1)) : []);
         const sources = plan.sources.map(source => {
             if (source.kind !== 'direct') return source;
             if (detaching) return { ...source, setup: { ...source.setup,
-                items: (source.setup.items ?? []).filter(item => item.kind === 'app' || !detachedKeys.has(machineSetupItemKeyV1(item))
+                items: (source.setup.items ?? []).filter(item => !isMachineSetupRecipeItemV1(item) || !detachedKeys.has(machineSetupItemKeyV1(item))
                     || attachedKeys.has(machineSetupItemKeyV1(item))) } };
             const items = [...source.setup.items ?? []];
             for (const item of params.setup.items ?? []) if (!items.some(existing => sameStrictJsonValue(existing, item))) items.push(item);

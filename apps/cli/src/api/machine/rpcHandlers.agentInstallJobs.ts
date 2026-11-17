@@ -41,6 +41,23 @@ export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerMa
     }) : undefined;
     if (executeMember === null) return memberUnavailable;
     const account = accountId ? { accountId, ...(executeMember ? { executeMember } : {}) } : undefined;
+    const start = async (selectedAccount: Parameters<AgentInstallJobOwner['start']>[1] = account) => {
+      const started = owner.start(parsed.data, selectedAccount);
+      if (!started.ok || !parsed.data.waitForTerminal) return started;
+      // This is still the admitted install call. Read/cancel the owner's exact
+      // job locally, without another transport admission or permission decision.
+      const cancel = () => { void owner.cancel({ jobId: started.jobId }, accountId ?? undefined); };
+      context?.signal.addEventListener('abort', cancel, { once: true });
+      if (context?.signal.aborted) cancel();
+      try {
+        const terminal = await owner.read({ jobId: started.jobId, cursor: 0, waitForTerminal: true }, accountId ?? undefined);
+        if (!terminal.ok) return terminal;
+        if (terminal.outcome?.kind === 'failed') return { ok: false as const,
+          errorCode: terminal.outcome.code === 'cancelled' ? 'cancelled' as const : 'native_effect_failed' as const,
+          error: terminal.outcome.message, details: { jobId: started.jobId, outcome: terminal.outcome } };
+        return started;
+      } finally { context?.signal.removeEventListener('abort', cancel); }
+    };
     if (parsed.data.definitionId !== undefined) {
       if (!accountId) return unavailable;
       if (accountId !== context!.machineAdmission!.custodianAccountId) {
@@ -52,7 +69,7 @@ export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerMa
           credentials: operation.credentials, operationContext: operation, signal: context?.signal,
         }));
         if (catalog.status !== 'ready' || !await operation.isCurrent() || await admittedAccount(context) !== accountId) return unavailable;
-        return owner.start(parsed.data, { ...account!, catalog });
+        return start({ ...account!, catalog });
       }
       if (parsed.data.intent !== 'uninstall') {
         // Registry Add writes the Account row before START. The custodian's
@@ -63,10 +80,10 @@ export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerMa
           || getActiveAccountSettingsSnapshot()?.scopeKey !== resolveAccountSettingsScopeKey(credentials)) return unavailable;
         const catalog = await refreshDaemonAcpCatalog({ credentials, signal: context?.signal });
         if (await admittedAccount(context) !== accountId) return unavailable;
-        return owner.start(parsed.data, { ...account!, catalog });
+        return start({ ...account!, catalog });
       }
     }
-    return owner.start(parsed.data, account);
+    return start();
   });
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, async (raw: unknown, context?: RpcHandlerContext) => {
     const parsed = DaemonAgentInstallReadRequestSchema.safeParse(raw);

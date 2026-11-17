@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { MachinePresetItemV1Schema, type MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import {
   addMachineSetupSoftware,
+  addMachineSetupItem,
+  containsMachineSetupItem,
   groupMachineSetupItems,
   machineSetupItemPresentation,
   moveMachineSetupItem,
@@ -153,5 +155,27 @@ describe('addMachineSetupSoftware', () => {
     const setup = { items: [recipe('softwareRecipe', 'google-chrome')] };
     expect(addMachineSetupSoftware(setup, ref)).toEqual({ ok: false, reason: 'contains' });
     expect(addMachineSetupSoftware(setup, { ...ref, revision: '9' })).toEqual({ ok: false, reason: 'contains' });
+  });
+});
+
+
+describe('catalog Agent preset items', () => {
+  const agent = { kind: 'agent' as const, agentId: 'acme.coding/reviewer' };
+
+  it('keeps Agent rows in the ordered draft and identifies them separately from recipes', () => {
+    const setup = { items: [recipe('softwareRecipe', 'node'), agent, app('Analytics')], scripts: [{ body: 'echo retained' }] };
+    expect(groupMachineSetupItems(setup.items).map(group => [group.kind, group.rows.map(row => row.index)]))
+      .toEqual([['softwareRecipe', [0]], ['agent', [1]], ['app', [2]]]);
+    expect(containsMachineSetupItem(setup, agent)).toBe(true);
+    expect(addMachineSetupItem(setup, agent)).toEqual({ ok: false, reason: 'contains' });
+    expect(addMachineSetupItem({ scripts: setup.scripts }, agent)).toEqual({ ok: true,
+      setup: { scripts: setup.scripts, items: [agent] } });
+  });
+
+  it('names a selected Agent from its catalog offer and retains its identity when the offer is absent', () => {
+    const offer = { agentId: agent.agentId, title: 'Reviewer', description: 'Reviews code', icon: 'robot' };
+    expect(machineSetupItemPresentation(agent, null, [offer])).toEqual({ title: 'Reviewer', description: 'Reviews code', icon: 'robot', offered: true });
+    expect(machineSetupItemPresentation(agent, null, [])).toEqual({ title: agent.agentId, offered: false });
+    expect(machineSetupItemPresentation(agent, null, null)).toEqual({ title: agent.agentId, offered: null });
   });
 });

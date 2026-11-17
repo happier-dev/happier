@@ -5111,6 +5111,21 @@ export type ManagedMachinesActionInputById = {
                     requestKey: string;
                 };
             };
+        } | {
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'machines.agents.install';
+            input: {
+                agentId: string;
+                machineId: string;
+                intent: 'install' | 'update';
+                definitionId?: string | undefined;
+                waitForTerminal?: boolean | undefined;
+                force?: boolean | undefined;
+                consent?: undefined | {
+                    vendorRecipe: boolean;
+                };
+            };
         })[] | undefined;
         updates?: undefined | {
             scope: 'all' | 'security';
@@ -5732,6 +5747,21 @@ export type ManagedMachinesActionInputById = {
                     companions?: string[] | undefined;
                     deploy?: undefined | {
                         requestKey: string;
+                    };
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'machines.agents.install';
+                input: {
+                    agentId: string;
+                    machineId: string;
+                    intent: 'install' | 'update';
+                    definitionId?: string | undefined;
+                    waitForTerminal?: boolean | undefined;
+                    force?: boolean | undefined;
+                    consent?: undefined | {
+                        vendorRecipe: boolean;
                     };
                 };
             })[] | undefined;
@@ -8267,6 +8297,21 @@ export type ManagedMachinesActionInputById = {
                     companions?: string[] | undefined;
                     deploy?: undefined | {
                         requestKey: string;
+                    };
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'machines.agents.install';
+                input: {
+                    agentId: string;
+                    machineId: string;
+                    intent: 'install' | 'update';
+                    definitionId?: string | undefined;
+                    waitForTerminal?: boolean | undefined;
+                    force?: boolean | undefined;
+                    consent?: undefined | {
+                        vendorRecipe: boolean;
                     };
                 };
             })[] | undefined;
@@ -31455,6 +31500,21 @@ export type ManagedMachinesActionResultById = {
                     requestKey: string;
                 };
             };
+        } | {
+            sourceIndex: number;
+            itemIndex: number;
+            actionId: 'machines.agents.install';
+            input: {
+                agentId: string;
+                machineId: string;
+                intent: 'install' | 'update';
+                definitionId?: string | undefined;
+                waitForTerminal?: boolean | undefined;
+                force?: boolean | undefined;
+                consent?: undefined | {
+                    vendorRecipe: boolean;
+                };
+            };
         })[] | undefined;
         appReviews?: undefined | {
             sourceIndex: number;
@@ -35350,6 +35410,21 @@ export type ManagedMachinesActionResultById = {
                             requestKey: string;
                         };
                     };
+                } | {
+                    sourceIndex: number;
+                    itemIndex: number;
+                    actionId: 'machines.agents.install';
+                    input: {
+                        agentId: string;
+                        machineId: string;
+                        intent: 'install' | 'update';
+                        definitionId?: string | undefined;
+                        waitForTerminal?: boolean | undefined;
+                        force?: boolean | undefined;
+                        consent?: undefined | {
+                            vendorRecipe: boolean;
+                        };
+                    };
                 })[] | undefined;
                 appReviews?: undefined | {
                     sourceIndex: number;
@@ -37174,6 +37249,21 @@ export type ManagedMachinesActionResultById = {
                     companions?: string[] | undefined;
                     deploy?: undefined | {
                         requestKey: string;
+                    };
+                };
+            } | {
+                sourceIndex: number;
+                itemIndex: number;
+                actionId: 'machines.agents.install';
+                input: {
+                    agentId: string;
+                    machineId: string;
+                    intent: 'install' | 'update';
+                    definitionId?: string | undefined;
+                    waitForTerminal?: boolean | undefined;
+                    force?: boolean | undefined;
+                    consent?: undefined | {
+                        vendorRecipe: boolean;
                     };
                 };
             })[] | undefined;
