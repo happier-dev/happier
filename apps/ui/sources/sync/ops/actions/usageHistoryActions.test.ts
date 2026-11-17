@@ -238,7 +238,8 @@ describe('Usage history through the shared Account Action', () => {
     const request = buildUiActionDispatchRequestV1({ actionId: 'usage.history.read',
       input: { query: normalizeUsageQuery({ period: { relative: '90days' } }), operation: 'status' },
       context: { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'account-a', defaultSessionId: 'unviewed-agent-session' } });
-    expect(await receive(request, { signal: new AbortController().signal }))
+    const result = await receive(request, { signal: new AbortController().signal });
+    expect(result, result.execution.ok ? undefined : result.execution.errorCode)
       .toMatchObject({ v: 1, execution: { ok: true, result: { status: 'idle', progress: { selected: 0, notRead: 0, completed: 0, failed: 0 } } } });
     expect(home.requests.filter(request => request.path.startsWith('/v2/usage/'))).toHaveLength(0);
   });
@@ -267,7 +268,7 @@ describe('Usage history through the shared Account Action', () => {
     const invoke = async (operation: 'read' | 'status' | 'cancel', signal = new AbortController().signal) => {
       const result = await receive(buildUiActionDispatchRequestV1({ actionId: 'usage.history.read', input: { query, operation },
         context: { surface: 'agent', authority: 'account_automation', runtimeAccountId: 'account-a' } }), { signal });
-      expect(result.execution.ok).toBe(true);
+      expect(result.execution.ok, result.execution.ok ? undefined : result.execution.errorCode).toBe(true);
       if (!result.execution.ok) throw new Error(result.execution.errorCode);
       return UsageHistoryReadStateSchema.parse(result.execution.result);
     };

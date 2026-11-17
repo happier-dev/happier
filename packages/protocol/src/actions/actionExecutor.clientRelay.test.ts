@@ -3,6 +3,19 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { mountedWorkReadClientRpcMethod, isMountedWorkReadClientRpcMethod, clientActionUnavailable, UiActionDispatchRequestV1Schema, parseClientActionDispatchResult } from './clientDispatchV1.js';
 
 describe('client placement delivery after canonical admission', () => {
+  it('preserves automation notices beside successful and refused Usage history results', () => {
+    const result = { status: 'idle', progress: { selected: 0, notRead: 0, completed: 0, failed: 0 } };
+    const automationNotices = [{ code: 'action_automations_not_checked', reason: 'not_found' }];
+    const success = { ok: true, result, automationNotices };
+    const refusal = { ok: false, errorCode: 'unavailable', error: 'unavailable', automationNotices };
+    for (const execution of [success, refusal]) {
+      expect(parseClientActionDispatchResult('usage.history.read', { v: 1, execution })).toEqual(execution);
+    }
+    expect(parseClientActionDispatchResult('usage.history.read', { v: 1,
+      execution: { ...success, result: { status: 'idle' } } })).toBeNull();
+    expect(parseClientActionDispatchResult('usage.history.read', { v: 1,
+      execution: { ...success, automationNotices: [{ code: 'unknown_notice', reason: 'not_found' }] } })).toBeNull();
+  });
   it('distinguishes a missing answering view from an unavailable navigation host', async () => {
     expect(clientActionUnavailable('session.pending.next'))
       .toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });

@@ -3,7 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './executor/types.js';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, type ActionExecuteFailure } from './actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema, type ActionExecuteFailure } from './actionExecutionResult.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
 import { ApprovalExecutionOriginCallerV1Schema } from '../approvals/approvalRequestV1.js';
 import { ExternalActionTargetV1Schema } from './externalActionApi.js';
@@ -194,10 +194,7 @@ export type UiActionChildExecuteRequestV1 = z.infer<typeof UiActionChildExecuteR
 
 export const UiActionDispatchResultV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  execution: z.discriminatedUnion('ok', [
-    z.strictObject({ ok: z.literal(true), result: z.unknown() }),
-    ActionExecuteFailureSchema,
-  ]),
+  execution: ActionExecuteResultSchema,
 }));
 export type UiActionDispatchResultV1 = z.infer<typeof UiActionDispatchResultV1Schema>;
 
@@ -237,7 +234,7 @@ export function parseClientActionDispatchResult(actionId: ActionId, raw: unknown
   const execution = parsed.data.execution;
   if (!execution.ok) return execution;
   const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
-  if (approval.success) return { ok: true, result: approval.data };
+  if (approval.success) return { ...execution, result: approval.data };
   const output = getActionSpec(actionId).outputSchema?.safeParse(execution.result);
-  return output?.success ? { ok: true, result: output.data } : null;
+  return output?.success ? { ...execution, result: output.data } : null;
 }
