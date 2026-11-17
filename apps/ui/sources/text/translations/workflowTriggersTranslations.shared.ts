@@ -361,6 +361,8 @@ export const en = {
         refuseNote: "A failed run refuses the Action with its reason.",
         askNote: "A failed run turns the Action into an approval that shows its reason. It is approved or denied like any approval request; the agent that asked can’t approve its own.",
         startedFromHappier: "Runs before Actions started from Happier",
+        startedFromHappierOwn: "Runs before your own Actions started from Happier",
+        decides: ({ action }: { action: string }) => `Decides “${action}”: when the run passes, it goes ahead; when it fails, it is refused and this reply is the reason.`,
         actionSentence: {
             beforeWait: ({ action }: { action: string }) => `Before “${action}”, wait for this workflow`,
             beforeNotify: ({ action }: { action: string }) => `Before “${action}”, start this workflow`,

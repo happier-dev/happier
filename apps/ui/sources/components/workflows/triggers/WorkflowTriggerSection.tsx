@@ -208,6 +208,11 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const rowWhens = rows.map((row) => edits[row.key] ?? rowWhen(row, props.set, props.draft));
     const showsEvent = [...rowWhens, ...pending.map((item) => item.when)].some((when) => when?.kind === 'pluginEvent');
     const runsBeforeActions = rowWhens.some((when) => when?.kind === 'action' && when.phase === 'before');
+    // The Home decides at write whether a before-trigger reaches other people's Actions (R22); until it says so
+    // (a new trigger, no subject, a subject the author only views) it runs on the author's own Actions.
+    const reachesOthers = rows.some((row) => row.trigger.kind === 'action' && row.trigger.phase === 'before')
+        && rows.every((row) => row.trigger.kind !== 'action' || row.trigger.phase !== 'before'
+            || ('reachesOthers' in row.trigger && row.trigger.reachesOthers === true));
     const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
     const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events, undefined, props.startContext),
         [catalog.events, props.startContext]);
@@ -473,8 +478,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                                 </HappierPressable>
                                 {/* A phone has no room beside the action: the reminder would only crowd it. */}
                                 {/* A before-trigger says where it applies (D6): only Actions started from Happier wait for it. */}
-                                {rows.length > 0 && !compact ? <Text style={styles.addNote}>{t(runsBeforeActions
-                                    ? 'workflows.triggers.card.startedFromHappier' : 'workflows.triggers.card.runNowToo')}</Text> : null}
+                                {rows.length > 0 && !compact ? <Text style={styles.addNote}>{t(!runsBeforeActions ? 'workflows.triggers.card.runNowToo'
+                                    : reachesOthers ? 'workflows.triggers.card.startedFromHappier' : 'workflows.triggers.card.startedFromHappierOwn')}</Text> : null}
                             </View>
                         )}
                     />

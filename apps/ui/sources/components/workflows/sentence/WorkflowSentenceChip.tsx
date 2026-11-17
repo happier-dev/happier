@@ -15,13 +15,15 @@ import { Typography } from '@/constants/Typography';
 /**
  * What a sentence chip is (lab round 1116c "Grammar"): `option` a chosen value (bordered), `placeholder` a
  * missing one ("choose a Machine"), `step` one step (filled while selected), `add` a quiet add ("or…",
- * "Add another step", "Workflow options").
+ * "Add another step", "Workflow options"), `verb` what a one-step sentence does ("run a command"): filled, with the
+ * sentence's only caret (lab builder D10).
  */
 export type WorkflowSentenceChipKind =
   | 'option'
   | 'placeholder'
   | 'step'
-  | 'add';
+  | 'add'
+  | 'verb';
 
 export type WorkflowSentenceChipProps = Readonly<{
   kind: WorkflowSentenceChipKind;
@@ -59,7 +61,8 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
   const { theme } = useUnistyles();
   const quiet = props.kind === 'add' || props.kind === 'placeholder';
   const filled =
-    props.selected === true && (props.kind === 'step' || props.kind === 'add');
+    props.kind === 'verb' ||
+    (props.selected === true && (props.kind === 'step' || props.kind === 'add'));
   const ink =
     quiet && !filled ? theme.colors.text.tertiary : theme.colors.text.primary;
   const borderColor =
@@ -69,11 +72,13 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
         ? theme.colors.state.warning.foreground
         : props.open === true
           ? theme.colors.text.primary
-          : props.kind === 'option' || filled
-            ? theme.colors.border.strong
-            : props.kind === 'add'
-              ? 'transparent'
-              : theme.colors.border.default;
+          : props.kind === 'verb'
+            ? 'transparent'
+            : props.kind === 'option' || filled
+              ? theme.colors.border.strong
+              : props.kind === 'add'
+                ? 'transparent'
+                : theme.colors.border.default;
   const glyph =
     props.mark ??
     (props.icon === undefined ? null : (
@@ -127,7 +132,9 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
           style={[
             styles.label,
             props.mono ? styles.mono : null,
-            filled && props.kind === 'step' ? styles.selectedLabel : null,
+            filled && (props.kind === 'step' || props.kind === 'verb')
+              ? styles.selectedLabel
+              : null,
             quiet && !filled ? styles.quietLabel : null,
             { color: props.struck ? theme.colors.text.tertiary : ink },
             props.struck ? styles.struck : null,
@@ -135,6 +142,13 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
         >
           {props.label}
         </Text>
+        {props.kind === 'verb' ? (
+          <Icon
+            name="caret-down"
+            size={ICON_SIZE.xs}
+            color={theme.colors.text.secondary}
+          />
+        ) : null}
         {props.tone === 'warning' ? (
           <View
             style={[

@@ -14,7 +14,8 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
+import type { WorkflowSentenceEditorIntent } from '@/components/workflows/authoring/workflowSentenceAuthoring';
+import { WorkflowSentenceBuilder } from '@/components/workflows/sentence/WorkflowSentenceBuilder';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 import type { AccountTriggerRow, TriggerSubject } from './accountTriggerRows';
@@ -61,7 +62,10 @@ function describeAutomationsSection(kind: (TriggerSubject | AutomationSubjectV1)
 type Opening =
   | Readonly<{ kind: 'scheduledJob' | 'deployOnPush'; anchor: React.RefObject<View | null> }>
   /** Add a check: the New trigger editor opened at the subject's own health form (the bound health-setup seed). */
-  | Readonly<{ kind: 'check'; anchor: React.RefObject<View | null> }>;
+  | Readonly<{ kind: 'check'; anchor: React.RefObject<View | null> }>
+  /** Automate… and the sentence starters: the builder, seeded with this resource's place and the starter's When (D10). */
+  | Readonly<{ kind: 'sentence'; anchor: React.RefObject<View | null>; intent: WorkflowSentenceEditorIntent;
+      lifetime: ServerAccountScopeLifetime; key: number }>;
 
 /**
  * A subject page's Triggers (OPS-AUTOMATIONS-1102 D2/D3): the Account's triggers that run on this
@@ -108,7 +112,8 @@ export const SubjectTriggersSection = React.memo(
       else void editor.open(row, anchor);
     }, [editor, router, serverId]);
     const close = () => setOpening(null);
-    const openSentence = (starter: SubjectSentenceStarter | null) => {
+    const sentenceKey = React.useRef(0);
+    const openSentence = (starter: SubjectSentenceStarter | null, anchor: React.RefObject<View | null>) => {
       const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
       if (!lifetime) return;
       const eventSeed = starter === null || !legacy ? undefined : subjectStarterEventSeed(starter, {
@@ -118,15 +123,14 @@ export const SubjectTriggersSection = React.memo(
       const trigger = starter === 'nightly' ? buildTriggerDefinition({
         when: subjectStarterWhen('nightly'), enabled: true, sessionId: null,
       }) : null;
-      const entry = prepareWorkflowSentenceEditorEntry({ name: props.subjectName, ...(project ? { project } : {}),
-        ...(eventSeed ? { eventSeed } : {}), ...(trigger ? { trigger } : {}),
-      }, lifetime);
-      if (entry) router.push(entry);
+      sentenceKey.current += 1;
+      setOpening({ kind: 'sentence', anchor, lifetime, key: sentenceKey.current, intent: { name: props.subjectName,
+        ...(project ? { project } : {}), ...(eventSeed ? { eventSeed } : {}), ...(trigger ? { trigger } : {}) } });
     };
     const openStarter = (starter: SubjectTriggerStarter, anchor: React.RefObject<View | null>) => {
       if (starter === 'scheduledJob' || starter === 'deployOnPush') setOpening({ kind: starter, anchor });
       else if (starter === 'addCheck') setOpening({ kind: 'check', anchor });
-      else openSentence(starter);
+      else openSentence(starter, anchor);
     };
     // Nothing known yet: the section keeps its place with its header and two placeholder rows, so the
     // page does not move when the rows land. With nothing retained, a failed read says so in place, with Retry.
@@ -143,7 +147,7 @@ export const SubjectTriggersSection = React.memo(
               testID="subject-triggers-add"
               icon="plus"
               title={t('workflows.triggers.section.automate')}
-              onPress={() => openSentence(null)}
+              onPress={() => openSentence(null, addAnchor)}
             />
           </View>
         }
@@ -218,6 +222,10 @@ export const SubjectTriggersSection = React.memo(
             accountLifetime={accountLifetime}
             eventSeed={legacy ? subjectStarterEventSeed('healthFailed', { subject: legacy, controllerMachineId: props.controllerMachineId }) : undefined}
           />
+        ) : null}
+        {opening?.kind === 'sentence' ? (
+          <WorkflowSentenceBuilder key={opening.key} anchorRef={opening.anchor} intent={opening.intent}
+            accountLifetime={opening.lifetime} onRequestClose={close} />
         ) : null}
         {opening?.kind === 'deployOnPush' && props.pushSetup ? (
           <DeploymentPushTriggerSetup anchorRef={opening.anchor} onRequestClose={close}

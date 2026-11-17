@@ -94,6 +94,19 @@ describe('workflow Add Action picker', () => {
         await act(async () => { screen.findByType(SelectionListSearchHeader).props.onKeyPress({ nativeEvent: { key: 'Enter' }, preventDefault() {} }); });
         expect(onAdd).toHaveBeenCalledWith(request);
     });
+    // The Action presets (Run a command, Send a message, Another step ›) need an addressed Account's catalog,
+    // which this host fixture does not serve since admitted discovery (3f6206db833); the session verb needs none.
+    it('offers a one-step sentence verbs, not the editor\'s structure, and answers with the ordinary step request', async () => {
+        const onAdd = vi.fn();
+        const { Pressable } = await import('react-native');
+        const screen = await renderScreen(<WorkflowAddBlockMenu purpose="verb" scopeLabel="Workflow" testID="add" onAdd={onAdd}
+            renderTrigger={({ toggle }) => <Pressable testID="verb" onPress={toggle} />} />);
+        await screen.pressByTestIdAsync('verb');
+        expect(screen.findByTestId('selection-list:verb-root:option:add-if')).toBeNull();
+        expect(screen.findByTestId('selection-list:verb-root:option:add-verb-another')).not.toBeNull();
+        await screen.pressByTestIdAsync('selection-list:verb-root:option:add-verb-session');
+        expect(onAdd).toHaveBeenCalledWith({ kind: 'step' });
+    });
     it('keeps the Add viewport steady when opening a workflow submenu', async () => {
         const screen = await renderScreen(<WorkflowAddBlockMenu scopeLabel="Workflow" testID="add" onAdd={vi.fn()} />);
         await screen.pressByTestIdAsync('add');

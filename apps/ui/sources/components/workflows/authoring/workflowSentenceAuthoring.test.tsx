@@ -157,3 +157,18 @@ it('keeps history and current operands when opening the full editor, and refuses
     await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'unavailable' }); });
     expect(home.creates).toEqual([]);
 });
+
+it('saves and hands over the place the sentence chose, not the place it started from', async () => {
+    const home = await sourceHome();
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ name: 'Notify', step: message, trigger,
+        project: { machineId: 'machine-a', directory: '/repo' } }, home.lifetime));
+    const chosen = { machineId: 'machine-b', directory: '/srv/app' };
+    await act(async () => hook.getCurrent().changeProject(chosen));
+    expect(hook.getCurrent().project).toEqual(chosen);
+    const entry = hook.getCurrent().openInEditor();
+    if (!entry) throw new Error('Expected the ordinary editor entry');
+    expect(readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope)).toMatchObject({ project: chosen });
+    await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'applied' }); });
+    expect(JSON.stringify(home.automations.creates[0])).toContain('machine-b');
+    expect(JSON.stringify(home.automations.creates[0])).not.toContain('machine-a');
+});

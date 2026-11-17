@@ -190,6 +190,23 @@ export function readActionTriggerSummaryFacts(
     };
 }
 
+/**
+ * What a wait-mode "before an Action" trigger makes this workflow's Result decide (05 S4 Result line), or `null`
+ * when no such trigger is set: its run passing lets the Action go ahead, its failing refuses it with the reply.
+ */
+export function formatTriggerResultDecides(triggers: readonly Readonly<{ kind: string }>[], context?: TriggerSummaryContext): string | null {
+    const titles = new Set<string>();
+    for (const trigger of triggers) {
+        if (!isActionTriggerSource(trigger) || trigger.phase !== 'before' || trigger.mode === 'notify') continue;
+        for (const fact of readActionTriggerSummaryFacts(trigger, context).actions) titles.add(fact.title);
+    }
+    return titles.size === 0 ? null : t('workflows.triggers.card.decides', { action: joinList([...titles]) });
+}
+
+function isActionTriggerSource(trigger: Readonly<{ kind: string }>): trigger is Extract<TriggerSummarySource, { kind: 'action' }> {
+    return trigger.kind === 'action';
+}
+
 function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>, context?: TriggerSummaryContext): string | null {
     const observation = trigger.observation;
     const transport = trigger.observationTransport;

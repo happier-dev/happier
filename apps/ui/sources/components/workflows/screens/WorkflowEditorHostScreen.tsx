@@ -100,7 +100,8 @@ import { WorkflowEditorCurrentContext } from './WorkflowEditorCurrentContext';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
 import { useWorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
-import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
+import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, projectWorkflowTriggerRows, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
+import { formatTriggerResultDecides } from '../triggers/formatTriggerSummary';
 import { useWorkflowEditorHistory, useWorkflowEditorHistoryLabels, workflowEditorSnapshotsEqual } from '../editor/useWorkflowEditorHistory';
 import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
 import { saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate } from '../editor/saveWorkflowEditorDefinition';
@@ -2050,6 +2051,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         incomplete: { state: triggers.incomplete, onChange: triggers.updateIncomplete },
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
+                        resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,
                         triggersSentence: <WorkflowTriggerSection {...section} presentation="sentence" /> };
                 })() : {})}

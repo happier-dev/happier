@@ -58,6 +58,11 @@ export function WorkflowAddBlockMenu(props: Readonly<{
     revealed?: boolean;
     /** `row` only: the host's own bar holds Add (a phone), so this row offers only Start from an example. */
     examplesOnly?: boolean;
+    /**
+     * `verb`: what a one-step sentence does (D10 "Automate this…"): Run a command, Send a message to a session,
+     * Start a session, then Another step › with every workflow step Action. The host replaces its one step.
+     */
+    purpose?: 'add' | 'verb';
     /** A host that draws its own Add (the Sentence view's "Add another step" chip); the menu stays this one. */
     renderTrigger?: (trigger: Readonly<{ open: boolean; toggle: () => void; anchorRef: React.RefObject<View | null> }>) => React.ReactNode;
     testID?: string;
@@ -80,6 +85,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                         anchorRef={anchorRef}
                         onAdd={props.onAdd}
                         onClose={close}
+                        {...(props.purpose === undefined ? {} : { purpose: props.purpose })}
                         {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
                         {...(props.testID === undefined ? {} : { testID: props.testID })}
                     />
@@ -176,6 +182,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
     anchorRef: React.RefObject<View | null>;
     onAdd: (request: WorkflowAddBlockRequest) => void;
     onClose: () => void;
+    purpose?: 'add' | 'verb';
     currentWorkflowRef?: string | null;
     testID?: string;
 }>): React.ReactElement {
@@ -270,6 +277,43 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             const spec = catalog.specs.find((candidate) => candidate.id === actionId);
             return spec === undefined ? [] : [{ ...actionOption(spec), id: optionId(suffix) }];
         });
+        const actionSearch = {
+            kind: 'dynamic' as const, id: 'action-search', title: t('workflows.page.blocks.menuAction'),
+            resolverKey: JSON.stringify(catalog.specs),
+            visibleWhen: (input: string) => input.trim().length > 0,
+            debounceMs: 0, loadingSkeletonRows: 0,
+            resolve: async () => ({ options: catalog.specs.map(actionOption) }),
+        };
+        if (props.purpose === 'verb') {
+            const verbIcon = (name: React.ComponentProps<typeof Icon>['name']) => () => <Icon name={name} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
+            // A verb is the Action's own preset, offered only while the catalog lists that Action here.
+            const verbPreset = (actionId: string, verb: 'command' | 'message', icon: React.ComponentProps<typeof Icon>['name']) => {
+                const spec = catalog.specs.find((candidate) => candidate.id === actionId);
+                if (spec === undefined || spec.projectionError !== undefined) return [];
+                const { rightAccessory: _source, ...option } = actionOption(spec);
+                return [{ ...option, id: optionId(`verb-${verb}`), label: t(`workflows.sentence.verbs.${verb}Menu`),
+                    subtitle: t(`workflows.sentence.verbs.${verb}Sub`), icon: verbIcon(icon) }];
+            };
+            return {
+                id: 'verb-root',
+                title: t('workflows.sentence.verbs.title'),
+                inputPlaceholder: t('common.search'),
+                searchAcrossSections: true,
+                sections: [
+                    { kind: 'static', id: 'verbs', options: [
+                        ...verbPreset('machines.command.run', 'command', 'terminal'),
+                        ...verbPreset('session.message.send', 'message', 'chat-circle'),
+                        { id: optionId('verb-session'), label: t('workflows.sentence.verbs.sessionMenu'), subtitle: t('workflows.sentence.verbs.sessionSub'),
+                            icon: verbIcon('sparkle'), onSelect: add({ kind: 'step' }) },
+                    ] },
+                    { kind: 'static', id: 'another', options: [
+                        { id: optionId('verb-another'), label: t('workflows.sentence.verbs.anotherMenu'), subtitle: t('workflows.sentence.verbs.anotherSub'),
+                            subtitleLines: 2, icon: verbIcon(WORKFLOW_BLOCK_KIND_GLYPH.action), openStep: actionsStep },
+                    ] },
+                    actionSearch,
+                ],
+            };
+        }
         return {
             id: 'add-root',
             title: t('workflows.editor.add'),
@@ -306,17 +350,11 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                     debounceMs: 0, loadingSkeletonRows: 0,
                     resolve: async () => ({ options: [...listBuiltinWorkflowReferenceOptions(), ...libraryOptions].map(workflowOption) }),
                 },
-                {
-                    kind: 'dynamic', id: 'action-search', title: t('workflows.page.blocks.menuAction'),
-                    resolverKey: JSON.stringify(catalog.specs),
-                    visibleWhen: (input) => input.trim().length > 0,
-                    debounceMs: 0, loadingSkeletonRows: 0,
-                    resolve: async () => ({ options: catalog.specs.map(actionOption) }),
-                },
+                actionSearch,
             ],
         };
     }, [libraryOptions, library.hasMore, library.loadingMore, library.loadMore, library.retry, library.status,
-        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.testID, theme.colors.text.secondary, theme.colors.text.tertiary]);
+        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.purpose, props.testID, theme.colors.text.secondary, theme.colors.text.tertiary]);
 
     return (
         <AgentInputSelectionListPopover

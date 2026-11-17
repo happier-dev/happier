@@ -11,7 +11,8 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { t } from '@/text';
 import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
-import { prepareWorkflowSentenceEditorEntry } from '../authoring/workflowSentenceAuthoring';
+import { WorkflowSentenceBuilder } from '../sentence/WorkflowSentenceBuilder';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE, WORKFLOWS_RUN_SETTINGS_ROUTE } from '../workflowsRoutes';
 
@@ -32,11 +33,12 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     const addAnchorRef = React.useRef<View>(null);
     const addOpenerRef = props.addOpenerRef;
     const canCreate = props.canCreate;
+    // New automation opens the sentence builder (D10); its Add another step… continues in the editor.
+    const [builder, setBuilder] = React.useState<Readonly<{ lifetime: ServerAccountScopeLifetime; key: number }> | null>(null);
     const openTrigger = () => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
-        const entry = prepareWorkflowSentenceEditorEntry({ name: t('workflows.newWorkflow') }, lifetime);
-        if (entry) router.pushRetainingCurrent(entry);
+        setBuilder((current) => ({ lifetime, key: (current?.key ?? 0) + 1 }));
     };
     React.useEffect(() => {
         if (!addOpenerRef || !canCreate) return;
@@ -147,6 +149,10 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                 />
             </View> : null}
             {examplesOpen ? <WorkflowExamplesPopover anchorRef={addAnchorRef} onRequestClose={() => setExamplesOpen(false)} /> : null}
+            {builder === null ? null : (
+                <WorkflowSentenceBuilder key={builder.key} anchorRef={addAnchorRef} accountLifetime={builder.lifetime}
+                    intent={{ name: t('workflows.newWorkflow') }} onRequestClose={() => setBuilder(null)} />
+            )}
         </View>
     );
 });

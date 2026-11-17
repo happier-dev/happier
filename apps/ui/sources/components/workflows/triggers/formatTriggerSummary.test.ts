@@ -7,7 +7,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ getPreferredLanguage: () => language.value });
 });
 
-const { formatTriggerSetSummary, formatTriggerSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readNextScheduledRunRefreshAtMs } = await import('./formatTriggerSummary');
+const { formatTriggerResultDecides, formatTriggerSetSummary, formatTriggerSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readNextScheduledRunRefreshAtMs, readSessionLifecycleKind } = await import('./formatTriggerSummary');
 const { resolveTriggerEventGroup } = await import('./triggerEventGroups');
 const { formatClockTime, parseCalendarSchedule, parseClockTime } = await import('./triggerSchedule');
 
@@ -22,6 +22,12 @@ function interval(everyMs: number) {
 }
 
 describe('formatTriggerSummary', () => {
+    it('keeps turn-start activity distinct from turn completion in summaries and grouping', () => {
+        const trigger = { kind: 'sessionLifecycle' as const, events: ['parentTurnStarted' as const] };
+        expect(readSessionLifecycleKind(trigger.events)).toBe('turnStarts');
+        expect(formatTriggerSummary(trigger)).toBe('workflows.triggers.kind.turnStarts');
+        expect(resolveTriggerEventGroup(trigger)).toMatchObject({ id: 'lifecycle:turnStarts', glyph: 'play' });
+    });
     it('names the exact one-time instant instead of presenting it as a recurring interval', () => {
         const summary = formatTriggerSummary({ kind: 'schedule', schedule: { kind: 'once', scheduledAt: new Date(2030, 10, 11, 9, 15).getTime() } });
         expect(summary).toContain('workflows.triggers.once.at(time=');
@@ -173,4 +179,22 @@ it('says the same sentence in collection rows and details, and keeps an unsayabl
     expect(formatTriggerSetSummary([{ ...cron('0 0 1 1 *'), enabled: false }])).toBe(`workflows.triggers.row.off · ${formatTriggerSummary(cron('0 0 1 1 *'))}`);
     expect(formatTriggerSummary(cron('*/5 * * * *'))).toContain('*/5 * * * *');
     expect(formatTriggerSetSummary([cron('*/5 * * * *')])).toBe('workflows.triggers.summary.schedule');
+});
+
+describe('formatTriggerResultDecides', () => {
+    const titles = { actionTitle: (actionId: string) => actionId === 'deployments.deploy' ? 'Deploy an app' : 'Merge a pull request' };
+    const before = (actionIds: string[], mode?: 'wait' | 'notify') =>
+        ({ kind: 'action', phase: 'before', actionIds, ...(mode === undefined ? {} : { mode }) }) as const;
+    it('names each Action a waiting before-trigger decides, once', () => {
+        const line = formatTriggerResultDecides([before(['deployments.deploy']), before(['deployments.deploy'], 'wait'),
+            before(['github.pr.merge'], 'wait')], titles);
+        expect(line).toContain('Deploy an app');
+        expect(line).toContain('Merge a pull request');
+        expect(line?.split('Deploy an app')).toHaveLength(2);
+    });
+    it('says nothing when no trigger waits on an Action', () => {
+        expect(formatTriggerResultDecides([before(['deployments.deploy'], 'notify'),
+            { kind: 'action', phase: 'after', actionIds: ['deployments.deploy'] }, cron('0 9 * * *')], titles)).toBeNull();
+        expect(formatTriggerResultDecides([], titles)).toBeNull();
+    });
 });

@@ -70,6 +70,12 @@ export type WorkflowSentenceViewProps = Readonly<{
   renderStepCard: (blockId: string) => React.ReactNode;
   /** The How card as the one card. Absent (an "Automate this…" host): no Workflow options chip. */
   renderOptionsCard?: () => React.ReactNode;
+  /**
+   * A one-step host ("Automate this…", D10): what the workflow does, as one verb chip. It leads the line
+   * its Machine and folder finish ("run a command on ⟨Machine⟩ in ⟨folder⟩") and replaces the step list
+   * and the Result clause, which belong to the editor.
+   */
+  verbClause?: React.ReactNode;
   testIDPrefix: string;
 }>;
 
@@ -122,18 +128,19 @@ export function WorkflowSentenceView(
           style={workflowSentenceStyles.line}
           testID={`${props.testIDPrefix}-sentence-where`}
         >
+          {props.verbClause}
           <WorkflowSentencePlace
             {...props.place}
             testIDPrefix={props.testIDPrefix}
           />
         </View>
-        <WorkflowSentenceSteps
+        {props.verbClause !== undefined ? null : <WorkflowSentenceSteps
           blocks={blocks}
           shownBlockId={optionsShown ? null : shownBlockId}
           onSelectStep={selectStep}
           {...props}
-        />
-        {blocks.length === 0 ? null : (
+        />}
+        {blocks.length === 0 || props.verbClause !== undefined ? null : (
           <View
             style={workflowSentenceStyles.line}
             testID={`${props.testIDPrefix}-sentence-result`}

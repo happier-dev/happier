@@ -2,6 +2,7 @@ import * as React from 'react';
 import { randomUUID } from 'expo-crypto';
 import { WorkflowDefinitionV1Schema, type WorkflowActionFieldBindingV1, type WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowDraftMutationResultV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildWorkflowDefinitionCandidate, buildWorkflowEditorDraftFromDefinition, validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
@@ -24,6 +25,9 @@ export type WorkflowSentenceDraft = Readonly<{
     readonly operands: WorkflowActionLeafV1['input'];
     changeStep: (step: WorkflowActionLeafV1) => void;
     changeOperand: (name: string, binding: WorkflowActionFieldBindingV1) => void;
+    /** Where it runs (the sentence's Machine and folder): the trigger set's one place and the saved workflow's target. */
+    project: WorkflowProjectTargetV1 | null;
+    changeProject: (project: WorkflowProjectTargetV1) => void;
     triggers: WorkflowTriggerEditing;
     history: WorkflowEditorHistoryControls;
     save: () => Promise<WorkflowDraftMutationResultV1>;
@@ -49,6 +53,9 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     });
     const mounted = React.useRef(true);
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+    const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(intent.project ?? null);
+    const projectRef = React.useRef(project);
+    projectRef.current = project;
     const [saved, setSaved] = React.useState<WorkflowEditorSavedRevision | null>(null);
     const savedRef = React.useRef(saved);
     const baseline = React.useRef<{ draft: WorkflowEditorDraft | null; description: string }>({ draft: null, description: '' });
@@ -58,7 +65,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     const [failed, setFailed] = React.useState<string | null>(null);
     const accountMemory = useWorkflowEditorAccountMemory(source.lifetime, { workspaceRefs: false });
     const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null,
-        sourceKey: source.store.get().draftId, projectTarget: source.intent.project ?? null,
+        sourceKey: source.store.get().draftId, projectTarget: project,
         accountLifetime: source.lifetime, ...(source.incomplete === undefined ? {} : { initialIncomplete: source.incomplete }) });
     React.useEffect(() => {
         if (source.intent.trigger === undefined) return;
@@ -113,8 +120,9 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             }
             const persisted = savedRef.current;
             if (persisted === null || !isCurrent()) return { status: 'refused', reason: 'draft_retired' };
-            if (source.intent.project !== undefined) accountMemory.remember({
-                workflowProjectTargetsByDefinitionId: { [persisted.definitionId]: source.intent.project },
+            const savedProject = projectRef.current;
+            if (savedProject !== null) accountMemory.remember({
+                workflowProjectTargetsByDefinitionId: { [persisted.definitionId]: savedProject },
             });
             const outcome = await triggers.save(persisted.definitionId, isCurrent);
             if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
@@ -130,7 +138,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
         }
     };
     return { draftStore: source.store, onChange, get step() { return readStep(); }, get operands() { return readStep()?.input ?? {}; },
-        changeStep, changeOperand, triggers: { ...triggers, setDraft: next => {
+        changeStep, changeOperand, project, changeProject: setProject, triggers: { ...triggers, setDraft: next => {
             const before = { draft: source.store.get(), triggers: triggers.captureSnapshot() };
             const after = { ...before, triggers: triggers.captureSnapshot(next) };
             if (history.record(before, after, t('workflows.editor.history.edited'))) triggers.setDraft(next);
@@ -139,7 +147,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             if (source.lifetime === null) return null;
             const { step: _step, trigger: _trigger, eventSeed, payloadSchema: _payloadSchema, ...seed } = source.intent;
             const row = triggers.captureSnapshot().rows[0];
-            return prepareWorkflowSentenceEditorEntry({ ...seed,
+            return prepareWorkflowSentenceEditorEntry({ ...seed, ...(projectRef.current === null ? {} : { project: projectRef.current }),
                 ...(row?.trigger ? { trigger: row.trigger, ...(row.payloadSchema === undefined ? {} : { payloadSchema: row.payloadSchema }) }
                     : eventSeed === undefined ? {} : { eventSeed }), name: source.store.get().name,
                 definition: WorkflowDefinitionV1Schema.parse(buildWorkflowDefinitionCandidate(source.store.get())) }, source.lifetime);

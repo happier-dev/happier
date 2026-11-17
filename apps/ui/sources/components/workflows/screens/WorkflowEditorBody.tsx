@@ -423,6 +423,8 @@ export type WorkflowEditorBodyProps = Readonly<{
      * automatically section Workflow settings opens with. The chip reveals that section.
      */
     triggersSummary?: string;
+    /** What a wait-mode "before an Action" trigger makes the Result decide (05 S4); absent when none is set. */
+    resultDecides?: string | null;
     triggersSection?: React.ReactNode;
     /** The same triggers as the Sentence view's When clause (round 1116c). */
     triggersSentence?: React.ReactNode;
@@ -515,7 +517,7 @@ type ReadWorkflowEditorValidation = (draft: WorkflowEditorDraft) => WorkflowDraf
  * The page's validation for one draft: the canonical owner, plus the facts only this page holds —
  * staged composer bytes a stored definition cannot carry, and targets its catalogs cannot run.
  */
-function validateWorkflowEditorPage(draft: WorkflowEditorDraft, input: Readonly<{
+export function validateWorkflowEditorPage(draft: WorkflowEditorDraft, input: Readonly<{
     stagedAttachments: ReturnType<ReturnType<typeof useWorkflowEditorComposerCustody>['readStagedAttachments']>;
     authoringFacts: SessionAuthoringControlFacts | undefined;
     triggerEvents?: NonNullable<Parameters<typeof validateWorkflowEditorDraft>[1]>['triggerEvents'];
@@ -1284,8 +1286,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
 
     // The workflow's Result: the spine's last node at the document's foot (round 1116).
     const resultFoot = React.useMemo(() => (
-        <WorkflowResultFoot draftStore={draftStore} onChange={onChange} editable={documentEditable} testIDPrefix={testIDPrefix} />
-    ), [documentEditable, draftStore, onChange, testIDPrefix]);
+        <WorkflowResultFoot draftStore={draftStore} onChange={onChange} editable={documentEditable} decides={props.resultDecides ?? null}
+            testIDPrefix={testIDPrefix} />
+    ), [documentEditable, draftStore, onChange, props.resultDecides, testIDPrefix]);
     const blockListProps = {
             draftStore,
             readValidation,

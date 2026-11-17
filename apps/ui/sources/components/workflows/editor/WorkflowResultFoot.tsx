@@ -6,6 +6,7 @@ import { setWorkflowFinalOutput } from '@happier-dev/protocol/workflows/workflow
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
@@ -40,6 +41,17 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: ICON_SIZE.lg,
     justifyContent: 'center',
   },
+  decides: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.space.s6,
+  },
+  decidesText: {
+    ...Typography.variant('meta'),
+    color: theme.colors.text.secondary,
+    flex: 1,
+    minWidth: 0,
+  },
 }));
 
 const readWholeDraft = (draft: WorkflowEditorDraft) => draft;
@@ -53,6 +65,8 @@ export function WorkflowResultFoot(
     draftStore: WorkflowEditorDraftStore;
     onChange: (next: WorkflowEditorDraft) => void;
     editable: boolean;
+    /** A wait-mode "before an Action" trigger's consequence for this Result (`formatTriggerResultDecides`). */
+    decides?: string | null;
     testIDPrefix: string;
   }>,
 ): React.ReactElement {
@@ -111,6 +125,12 @@ export function WorkflowResultFoot(
               />
             </WorkflowFieldPair>
           </View>
+          {props.decides ? (
+            <View testID={`${id}-decides`} style={styles.decides}>
+              <Icon name="sign-in" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+              <Text style={styles.decidesText}>{props.decides}</Text>
+            </View>
+          ) : null}
         </View>
       </View>
     </View>
