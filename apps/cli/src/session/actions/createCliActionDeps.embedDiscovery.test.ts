@@ -21,7 +21,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('spawn-only frame model discovery', () => {
   it.each([
-    ['modelSelection', 'current'], ['modelSelection', 'revoked_during_discovery'], ['configuration', 'current'],
+    ['modelSelection', 'current'], ['modelSelection', 'withdrawn_after_admission'], ['configuration', 'current'],
   ] as const)('retains %s / %s admission for no-Session options without borrowing Account HTTP', async (fieldPath, admission) => {
     const pluginId = 'acme.embed-discovery';
     const identity = { pluginId, localId: 'assistant' };
@@ -80,6 +80,7 @@ describe('spawn-only frame model discovery', () => {
       // original Action ingress, grant, inventory and capability producer stay real.
       const network = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Account HTTP is unavailable to this frame'));
       let nativeReads = 0;
+      let withdrawn = false;
       const executor = createActionExecutor(createCliActionDeps({
         token: 'daemon-bearer', credentials: { token: 'daemon-bearer', encryption: null },
         sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example',
@@ -92,27 +93,24 @@ describe('spawn-only frame model discovery', () => {
           const parsed = z.object({ id: z.literal(capabilityId), method: z.string(),
             params: z.optional(z.record(z.string(), z.unknown())) }).parse(request);
           nativeReads += 1;
+          if (admission === 'withdrawn_after_admission') withdrawn = true;
           return capabilities.invoke(parsed, { signal: options?.signal });
         } },
       }));
       let currentnessReads = 0;
-      const result = await executeExternalAction({ actionId: 'action.options.resolve', envelope,
+      const invoke = () => executeExternalAction({ actionId: 'action.options.resolve', envelope,
         principal: { accountId: 'owner', principalId: 'owner', credentialId: 'spawn-child', authority: 'account_automation', grant },
         currentMachineId: target.machineId, currentServerId: 'home', currentAccountId: 'owner', currentInstallationId: 'installation',
         executionAuthorization: authorization, externalActionMachineRequestPrivateKey: keys.secretKey,
-        verifyExecutionAuthorization: async () => ++currentnessReads === 1 || admission === 'current',
+        verifyExecutionAuthorization: async () => { currentnessReads += 1; return !withdrawn; },
         machineAdmission: { machineId: target.machineId, actorAccountId: 'owner', custodianAccountId: 'owner',
           installationId: 'installation', role: 'use', encryptionMode: 'plain' },
         resolveTarget: async () => target, executor,
       });
+      const result = await invoke();
       const failureCode = result.kind === 'response' && result.response.v === 1 && !result.response.execution.ok
         ? result.response.execution.errorCode : null;
       const httpPaths = network.mock.calls.map(([url]) => new URL(String(url)).pathname);
-      if (admission !== 'current') {
-        expect(result).toMatchObject({ kind: 'response', response: { execution: { ok: false } } });
-        expect(nativeReads).toBe(0);
-        return;
-      }
       const nativeModels = [{ value: 'default', label: 'Default' }, { value: 'small', label: 'Small' }];
       const expected = fieldPath === 'modelSelection'
         ? { options: nativeModels, modelCatalog: { nativeModels } }
@@ -122,6 +120,17 @@ describe('spawn-only frame model discovery', () => {
       if (result.kind !== 'response' || result.response.v !== 1 || !result.response.execution.ok) throw new Error('Discovery failed');
       expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].safeParse(result.response.execution.result).success).toBe(true);
       if (fieldPath === 'modelSelection') expect(nativeReads).toBe(1);
+      if (admission === 'withdrawn_after_admission') {
+        // The admitted finite discovery finishes; withdrawal governs the next
+        // request and cannot disclose another native catalog or borrow HTTP.
+        expect(currentnessReads).toBe(1);
+        const next = await invoke();
+        expect(next).toMatchObject({ kind: 'response', response: { execution: {
+          ok: false, errorCode: 'not_authenticated',
+        } } });
+        expect(currentnessReads).toBe(2);
+        expect(nativeReads).toBe(1);
+      }
       expect(network).not.toHaveBeenCalled();
     } finally { await fixture.dispose(); }
   });

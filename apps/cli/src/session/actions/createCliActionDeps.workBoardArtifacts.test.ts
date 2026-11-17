@@ -43,7 +43,7 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const updateSchema = z.strictObject({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number(),
             ...privateRevisionMetadata });
         const rows = new Map<string, z.infer<typeof createSchema> & { headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number;
-            ownerAccountId: string; access: 'owner'; encryptionMode: 'plain' | 'e2ee' }>();
+            ownerAccountId: string; access: 'owner'; encryptionMode: 'plain' | 'e2ee'; publicAudience: 'none' }>();
         const homeArtifactId = buildHomeHubArtifactIdV1('owner');
         const area = { serverId: 'board-home', accountId: 'owner',
             owner: { kind: 'pluginArea', pluginId: 'com.acme.test', pageId: 'dashboard', area: 'main' } } as const;
@@ -90,8 +90,14 @@ describe('CLI Board Actions through the Artifact owner', () => {
                 const incumbent = rows.get(parsed.id);
                 if (incumbent) return { status: 200, data: incumbent };
                 const row = { ...parsed, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
-                    ownerAccountId: 'owner', access: 'owner' as const, encryptionMode: mode };
-                rows.set(row.id, row); return { status: 200, data: row };
+                    ownerAccountId: 'owner', access: 'owner' as const, encryptionMode: mode, publicAudience: 'none' as const };
+                rows.set(row.id, row);
+                // Content owners consume the create acknowledgement without a
+                // reread. A receipt alone must retain the unknown-write result.
+                if (initiallyUnavailable && (parsed.id === homeArtifactId || parsed.id === areaArtifactId)) {
+                    return { status: 200, data: { id: row.id, headerVersion: row.headerVersion, bodyVersion: row.bodyVersion } };
+                }
+                return { status: 200, data: row };
             }
             const artifactId = decodeURIComponent(new URL(url).pathname.split('/')[3] ?? '');
             const row = rows.get(artifactId)!;
