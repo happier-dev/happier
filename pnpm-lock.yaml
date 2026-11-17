@@ -1429,6 +1429,9 @@ importers:
       '@happier-dev/plugins-cursor':
         specifier: 0.0.0
         version: link:../../packages/plugins/cursor
+      '@happier-dev/plugins-database-workbench':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/database-workbench
       '@happier-dev/plugins-deploy-cloudflare':
         specifier: 0.0.0
         version: link:../../packages/plugins/deploy-cloudflare
@@ -1558,6 +1561,9 @@ importers:
       '@happier-dev/plugins-sentry':
         specifier: 0.0.0
         version: link:../../packages/plugins/sentry
+      '@happier-dev/plugins-telemetry':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/telemetry
       '@happier-dev/plugins-triage':
         specifier: 0.0.0
         version: link:../../packages/plugins/triage
