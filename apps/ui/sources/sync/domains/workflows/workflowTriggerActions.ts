@@ -116,8 +116,8 @@ async function callTriggerAction<TResult>(
         const active = getActiveServerAccountScope();
         if (!active || !sameTriggerAccountScope(active, options.accountLifetime.scope)) return result;
     }
-    // A deliberate private review or exact Event read is not an Account list observation.
-    if (actionId === 'workflow.trigger.list' && (('review' in request && request.review === true) || 'triggerId' in request)) return result;
+    // Exact set/detail reads and deliberate private reviews are not list membership observations.
+    if (actionId === 'workflow.trigger.list' && 'automationId' in request) return result;
     const lifetimeSession = 'lifetimeSession' in request && typeof request.lifetimeSession === 'object' && request.lifetimeSession !== null
         ? request.lifetimeSession : null;
     const sessionId = lifetimeSession && 'sessionId' in lifetimeSession && typeof lifetimeSession.sessionId === 'string'

@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import type { WorkflowTriggerListRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 
@@ -52,13 +53,16 @@ export type ResourceAutomationsSectionInput = Readonly<{
 }>;
 type LegacyResourceAutomationsSectionInput = Omit<ResourceAutomationsSectionInput, 'subject'> & Readonly<{ subject: TriggerSubject }>;
 
-export type ResourceAutomationsSectionRead = Readonly<{
+export type SelectedAutomationsSectionRead = Readonly<{
     accountLifetime: ServerAccountScopeLifetime | null | undefined;
     read: ReturnType<typeof useWorkflowTriggerSets>;
     editor: ReturnType<typeof useAccountWorkflowEditor>;
     rows: readonly AccountTriggerRow[];
     also: readonly AccountTriggerRow[];
     skippedNotSharedCount: number;
+}>;
+
+export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Readonly<{
     project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> | undefined;
     audience: readonly PrincipalRefV1[] | undefined;
     link: Readonly<{
@@ -73,6 +77,28 @@ export type ResourceAutomationsSectionRead = Readonly<{
         submit(decision: 'accept' | 'decline'): Promise<ResourceAutomationLinkResult>;
     }>;
 }>;
+
+/** The selected read owns membership; every section consumes the same admitted rows and editor. */
+function useSelectedAutomationsSection(request: WorkflowTriggerListRequestV1 | null,
+    accountLifetime: ServerAccountScopeLifetime | null | undefined, demanded: boolean): SelectedAutomationsSectionRead {
+    const read = useWorkflowTriggerSets(request, accountLifetime, { demanded });
+    const editor = useAccountWorkflowEditor({ read, accountLifetime });
+    const projected = React.useMemo(() => read.attachedPage ? projectAccountTriggerRows({
+        sets: read.sets, attachedPage: read.attachedPage, accountId: accountLifetime?.scope.accountId,
+        resolveWorkflowTitle: editor.resolveWorkflowTitle,
+    }) : EMPTY_ROWS, [read.sets, read.attachedPage, accountLifetime?.scope.accountId, editor.resolveWorkflowTitle]);
+    const rows = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'direct'), [projected]);
+    const also = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'context'), [projected]);
+    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0 };
+}
+
+/** Action detail selects an Action phase, without inventing a resource or audience. */
+export function useActionAutomationsSection(props: Extract<WorkflowTriggerListRequestV1, { actionId: string }>
+    & Readonly<{ accountLifetime: ServerAccountScopeLifetime | null }>): SelectedAutomationsSectionRead {
+    const { accountLifetime, ...request } = props;
+    const demanded = useLayoutPresentationActive();
+    return useSelectedAutomationsSection(request, accountLifetime, demanded);
+}
 
 /** Resource section data and mutations, consuming the incumbent read and presentation lifetimes. */
 export function useResourceAutomationsSection(props: LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead & { project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> };
@@ -91,15 +117,9 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const subject: AutomationSubjectV1 | null = 'serverId' in props.subject ? props.subject : !serverId ? null
         : props.subject.kind === 'environment' ? { kind: 'environment', serverId, environmentId: props.subject.environmentId }
             : { kind: 'machine', serverId, machineId: props.subject.machineId };
-    const read = useWorkflowTriggerSets(subject ? { subject, ...(props.contextSubjects ? { contextSubjects: [...props.contextSubjects] } : {}) } : null,
-        accountLifetime, { demanded });
-    const editor = useAccountWorkflowEditor({ read, accountLifetime });
-    const projected = React.useMemo(() => read.attachedPage ? projectAccountTriggerRows({
-        sets: read.sets, attachedPage: read.attachedPage, accountId: accountLifetime?.scope.accountId,
-        resolveWorkflowTitle: editor.resolveWorkflowTitle,
-    }) : EMPTY_ROWS, [read.sets, read.attachedPage, accountLifetime?.scope.accountId, editor.resolveWorkflowTitle]);
-    const rows = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'direct'), [projected]);
-    const also = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'context'), [projected]);
+    const { read, editor, rows, also, skippedNotSharedCount } = useSelectedAutomationsSection(
+        subject ? { subject, ...(props.contextSubjects ? { contextSubjects: [...props.contextSubjects] } : {}) } : null,
+        accountLifetime, demanded);
     const legacyMachineId = legacySubject?.machineId;
     const project = React.useMemo(() => props.executionContext ?? (legacyMachineId ? { machineId: legacyMachineId, directory: '~' } : undefined),
         [props.executionContext, legacyMachineId]);
@@ -164,5 +184,5 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         missingAudience, issue: reviewIssue, loading: reviewLoading,
         retryReview, submit: submitLink }),
     [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, reviewIssue, reviewLoading, retryReview, submitLink]);
-    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0, project, audience, link };
+    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, audience, link };
 }

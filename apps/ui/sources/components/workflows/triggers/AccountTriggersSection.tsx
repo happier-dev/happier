@@ -29,6 +29,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import {
     addWorkflowTrigger,
+    listWorkflowTriggerSets,
     removeWorkflowTrigger,
     reviewWorkflowTriggerSet,
     updateWorkflowTrigger,
@@ -103,10 +104,23 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
         refresh();
         return write;
     }, [refresh]);
+    const readSet = async (automationId: string) => {
+        const set = sets.find(candidate => candidate.automationId === automationId)
+            ?? (await listWorkflowTriggerSets({ automationId }, actionOptions)).find(candidate => candidate.automationId === automationId);
+        if (!set) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+        return set;
+    };
     const [pending, setPending] = React.useState<ReadonlySet<string>>(() => new Set());
     const openRow = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'> & Partial<Pick<AccountTriggerRow, 'legacy'>>, anchor: React.RefObject<View | null>) => {
-        const set = sets.find((candidate) => candidate.automationId === row.automationId);
-        if (!set) return;
+        const lifetime = captureLifetime();
+        let set: WorkflowTriggerSetV1;
+        try {
+            set = sets.find(candidate => candidate.automationId === row.automationId) ?? await readSet(row.automationId);
+        } catch (error) {
+            if (lifetime?.isCurrent()) void Modal.alert(t('workflows.triggers.section.saveFailed'), formatWorkflowProblemMessage(error));
+            return;
+        }
+        if (!lifetime?.isCurrent()) return;
         if (isWorkflowTriggerSourceGone(set)) {
             void remove(row);
             return;
@@ -138,10 +152,12 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     });
     /** A trigger whose Workflow is gone offers only this; `triggerId: null` is the whole retained set. */
     const remove = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'>) => {
-        const set = sets.find((candidate) => candidate.automationId === row.automationId);
-        if (!set || pending.has(set.automationId)) return;
-        setPending((current) => new Set(current).add(set.automationId));
+        if (pending.has(row.automationId)) return;
+        setPending((current) => new Set(current).add(row.automationId));
         try {
+            const lifetime = captureLifetime();
+            const set = await readSet(row.automationId);
+            if (!lifetime?.isCurrent()) return;
             // The Action owns the confirmation; declining it leaves the row and says nothing.
             await removeWorkflowTrigger(accountTriggerRemoval(set, row.triggerId), actionOptions);
             refresh();
@@ -149,15 +165,16 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
             if (error instanceof WorkflowActionError && error.rawCode === 'approval_canceled') return;
             void Modal.alert(t('workflows.triggers.section.saveFailed'), formatWorkflowProblemMessage(error));
         } finally {
-            setPending((current) => { const next = new Set(current); next.delete(set.automationId); return next; });
+            setPending((current) => { const next = new Set(current); next.delete(row.automationId); return next; });
         }
     });
     const toggle = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'>, next: boolean) => {
-        const set = sets.find((candidate) => candidate.automationId === row.automationId);
-        if (!set || pending.has(set.automationId) || set.legacy?.lockedReason === 'review_required') return;
-        setPending((current) => new Set(current).add(set.automationId));
+        if (pending.has(row.automationId)) return;
+        setPending((current) => new Set(current).add(row.automationId));
         try {
             const lifetime = captureLifetime();
+            const set = await readSet(row.automationId);
+            if (set.legacy?.lockedReason === 'review_required') return;
             if (set.legacy && !await Modal.confirm(t('workflows.triggers.legacy.editNotice'),
                 t('workflows.triggers.legacy.conversionBoundary'), {
                     confirmText: t(next ? 'workflows.triggers.popover.turnOn' : 'workflows.triggers.popover.turnOff'),
@@ -168,13 +185,13 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
         } catch (error) {
             void Modal.alert(t('workflows.triggers.section.saveFailed'), formatWorkflowProblemMessage(error));
         } finally {
-            setPending((current) => { const next = new Set(current); next.delete(set.automationId); return next; });
+            setPending((current) => { const next = new Set(current); next.delete(row.automationId); return next; });
         }
     });
     const openTrigger = open?.triggerId == null ? undefined : open.set.triggers.find((trigger) => trigger.id === open.triggerId);
     const openEnabled = open !== null && open.set.enabled && openTrigger?.enabled !== false;
     // History reads the current list's occurrence, not the revision kept open for editing.
-    const liveSet = open?.history ? sets.find(set => set.automationId === open.set.automationId) : undefined;
+    const liveSet = open?.history ? sets.find(set => set.automationId === open.set.automationId) ?? open.set : undefined;
     const liveTrigger = liveSet?.triggers.find(trigger => trigger.id === open?.triggerId);
     const popover = open === null ? null : (
         <AccountTriggerPopover

@@ -272,6 +272,96 @@ function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRe
 // The retained Account adapter below exercises settings, source intake and legacy
 // links. Primary Library presentation consumes the unified view tested alongside it.
 describe('Account Workflow Library and settings', () => {
+    it('hydrates only an interacted selected attachment and uses its set revision for ordinary edits', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const set = WorkflowTriggerSetV1Schema.parse({ ...fixture(), revision: 7,
+            triggers: [{ ...trigger('t1'), nextRunAt: 123 }] });
+        serve(set);
+        const subject = { kind: 'machine', serverId, machineId: project.machineId } as const;
+        const selected = { automationId: set.automationId, triggerId: 't1', workflowDefinitionId: null,
+            relation: 'direct' as const, enabled: true, revision: 1,
+            summary: { kind: 'schedule' as const, schedule: trigger('t1').schedule },
+            setUpBy: { accountId: 'account-a', displayName: 'Owner' } };
+        const exactReads = () => home.requests.filter(request => request.method === 'GET'
+            && request.path === `/v3/automations/${set.automationId}`);
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({ automations: [],
+            attached: [selected], nextCursor: null, skippedNotSharedCount: 0 }) });
+        const hook = await renderHook(() => useResourceAutomationsSection({ subject }), {
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toHaveLength(1));
+        expect(exactReads()).toEqual([]);
+        expect(hook.getCurrent().read.sets).toEqual([]);
+        await act(async () => hook.getCurrent().editor.open(hook.getCurrent().rows[0]!, { current: null }));
+        expect(hook.getCurrent().editor.popover?.props.set.revision).toBe(7);
+        expect(exactReads()).toHaveLength(1);
+        expect(Object.hasOwn(storage.getState().workflowTriggerSetIdsByQuery, '')).toBe(false);
+        await act(async () => hook.getCurrent().editor.popover?.props.onHistory());
+        expect(hook.getCurrent().editor.popover?.props.pushedPage.content.props.nextRunAt).toBe(123);
+        await act(async () => hook.getCurrent().editor.toggle(hook.getCurrent().rows[0]!, false));
+        expect(writes()).toMatchObject([{ expectedTemplateVersion: 7 }]);
+        expect(rows[0]?.triggers[0]?.enabled).toBe(false);
+        expect(home.requests.filter(request => request.method === 'GET' && request.path.startsWith('/v3/automations?'))).toEqual([]);
+    });
+
+    it('reads Action attachments through the shared selected controller with paging and phase changes', async () => {
+        const { useActionAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { WorkflowAttachedTriggerPageV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const page = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [
+            { automationId: 'action-check', triggerId: 'direct', workflowDefinitionId: 'builtin:review-and-converge',
+                relation: 'direct', enabled: false, revision: 2, summary: { kind: 'action', phase: 'after', actionIds: ['session.archive'] },
+                setUpBy: { accountId: 'account-a', displayName: 'Owner' } },
+        ], nextCursor: 'next-action-page', skippedNotSharedCount: 2 });
+        const requests: unknown[] = [];
+        let failed = false;
+        let presented = false;
+        const initial = createDeferred<void>();
+        home.answer(serverId, 'POST /v3/automations/query', { select: async input => {
+            requests.push(input);
+            await initial.promise;
+            if (failed) return { status: 503, body: { error: 'database_transaction_timeout' } };
+            const next = typeof input === 'object' && input !== null && 'cursor' in input;
+            return { body: AutomationDefinitionListResponseSchema.parse({ automations: [], ...page,
+                ...(next ? { attached: [{ ...page.attached[0]!, automationId: 'inline-action-check', workflowDefinitionId: null, triggerId: 'next' }], nextCursor: null } : {}) }) };
+        } });
+        const hook = await renderHook((props: { phase: 'before' | 'after' }) => useActionAutomationsSection({
+            actionId: 'session.archive', phase: props.phase, accountLifetime: lifetime,
+        }), { initialProps: { phase: 'after' },
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={presented}>{children}</PluginSurfaceFocusEligibilityProvider> });
+        expect(hook.getCurrent().read.status).toBe('loading');
+        expect(requests).toEqual([]);
+        presented = true;
+        await hook.rerender({ phase: 'after' });
+        await act(async () => initial.resolve());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).not.toBe('loading'));
+        expect(home.requests.filter(request => request.method === 'GET' && request.path.startsWith('/v3/automations?'))).toEqual([]);
+        expect(requests).toEqual([expect.objectContaining({ actionId: 'session.archive', phase: 'after' })]);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        expect(hook.getCurrent().rows).toMatchObject([{ automationId: 'action-check', off: true }]);
+        expect(hook.getCurrent().also).toEqual([]);
+        expect(hook.getCurrent().skippedNotSharedCount).toBe(2);
+        await hook.rerender({ phase: 'after' });
+        expect(requests).toHaveLength(1);
+        await act(async () => hook.getCurrent().read.loadMore());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toHaveLength(2));
+        expect(requests.at(-1)).toMatchObject({ actionId: 'session.archive', phase: 'after', cursor: 'next-action-page' });
+        await hook.rerender({ phase: 'before' });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toHaveLength(1));
+        expect(requests.at(-1)).toMatchObject({ actionId: 'session.archive', phase: 'before' });
+        expect(requests.at(-1)).not.toHaveProperty('cursor');
+        const retained = hook.getCurrent().rows;
+        failed = true;
+        await act(async () => hook.getCurrent().read.retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('failed'));
+        expect(hook.getCurrent().rows).toBe(retained);
+        expect(requests).toHaveLength(4);
+        expect(requests.every(input => typeof input === 'object' && input !== null && 'actionId' in input && !('subject' in input))).toBe(true);
+    });
+
     it('reads the selected resource page without a census and retains direct, context and skipped facts across failure and Retry', async () => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');

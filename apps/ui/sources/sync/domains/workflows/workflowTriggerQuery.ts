@@ -6,7 +6,7 @@ import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/e
 /** The same identity owns hook demand, list publication and store membership. */
 export function workflowTriggerQueryKey(request: WorkflowTriggerListRequestV1): string {
     if ('lifetimeSession' in request) return `session:${request.lifetimeSession.sessionId}`;
-    if ('subject' in request) return `selected:${createCanonicalJsonSigningInput(request)}`;
+    if ('subject' in request || 'actionId' in request) return `selected:${createCanonicalJsonSigningInput(request)}`;
     if ('workflow' in request) return `workflow:${request.workflow}`;
     if ('managedTarget' in request) return `managed:${JSON.stringify([request.managedTarget.homeId, request.managedTarget.managedId])}`;
     if ('scope' in request) return request.scope;

@@ -36,7 +36,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     const workflow = request && 'workflow' in request ? request.workflow : null;
     const requestedScope = request && 'scope' in request ? request.scope : 'account_inline';
     const queryKey = request === null ? '' : workflowTriggerQueryKey(request);
-    const selected = request !== null && 'subject' in request;
+    const selected = request !== null && ('subject' in request || 'actionId' in request);
     // Addressed reads for the focused Account share its canonical Automation
     // projection, including local Action receipts before a socket wake arrives.
     const focused = !addressed || Boolean(scope && activeLifetime?.isCurrent()
@@ -113,7 +113,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             ? current.status === 'ready' ? current : { ...current, status: 'loading' }
             : { identity, status: 'loading' });
         const cursor = attempt.identity === identity ? attempt.cursor : undefined;
-        const pageRequest = 'subject' in readRequest && cursor ? { ...readRequest, cursor } : readRequest;
+        const pageRequest = selected && cursor ? { ...readRequest, cursor } : readRequest;
         listWorkflowTriggerPage(pageRequest, { signal: controller.signal,
             ...(addressed ? { accountLifetime } : {}) }).then(result => {
             if (!controller.signal.aborted && lifetime.isCurrent()) {

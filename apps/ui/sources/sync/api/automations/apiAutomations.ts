@@ -111,7 +111,7 @@ export async function listAutomationDefinitions(
     if (query.workflowDefinitionId !== undefined) search.set('workflowDefinitionId', query.workflowDefinitionId);
     if (query.scopeSessionId !== undefined) search.set('scopeSessionId', query.scopeSessionId);
     if (query.scope !== undefined) search.set('scope', query.scope);
-    const selectedPage = query.healthCheckSources !== undefined || query.subject !== undefined || query.workflowDefinitionIds !== undefined || query.managedTarget !== undefined
+    const selectedPage = query.healthCheckSources !== undefined || query.subject !== undefined || query.actionId !== undefined || query.workflowDefinitionIds !== undefined || query.managedTarget !== undefined
         || query.managedTargetUnindexed !== undefined;
     const raw = await readAutomationApiJson(selectedPage ? '/v3/automations/query' : `/v3/automations?${search.toString()}`, {
         headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: selectedPage }),
