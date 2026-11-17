@@ -4,6 +4,69 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, posix, resolve as resolvePath } from 'node:path';
 
 export type UiParitySource = Readonly<{ filePath: string; content: string }>;
+
+/** Composition closure: a factory's published executor ports must reach its consumer.
+ * This checks forwarding, not input admission or the handler's effects. */
+export function collectActionDependencyForwardingParity(files: readonly UiParitySource[]) {
+  const modules = new Map(files.map(file => [file.filePath,
+    ts.createSourceFile(file.filePath, file.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)]));
+  const findings: { filePath: string; operation: string; factory: string }[] = [];
+  for (const [filePath, source] of modules) {
+    const imports = new Map<string, { path: string; name: string }>();
+    for (const node of source.statements) {
+      if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) continue;
+      const bindings = node.importClause?.namedBindings;
+      if (!bindings || !ts.isNamedImports(bindings)) continue;
+      const path = posix.normalize(posix.join(posix.dirname(filePath), node.moduleSpecifier.text));
+      const target = [path, `${path}.ts`, path.replace(/\.js$/, '.ts')].find(path => modules.has(path));
+      if (target) for (const binding of bindings.elements) imports.set(binding.name.text,
+        { path: target, name: binding.propertyName?.text ?? binding.name.text });
+    }
+    function visit(node: ts.Node): void {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+        && ts.isCallExpression(node.initializer) && ts.isIdentifier(node.initializer.expression)) {
+        const imported = imports.get(node.initializer.expression.text);
+        const producer = imported && modules.get(imported.path);
+        const declaration = producer?.statements.find(statement => ts.isFunctionDeclaration(statement)
+          && statement.name?.text === imported?.name);
+        if (producer && declaration && ts.isFunctionDeclaration(declaration) && declaration.type) {
+          const keys = new Set<string>();
+          function ports(type: ts.TypeNode): void {
+            if (ts.isTypeReferenceNode(type) && ts.isIdentifier(type.typeName)) {
+              if (type.typeName.text === 'Pick' && type.typeArguments?.[0]?.getText(producer) === 'ActionExecutorDeps') {
+                const keyType = type.typeArguments[1];
+                for (const key of keyType && ts.isUnionTypeNode(keyType) ? keyType.types : keyType ? [keyType] : []) {
+                  if (ts.isLiteralTypeNode(key) && ts.isStringLiteral(key.literal)) keys.add(key.literal.text);
+                }
+              } else {
+                const alias = producer?.statements.find(statement => ts.isTypeAliasDeclaration(statement)
+                  && statement.name.text === type.typeName.getText(producer));
+                if (alias && ts.isTypeAliasDeclaration(alias)) ports(alias.type);
+              }
+            }
+          }
+          ports(declaration.type);
+          const receiver = node.name.text;
+          function consume(candidate: ts.Node): void {
+            if (ts.isPropertyAccessExpression(candidate) && ts.isIdentifier(candidate.expression)
+              && candidate.expression.text === receiver) keys.delete(candidate.name.text);
+            if (ts.isSpreadAssignment(candidate) && ts.isIdentifier(candidate.expression)
+              && candidate.expression.text === receiver) keys.clear();
+            ts.forEachChild(candidate, consume);
+          }
+          // Only the enclosing function owns this binding; unrelated functions cannot forward it.
+          let scope: ts.Node = node;
+          while (scope.parent && !ts.isFunctionLike(scope)) scope = scope.parent;
+          consume(scope);
+          for (const key of keys) findings.push({ filePath, operation: key, factory: imported!.name });
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+  return findings;
+}
 type Surfaces = Readonly<{ ui?: boolean; agent?: boolean; mcp?: boolean; cli?: boolean }>;
 type Spec = Readonly<{ id: string; surfaces: Surfaces; cli?: Readonly<{ commands?: readonly unknown[] }> }>;
 type Setting = Readonly<{ anchor: string; surfaces?: Surfaces; storage?: Readonly<{

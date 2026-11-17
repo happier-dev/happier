@@ -1,17 +1,24 @@
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
 import { AGENT_ACTION_EXCLUSION_REASONS, listActionSpecs, listActionCliCommandDeclarations } from '../../packages/protocol/src/actions/actionSpecs.ts';
 import { listActionSpecsForCatalogSurface } from '../../packages/protocol/src/actions/actionCatalog.ts';
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1, buildBuiltInAccountSettingMutationV1,
   readPortablePlatformAccountSettingBindingV1, resolveBuiltInAccountSettingResetValueV1 } from '../../packages/protocol/src/actions/settings/settingsDeclarations.ts';
 import { accountSettingsParse } from '../../packages/protocol/src/account/settings/accountSettings.ts';
-import { collectUiActionParity, readUiActionParitySources } from './lib/uiActionParity.ts';
+import { collectActionDependencyForwardingParity, collectUiActionParity, readUiActionParitySources } from './lib/uiActionParity.ts';
 
 // Development diagnostic for the same source walker consumed by the UI parity test.
 export function readCurrentUiActionParity() {
   const root = fileURLToPath(new URL('../..', import.meta.url));
   const files = readUiActionParitySources(root);
   const specs = listActionSpecs();
+  const dependencyDirectory = 'apps/cli/src/session/actions/cliActionDeps';
+  const dispatchFindings = collectActionDependencyForwardingParity([
+    'apps/cli/src/session/actions/createCliActionDeps.ts',
+    ...readdirSync(resolve(root, dependencyDirectory)).filter(name => name.endsWith('.ts') && !name.includes('.test.'))
+      .map(name => `${dependencyDirectory}/${name}`),
+  ].map(filePath => ({ filePath, content: readFileSync(resolve(root, filePath), 'utf8') })));
   const defaults = accountSettingsParse({});
   const settingBindings = new Map<string, string[]>();
   for (const declaration of BUILT_IN_SETTINGS_DECLARATIONS_V1) {
@@ -34,7 +41,7 @@ export function readCurrentUiActionParity() {
       settingBindings.set(`account:${binding.key}`, anchors);
     }
   }
-  return { sourceFiles: files.length, canonicalSpecs: specs.length,
+  return { sourceFiles: files.length, canonicalSpecs: specs.length, dispatchFindings,
     ...collectUiActionParity(files, specs, BUILT_IN_SETTINGS_DECLARATIONS_V1, {
       sourceRoot: root,
       agentIds: new Set(listActionSpecsForCatalogSurface({ surface: 'agent' }).map(spec => spec.id)),
@@ -51,5 +58,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   console.log(`UI Action parity: ${report.sourceFiles} source files, ${report.canonicalSpecs} canonical specs, `
     + `${report.actions.length} Action sites, ${report.settings.length} settings sites, ${report.findings.length} findings`);
   console.log(JSON.stringify(report));
-  if (report.findings.length || !report.actions.length || !report.settings.length) process.exitCode = 1;
+  if (report.findings.length || report.dispatchFindings.length || !report.actions.length || !report.settings.length) process.exitCode = 1;
 }

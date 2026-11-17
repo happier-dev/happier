@@ -1,18 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BUILT_IN_SETTINGS_METADATA_V1 } from '../../../packages/protocol/src/actions/settings/builtInSettingsMetadata.ts';
 import { SCREEN_CAPTURE_DELIVERY_ACTION_SPECS } from '../../../packages/protocol/src/actions/specs/screenCapture.ts';
 import { listActionSpecs } from '../../../packages/protocol/src/actions/actionSpecs.ts';
-import { collectUiActionParity, readUiActionParitySources } from './uiActionParity.ts';
+import { collectActionDependencyForwardingParity, collectUiActionParity, readUiActionParitySources } from './uiActionParity.ts';
 import './uiActionParity.settings.test.ts';
 
 const specs = [
   { id: 'demo.edit', surfaces: { ui: true, agent: true, mcp: true, cli: false } },
   { id: 'settings.set', surfaces: { ui: true, agent: true, mcp: true, cli: true }, cli: { commands: [{ path: ['settings', 'set'] }] } },
 ];
+
+test('Action dependency composition retains every port published by its factory', () => {
+  const owner = 'apps/cli/src/session/actions/createCliActionDeps.ts';
+  const directory = 'apps/cli/src/session/actions/cliActionDeps';
+  const files = [owner, ...readdirSync(directory).filter(name => name.endsWith('.ts') && !name.includes('.test.'))
+    .map(name => `${directory}/${name}`)].map(filePath => ({ filePath, content: readFileSync(filePath, 'utf8') }));
+  assert.deepEqual(collectActionDependencyForwardingParity(files), []);
+  // F4: the handler existed but its port never reached the composed executor.
+  const missing = files.map(file => file.filePath === owner ? { ...file,
+    content: file.content.replace(/projectsSetupSet:\s*projectDeps\.projectsSetupSet,/, ''),
+  } : file);
+  assert.deepEqual(collectActionDependencyForwardingParity(missing).map(row => row.operation), ['projectsSetupSet']);
+});
 
 test('source discovery excludes test harnesses and composed fixtures while retaining product controls', () => {
   const root = mkdtempSync(join(tmpdir(), 'ui-parity-sources-'));
