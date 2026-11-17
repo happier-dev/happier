@@ -1,6 +1,7 @@
 import { Client, Query } from 'pg';
 import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import { statsOperationResultV1 } from '../stats.js';
 import {
     executePostgresqlOperation, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
     compilePostgresqlSetupV1, decodePostgresqlSetupV1,
@@ -118,6 +119,12 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             || (input.operation === 'statement.explain' && input.accessMode === 'write');
         let transaction = false;
         let committing = false;
+        const executionOptions: PostgresqlExecutionOptions = input.operation === 'stats.read' ? { stats: {
+            database: setup.database, pgStatStatements: setup.pgStatStatements,
+            intervalBasis: { databaseIdentity, engineStartedAt: setup.engineStartedAt,
+                bindingKey: JSON.stringify({ target: input.target, databaseIdentity, currentUser: setup.currentUser }),
+                selectionKey: JSON.stringify(input.request) },
+        } } : {};
         const onAbort = () => {
             if (!activeQuery) { void close().catch(() => {}); return; }
             void cancelActive().catch(() => { void close().catch(() => {}); });
@@ -126,13 +133,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         try {
             await query({ text: write ? 'BEGIN' : 'BEGIN READ ONLY', values: [] });
             transaction = true;
-            const options: PostgresqlExecutionOptions = input.operation === 'stats.read' ? { stats: {
-                database: setup.database, pgStatStatements: setup.pgStatStatements,
-                intervalBasis: { databaseIdentity, engineStartedAt: setup.engineStartedAt,
-                    bindingKey: JSON.stringify({ target: input.target, databaseIdentity, currentUser: setup.currentUser }),
-                    selectionKey: JSON.stringify(input.request) },
-            } } : {};
-            const result = await executePostgresqlOperation(input, query, options);
+            const result = await executePostgresqlOperation(input, query, executionOptions);
             operationSignal?.throwIfAborted();
             if (!result.ok || (input.operation === 'statement.explain' && input.accessMode === 'write')) {
                 await query({ text: 'ROLLBACK', values: [] });
@@ -152,6 +153,14 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             if (error instanceof PostgresqlOperationError) return error.failure;
             if (error instanceof PostgresqlInputError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };
             const failureCause = postgresqlFailureCause(error);
+            // Installed pg_stat_statements reports 55000 when its shared library
+            // was not loaded. Settle after rollback, preserving this connection
+            // for ordinary reads and leaving user-authored SQL failures intact.
+            if (input.operation === 'stats.read' && input.request.group === 'statements'
+                && failureCause.code === '55000' && executionOptions.stats) {
+                return statsOperationResultV1('postgresql', input.request,
+                    { status: 'unavailable', reason: 'preload_restart_required' }, [], executionOptions.stats);
+            }
             return { ok: false, status: 'failed', code: failureCause.source === 'engine' ? 'database_engine_error' : 'database_transport_error', cause: failureCause };
         } finally {
             operationSignal?.removeEventListener('abort', onAbort);
