@@ -1,6 +1,8 @@
 import * as React from 'react';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { acquireDaemonMergedWorkflowEventCatalog, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import type { WorkflowEventsListOutputV1 } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import {
   readEligibleEventPluginName,
   readEligibleEventPresentation,
@@ -14,7 +16,7 @@ const NO_EVENTS: readonly WorkflowTriggerEventOption[] = Object.freeze([]);
 
 /**
  * The plugin-declared Events a trigger can start on, read from the Machine's trigger-event catalog
- * (the merged daemon projection the Event editor reads), named as that editor names them. Read only
+ * through workflow.events.list, named as the Event editor names them. Read only
  * while `enabled`: a closed menu with no plugin trigger issues no Machine read.
  */
 export function useWorkflowTriggerEventOptions(
@@ -34,11 +36,32 @@ export function useWorkflowTriggerEventOptions(
     sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
   });
   const ready = projection.phase === 'ready' ? projection.inputs : null;
+  const target = React.useMemo(() => params.enabled && projection.phase === 'ready'
+    ? readCachedDaemonMergedProjectionCacheEntry({ machineId: params.machineId, serverId: params.serverId,
+      sections: PLUGIN_EVENT_AUTOMATION_SECTIONS }) : null,
+  [params.enabled, params.machineId, params.serverId, projection.phase, projection.inputs]);
+  const [catalog, setCatalog] = React.useState<Readonly<{
+    target: typeof target;
+    status: 'ready' | 'unavailable';
+    events: WorkflowEventsListOutputV1['events'];
+  }> | null>(null);
+  React.useEffect(() => {
+    if (target?.kind !== 'ready' || !params.machineId) return;
+    const read = acquireDaemonMergedWorkflowEventCatalog(target, params.machineId);
+    let mounted = true;
+    void read.promise.then(events => {
+      if (mounted) setCatalog({ target, status: 'ready', events });
+    }, () => {
+      if (mounted) setCatalog({ target, status: 'unavailable', events: [] });
+    });
+    return () => { mounted = false; read.release(); };
+  }, [target, params.machineId]);
+  const admitted = catalog?.target === target ? catalog : null;
   const localize = usePluginLocalizedTextResolver({
     projection: ready?.pluginUiProjection ?? null,
   });
   const events = React.useMemo(() => {
-    const eligible = ready?.automationEligibleEvents;
+    const eligible = admitted?.events;
     if (!eligible || eligible.length === 0) return NO_EVENTS;
     return eligible.map((entry) => ({
       eventRef: {
@@ -51,12 +74,12 @@ export function useWorkflowTriggerEventOptions(
         entry.event.identity.pluginId,
       ),
     }));
-  }, [localize, ready]);
+  }, [localize, ready, admitted]);
   const status =
     !params.enabled || params.machineId === null
       ? 'idle'
       : projection.phase === 'ready'
-        ? 'ready'
+        ? admitted?.status ?? 'loading'
         : projection.phase === 'loading' || projection.phase === 'idle'
           ? 'loading'
           : 'unavailable';

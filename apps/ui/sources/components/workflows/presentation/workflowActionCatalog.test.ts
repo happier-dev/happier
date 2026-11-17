@@ -167,4 +167,16 @@ describe('workflow executing-machine Action catalog', () => {
         expect(specs.some((spec) => spec.id === 'review.start')).toBe(true);
         expect(specs.filter(spec => spec.id.startsWith('workflow.run.')).map(spec => spec.id)).toEqual(['workflow.run.summaries']);
     });
+    it('offers before and after an Action from the host catalog\'s own eligibility when no discovery is mounted', () => {
+        const hookable = (id: string) => { const spec = getActionSpec(id as Parameters<typeof getActionSpec>[0]);
+            return spec.sideEffectClass !== 'none' && spec.sideEffectClass !== 'read'; };
+        const before = listWorkflowStepActionSpecs(null, null, undefined, undefined, 'before');
+        const after = listWorkflowStepActionSpecs(null, null, undefined, undefined, 'after');
+        expect(before.length).toBeGreaterThan(0);
+        expect(before.every(spec => hookable(spec.id))).toBe(true);
+        expect(listActionSpecs().filter(spec => spec.sideEffectClass === 'read').some(spec => before.some(entry => entry.id === spec.id))).toBe(false);
+        // After never offers an Action that settles through a completion contract.
+        expect(after.every(spec => getActionSpec(spec.id as Parameters<typeof getActionSpec>[0]).completion === undefined)).toBe(true);
+        expect(after.every(spec => before.some(entry => entry.id === spec.id))).toBe(true);
+    });
 });

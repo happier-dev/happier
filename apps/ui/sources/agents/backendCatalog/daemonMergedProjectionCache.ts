@@ -20,6 +20,8 @@ import { DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS, daemonProjectionSectionsC
 import { getPreferredLanguage } from '@/text';
 import { slicePluginSections } from '@/sync/domains/plugins/ui/projectionSections';
 import type { DaemonMergedProjectionInputs } from './daemonContributionRegistryProjectionAdapters';
+import type { ActionDiscoveryDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import type { WorkflowEventsListOutputV1 } from '@happier-dev/protocol/actions/specs/workflowEvents';
 
 // The held projection answers and their synchronous readers. This module stays
 // free of the Machine RPC stack so store domains can read a published Machine
@@ -40,6 +42,9 @@ export type ProjectionCacheResult = (
     }>
 );
 export type ProjectionCacheEntry = Readonly<{
+    /** Demand-scoped Action discovery borrows this exact admitted projection. */
+    workflowActionCatalog: { current: ProjectionActionCatalogRead | null };
+    workflowEventCatalog: { current: ProjectionCatalogRead<WorkflowEventsListOutputV1['events']> | null };
     fetchedAtMs: number;
     projectionRevision: number;
     /** Exact selected caller/Action identities; absent for the complete catalogue. */
@@ -61,6 +66,22 @@ export type ProjectionCacheEntry = Readonly<{
         retainReader(reader: ActiveServerAccountScopeLifetime): void;
     }>;
 }> & ProjectionCacheResult;
+export type ProjectionCatalogRead<T> = {
+    readonly promise: Promise<T>;
+    readers: number;
+    dispose(): void;
+};
+export type ProjectionActionCatalogRead = ProjectionCatalogRead<readonly ActionDiscoveryDefinitionSummaryV1[]>;
+/** An Account authoring demand has no daemon projection to fabricate. */
+export type AccountActionCatalogEntry = Readonly<{
+    kind: 'accountActionCatalog';
+    accountScope: ServerAccountScope;
+    accountCurrentness: ActiveServerAccountScopeLifetime;
+    targetServerId: string;
+    workflowActionCatalog: { current: ProjectionActionCatalogRead | null };
+    retirement?: Readonly<{ dispose(): void }>;
+    sectionHolding?: undefined;
+}>;
 export type ReusableProjectionCacheEntry = Extract<ProjectionCacheEntry, { kind: 'ready' | 'unsupported' }>;
 
 /**
@@ -69,7 +90,7 @@ export type ReusableProjectionCacheEntry = Extract<ProjectionCacheEntry, { kind:
  * direct callers — goes through this cache and its single in-flight request
  * per machine scope, projection revision, requested locale and section demand.
  */
-export const PROJECTION_CACHE = new Map<string, ProjectionCacheEntry>();
+export const PROJECTION_CACHE = new Map<string, ProjectionCacheEntry | AccountActionCatalogEntry>();
 type ProjectionSectionPool = DaemonProjectionSectionCache & {
     key: string;
     references: Map<string, number>;
@@ -302,6 +323,8 @@ export function evictAnswersOnHomeAccountRetirement(): void {
             if (entry.accountCurrentness ? entry.accountCurrentness.isCurrent()
                 : entry.targetServerId && !areServerProfileIdentifiersEquivalent(entry.targetServerId, serverId)) continue;
             PROJECTION_CACHE.delete(cacheKey);
+            entry.workflowActionCatalog.current?.dispose();
+            if (entry.kind !== 'accountActionCatalog') entry.workflowEventCatalog.current?.dispose();
             entry.retirement?.dispose();
             releaseProjectionSections(entry.sectionHolding);
             PROJECTION_SUMMARY_SUBSCRIPTIONS.get(cacheKey)?.notify();
@@ -313,11 +336,13 @@ export function currentProjectionCacheEntry(cacheKey: string): ProjectionCacheEn
     const entry = PROJECTION_CACHE.get(cacheKey) ?? null;
     if (entry?.accountCurrentness && !entry.accountCurrentness.isCurrent()) {
         PROJECTION_CACHE.delete(cacheKey);
+        entry.workflowActionCatalog.current?.dispose();
+        if (entry.kind !== 'accountActionCatalog') entry.workflowEventCatalog.current?.dispose();
         entry.retirement?.dispose();
         releaseProjectionSections(entry.sectionHolding);
         return null;
     }
-    return entry;
+    return entry?.kind === 'accountActionCatalog' ? null : entry;
 }
 
 export function readCachedDaemonMergedProjectionCacheEntry(params: Readonly<{

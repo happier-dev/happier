@@ -3944,7 +3944,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     workflowEventsList: async (args, context) => {
       const catalog = await loadDaemonMergedProjectionCacheEntry({ machineId: args.machineId,
-        serverId: args.serverId, signal: context.signal, accountLifetime: accountContext?.accountLifetime, reuseFreshReady: false,
+        serverId: args.serverId, signal: context.signal, accountLifetime: accountContext?.accountLifetime, reuseFreshReady: true,
         sections: ['automationEligibleEvents'],
       });
       if (catalog?.kind !== 'ready' || catalog.inputs.automationEligibleEvents === undefined) {

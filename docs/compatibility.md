@@ -23,6 +23,14 @@ Protocol, CLI and UI readers reload together; older strict readers reject the
 new union arm. No migration, store or compatibility adapter is introduced.
 
 
+## Workflow authoring discovery (unreleased 0.3)
+
+The existing Action discovery read accepts optional `purpose: 'workflow_step' |
+'automation'` and nullable `limit`; omission preserves ordinary discovery.
+Matching development Protocol, CLI and UI readers consume these authoring
+summaries together. This changes neither execution admission nor persisted
+state and introduces no compatibility adapter.
+
 ## Workflow command JSON input (unreleased 0.3)
 
 The closed `machines.command.run` input accepts optional strict JSON `stdin`.

@@ -511,6 +511,7 @@ function getHostActionSearchSummary(
 
 export function searchSerializedActionSpecsForSurface(params: Readonly<{
   surface?: keyof ActionSurfaces | null;
+  purpose?: 'workflow_step' | 'automation';
   query?: string | null;
   limit?: number | null;
   /** Tool search discovers summaries; explicit detail reads retain the full contract. */
@@ -519,7 +520,10 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
   additionalDefinitions?: readonly ActionDefinitionSummaryV1[];
 }>): readonly SerializedActionSpec[] {
   const query = normalizeActionSearchQuery(params.query ?? '');
-  const hostDefinitions = listActionSpecsForCatalogSurface(params)
+  const catalog = params.purpose === 'automation' ? { ...params, surface: null }
+    : params.purpose === 'workflow_step' ? { ...params, surface: 'agent' as const } : params;
+  const hostDefinitions = listActionSpecsForCatalogSurface(catalog)
+    .filter(spec => params.purpose !== 'workflow_step' || isWorkflowStepActionSpecV1(spec))
     .map((spec) => getHostActionSearchSummary(spec, params))
     // Search the immutable cached summary so repeated request-current filters
     // do not rebuild the same host projection or its normalized search text.
@@ -529,7 +533,8 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
   const additionalDefinitions = (params.additionalDefinitions ?? [])
     .filter((definition) => (
       !hostIds.has(definition.id)
-      && (!params.surface || definition.surfaces[params.surface] === true)
+      && (!catalog.surface || definition.surfaces[catalog.surface] === true)
+      && (params.purpose !== 'workflow_step' || isWorkflowStepActionSpecV1(definition))
     ))
     .map(definition => actionDefinitionToSummary(definition, params.includeOutputSchema));
   return searchActionDefinitionSummaryCandidates([

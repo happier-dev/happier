@@ -14,7 +14,7 @@ import {
 } from './vocabulary.js';
 import type { ActionDefinitionSlashV1 } from '../../actions/actionDefinitionV1.js';
 import { ActionContextualDefaultsSchema } from '../../actions/contextualDefaults.js';
-import { ActionToolExposureSchema } from '../../actions/metadata.js';
+import { ActionToolExposureSchema, type ActionExecutionPlacement } from '../../actions/metadata.js';
 import { InputPredicateSchema } from '../../inputs/inputPredicates.js';
 import { ActionOperationDeclarationV1Schema } from '../../actions/operations/v1.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../../actions/sessionTargetV1.js';
@@ -102,6 +102,11 @@ export const PluginActionExecutionV2Schema = lazyZodSchema(() => z.discriminated
   }),
 ]));
 export type PluginActionExecutionV2 = z.infer<typeof PluginActionExecutionV2Schema>;
+
+/** The declared realm's existing host Action placement, shared by discovery adapters. */
+export function resolvePluginActionExecutionPlacementV2(execution: PluginActionExecutionV2): ActionExecutionPlacement {
+  return execution.target === 'daemon' ? 'machine' : execution.target;
+}
 
 export const PluginActionDeclaredExecutionV2Schema = PluginActionExecutionV2Schema;
 

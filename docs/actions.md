@@ -6004,6 +6004,16 @@ health to claim that a backup, Machine setup or certificate recovered.
 
 ## Workflow inputs and complete review reads (0.3 development source)
 
+Workflow and hook pickers use the ordinary admitted `action.spec.search` read.
+Its optional `purpose: 'workflow_step'` selects executable Workflow steps;
+`purpose: 'automation'` includes eligible host-internal effects for before/after
+hooks, independently of their tool exposure. Both retain the Action owner's
+enabled and credential decisions. `limit: null` requests every matching summary;
+omission retains ordinary search paging. The CLI's `actions search` accepts
+`--purpose` and `--limit-json null` through the same schema. These discovery
+choices do not authorize execution. Event pickers use `workflow.events.list`
+rather than interpreting a private daemon projection themselves.
+
 An Event-triggered Workflow can bind `trigger_event` references to scalar leaves
 of its declared Event payload. Save validates paths with the Event filter's
 scalar-leaf resolver. Create and update may supply `intendedTriggers` for draft

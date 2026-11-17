@@ -2,6 +2,7 @@ import { isWorkflowStepActionSpecV1, listActionSpecs, type ActionSpec } from '@h
 import type { ActionDiscoveryDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ActionJsonSchemaProjectionError } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readPluginActionApprovalScopeSubjectKindV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
@@ -43,8 +44,13 @@ function projectWorkflowAction(read: () => WorkflowActionSpec, unavailable: () =
     }
 }
 
-export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[], selected?: ReadonlySet<string>): WorkflowActionSpec[] {
-    return specs.filter(selected ? spec => selected.has(spec.id) : isWorkflowStepActionSpecV1)
+export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[], selected?: ReadonlySet<string>,
+    purpose: WorkflowActionCatalogPurpose = 'workflowStep'): WorkflowActionSpec[] {
+    // Without discovery, the host catalog's own projection decides before/after eligibility.
+    const offered = selected ? (spec: ActionSpec) => selected.has(spec.id)
+        : purpose === 'workflowStep' ? isWorkflowStepActionSpecV1
+            : (spec: ActionSpec) => serializeActionSpec(spec, { includeOutputSchema: false }).automation?.[purpose] === true;
+    return specs.filter(offered)
         .map(spec => {
             const presentation = { id: spec.id, title: resolveWorkflowActionTitle(spec.id, spec),
             ...resolveHostActionPickerPresentation(spec.id),
@@ -64,7 +70,7 @@ export function listWorkflowStepActionSpecs(projection?: PluginProjectionV2 | nu
     purpose: WorkflowActionCatalogPurpose = 'workflowStep'): readonly WorkflowActionSpec[] {
     const selected = discovery === undefined ? undefined : new Set(discovery
         .filter(spec => spec.automation?.[purpose] === true).map(spec => spec.id));
-    const host = projectWorkflowHostActionSpecs(listActionSpecs(), selected);
+    const host = projectWorkflowHostActionSpecs(listActionSpecs(), selected, purpose);
     const subjectKinds = purpose === 'workflowStep' ? [] : Object.values(presentation?.subjectKindsById ?? {});
     const contributed = Object.entries(projection?.actionsById ?? {}).flatMap(([key, action]): WorkflowActionSpec[] => {
         const identity = parseQualifiedPluginContributionKey(key);
@@ -72,7 +78,8 @@ export function listWorkflowStepActionSpecs(projection?: PluginProjectionV2 | nu
         const actionId = formatQualifiedPluginActionId(identity);
         // Offered choices consume discovery; omitted discovery is the existing
         // authored-ID lookup used outside a mounted picker.
-        if (selected ? !selected.has(actionId) : action.available === false
+        // Before/after eligibility of a contributed Action is known only from discovery.
+        if (selected ? !selected.has(actionId) : purpose !== 'workflowStep' || action.available === false
             || action.execution.target !== 'daemon' || !action.surfaces.includes('agent')) return [];
         const present = (resolved: ResolvedPluginProjectedActionPresentation): WorkflowActionSpec => ({ id: actionId, title: resolved.title,
             ...(purpose === 'workflowStep' ? {} : { subjectKind: readPluginActionApprovalScopeSubjectKindV1({

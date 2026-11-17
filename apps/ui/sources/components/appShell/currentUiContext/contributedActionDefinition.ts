@@ -2,6 +2,7 @@ import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/ac
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { readPluginActionApprovalScopeSubjectKindV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
+import { resolvePluginActionExecutionPlacementV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -34,6 +35,7 @@ export function projectedActionToDefinition(action: PluginProjectedActionV2, pro
         id: formatQualifiedPluginActionId({ pluginId: action.pluginId, localId: action.id }),
         title: presentation.title, description: presentation.description,
         safety: action.dangerLevel === 'safe' ? 'safe' : 'danger', approval,
+        executionPlacement: resolvePluginActionExecutionPlacementV2(action.execution),
         placements: [], slash: action.slash ?? null, bindings: null, examples: null,
         surfaces: { ui: action.surfaces.includes('ui'), voice: action.surfaces.includes('voice'),
             agent: action.surfaces.includes('agent'), mcp: action.surfaces.includes('mcp'), cli: action.surfaces.includes('cli'),

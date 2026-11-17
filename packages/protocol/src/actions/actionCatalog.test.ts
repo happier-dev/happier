@@ -22,6 +22,21 @@ import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js'
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it('returns a complete deliberately demanded catalog beyond ordinary search limits', () => {
+    const base = actionSpecToActionDefinitionV1(getActionSpec('action.spec.search'));
+    const definitions = Array.from({ length: 201 }, (_, index): ActionDefinitionV1 => ({
+      ...base, id: `test.complete/actions/choice-${index}`, title: `Complete choice ${index}`,
+    }));
+    const search = (limit?: number | null) => searchSerializedActionSpecsForSurface({
+      surface: 'ui', includeOutputSchema: false, isActionEnabled: () => false,
+      additionalDefinitions: definitions, ...(limit === undefined ? {} : { limit }),
+    });
+    expect(getActionSpec('action.spec.search').inputSchema.safeParse({ limit: null }).success).toBe(true);
+    expect(search(null).map(row => row.id).sort()).toEqual(definitions.map(row => row.id).sort());
+    expect(search()).toHaveLength(20);
+    expect(search(100)).toHaveLength(100);
+  });
+
   it('publishes hook and Workflow choices consistently to catalog and strict external discovery', () => {
     for (const [id, automation] of [
       ['machines.command.run', { before: true, after: true, workflowStep: true }],

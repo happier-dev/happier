@@ -117,6 +117,47 @@ it('keeps a deliberately complete discovery read beyond the ordinary search limi
   expect(found.map(row => row.id).sort()).toEqual(declarations.map(row => row.id).sort());
 });
 
+it('discovers the complete automation choice set through one admitted UI read', async () => {
+  const executor = createRawActionExecutor(createDeps());
+  const context = { surface: 'ui' as const, authority: 'present_user' as const,
+    actionCaller: { kind: 'host' as const }, actionsSettings: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { 'machines.command.run': { enabled: false } },
+    }) };
+  const result = await executor.execute('action.spec.search', { purpose: 'automation', limit: null }, context);
+  expect(result).toMatchObject({ ok: true });
+  if (!result.ok) return;
+  const found = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.search'].parse(result.result).actionSpecs;
+  expect(found.find(row => row.id === 'workspace.tabs.open')).toMatchObject({
+    executionPlacement: 'client', automation: { before: true, after: true, workflowStep: false },
+  });
+  expect(found.find(row => row.id === 'wait')).toMatchObject({
+    automation: { before: false, after: false, workflowStep: true },
+  });
+  expect(found.find(row => row.id === 'transcript.unfollow')).toMatchObject({
+    automation: { before: true, after: true, workflowStep: false },
+  });
+  expect(found.some(row => row.id === 'machines.command.run')).toBe(false);
+  const ordinary = await executor.execute('action.spec.search', { query: 'wait', limit: null }, context);
+  expect(ordinary).toMatchObject({ ok: true });
+  if (ordinary.ok) expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.search'].parse(ordinary.result).actionSpecs.some(row => row.id === 'wait')).toBe(false);
+});
+
+it('discovers agent-only Workflow steps through the UI read without offering disabled Actions', async () => {
+  const executor = createRawActionExecutor(createDeps());
+  const context = { surface: 'ui' as const, authority: 'present_user' as const,
+    actionCaller: { kind: 'host' as const }, actionsSettings: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { 'machines.command.run': { enabled: false } },
+    }) };
+  const wait = await executor.execute('action.spec.search', { purpose: 'workflow_step', query: 'wait', limit: 100 }, context);
+  expect(wait).toMatchObject({ ok: true });
+  if (!wait.ok) return;
+  expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.search'].parse(wait.result).actionSpecs.some(row => row.id === 'wait')).toBe(true);
+  const command = await executor.execute('action.spec.search', { purpose: 'workflow_step', query: 'machines.command.run' }, context);
+  expect(command).toMatchObject({ ok: true });
+  if (!command.ok) return;
+  expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.search'].parse(command.result).actionSpecs.some(row => row.id === 'machines.command.run')).toBe(false);
+});
+
 it('discovers static MCP suggestions through the existing Action option reader without external reads', async () => {
   const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Static options cannot fetch vendor data'));
   try {

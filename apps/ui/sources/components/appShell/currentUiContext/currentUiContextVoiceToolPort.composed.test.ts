@@ -2015,6 +2015,27 @@ describe('current UI context Voice tool port', () => {
         expect(daemonRequests).toEqual([]);
     });
 
+    it('preserves client and daemon placement in the shared discovery definition', async () => {
+        const { projectedActionToDefinition } = await import('./contributedActionDefinition');
+        const daemon = createDaemonActionProjection({ surfaces: ['agent'] });
+        const client = createCurrentUiClientActionFixture({ surfaces: ['agent'], handler: async () => null });
+        const daemonAction = Object.values(daemon.actionsById)[0]!;
+        expect(projectedActionToDefinition(daemonAction, daemon).executionPlacement).toBe('machine');
+        expect(projectedActionToDefinition(client.action, client.projection).executionPlacement).toBe('client');
+        if (client.action.execution.target !== 'client') throw new Error('Expected a client fixture');
+        const accountAction = { ...client.action, id: 'account-only',
+            execution: { target: 'account' as const, account: client.action.execution.client } };
+        const definitions = [projectedActionToDefinition(daemonAction, daemon),
+            projectedActionToDefinition(client.action, client.projection),
+            projectedActionToDefinition(accountAction, client.projection)];
+        const { searchSerializedActionSpecsForSurface } = await import('@happier-dev/protocol/actions/actionCatalog');
+        const summaries = searchSerializedActionSpecsForSurface({ surface: 'agent', limit: null,
+            includeOutputSchema: false, isActionEnabled: () => false, additionalDefinitions: definitions });
+        expect(summaries.find(row => row.id === definitions[0]!.id)?.automation?.workflowStep).toBe(true);
+        expect(summaries.find(row => row.id === definitions[1]!.id)?.automation?.workflowStep).toBe(false);
+        expect(summaries.find(row => row.id === definitions[2]!.id)?.automation?.workflowStep).toBe(false);
+    });
+
     it('derives exact Voice Action definitions from the latest current AppShell projection', async () => {
         let projection = createDaemonActionProjection();
         const current = projection.actionsById[`${ACTION_ID.pluginId}/${ACTION_ID.localId}`]!;
@@ -2090,6 +2111,7 @@ describe('current UI context Voice tool port', () => {
             title: 'File ticket',
             description: 'Creates an issue in the current project.',
             safety: 'safe',
+            executionPlacement: 'machine',
             approval: { result: 'none' },
             placements: [],
             slash: null,

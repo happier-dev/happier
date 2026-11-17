@@ -10,7 +10,7 @@ import {
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { readHomeAccountDepartures } from '@/sync/runtime/orchestration/homeAccountChange';
-import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
     forgetPluginUiProjectionAdmissionSnapshot,
@@ -32,6 +32,7 @@ import { daemonProjectionSectionsCover, demandedDaemonProjectionSections, readDa
 
 import { getPreferredLanguage } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { isPluginProjectedActionExecutable } from '@/sync/domains/plugins/ui/projection';
 import { mergeProjectionSections } from './mergeProjectionSections';
 import { entryIsFresh, matchesProjectionCurrentness } from './projectionCurrentness';
 import {
@@ -53,6 +54,8 @@ import {
     type ProjectionCacheResult,
     type ProjectionSectionHolding,
     type ReusableProjectionCacheEntry,
+    type ProjectionCatalogRead,
+    type AccountActionCatalogEntry,
 } from './daemonMergedProjectionCache';
 export { entryIsFresh } from './projectionCurrentness';
 export type { DaemonMergedProjectionInputs } from './daemonContributionRegistryProjectionAdapters';
@@ -103,12 +106,120 @@ type ProjectionRequest = Readonly<{
 const LATEST_PROJECTION_REQUEST = new Map<string, ProjectionRequest>();
 
 export function clearDaemonMergedProjectionCacheForTests(): void {
-    for (const entry of PROJECTION_CACHE.values()) { entry.retirement?.dispose(); releaseProjectionSections(entry.sectionHolding); }
+    for (const entry of PROJECTION_CACHE.values()) {
+        entry.workflowActionCatalog.current?.dispose();
+        if (entry.kind !== 'accountActionCatalog') entry.workflowEventCatalog.current?.dispose();
+        entry.retirement?.dispose();
+        releaseProjectionSections(entry.sectionHolding);
+    }
     PROJECTION_CACHE.clear();
     PROJECTION_SECTION_POOLS.clear();
     for (const subscription of PROJECTION_SUMMARY_SUBSCRIPTIONS.values()) subscription.notify();
     clearProjectedAgentUiBehaviorDescriptors();
     LATEST_PROJECTION_REQUEST.clear();
+}
+
+/** The admitted catalog read belongs to this projection's existing Account lifetime. */
+function acquireProjectionCatalogRead<T>(
+    entry: Pick<ProjectionCacheEntry, 'accountScope' | 'accountCurrentness'>,
+    holding: { current: ProjectionCatalogRead<T> | null },
+    load: (signal: AbortSignal, accountScope: ServerAccountScope) => Promise<T>,
+    onDispose?: () => void,
+) {
+    let read = holding.current;
+    if (!read) {
+        const abort = new AbortController();
+        let retirement: Readonly<{ dispose(): void }> | undefined;
+        const promise = (async () => {
+            const accountScope = entry.accountScope;
+            if (!accountScope || entry.accountCurrentness?.isCurrent() !== true) {
+                throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+            }
+            const result = await load(abort.signal, accountScope);
+            abort.signal.throwIfAborted();
+            return result;
+        })();
+        const created: ProjectionCatalogRead<T> = {
+            promise, readers: 0,
+            dispose() {
+                abort.abort();
+                retirement?.dispose();
+                if (holding.current === created) holding.current = null;
+                onDispose?.();
+            },
+        };
+        holding.current = created;
+        retirement = entry.accountCurrentness?.onRetire(created.dispose);
+        read = created;
+    }
+    read.readers++;
+    const acquired = read;
+    return {
+        promise: acquired.promise,
+        release() { if (--acquired.readers === 0) acquired.dispose(); },
+    };
+}
+
+/** One discovery admission while any picker demands this admitted Machine answer. */
+export function acquireDaemonMergedWorkflowActionCatalog(
+    entry: Extract<ProjectionCacheEntry, { kind: 'ready' }> | AccountActionCatalogEntry,
+    onDispose?: () => void,
+) {
+    return acquireProjectionCatalogRead(entry, entry.workflowActionCatalog, async (signal, accountScope) => {
+        const [{ createFrontDoorActionExecute, requireActionSuccess }, { projectedActionToDefinition }, { ActionSpecSearchResultSchema }] = await Promise.all([
+            import('@/sync/ops/actions/frontDoorRuntimeActionExecutor'),
+            import('@/components/appShell/currentUiContext/contributedActionDefinition'),
+            import('@happier-dev/protocol/actions/specs/catalog'),
+        ]);
+        const projection = entry.kind === 'ready' ? entry.inputs.pluginUiProjection : null;
+        const execute = createFrontDoorActionExecute(undefined, {
+            listContributedActionDefinitions: () => projection ? Object.values(projection.actionsById)
+                .filter(isPluginProjectedActionExecutable)
+                .map(action => projectedActionToDefinition(action, projection)) : [],
+        });
+        const result = await execute('action.spec.search', { purpose: 'automation', limit: null }, {
+            surface: 'ui', signal, serverId: accountScope.serverId, expectedAccountId: accountScope.accountId,
+        });
+        requireActionSuccess(result, 'action.spec.search');
+        return ActionSpecSearchResultSchema.parse(result.result).actionSpecs;
+    }, onDispose);
+}
+
+/** Event choices consume the same public read as headless Workflow authoring. */
+export function acquireDaemonMergedWorkflowEventCatalog(
+    entry: Extract<ProjectionCacheEntry, { kind: 'ready' }>,
+    machineId: string,
+) {
+    return acquireProjectionCatalogRead(entry, entry.workflowEventCatalog, async (signal, accountScope) => {
+        const [{ createFrontDoorActionExecute, requireActionSuccess }, { WorkflowEventsListOutputV1Schema }] = await Promise.all([
+            import('@/sync/ops/actions/frontDoorRuntimeActionExecutor'),
+            import('@happier-dev/protocol/actions/specs/workflowEvents'),
+        ]);
+        const result = await createFrontDoorActionExecute()('workflow.events.list', { machineId, serverId: accountScope.serverId }, {
+            surface: 'ui', signal, serverId: accountScope.serverId, expectedAccountId: accountScope.accountId,
+        });
+        requireActionSuccess(result, 'workflow.events.list');
+        return WorkflowEventsListOutputV1Schema.parse(result.result).events;
+    });
+}
+
+/** Account-only and addressed Machine discovery share this owner's holding and lifetime. */
+export function acquireWorkflowAccountActionCatalog(lifetime: ActiveServerAccountScopeLifetime) {
+    const owner = readServerAccountScopeOwnerLifetime(lifetime);
+    const key = JSON.stringify(['workflowActionCatalog', serverAccountScopeKeySuffix(owner.scope)]);
+    const current = PROJECTION_CACHE.get(key);
+    let entry = current?.kind === 'accountActionCatalog'
+        && current.accountCurrentness.isCurrent() ? current : null;
+    if (!entry) {
+        current?.workflowActionCatalog.current?.dispose();
+        entry = { kind: 'accountActionCatalog', accountScope: owner.scope, accountCurrentness: owner,
+            targetServerId: owner.scope.serverId, workflowActionCatalog: { current: null } };
+        PROJECTION_CACHE.set(key, entry);
+    }
+    const acquired = entry;
+    return acquireDaemonMergedWorkflowActionCatalog(acquired, () => {
+        if (PROJECTION_CACHE.get(key) === acquired) PROJECTION_CACHE.delete(key);
+    });
 }
 
 
@@ -362,8 +473,13 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
                 cached.retirement?.dispose();
             }
         }) : undefined;
+        const reuseCatalogs = current && inputs === previousInputs && matchesProjectionCurrentness(current, {
+            projectionRevision: entry.projectionRevision, locale, accountScope,
+        });
         const published: ProjectionCacheEntry = Object.freeze({
             ...entry,
+            workflowActionCatalog: reuseCatalogs ? current.workflowActionCatalog : { current: null },
+            workflowEventCatalog: reuseCatalogs ? current.workflowEventCatalog : { current: null },
             // Freshness starts when the admitted answer becomes usable, not
             // before a cold describe and its section hydration have finished.
             fetchedAtMs: Date.now(),

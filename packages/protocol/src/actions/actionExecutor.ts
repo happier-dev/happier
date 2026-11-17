@@ -5532,17 +5532,26 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (dispatchAgentsSubagents1Result !== null) return dispatchAgentsSubagents1Result;
 
         if (actionId === 'action.spec.search') {
+          // The read is admitted on its invoking surface. Automation targets
+          // include host-internal effects; their external exposure does not
+          // restrict which effects may be selected for hooks.
+          const purpose = data.purpose === 'workflow_step' || data.purpose === 'automation' ? data.purpose : undefined;
+          const discoveryContext = purpose === 'automation' ? { ...ctx, surface: undefined }
+            : purpose === 'workflow_step' ? { ...ctx, surface: 'agent' as const } : ctx;
           return {
             ok: true,
             result: {
               actionSpecs: searchSerializedActionSpecsForSurface({
                 surface: ctx.surface ?? null,
-                includeOutputSchema: ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli' && ctx.surface !== 'voice',
+                purpose,
+                includeOutputSchema: !purpose && ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli' && ctx.surface !== 'voice',
                 query: typeof data.query === 'string' ? data.query : '',
                 limit: data.limit === null || typeof data.limit === 'number' ? data.limit : undefined,
-                isActionEnabled: (id) => !credentialScopeFailure(id, ctx, undefined, true) && isActionEnabled(getActionSpec(id), ctx),
+                isActionEnabled: (id) => !credentialScopeFailure(id, discoveryContext, undefined, true)
+                  && (purpose === 'automation' ? isHostInternalActionEnabled(getActionSpec(id), discoveryContext)
+                    : isActionEnabled(getActionSpec(id), discoveryContext)),
                 additionalDefinitions: listContributedActionDefinitions().filter((definition) => (
-                  isContributedActionDefinitionEnabled(definition, ctx)
+                  isContributedActionDefinitionEnabled(definition, discoveryContext)
                 )),
               }).map(projectActionDefinitionSummaryForExternalDiscovery),
             },
