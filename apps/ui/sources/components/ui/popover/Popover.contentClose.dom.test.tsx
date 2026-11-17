@@ -109,3 +109,57 @@ it.each(['unmount', 'closed'] as const)(
     }
   },
 );
+
+// DESIGN-ACCEPT-1116-D D-K1: a tooltip mounted while its trigger is focused never held focus. When Tab moves on,
+// the trigger's blur unmounts it while the document momentarily focuses nothing; it must not pull focus back to the
+// trigger, or Tab can never leave that control (the rail's Updates button trapped the keyboard).
+it('lets focus move on when a trigger blur unmounts a popover that never held focus', async () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+    () => new DOMRect(100, 200, 160, 40),
+  );
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  function Harness() {
+    const [focused, setFocused] = React.useState(false);
+    const anchorRef = React.useRef<View>(null);
+    return (
+      <>
+        <View ref={anchorRef}>
+          <button
+            data-testid="rail-updates"
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+          >
+            Updates
+          </button>
+        </View>
+        {focused ? (
+          <Popover open anchorRef={anchorRef} backdrop={false} boundaryRef={null} portal={{ web: true, sizeToContent: true }}>
+            {() => <span role="tooltip">Updates are available</span>}
+          </Popover>
+        ) : null}
+        <button data-testid="rail-settings">Settings</button>
+      </>
+    );
+  }
+  try {
+    await act(async () => root.render(<Harness />));
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="rail-updates"]')!;
+    await act(async () => {
+      trigger.focus();
+    });
+    expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+    // A Tab first blurs the trigger; microtasks run before the next control receives focus.
+    await act(async () => {
+      trigger.blur();
+    });
+    await act(async () => {});
+    expect(document.activeElement).not.toBe(trigger);
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+  }
+});

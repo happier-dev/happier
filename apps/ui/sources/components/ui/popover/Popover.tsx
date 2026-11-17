@@ -905,11 +905,21 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
 
     // Its content can close it too (a Done button turning `open` off or unmounting it). Focus then sits in the content
     // or, once the content left, nowhere; it goes back to the opener exactly as a requested close returns it (L04).
+    // Only a popover that held focus gives it back. A tooltip never takes focus, and its trigger's own blur unmounts it
+    // while the document focuses nothing for a moment: pulling focus back then would stop Tab at that trigger.
     React.useLayoutEffect(() => {
         if (Platform.OS !== 'web' || !open || typeof document === 'undefined') return;
         closeRequested.current = false;
+        let heldFocus = getContentDomElement()?.contains(document.activeElement) === true;
+        const noteFocus = (event: FocusEvent) => {
+            if (!heldFocus && event.target instanceof Node && getContentDomElement()?.contains(event.target) === true) {
+                heldFocus = true;
+            }
+        };
+        document.addEventListener('focusin', noteFocus, true);
         return () => {
-            if (closeRequested.current) return;
+            document.removeEventListener('focusin', noteFocus, true);
+            if (closeRequested.current || !heldFocus) return;
             const content = getContentDomElement();
             const stranded = () => {
                 const focused = document.activeElement;
