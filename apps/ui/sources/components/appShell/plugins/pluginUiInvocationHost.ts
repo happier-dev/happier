@@ -204,6 +204,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
         openSurface: async () => unavailable(),
         replacePageLocation: async () => unavailable(),
         setUnsavedChanges: async () => unavailable(),
+        deviceState: async () => unavailable(),
         notify: async () => unavailable(),
         confirm: async () => unavailable(),
         diagnostic: () => {},

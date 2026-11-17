@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { credentialBrokeredSourceUseMessage } from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { useUnistyles } from 'react-native-unistyles';
@@ -16,7 +17,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { presentShareSheet, type ShareSheetAnchor } from '../presentShareSheet';
 import type {
   ShareLevelPresentation,
@@ -123,7 +124,7 @@ function CredentialShareModal(
     [query, sections],
   );
   return (
-    <ShareSheet
+    <ShareSheet host={SHARE_SHEET_HOST}
       model={model}
       actions={actions}
       adapter={adapter}

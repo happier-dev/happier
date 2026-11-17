@@ -174,6 +174,7 @@ function createFixtureHostApi(context: SurfaceContext, state: FixtureState): Plu
         replacePageLocation: unsupported,
         setPageNavigation: unsupported,
         setUnsavedChanges: unsupported,
+        deviceState: unsupported,
         notify: async () => undefined,
         confirm: async () => false,
         diagnostic: () => undefined,

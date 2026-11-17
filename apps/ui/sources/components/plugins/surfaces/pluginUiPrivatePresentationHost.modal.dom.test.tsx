@@ -280,6 +280,7 @@ function createHostApi(
         openSurface: async () => undefined,
         replacePageLocation: async () => unexpectedHostApiCall('replacePageLocation'),
         setUnsavedChanges: async () => unexpectedHostApiCall('setUnsavedChanges'),
+        deviceState: async () => unexpectedHostApiCall('deviceState'),
         notify: async () => undefined,
         confirm: async () => false,
         diagnostic: () => undefined,

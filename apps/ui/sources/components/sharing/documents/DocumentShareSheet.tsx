@@ -1,10 +1,11 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import type { ShareSheetActions, ShareSheetModel, ShareSheetPresentation } from '../shareSheetTypes';
 import { createDocumentShareAdapter, type DocumentShareKind } from './documentShareAdapter';
 import { useDocumentShareController } from './useDocumentShareController';
@@ -74,7 +75,7 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
                     link={publicLink} idPrefix={context.idPrefix} kind={props.kind} />,
         } } : {}),
     };
-    return <ShareSheet model={controller.model} actions={controller.actions} adapter={adapter}
+    return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions} adapter={adapter}
         presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose} testID={props.testID ?? DEFAULT_TEST_ID} />;
 }
 
@@ -102,6 +103,6 @@ export function DocumentShareSheet(props: DocumentShareSheetProps): React.ReactE
         kind: props.kind, description: props.description, grants: [], loading: false, readOnly: false, retryContent: noop,
         issue: { code: 'not_authenticated', message: t('shareSheet.documents.errors.unavailable'), retryable: false },
     });
-    return <ShareSheet model={UNSCOPED_MODEL} actions={UNSCOPED_ACTIONS} adapter={adapter}
+    return <ShareSheet host={SHARE_SHEET_HOST} model={UNSCOPED_MODEL} actions={UNSCOPED_ACTIONS} adapter={adapter}
         presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose} testID={props.testID ?? DEFAULT_TEST_ID} />;
 }

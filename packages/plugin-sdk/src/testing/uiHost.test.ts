@@ -52,6 +52,38 @@ const initialSurface = createSurfaceContextFixture();
 const firstDigest = `sha256:${'1'.repeat(64)}`;
 const secondDigest = `sha256:${'2'.repeat(64)}`;
 
+it('round-trips device drafts through the negotiated fixture transport and refuses absent support', async () => {
+    const values = new Map<string, import('../identity.js').JsonValue>();
+    const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,
+        adapter: createSemanticAdapter().adapter };
+    const fixture = await createPluginUiTestkit({ ...options, handlers: { deviceState(request) {
+        if (request.operation === 'write') values.set(request.key, request.value);
+        if (request.operation === 'remove') values.delete(request.key);
+        return { status: 'ready', value: values.get(request.key) ?? null };
+    } } });
+    try {
+        expect(fixture.context.hostApi.version().apiVersion).toBe('1.2.0');
+        expect(fixture.context.hostApi.version().methods).toContain('deviceState');
+        const value = { sql: 'select $1', history: [{ sql: 'select 1' }] };
+        await expect(fixture.context.hostApi.deviceState({ operation: 'read', key: 'draft' })).resolves.toEqual({ status: 'ready', value: null });
+        await fixture.context.hostApi.deviceState({ operation: 'write', key: 'draft', value });
+        await expect(fixture.context.hostApi.deviceState({ operation: 'read', key: 'draft' })).resolves.toEqual({ status: 'ready', value });
+        await fixture.context.hostApi.deviceState({ operation: 'remove', key: 'draft' });
+        await expect(fixture.context.hostApi.deviceState({ operation: 'read', key: 'draft' })).resolves.toEqual({ status: 'ready', value: null });
+    } finally { await fixture.dispose(); }
+    for (const apiRange of [undefined, '1.0.0', '1.1.0']) {
+        const unsupported = await createPluginUiTestkit({ ...options, ...(apiRange ? { apiRange, handlers: {
+            deviceState: () => ({ status: 'ready' as const, value: null }),
+        } } : {}) });
+        try {
+            expect(unsupported.context.hostApi.version().methods).not.toContain('deviceState');
+            await expect(unsupported.context.hostApi.deviceState({ operation: 'read', key: 'draft' }))
+                .rejects.toMatchObject({ code: 'unsupported_method' });
+        } finally { await unsupported.dispose(); }
+    }
+});
+
 
 it('presents Action failures through the installed fixture host and SDK transport', async () => {
     const failure = { ok: false as const, errorCode: 'unavailable', requestId: 'request-42', details: { retryable: true } };

@@ -97,6 +97,7 @@ const browserHostApi: PluginUiHostApi = {
   replacePageLocation: async () => unsupportedBrowserHostMethod(),
   setPageNavigation: async () => unsupportedBrowserHostMethod(),
   setUnsavedChanges: async () => unsupportedBrowserHostMethod(),
+  deviceState: async () => unsupportedBrowserHostMethod(),
   notify: async () => unsupportedBrowserHostMethod(),
   confirm: async () => unsupportedBrowserHostMethod(),
   diagnostic: () => undefined,

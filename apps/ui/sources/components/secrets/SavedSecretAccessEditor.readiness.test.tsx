@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -31,7 +32,7 @@ const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamAct
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
-const { ShareSheet } = await import('@/components/sharing/ShareSheet');
+const { ShareSheet } = await import('@happier-dev/plugin-ui/components');
 const { ModalProvider } = await import('@/modal');
 const { createDocumentShareAdapter } = await import('@/components/sharing/documents/documentShareAdapter');
 beforeAll(loadSyncSingletonForTests);
@@ -133,7 +134,7 @@ describe('SavedSecretAccessEditor recipient readiness', () => {
             const actions: ShareSheetActions = { setQuery: noop, retryDirectory: noop, loadMore: noop,
                 addPrincipal: noop, retryMutation: noop, setAccessLevel: noop, requestRemove: () => setGrants([]),
                 confirmRemove: noop, cancelRemove: noop, explain: noop };
-            return <ShareSheet model={{ revision: 1, editable: true, stale: false, owner: null, grants,
+            return <ShareSheet host={SHARE_SHEET_HOST} model={{ revision: 1, editable: true, stale: false, owner: null, grants,
                 directory: { query: '', sections: [] } }} actions={actions} adapter={adapter} presentation="inline"
                 openRowRequest={{ key: principal.key }} testID="document-share-editor" />;
         }

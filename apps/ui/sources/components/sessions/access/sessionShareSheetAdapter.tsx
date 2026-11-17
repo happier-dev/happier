@@ -1,3 +1,4 @@
+import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -6,7 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
-import { ShareRowAction } from '@/components/sharing/ShareGrantRow';
+import { ShareRowAction } from '@happier-dev/plugin-ui/components';
 import type { ShareSheetAdapter, ShareSheetSectionContext } from '@/components/sharing/shareSheetTypes';
 import type { SessionCollaborationHandoff } from '@/components/sessions/collaboration/sessionCollaborationIntent';
 import { t } from '@/text';
@@ -73,7 +74,7 @@ function SessionAccessDelegationControl(props: Readonly<{
             accessibilityLabel={`${row.principal.accessibilityLabel}, ${t('session.access.delegation')}`}
             onValueChange={(value) => actions.setPermissionDelegation(row.grant, value)} /> :
             <Text style={styles.secondary}>{delegation.value ? t('common.on') : t('common.off')}</Text>}
-        {delegation.kind === 'locked' ? <ShareRowAction label={delegation.reason.message}
+        {delegation.kind === 'locked' ? <ShareRowAction useHost={useShareGrantRowPresentation} label={delegation.reason.message}
             testID={id('delegation-reason')} onPress={() => actions.explain(delegation.reason)} /> : null}
     </View>;
 }
@@ -110,7 +111,7 @@ function buildEncryptionSection(model: SessionAccessEditorModel, actions: Sessio
         onSelect: encryption.reason ? () => { if (encryption.reason) actions.explain(encryption.reason); } : undefined,
         ...(encryption.actionLabel && !prepareOnGrants ? {
             rightAccessoryOutsidePressable: true,
-            rightAccessory: () => <ShareRowAction label={encryption.actionLabel ?? ''}
+            rightAccessory: () => <ShareRowAction useHost={useShareGrantRowPresentation} label={encryption.actionLabel ?? ''}
                 testID={`${idPrefix}session-access-prepare`} onPress={() => actions.prepareAccess()} />,
         } : {}),
     }, {
@@ -139,7 +140,7 @@ function buildEncryptionSection(model: SessionAccessEditorModel, actions: Sessio
                 // The projection already decided which rows a repeated delivery could change.
                 ...(row.actionLabel && !mapped && !encryption.actionLabel && isSessionAccessEditable(model) ? {
                     rightAccessoryOutsidePressable: true,
-                    rightAccessory: () => <ShareRowAction label={row.actionLabel ?? ''}
+                    rightAccessory: () => <ShareRowAction useHost={useShareGrantRowPresentation} label={row.actionLabel ?? ''}
                         testID={`${idPrefix}session-access-reprepare-${row.recipientAccountId}`}
                         disabled={encryption.progressLabel !== undefined}
                         onPress={() => actions.prepareAccess(row.recipientAccountId)} />,
@@ -149,7 +150,7 @@ function buildEncryptionSection(model: SessionAccessEditorModel, actions: Sessio
         if (recipients.loading) options.push({ id: 'encryption-recipients-loading', label: t('common.loading'), loading: true, disabled: true });
         if (recipients.error) options.push({ id: 'encryption-recipients-error', label: recipients.error.message,
             rightAccessoryOutsidePressable: true,
-            rightAccessory: () => <ShareRowAction label={t('common.retry')}
+            rightAccessory: () => <ShareRowAction useHost={useShareGrantRowPresentation} label={t('common.retry')}
                 testID={`${idPrefix}session-access-recipients-retry`} onPress={actions.loadMoreRecipients} /> });
         else if (encryption.recipientsView === 'all' && recipients.hasMore && !recipients.loading) options.push({
             id: 'encryption-recipients-more',
@@ -217,7 +218,7 @@ export function createSessionShareSheetAdapter(input: Readonly<{
         renderGrantDetails: (row, context) => {
             const recipient = encryptionForGrant(row);
             return <>
-                {recipient?.actionLabel && context.editable && (!model.encryption?.actionLabel || canPrepareThroughGrantRows(model)) ? <ShareRowAction label={recipient.actionLabel}
+                {recipient?.actionLabel && context.editable && (!model.encryption?.actionLabel || canPrepareThroughGrantRows(model)) ? <ShareRowAction useHost={useShareGrantRowPresentation} label={recipient.actionLabel}
                     testID={`${context.idPrefix}session-access-reprepare-${recipient.recipientAccountId}`}
                     disabled={model.encryption?.progressLabel !== undefined}
                     onPress={() => actions.prepareAccess(recipient.recipientAccountId)} /> : null}
@@ -267,9 +268,9 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                     ...confirmation.consequences.map((consequence, index) => ({ id: `context-consequence:${index}`, label: consequence, disabled: true })),
                     { id: 'context-confirmation-actions', label: confirmation.label, rightAccessoryOutsidePressable: true,
                         rightAccessory: () => <View style={styles.contextActions}>
-                            <ShareRowAction label={t('common.continue')} testID={`${idPrefix}session-access-context-confirm`}
+                            <ShareRowAction useHost={useShareGrantRowPresentation} label={t('common.continue')} testID={`${idPrefix}session-access-context-confirm`}
                                 disabled={context.operation === 'saving'} onPress={actions.confirmContext} />
-                            <ShareRowAction label={t('common.cancel')} testID={`${idPrefix}session-access-context-cancel`}
+                            <ShareRowAction useHost={useShareGrantRowPresentation} label={t('common.cancel')} testID={`${idPrefix}session-access-context-cancel`}
                                 disabled={context.operation === 'saving'} onPress={actions.cancelContext} />
                         </View> },
                 ] });
@@ -290,7 +291,7 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                 ...(historical.error ? { subtitle: historical.error.message } : {}),
                 loading: historical.updating,
                 rightAccessoryOutsidePressable: true,
-                rightAccessory: () => <ShareRowAction label={t('session.access.historicalLayoutUpdate')}
+                rightAccessory: () => <ShareRowAction useHost={useShareGrantRowPresentation} label={t('session.access.historicalLayoutUpdate')}
                     testID={`${idPrefix}session-access-historical-layout-update`}
                     disabled={historical.updating || !editable} onPress={update} /> });
             if (model.content.phase === 'initial' || model.content.phase === 'refreshing') notices.push({ id: 'loading', label: t('common.loading'), loading: true, disabled: true });
@@ -305,7 +306,7 @@ export function createSessionShareSheetAdapter(input: Readonly<{
             if (notice && !noticeShownAtContext) notices.push({ id: 'notice', label: notice.message,
                 onSelect: notice.action === 'clear_access' ? actions.clearAccess : () => { if (notice.reason) actions.explain(notice.reason); },
                 rightAccessoryOutsidePressable: notice.action === 'clear_access',
-                rightAccessory: notice.action === 'clear_access' ? () => <ShareRowAction label={t('session.access.private')}
+                rightAccessory: notice.action === 'clear_access' ? () => <ShareRowAction useHost={useShareGrantRowPresentation} label={t('session.access.private')}
                     testID={`${idPrefix}session-access-clear-draft`} onPress={actions.clearAccess} /> : undefined });
             const trailing: SelectionListSectionDescriptor[] = notices.length ? [{ kind: 'static', id: 'status', options: notices }] : [];
             if (input.onGiveBotCopy) trailing.push({ kind: 'static', id: 'bot-template', options: [{

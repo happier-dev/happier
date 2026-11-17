@@ -1,3 +1,4 @@
+import { t } from '@/text';
 import * as React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
@@ -21,7 +22,7 @@ vi.mock('react-native', async () => {
 });
 
 const { SelectionList } = await import('../SelectionList');
-const { buildDirectorySelectionSection } = await import('@/components/sharing/buildDirectorySelectionSection');
+const { buildDirectorySelectionSection } = await import('@happier-dev/plugin-ui/components');
 
 function makeStep(section: SelectionListDynamicSection): SelectionListStep {
     return {
@@ -76,12 +77,12 @@ describe('SelectionList dynamic-section state rendering (Phase 2.2 mapping)', ()
         const { act } = await import('react-test-renderer');
         const root = (pending: boolean): SelectionListStep => {
             const sections = [
-                buildDirectorySelectionSection({
+                buildDirectorySelectionSection({ loadingLabel: t('common.loading'),
                     source: { kind: 'account', title: 'Members', candidates: [], status: pending ? 'loading' : 'idle', cursor: null, hasMore: false, loadingMore: false },
                     id: 'members', title: 'Members', resolverKey: String(pending), showSkeletonsOnFirstLoad: true,
                     options: () => pending ? [] : [{ id: 'ada', label: 'Ada' }],
                 }),
-                buildDirectorySelectionSection({
+                buildDirectorySelectionSection({ loadingLabel: t('common.loading'),
                     source: { kind: 'group', title: 'Groups', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false },
                     id: 'groups', title: 'Groups', resolverKey: 'groups', showSkeletonsOnFirstLoad: true,
                     options: () => [],

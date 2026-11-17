@@ -421,6 +421,8 @@ type ResolvedActionPresentation = Readonly<{
     contributionSurfaces?: PluginActionContributionV2['surfaces'];
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
     approvalScope?: PluginActionContributionV2['approvalScope'];
+    approvalInputCustody?: PluginActionContributionV2['approvalInputCustody'];
+    secretInputPaths?: PluginActionContributionV2['secretInputPaths'];
     readOnly?: PluginActionContributionV2['readOnly'];
     /** Manifest Action icon retained for host-rendered catalog consumers. */
     icon?: PluginActionContributionV2['icon'];

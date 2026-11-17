@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -8,7 +9,7 @@ import { act, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import { t } from '@/text';
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { createMachineShareAdapter } from './machineShareAdapter';
 import { useMachineShareController } from './useMachineShareController';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../../server/sources/testkit/lightSqliteHarness';
@@ -102,7 +103,7 @@ describe('Machine sharing save result through the real route and SQLite', () => 
             function Surface() {
                 const controller = useMachineShareController({ machineId: machine.id, machineName: 'Devbox', scope });
                 current = controller;
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }

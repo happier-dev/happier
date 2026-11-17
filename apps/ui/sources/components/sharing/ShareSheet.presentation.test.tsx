@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 // @vitest-environment jsdom
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -147,7 +148,7 @@ const { ProfileDetailScreen } = await import('@/components/settings/profiles/Pro
 const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/PageHeader');
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { lightTheme, darkTheme } = await import('@/theme');
-const { ShareSheet } = await import('./ShareSheet');
+const { ShareSheet } = await import('@happier-dev/plugin-ui/components');
 const { createDocumentShareAdapter } = await import('./documents/documentShareAdapter');
 const { ModalCardFrame } = await import('@/modal/components/card/ModalCardFrame');
 const { resolveGlassPresentationVariables } = await import('@/components/ui/glass/glassDocumentPresentation');
@@ -212,7 +213,7 @@ function PublicLinkCapture() {
     return <ModalCardFrame title="Share Code reviewer" subtitle="Role · Default agent · Session"
         presentation={capture.width < 600 ? 'sheet' : 'card'} sheetBottomInset={capture.width < 600 ? 24 : 0}
         dimensions={{ width: 560, maxHeightRatio: 0.92 }} onClose={noop} testID="public-link-modal">
-        <ShareSheet model={model} actions={actions} adapter={adapter} presentation="full" onRequestClose={noop} testID="public-link-share" />
+        <ShareSheet host={SHARE_SHEET_HOST} model={model} actions={actions} adapter={adapter} presentation="full" onRequestClose={noop} testID="public-link-share" />
     </ModalCardFrame>;
 }
 const actions: ShareSheetActions = { setQuery: noop, retryDirectory: noop, loadMore: noop, addPrincipal: noop,
@@ -432,7 +433,7 @@ it.each(variants)('captures SHARE source owners ($dark / $width)', async variant
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><ModalCardFrame title={chrome.title} subtitle={chrome.subtitle}
             presentation={capture.width < 600 ? 'sheet' : 'card'} sheetBottomInset={capture.width < 600 ? 24 : 0}
             dimensions={{ width: 560, maxHeightRatio: 0.92 }} onClose={noop} testID={`${document.id}-modal`}>
-            <ShareSheet model={model} actions={actions} adapter={adapter} presentation="full" onRequestClose={noop} testID={`${document.id}-share`} />
+            <ShareSheet host={SHARE_SHEET_HOST} model={model} actions={actions} adapter={adapter} presentation="full" onRequestClose={noop} testID={`${document.id}-share`} />
         </ModalCardFrame>{document.id === 'board' ? <BoardReadProbe /> : null}</InjectedAuthProvider>);
         if (document.id === 'board') {
             try { await vi.waitFor(() => expect(sourceText(screen.tree.toJSON())).toContain(t('boards.meta.items', { count: 11 }))); }
@@ -469,7 +470,7 @@ it.each(variants)('captures SHARE source owners ($dark / $width)', async variant
     const session = await renderScreen(<ModalCardFrame title="Share Release workspace" subtitle="Session · Claude · MacBook Pro"
         presentation={capture.width < 600 ? 'sheet' : 'card'} sheetBottomInset={capture.width < 600 ? 24 : 0}
         dimensions={{ width: 560, maxHeightRatio: 0.92 }} onClose={noop} testID="session-modal">
-        <ShareSheet model={{ ...model, grants: sessionModel.grants }} actions={sessionActions} adapter={sessionAdapter}
+        <ShareSheet host={SHARE_SHEET_HOST} model={{ ...model, grants: sessionModel.grants }} actions={sessionActions} adapter={sessionAdapter}
             presentation="full" onRequestClose={noop} testID="session-share" />
     </ModalCardFrame>);
     await settle(session);

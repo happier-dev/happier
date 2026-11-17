@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { SessionAccessCandidateRowModel, SessionAccessDirectoryKind, SessionAccessGrantOperationModel } from '@/components/sessions/access/sessionAccessEditorTypes';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
 import { presentShareSheet } from '@/components/sharing/presentShareSheet';
-import { buildDirectorySelectionSection } from '@/components/sharing/buildDirectorySelectionSection';
+import { buildDirectorySelectionSection } from '@happier-dev/plugin-ui/components';
 import { Item } from '@/components/ui/lists/Item';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { SELECTION_LIST_MODAL_MAX_HEIGHT, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
@@ -83,7 +83,7 @@ function PickerContent(props: Readonly<{
         props.onChoose(principal);
     }, [props]);
     const visibleSources = directory.sections;
-    const sections = visibleSources.map((source): SelectionListSectionDescriptor => buildDirectorySelectionSection({
+    const sections = visibleSources.map((source): SelectionListSectionDescriptor => buildDirectorySelectionSection({ loadingLabel: t('common.loading'),
         source,
         id: `team-credential-audience:${source.kind}`,
         title: source.title,

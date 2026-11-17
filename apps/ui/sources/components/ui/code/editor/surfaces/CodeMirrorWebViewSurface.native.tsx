@@ -207,10 +207,13 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
 
     const postIntelligence = React.useCallback(() => {
         const port = intelligenceRef.current;
-        if (readyRef.current) postEnvelope({ v: 1, type: 'intelligence.configure', payload: port ? {
-            path: port.path, inlayHints: port.inlayHints, semanticHighlighting: port.semanticHighlighting, capabilities: port.getSnapshot().capabilities,
+        const completionSource = propsRef.current.completionSource;
+        if (readyRef.current) postEnvelope({ v: 1, type: 'intelligence.configure', payload: port || completionSource ? {
+            ...(port ? { path: port.path, inlayHints: port.inlayHints, semanticHighlighting: port.semanticHighlighting, capabilities: port.getSnapshot().capabilities } : {}),
+            ...(completionSource ? { completion: { triggerCharacters: completionSource.triggerCharacters } } : {}),
         } : null });
     }, [postEnvelope]);
+    React.useEffect(() => { postIntelligence(); }, [props.completionSource, postIntelligence]);
     /** The shared next-edit snapshot, drawn by the WebView; hint words come from the host's locale. */
     const postNextEdit = React.useCallback(() => {
         if (!readyRef.current) return;
@@ -526,6 +529,23 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                     if (decoded.type === 'intelligence.request') {
                         const payload = decoded.payload as { id?: unknown; kind?: unknown; options?: unknown } | null;
                         if (typeof payload?.id !== 'string') return;
+                        if (payload.kind === 'portableCompletion') {
+                            const id = payload.id;
+                            const position = payload.options as Record<string, unknown> | null;
+                            const source = propsRef.current.completionSource;
+                            if (!source || !position || !Number.isInteger(position.offset) || Number(position.offset) < 0
+                                || !Number.isInteger(position.line) || Number(position.line) < 1
+                                || !Number.isInteger(position.character) || Number(position.character) < 0 || typeof position.explicit !== 'boolean') {
+                                postEnvelope({ v: 1, type: 'intelligence.result', payload: { id, result: null } }); return;
+                            }
+                            const abort = new AbortController(); intelligenceRequestsRef.current.set(id, abort);
+                            const at = { offset: Number(position.offset), line: Number(position.line), character: Number(position.character), explicit: position.explicit };
+                            void Promise.resolve().then(() => source.complete(at, abort.signal))
+                                .then(result => { if (!abort.signal.aborted && source === propsRef.current.completionSource) postEnvelope({ v: 1, type: 'intelligence.result', payload: { id, result } }); })
+                                .catch(() => { if (!abort.signal.aborted) postEnvelope({ v: 1, type: 'intelligence.result', payload: { id, result: null } }); })
+                                .finally(() => intelligenceRequestsRef.current.delete(id));
+                            return;
+                        }
                         const port = intelligenceRef.current, id = payload.id;
                         const parsed = DaemonLspQueryRequestSchema.safeParse({ ...(payload.options && typeof payload.options === 'object' ? payload.options : {}),
                             kind: payload.kind, rootPath: '/', path: port?.path ?? 'unavailable' });
@@ -716,12 +736,15 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                         if (payload === null) { publishSelection(null); return; }
                         if (!payload || typeof payload !== 'object') return;
                         const value = payload as Record<string, unknown>;
+                        const range = value.range && typeof value.range === 'object' ? value.range as Record<string, unknown> : null;
                         if (!Number.isInteger(value.startLine) || Number(value.startLine) < 1
                             || !Number.isInteger(value.endLine) || Number(value.endLine) < Number(value.startLine)
-                            || typeof value.text !== 'string') return;
+                            || typeof value.text !== 'string' || !range || !Number.isInteger(range.start) || Number(range.start) < 0
+                            || !Number.isInteger(range.end) || Number(range.end) < Number(range.start)) return;
                         const rect = value.rect;
                         const position = rect && typeof rect === 'object' ? rect as Record<string, unknown> : null;
                         publishSelection({ startLine: Number(value.startLine), endLine: Number(value.endLine), text: value.text,
+                            range: { start: Number(range.start), end: Number(range.end) },
                             rect: position && ['x', 'y', 'width', 'height'].every((key) => typeof position[key] === 'number' && Number.isFinite(position[key]))
                                 ? { x: Number(position.x), y: Number(position.y), width: Number(position.width), height: Number(position.height) } : null,
                             collapsed: value.collapsed === true,

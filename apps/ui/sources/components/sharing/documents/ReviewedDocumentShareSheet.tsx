@@ -1,9 +1,10 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { presentSharePrincipal, sharePrincipalKey } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
 import type { SharePrincipalPresentation, ShareSheetActions, ShareSheetAdapter } from '../shareSheetTypes';
@@ -88,7 +89,7 @@ export function ReviewedDocumentShareSheet(props: DocumentShareSheetProps & Read
     };
     return <View style={styles.root}>
         {failed ? <AttentionBanner testID="document-share-error" tone="danger" title={t('botTemplates.unavailable')} /> : null}
-        <ShareSheet presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose}
+        <ShareSheet host={SHARE_SHEET_HOST} presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose}
             testID={props.testID ?? 'document-share-editor'} adapter={adapter} actions={actions}
             primaryAction={{ testID: 'document-share-submit', label: t(shared ? 'botTemplates.shared' : 'common.share'),
                 loading: pending, disabled: !editable || (!selected.length && !signedInLink), onPress: () => { void submit(); } }}

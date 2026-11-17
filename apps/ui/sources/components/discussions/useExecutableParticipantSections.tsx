@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
@@ -26,7 +27,7 @@ import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/iden
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useDiscussionInviteCandidates } from './useDiscussionInviteCandidates';
-import { SharePrincipalVisual } from '@/components/sharing/buildShareSheetSelectionStep';
+import { SharePrincipalVisual } from '@happier-dev/plugin-ui/components';
 import type { SharePrincipalPresentation } from '@/components/sharing/shareSheetTypes';
 import { t } from '@/text';
 import { describeMachineReadinessCause, presentSessionReadiness } from '@/components/sessions/model/sessionReadinessPresentation';
@@ -310,7 +311,7 @@ export function useExecutableParticipantSections(
         label: principal.displayName,
         ...(principal.secondaryLabel ? { subtitle: principal.secondaryLabel } : {}),
         accessibilityLabel: principal.accessibilityLabel,
-        icon: () => <SharePrincipalVisual principal={principal} testID={`discussion-invite-person-visual-${ref.accountId}`} />,
+        icon: () => <SharePrincipalVisual host={SHARE_SHEET_HOST} principal={principal} testID={`discussion-invite-person-visual-${ref.accountId}`} />,
         disabled: busy,
         onSelect: () => people.onChoose({ kind: 'account', accountId: ref.accountId }) }];
     };

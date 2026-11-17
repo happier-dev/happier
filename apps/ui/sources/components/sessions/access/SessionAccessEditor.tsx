@@ -1,6 +1,7 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
-import { ShareSheet } from '@/components/sharing/ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { createSessionShareSheetAdapter, isSessionAccessEditable } from './sessionShareSheetAdapter';
 import type { SessionAccessEditorProps } from './sessionAccessEditorTypes';
 import { useSessionAccessQueryText } from './sessionAccessQuery';
@@ -42,6 +43,6 @@ export function SessionAccessEditor(props: SessionAccessEditorProps): React.Reac
         grants: model.grants,
         directory: { query, sections: model.directory.sections },
     };
-    return <ShareSheet model={sheetModel} actions={actions} adapter={adapter} presentation={presentation}
+    return <ShareSheet host={SHARE_SHEET_HOST} model={sheetModel} actions={actions} adapter={adapter} presentation={presentation}
         onRequestClose={onRequestClose} openRowRequest={props.openRowRequest} testID={testID} />;
 }

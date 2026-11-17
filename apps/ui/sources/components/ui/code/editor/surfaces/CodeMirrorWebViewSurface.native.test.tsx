@@ -331,7 +331,7 @@ describe('CodeMirrorWebViewSurface (native)', () => {
         expect(ref.current?.getSelection?.()).toBeNull();
         const listener = vi.fn();
         const unsubscribe = ref.current!.subscribeSelection!(listener);
-        const selection = { startLine: 1, endLine: 2, text: 'ne\ntw', rect: { x: 5, y: 8, width: 0, height: 18 } };
+        const selection = { startLine: 1, endLine: 2, text: 'ne\ntw', range: { start: 1, end: 6 }, rect: { x: 5, y: 8, width: 0, height: 18 } };
         emitEnvelope({ v: 1, type: 'selection', payload: selection });
         expect(ref.current!.getSelection!()).toEqual({ ...selection, collapsed: false });
         expect(listener).toHaveBeenCalledTimes(1);

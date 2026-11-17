@@ -5,7 +5,8 @@ import { isolateHistory } from '@codemirror/commands';
 import { parser as markdownParser } from '@lezer/markdown';
 import { applyWorkspaceFileTextEdits } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import type { LanguageIntelligenceCompletionItem, LanguageIntelligenceRange, LanguageIntelligenceSignatureHelp } from '@happier-dev/protocol/machines/languageIntelligence';
-import type { CodeEditorLanguageIntelligence } from '../codeEditorTypes';
+import type { CodeEditorCompletionSource, CodeEditorLanguageIntelligence } from '../codeEditorTypes';
+import { codeMirrorDocumentOffset, codeMirrorEditorOffset } from './codeMirrorDocumentOffsets';
 import { minimalCodeEditorEdit } from '../codeEditorDocumentEdit';
 import { projectCodeSemanticTokens } from '../../model/codeSemanticTokens';
 
@@ -36,7 +37,8 @@ function documentationNode(value: string): HTMLElement {
     return root;
 }
 
-export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageIntelligence, onSignature?: (help: LanguageIntelligenceSignatureHelp | null) => void): Readonly<{
+export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageIntelligence | null, onSignature?: (help: LanguageIntelligenceSignatureHelp | null) => void,
+    completionSource?: CodeEditorCompletionSource, lineSeparator: () => string = () => '\n'): Readonly<{
     extensions: Extension[];
     command(view: EditorView, command: string): boolean;
     formatDocument(view: EditorView): Promise<void>;
@@ -46,7 +48,7 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
     let formatting: Promise<void> = Promise.resolve();
     const pending = new Map<string, AbortController>();
     const cancel = () => { for (const request of pending.values()) request.abort(); pending.clear(); };
-    const caps = () => port.getSnapshot().capabilities;
+    const caps = () => port?.getSnapshot().capabilities;
     const position = (editor: EditorView, offset: number) => { const line = editor.state.doc.lineAt(offset); return { line: line.number - 1, character: offset - line.from }; };
     const offset = (editor: EditorView, value: LanguageIntelligenceRange['start']) => {
         const line = editor.state.doc.line(value.line + 1);
@@ -54,7 +56,7 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
         return line.from + value.character;
     };
     const request = async (editor: EditorView, kind: Parameters<CodeEditorLanguageIntelligence['request']>[0], options: Parameters<CodeEditorLanguageIntelligence['request']>[1], signal?: AbortSignal) => {
-        if (disposed || signal?.aborted) return null;
+        if (!port || disposed || signal?.aborted) return null;
         pending.get(kind)?.abort();
         const abort = new AbortController(); pending.set(kind, abort);
         const doc = editor.state.doc;
@@ -83,14 +85,14 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
         const viewport = { start: position(editor, visible[0].from), end: position(editor, visible[visible.length - 1].to) };
         const doc = editor.state.doc;
         const [hints, semantic] = await Promise.all([
-            caps()?.inlayHint && port.inlayHints !== 'off' ? request(editor, 'inlayHint', { range: viewport }) : null,
-            (caps()?.semanticTokensRange || caps()?.semanticTokensDelta) && port.semanticHighlighting ? request(editor, 'semanticTokens', { range: viewport }) : null,
+            caps()?.inlayHint && port?.inlayHints !== 'off' ? request(editor, 'inlayHint', { range: viewport }) : null,
+            (caps()?.semanticTokensRange || caps()?.semanticTokensDelta) && port?.semanticHighlighting ? request(editor, 'semanticTokens', { range: viewport }) : null,
         ]);
         if (disposed || editor.state.doc !== doc || editor.visibleRanges[0]?.from !== visible[0].from
             || editor.visibleRanges.at(-1)?.to !== visible.at(-1)?.to) return;
         const decorations: ReturnType<Decoration['range']>[] = [];
         if (hints?.status === 'ok' && hints.kind === 'inlayHint') for (const hint of hints.hints) {
-            if (port.inlayHints === 'parameters' && hint.kind !== 2) continue;
+            if (port?.inlayHints === 'parameters' && hint.kind !== 2) continue;
             const from = offset(editor, hint.position);
             if (from < visible[0].from || from > visible[visible.length - 1].to) continue;
             decorations.push(Decoration.widget({ widget: new Hint(`${hint.paddingLeft ? ' ' : ''}${hint.label}${hint.paddingRight ? ' ' : ''}`, hint.tooltip), side: 1 }).range(from));
@@ -118,14 +120,37 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
     }
     const resolved = new Map<string, LanguageIntelligenceCompletionItem>();
     const source = async (context: CompletionContext) => {
-        if (!caps()?.completion || context.view?.composing || !context.state.selection.main.empty) return null;
+        if ((!completionSource && !caps()?.completion) || context.view?.composing || !context.state.selection.main.empty) return null;
         if (!context.view) return null;
         const editor = context.view;
         const before = context.state.doc.sliceString(Math.max(0, context.pos - 1), context.pos);
-        const triggered = caps()?.completionTriggerCharacters?.includes(before);
+        const triggered = (completionSource?.triggerCharacters ?? caps()?.completionTriggerCharacters)?.includes(before);
         const word = context.matchBefore(/[\p{L}\p{N}_$]+/u);
         if (!context.explicit && !triggered && !word) return null;
         const abort = new AbortController(); context.addEventListener('abort', () => abort.abort(), { onDocChange: true });
+        if (completionSource) {
+            pending.get('completion')?.abort(); pending.set('completion', abort);
+            const doc = editor.state.doc;
+            try {
+                const at = position(editor, context.pos);
+                const items = await completionSource.complete({ offset: codeMirrorDocumentOffset(doc, context.pos, lineSeparator()),
+                    line: at.line + 1, character: at.character, explicit: context.explicit }, abort.signal);
+                if (!items || disposed || abort.signal.aborted || context.aborted || editor.state.doc !== doc) return null;
+                return { from: word?.from ?? context.pos, options: items.map((item): Completion => ({
+                    label: item.label, detail: item.detail,
+                    apply(target, _completion, from, to) {
+                        if (disposed || target.composing || target.state.doc !== doc || abort.signal.aborted) return;
+                        const start = item.range ? codeMirrorEditorOffset(doc, item.range.start, lineSeparator()) : from;
+                        const end = item.range ? codeMirrorEditorOffset(doc, item.range.end, lineSeparator()) : to;
+                        const insert = target.state.toText(item.insertText ?? item.label);
+                        target.dispatch({ changes: { from: start, to: end, insert }, selection: { anchor: start + insert.length },
+                            annotations: isolateHistory.of('full'), userEvent: 'input.complete' });
+                        closeCompletion(target);
+                    },
+                })) };
+            } catch { return null; }
+            finally { if (pending.get('completion') === abort) pending.delete('completion'); }
+        }
         const response = await request(editor, 'completion', { position: position(editor, context.pos), completionContext: {
             triggerKind: context.explicit ? 1 : triggered ? 2 : 1, ...(triggered ? { triggerCharacter: before } : {}) } }, abort.signal);
         if (response?.status !== 'ok' || response.kind !== 'completion' || context.aborted) return null;
@@ -195,7 +220,7 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
     }
     const command = (editor: EditorView, name: string): boolean => {
         if (disposed || editor.composing) return false;
-        if (name === 'suggest') return caps()?.completion === true && startCompletion(editor);
+        if (name === 'suggest') return (Boolean(completionSource) || caps()?.completion === true) && startCompletion(editor);
         if (name === 'acceptCompletion') return acceptCompletion(editor);
         if (name === 'signatureHelp') { void signature(editor); return true; }
         if (name === 'expandSelection' && caps()?.selectionRange) { void expand(editor); return true; }
@@ -206,7 +231,7 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
         const selection = editor.state.selection.main;
         formatting = request(editor, capability, { ...(name === 'formatSelection' ? { range: { start: position(editor, selection.from), end: position(editor, selection.to) } } : {}),
             ...(name !== 'organizeImports' ? { formattingOptions: { tabSize: editor.state.tabSize, insertSpaces: true } } : {}) }).then(result => {
-            if (result?.status !== 'ok' || !('files' in result) || result.files.some(file => file.path !== port.path || file.renameTo)) return;
+            if (result?.status !== 'ok' || !('files' in result) || result.files.some(file => file.path !== port?.path || file.renameTo)) return;
             const file = result.files[0]; if (!file) return;
             const next = applyWorkspaceFileTextEdits(editor.state.sliceDoc(), file.edits).text;
             const change = minimalCodeEditorEdit(editor.state.doc.toString(), editor.state.toText(next).toString());
@@ -214,10 +239,10 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
         }).catch(() => {});
         return true;
     };
-    return { extensions: [decorationLayer(setRange), decorationLayer(setOccurrences), autocompletion({ override: [source], defaultKeymap: false }), keymap.of([
+    return { extensions: [...(port ? [decorationLayer(setRange), decorationLayer(setOccurrences)] : []), autocompletion({ override: [source], defaultKeymap: false }), keymap.of([
         { key: 'Ctrl-Space', run: editor => command(editor, 'suggest') }, { key: 'Mod-Space', run: editor => command(editor, 'suggest') },
         ...completionKeymap, { key: 'Escape', run: () => { dismissSignature(); return false; } },
-    ]), ViewPlugin.fromClass(class {
+    ]), ...(port ? [ViewPlugin.fromClass(class {
         constructor(editor: EditorView) { queueMicrotask(() => { if (!disposed) { void refreshRange(editor).catch(() => {}); void refreshOccurrences(editor).catch(() => {}); } }); }
         update(update: import('@codemirror/view').ViewUpdate) {
             if (update.selectionSet && !update.startState.selection.eq(update.state.selection, true)) {
@@ -238,5 +263,5 @@ export function createCodeMirrorLanguageIntelligence(port: CodeEditorLanguageInt
             }
         }
         destroy() { cancel(); }
-    })], command, async formatDocument(editor) { command(editor, 'format'); await formatting; }, dispose() { disposed = true; cancel(); resolved.clear(); dismissSignature(); } };
+    })] : [])], command, async formatDocument(editor) { command(editor, 'format'); await formatting; }, dispose() { disposed = true; cancel(); resolved.clear(); dismissSignature(); } };
 }

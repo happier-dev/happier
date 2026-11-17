@@ -36,6 +36,8 @@ export function createExternalActionRuntime(
     pluginVersion?: string; inputSchema?: object; resultSchema?: object; occurrenceId?: PluginRuntimeOccurrenceId;
     sourceCustody?: PluginSourceCustodyV1;
     inputHints?: { fields: readonly { path: string; title: string; widget: 'secret' }[] };
+    approvalInputCustody?: 'live_only';
+    secretInputPaths?: readonly string[];
     onInput?: (input: JsonValue) => void;
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
     confirmation?: PluginActionContributionV2['confirmation'];
@@ -88,6 +90,8 @@ export function createExternalActionRuntime(
           ...(actionOptions.inputSchema === undefined ? {} : { inputSchema: actionOptions.inputSchema }),
           ...(actionOptions.resultSchema === undefined ? {} : { resultSchema: actionOptions.resultSchema }),
           ...(actionOptions.inputHints === undefined ? {} : { inputHints: actionOptions.inputHints }),
+          ...(actionOptions.approvalInputCustody === undefined ? {} : { approvalInputCustody: actionOptions.approvalInputCustody }),
+          ...(actionOptions.secretInputPaths === undefined ? {} : { secretInputPaths: actionOptions.secretInputPaths }),
           ...(actionOptions.confirmationWhen === undefined ? {} : { confirmationWhen: actionOptions.confirmationWhen }),
           ...(actionOptions.unavailable ? { availability: { when: { fact: 'plugin.enabled', operator: 'equals', value: false } } } : {}),
           ...(dangerLevel === 'safe' ? {} : { confirmation: actionOptions.confirmation ?? { title: 'Write', body: 'Write provider state?', confirmLabel: 'Write' } }),

@@ -330,6 +330,9 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         setUnsavedChanges: async () => {
             throw new Error('dev surface has no page guard');
         },
+        deviceState: async () => {
+            throw new Error('dev surface has no device draft storage');
+        },
         setPageNavigation: async () => {
             throw new Error('dev surface has no page navigation');
         },

@@ -1215,6 +1215,24 @@ function describeApprovalNetworkValue(policy: Readonly<{ network: string; networ
       : 'No network access';
 }
 
+/** `[]` matches one element; `**` matches zero or more descendant segments. */
+function matchesConfidentialInputPath(secret: readonly string[], path: readonly string[]): boolean {
+  if (!secret.includes('**')) return secret.length === path.length
+    && secret.every((segment, index) => segment === '[]' || segment === path[index]);
+  let reachable = [true];
+  for (const segment of secret) reachable.push(segment === '**' && reachable[reachable.length - 1] === true);
+  for (const segment of path) {
+    const next = [false];
+    for (const [index, expected] of secret.entries()) {
+      next.push(expected === '**'
+        ? next[index] === true || reachable[index + 1] === true
+        : reachable[index] === true && (expected === '[]' || expected === segment));
+    }
+    reachable = next;
+  }
+  return reachable[secret.length] === true;
+}
+
 /**
  * Installed Actions have no built-in ActionSpec. Their admitted JSON is the
  * review contract; never use the static manifest confirmation as its substitute.
@@ -1234,8 +1252,7 @@ export function projectTargetActionApprovalInput(input: unknown, secretInputPath
   const confidentialPaths: string[] = [];
   const pending: Array<Readonly<{ source: JsonValue; destination: JsonValue[] | Record<string, JsonValue>; path: readonly string[] }>> = [];
   const project = (value: JsonValue, path: readonly string[]): JsonValue => {
-    if (secretPaths.some(secret => secret.length === path.length
-      && secret.every((segment, index) => segment === '[]' || segment === path[index]))) {
+    if (secretPaths.some(secret => matchesConfidentialInputPath(secret, path))) {
       confidentialPaths.push(path.join('.'));
       return '[REDACTED]';
     }
@@ -1275,11 +1292,8 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
   if (!projection) return unavailable();
   const { input: redacted, confidentialPaths } = projection;
   const confidentialTitle = (path: string): string => {
-    const declared = request.secretInputPaths?.find(candidate => {
-      const segments = candidate.split('.');
-      const actual = path.split('.');
-      return segments.length === actual.length && segments.every((segment, index) => segment === '[]' || segment === actual[index]);
-    });
+    const actual = path.split('.');
+    const declared = request.secretInputPaths?.find(candidate => matchesConfidentialInputPath(candidate.split('.'), actual));
     return (declared && request.secretInputLabels && Object.hasOwn(request.secretInputLabels, declared)
       ? request.secretInputLabels[declared] : undefined)
       ?? (path ? humanizeApprovalKey(path) : 'Arguments');

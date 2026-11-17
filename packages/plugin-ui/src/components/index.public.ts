@@ -1773,3 +1773,13 @@ export {
   type ThemePreviewPaint,
   type ThemeMiniatureForm,
 } from './ThemePalettePreview.js';
+export { CodeEditor, type CodeEditorProps, type CodeEditorHandle } from './CodeEditor.js';
+export * from './ShareGrantRow.js';
+export * from './shareGrantModels.js';
+export * from './shareSelectionListTypes.js';
+export * from './shareSheetModels.js';
+export * from './ShareSheet.js';
+export * from './shareSheetHost.js';
+export * from './buildShareSheetSelectionStep.js';
+export * from './buildDirectorySelectionSection.js';
+export * from './ShareConnectedPeoplePrompt.js';

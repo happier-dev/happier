@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -9,7 +10,7 @@ import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accou
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
-import { ShareSheet } from '@/components/sharing/ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import type {
@@ -537,7 +538,7 @@ function DiscussionInviteShareSheet(
     ...(inline ? { namespace: 'discussion-participants' } : {}),
   });
   return (
-    <ShareSheet
+    <ShareSheet host={SHARE_SHEET_HOST}
       model={controller.model}
       actions={controller.actions}
       adapter={adapter}

@@ -2350,6 +2350,19 @@ uses retention zero for this write, atomically removing earlier body revisions.
 Ordinary replayable approval history keeps the configured retention. E2EE bodies
 remain opaque to the server; this non-content custody fact does not disclose SQL.
 
+In unreleased 0.3 source, an authored Action's explicit `surfaces` list is its
+exposure decision. `definePlugin` preserves that list; omitting it retains the
+CLI default. Declaring a UI surface does not add agent or plugin exposure.
+
+Contributed Actions can declare `secretInputPaths` using the existing input-path
+grammar, including `[]` for array elements and `**` for zero or more descendant
+segments. The current approval presenter
+redacts those values while retaining other input, and the diagnostic owner
+enrolls the same confidential operands. `approvalInputCustody: 'live_only'`
+selects the existing live approval waiter even when no confidential value is
+present, so executable operands are not made durable replay input. These fields
+are part of the contributed declaration and its canonical host projection.
+
 In unreleased 0.3 source, the Protocol Action invoker also owns cancellation
 settlement. Once a non-read handler starts, cancellation still reaches its IO
 signal, while the invoker awaits the handler's exact success, native failure or
@@ -3575,6 +3588,38 @@ retirement still erases private state without asking, and stale facades cannot
 publish into a replacement mount. No plugin callback participates in navigation
 admission. Non-page mounts do not advertise the method. This is an unreleased
 Host API V1 operation, not a new persistence format or released SDK guarantee.
+
+### Shared access picker and code editor (0.3 development source)
+
+`ShareSheet` from `@happier-dev/plugin-ui/components` is the shared
+person/group/Team access picker. Authors supply its model, actions and domain
+adapter; the mounted presentation host supplies the existing native list,
+identity visuals, localized words and device services. App sharing callers use
+that same component. Directory acquisition, grant changes and access policy
+stay with their existing domain owners.
+
+`CodeEditor` from the same public entry delegates to the incumbent Monaco or
+native CodeMirror editor through the presentation host. Portable props and its
+handle are exported from `@happier-dev/plugin-ui/presentation` and the pure
+`@happier-dev/plugin-ui/presentation/codeEditor` entry. Workspace language
+intelligence remains with the workspace host. Database selection,
+SQL/history and result state belong to the workbench controller rather than
+another editor implementation.
+
+### Plugin device drafts (0.3 development source)
+
+The negotiated `deviceState` Host API reads, writes and explicitly removes a
+JSON value under an authored key. The mounted host supplies Home, Account,
+plugin and contribution scope and stores it through `persistenceStorage` on
+the current device. It performs no startup scan and writes no Account settings.
+Missing scope or unavailable storage returns a typed unavailable result; the
+plugin keeps its live input and presents the failure through its existing UI.
+
+The database console uses this bridge for SQL and SQL-only history, with a key
+that includes Machine and structured database target identity. Parameters,
+result cells and staged edits stay out of that record. Staged changes, filters,
+location and widths belong to the workbench instance; its unsaved-change flag
+uses the page navigation guard above.
 
 ### Plugin Project pages (0.3 development source)
 
@@ -11656,7 +11701,7 @@ negotiation reply retires the controller. Invalid addressed negotiation results
 settle as `invalid_negotiation` rather than leaving the client pending.
 In 0.3 development, the host selects the oldest supported semantic generation
 matching the requested range: an installed `^1.0.0` client receives exactly 1.0.0,
-while the current SDK requests `^1.1.0`. The Protocol-owned method introduction
+while the current SDK requests `^1.2.0`. The Protocol-owned method introduction
 facts project each reply's method set; 1.1 adds `actionControl`,
 `openManagedMachineConfiguration`, `openDeployment` and `openResource`. The latter submits a typed
 resource intent to core's Account preference, contributed-handler selection and
@@ -11669,7 +11714,9 @@ Because current presentation and older authored SDKs share one wire identity,
 the latest client's range must not narrow a sibling's installed operations.
 Withheld methods and unknown wire or operation payload fields remain refused.
 Wire epoch 1, mount identity and installed-handler
-authority are unchanged. A 1.1 wire negotiation request reaching a 1.0-only
+authority are unchanged. A 1.2 client can negotiate only hosts supporting its
+generation; `deviceState` first appears in 1.2. Earlier 1.0 and 1.1 replies keep
+their closed method sets. A 1.1 wire negotiation request reaching a 1.0-only
 Host API receives `incompatible_api_version`; there is no silent downgrade.
 An older host's injected single-range controller can instead refuse a later
 1.1 client locally after its presentation client negotiated 1.0. Safe refusal

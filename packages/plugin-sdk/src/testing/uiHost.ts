@@ -11,6 +11,7 @@ import { PluginUiReadAuthorityReferenceV1Schema } from '@happier-dev/protocol/pl
 import { PluginUiOpenManagedMachineConfigurationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenDeploymentRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiSetUnsavedChangesRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiDeviceStateRequestV1Schema, PluginUiDeviceStateResultV1Schema, type PluginUiDeviceStateRequestV1, type PluginUiDeviceStateResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiSetPageNavigationRequestV1Schema, type PluginUiPageNavigationV1 } from '@happier-dev/protocol/plugins/ui/pageNavigation';
 import type { PluginUiHostApiWireEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { DaemonPluginUiTargetedSurfaceMountsV1Schema, DaemonPluginUiTargetedSurfaceRendererAvailabilityV1Schema, readDaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -669,6 +670,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
         input: PluginUiTestkitReplacePageLocationInput,
     ) => string | Promise<string>;
     setUnsavedChanges?: (input: Readonly<{ isDirty: boolean; signal: AbortSignal }>) => void | Promise<void>;
+    deviceState?: (input: PluginUiDeviceStateRequestV1, signal: AbortSignal) => PluginUiDeviceStateResultV1 | Promise<PluginUiDeviceStateResultV1>;
     setPageNavigation?: (input: Readonly<{ navigation: PluginUiPageNavigationV1 | null; signal: AbortSignal }>) => void | Promise<void>;
     /** Delegate presentation to the captured host presenter. */
     presentActionFailure?: (input: Readonly<{
@@ -709,6 +711,7 @@ const hostMethodPolicies = {
     openDeployment: 'openDeployment',
     replacePageLocation: 'replacePageLocation',
     setUnsavedChanges: 'setUnsavedChanges',
+    deviceState: 'deviceState',
     setPageNavigation: 'setPageNavigation',
     notify: 'notify',
     confirm: 'confirm',
@@ -1751,6 +1754,12 @@ async function createPluginUiTestkitInternal<TSurface>(
                 if (!payload.success) throw fixtureError('invalid_payload', 'writeClipboard payload is invalid.');
                 await handlers.writeClipboard({ value: payload.data.value, signal });
                 return undefined;
+            }
+            case 'deviceState': {
+                if (!handlers.deviceState) throw fixtureError('unsupported_method', 'deviceState is not installed.');
+                const payload = PluginUiDeviceStateRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'deviceState payload is invalid.');
+                return PluginUiDeviceStateResultV1Schema.parse(await handlers.deviceState(payload.data, signal));
             }
             case 'setUnsavedChanges': {
                 if (!handlers.setUnsavedChanges) throw fixtureError('unsupported_method', 'setUnsavedChanges is not installed.');

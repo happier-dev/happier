@@ -311,6 +311,8 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     ...(definition.sessionTarget ? { sessionTarget: definition.sessionTarget } : {}),
     ...(definition.confirmationWhen === undefined ? {} : { confirmationWhen: definition.confirmationWhen }),
     ...(definition.approvalScope === undefined ? {} : { approvalScope: definition.approvalScope }),
+    ...(definition.approvalInputCustody === undefined ? {} : { approvalInputCustody: definition.approvalInputCustody }),
+    ...(definition.secretInputPaths === undefined ? {} : { secretInputPaths: definition.secretInputPaths }),
     ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly,
       sideEffectClass: definition.readOnly === true ? 'read' as const : 'external' as const }),
     ...(definition.operation ? { operation: definition.operation } : {}),
@@ -322,6 +324,8 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
   } satisfies Omit<ActionDefinitionV1, 'execution' | 'inputSchema' | 'inputHints' | 'outputSchema'> & Readonly<{
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
     approvalScope?: PluginActionContributionV2['approvalScope'];
+    approvalInputCustody?: PluginActionContributionV2['approvalInputCustody'];
+    secretInputPaths?: PluginActionContributionV2['secretInputPaths'];
     readOnly?: PluginActionContributionV2['readOnly'];
     inputSchema?: PluginActionContributionV2['inputSchema'];
     execution: PluginActionContributionV2['execution'];

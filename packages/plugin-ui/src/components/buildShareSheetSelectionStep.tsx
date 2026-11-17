@@ -1,41 +1,21 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierShareHelp } from '@happier-dev/plugin-ui/presentation';
-import { Avatar } from '@/components/ui/avatar/Avatar';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import type { SelectionListOption, SelectionListSectionDescriptor, SelectionListStep } from '@/components/ui/selectionList';
-import { Text } from '@/components/ui/text/Text';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
-import { t } from '@/text';
-import { ShareGrantRow, ShareLevelControl, ShareRowAction } from './ShareGrantRow';
-import { ShareConnectedPeoplePrompt } from './ShareConnectedPeoplePrompt';
-import { useSharePresentationHost } from './sharePresentationHost';
-import { buildDirectorySelectionSection } from './buildDirectorySelectionSection';
-import {
-    SHARE_ACCESS_LEVEL_ORDER,
-    type ShareCandidateRowModel,
-    type ShareDirectoryKind,
-    type ShareDirectorySectionModel,
-    type ShareGrantRowModel,
-    type SharePrincipalPresentation,
-    type ShareSheetActions,
-    type ShareSheetAdapter,
-    type ShareSheetModel,
-    type ShareSheetPresentation,
-    type ShareSheetSectionContext,
-} from './shareSheetTypes';
-
-const styles = StyleSheet.create((theme) => ({
-    helpLine: { color: theme.colors.text.secondary },
-}));
-
+import { HappierShareHelp } from '../presentation/sharing/ShareSheet.js';
+import { ShareGrantRow, ShareLevelControl, ShareRowAction } from './ShareGrantRow.js';
+import { ShareConnectedPeoplePrompt } from './ShareConnectedPeoplePrompt.js';
+import { buildDirectorySelectionSection } from './buildDirectorySelectionSection.js';
+import { useShareSheetHost } from './useShareSheetHost.js';
+import type { ShareSheetHost } from './shareSheetHost.js';
+import type { SelectionListOption, SelectionListSectionDescriptor, SelectionListStep } from './shareSelectionListTypes.js';
+import { SHARE_ACCESS_LEVEL_ORDER, type ShareCandidateRowModel, type ShareDirectoryKind, type ShareDirectorySectionModel,
+    type ShareGrantRowModel, type SharePrincipalPresentation, type ShareSheetActions, type ShareSheetModel,
+    type ShareSheetSectionContext } from './shareGrantModels.js';
+import type { ShareSheetAdapter, ShareSheetPresentation } from './shareSheetModels.js';
 export const SHARE_DIRECTORY_KINDS: readonly ShareDirectoryKind[] = ['account', 'group', 'team'];
 
-function principalKindLabel(principal: SharePrincipalPresentation): string {
+function principalKindLabel(principal: SharePrincipalPresentation, host: ShareSheetHost): string {
     // A Team that says who is in it needs no "Team" word: its section and glyph already say so.
     return principal.ref.kind === 'account' || (principal.ref.kind === 'team' && principal.secondaryLabel) ? ''
-        : principal.ref.kind === 'group' ? t('shareSheet.group') : t('shareSheet.team');
+        : principal.ref.kind === 'group' ? host.text('shareSheet.group') : host.text('shareSheet.team');
 }
 
 /**
@@ -43,35 +23,29 @@ function principalKindLabel(principal: SharePrincipalPresentation): string {
  * for a Team or Group. Decorative on purpose: the row's own `accessibilityLabel` is the single
  * accessible name, and the visible kind stays in the subtitle.
  */
-export function SharePrincipalVisual(props: Readonly<{ principal: SharePrincipalPresentation; testID: string; size?: number }>): React.ReactElement {
-    const { principal } = props;
-    const { theme } = useUnistyles();
-    const size = props.size ?? ICON_SIZE.lg;
-    return <View testID={props.testID} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        {principal.ref.kind === 'account'
-            ? <Avatar id={principal.avatar?.id ?? principal.key} size={size} imageUrl={principal.avatar?.imageUrl ?? null} />
-            : <Icon name="users" size={size} color={theme.colors.text.secondary} />}
-    </View>;
+export function SharePrincipalVisual(props: Readonly<{ principal: SharePrincipalPresentation; testID: string; size?: number; host?: ShareSheetHost }>): React.ReactElement {
+    const host = useShareSheetHost(props.host);
+    return <host.PrincipalVisual principal={props.principal} testID={props.testID} size={props.size} />;
 }
 
 /** One help block: the level legend, then the domain rules and members-only link explanation. */
 export function ShareHelp<TRow extends ShareGrantRowModel>(props: Readonly<{
-    adapter: ShareSheetAdapter<TRow>; testID: string;
+    adapter: ShareSheetAdapter<TRow>; testID: string; host: ShareSheetHost;
     /** Inside the Details disclosure the row already carries the info mark; the note does not repeat it. */
     markNote?: boolean;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
-    const host = useSharePresentationHost();
+    const presentationHost = props.host.useSharePresentation();
     const lines = SHARE_ACCESS_LEVEL_ORDER.flatMap(level => {
         const presentation = props.adapter.levels[level];
         return presentation?.help ? [{ label: presentation.label, text: presentation.help }] : [];
     });
-    return <HappierShareHelp host={host} testID={props.testID} levels={lines}
-        noteIcon={props.markNote === false ? undefined : <Icon name="info" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
-        note={[...(props.adapter.notes ?? []), ...(props.adapter.linkPath ? [t('shareSheet.membersOnlyLink')] : [])].join(' ')} />;
+    return <HappierShareHelp host={presentationHost} testID={props.testID} levels={lines}
+        noteIcon={props.markNote === false ? undefined : <props.host.Icon name="info" />}
+        note={[...(props.adapter.notes ?? []), ...(props.adapter.linkPath ? [props.host.text('shareSheet.membersOnlyLink')] : [])].join(' ')} />;
 }
 
 export type ShareSheetStepInput<TRow extends ShareGrantRowModel> = Readonly<{
+    host: ShareSheetHost;
     model: ShareSheetModel<TRow>;
     actions: ShareSheetActions;
     adapter: ShareSheetAdapter<TRow>;
@@ -101,7 +75,7 @@ export function shareSheetStepId(namespace: string, directoryKind?: ShareDirecto
  * Send a copy instead.
  */
 export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(input: ShareSheetStepInput<TRow>): SelectionListStep {
-    const { model, actions, adapter, idPrefix } = input;
+    const { model, actions, adapter, idPrefix, host } = input;
     const ns = adapter.namespace;
     // Collapsed, the Browse entries share one group instead of trailing three empty headings.
     const suggestionsShown = input.directoryKind !== undefined || input.revealSuggestions !== false;
@@ -109,12 +83,12 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         ...(input.directoryKind ? { directoryKind: input.directoryKind } : {}) };
     const adapterSections = input.directoryKind && !adapter.showLeadingOnDirectorySteps ? {} : adapter.sections?.(context) ?? {};
     const subtitle = (principal: SharePrincipalPresentation, row?: TRow, extra?: readonly (string | undefined)[]) =>
-        [principalKindLabel(principal), principal.secondaryLabel, ...(adapter.principalTags?.(principal, row) ?? []), ...(extra ?? [])]
+        [principalKindLabel(principal, host), principal.secondaryLabel, ...(adapter.principalTags?.(principal, row) ?? []), ...(extra ?? [])]
             .filter(Boolean).join(' · ');
     const accessiblePrincipal = (principal: SharePrincipalPresentation, row?: TRow) =>
         [principal.accessibilityLabel, ...(adapter.principalTags?.(principal, row) ?? []),
             row?.operation.kind === 'error' ? row.operation.error.message : undefined].filter(Boolean).join(', ');
-    const visual = (principal: SharePrincipalPresentation) => () => <SharePrincipalVisual principal={principal}
+    const visual = (principal: SharePrincipalPresentation) => () => <SharePrincipalVisual host={host} principal={principal}
         testID={`${idPrefix}${ns}-principal-visual:${principal.key}`} />;
     const excluded = new Set(model.grants.map((row) => row.principal.key));
     if (model.owner) excluded.add(model.owner.principal.key);
@@ -125,10 +99,10 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     const current: SelectionListOption[] = [];
     if (model.owner) current.push({ id: model.owner.principal.key, label: model.owner.principal.displayName,
         subtitle: subtitle(model.owner.principal), accessibilityLabel: accessiblePrincipal(model.owner.principal),
-        icon: visual(model.owner.principal), rightAccessory: () => <Text style={styles.helpLine}>{t('shareSheet.owner')}</Text> });
+        icon: visual(model.owner.principal), rightAccessory: () => <host.SecondaryText>{host.text('shareSheet.owner')}</host.SecondaryText> });
     for (const row of model.grants) {
     const removeOnRow = singleLevel && model.editable && row.removal.kind === 'allowed' && !adapter.renderGrantDetails;
-    const removeLabel = adapter.removalLabels?.(row)?.request ?? t('shareSheet.remove');
+    const removeLabel = adapter.removalLabels?.(row)?.request ?? host.text('shareSheet.remove');
     current.push({
         id: row.principal.key, testID: `${idPrefix}${ns}-grant-${row.principal.key}`,
         label: row.principal.displayName,
@@ -141,16 +115,16 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         onSelect: () => input.onExpand(row.principal.key),
         rightAccessoryOutsidePressable: true,
         rightAccessory: removeOnRow
-            ? () => <ShareRowAction label={removeLabel} tone="destructive" endsRow
+            ? () => <ShareRowAction useHost={host.useGrantRowPresentation} label={removeLabel} tone="destructive" endsRow
                 testID={`${idPrefix}${ns}-remove:${row.principal.key}`}
                 accessibilityLabel={`${row.principal.accessibilityLabel}, ${removeLabel}`}
                 disabled={row.operation.kind === 'saving' || row.operation.kind === 'removing'}
                 // Open the row so a removal that asks for confirmation shows it in place.
                 onPress={() => { input.onExpand(row.principal.key); actions.requestRemove(row.grant); }} />
-            : () => <ShareLevelControl row={row} adapter={adapter} actions={actions} editable={model.editable}
+            : () => <ShareLevelControl useHost={host.useGrantRowPresentation} row={row} adapter={adapter} actions={actions} editable={model.editable}
                 onExpand={() => input.onExpand(row.principal.key)} testID={`${idPrefix}${ns}-level:${row.principal.key}`} />,
         expandedContentInset: 'text',
-        ...(removeOnRow ? {} : { expandedContent: () => <ShareGrantRow row={row} adapter={adapter} actions={actions} context={context} /> }),
+        ...(removeOnRow ? {} : { expandedContent: () => <ShareGrantRow useHost={host.useGrantRowPresentation} row={row} adapter={adapter} actions={actions} context={context} /> }),
     });
     }
 
@@ -165,7 +139,7 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             // sheet (an archived context Team) is said once by the adapter, and a row's own reason is one press away.
             return [{ id: row.principal.key, testID: `${idPrefix}${ns}-candidate-${row.principal.key}`,
                 label: row.principal.displayName,
-                subtitle: subtitle(row.principal, undefined, [reason ? t('shareSheet.cantAdd') : undefined,
+                subtitle: subtitle(row.principal, undefined, [reason ? host.text('shareSheet.cantAdd') : undefined,
                     row.operation.kind === 'error' ? row.operation.error.message : undefined]),
                 accessibilityLabel: reason ? `${row.principal.accessibilityLabel}, ${reason.message}` : row.principal.accessibilityLabel,
                 icon: visual(row.principal),
@@ -173,17 +147,17 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
                 disabled: row.operation.kind === 'saving',
                 onSelect: () => reason ? actions.explain(reason) : actions.addPrincipal(row.principal.ref),
                 ...(reason ? {} : { rightAccessoryOutsidePressable: true,
-                    rightAccessory: () => <ShareRowAction label={t('common.add')}
+                    rightAccessory: () => <ShareRowAction useHost={host.useGrantRowPresentation} label={host.text('common.add')}
                         testID={`${idPrefix}${ns}-add:${row.principal.key}`}
                         disabled={row.operation.kind === 'saving'}
                         onPress={() => actions.addPrincipal(row.principal.ref)}
-                        trailing={<ShareAddIcon />} /> }),
+                        trailing={<host.Icon name="plus" />} /> }),
             }];
         });
     };
     const sourceSection = (source: ShareDirectorySectionModel): SelectionListSectionDescriptor => buildDirectorySelectionSection({
-        source, id: `directory:${source.kind}`, title: input.directoryKind
-            ? source.title : t('shareSheet.suggestions', { kind: source.title }),
+        loadingLabel: host.text('common.loading'), source, id: `directory:${source.kind}`, title: input.directoryKind
+            ? source.title : host.suggestions(source.title),
         resolverKey: JSON.stringify([source.resolverKey ?? source.kind, [...excluded], source.resolveCandidates ? undefined : model.revision]),
         // A directory step is the section, so its first load shows a skeleton row. On the root, suggestions
         // whose existence is unknown stay out until they resolve: a heading that appears and then empties
@@ -196,8 +170,8 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             // found who already has access is shown under Who has access, not as a reason to connect.
             const typed = query.trim();
             const noOne = source.kind === 'account' && source.resolveCandidates !== undefined && typed !== '' && rows.length === 0;
-            return noOne ? [{ id: 'search-empty', label: t('shareSheet.noMatchingPeople', { query: typed }), disabled: true,
-                content: <ShareConnectedPeoplePrompt query={typed} testID={`${idPrefix}${ns}-search-empty`} /> }] : options;
+            return noOne ? [{ id: 'search-empty', label: host.noMatchingPeople(typed), disabled: true,
+                content: <ShareConnectedPeoplePrompt host={host} query={typed} testID={`${idPrefix}${ns}-search-empty`} /> }] : options;
         },
     });
 
@@ -210,14 +184,14 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     if (!input.directoryKind) {
         // Last-good rows stay while the owner cannot be reached, but must not read as the current answer.
         roster.push({ kind: 'static', id: 'current',
-            title: model.stale ? t('shareSheet.whoHasAccessStale') : t('shareSheet.whoHasAccess'), options: current });
+            title: model.stale ? host.text('shareSheet.whoHasAccessStale') : host.text('shareSheet.whoHasAccess'), options: current });
         roster.push(...adapterSections.afterAccess ?? []);
         const publicLink = adapter.publicLink;
         if (publicLink) roster.push({ kind: 'static', id: 'public-link', options: [{
-            id: 'public-link', testID: `${idPrefix}${ns}-public-link`, label: publicLink.label ?? t('session.sharing.publicLink'),
-            icon: () => <ShareHandoffIcon name="link" />,
-            accessibilityLabel: `${publicLink.label ?? t('session.sharing.publicLink')}, ${publicLink.stateLabel}`,
-            rightAccessory: () => <SharePublicLinkState stateLabel={publicLink.stateLabel} />,
+            id: 'public-link', testID: `${idPrefix}${ns}-public-link`, label: publicLink.label ?? host.text('session.sharing.publicLink'),
+            icon: () => <host.Icon name="link" />,
+            accessibilityLabel: `${publicLink.label ?? host.text('session.sharing.publicLink')}, ${publicLink.stateLabel}`,
+            rightAccessory: () => <host.PublicLinkState stateLabel={publicLink.stateLabel} />,
             onSelect: publicLink.onOpen ?? (() => input.onExpand('public-link')),
             ...(publicLink.renderContent ? { expandedContentInset: 'text', expandedContent: () => publicLink.renderContent!(context) } : {}),
         }] });
@@ -236,16 +210,16 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         if (suggestionsShown) suggestionSections.push(sourceSection(source));
         const controls: SelectionListOption[] = [];
         if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,
-            rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction label={t('common.retry')}
+            rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction useHost={host.useGrantRowPresentation} label={host.text('common.retry')}
                 testID={`${idPrefix}${ns}-directory-retry:${kind}`} onPress={() => actions.retryDirectory(kind)} /> });
         // A searchable directory (a resolver) is always one Browse away: a query's page says nothing about everyone
         // else. A fixed people list already shown as suggestions needs Browse only for its next page.
         const browsable = source.resolveCandidates !== undefined || source.hasMore
             || (source.candidates.length > 0 && !(kind === 'account' && suggestionsShown));
         if (!input.directoryKind && browsable) controls.push({ id: `browse:${kind}`,
-            label: t(kind === 'account' ? 'shareSheet.browsePeople' : kind === 'team' ? 'shareSheet.browseTeams' : 'shareSheet.browseGroups'),
-            icon: () => <ShareDirectoryIcon />,
-            ...(source.status === 'loading' || source.status === 'refreshing' ? { subtitle: t('common.loading') } : {}),
+            label: host.text(kind === 'account' ? 'shareSheet.browsePeople' : kind === 'team' ? 'shareSheet.browseTeams' : 'shareSheet.browseGroups'),
+            icon: () => <host.Icon name="users" />,
+            ...(source.status === 'loading' || source.status === 'refreshing' ? { subtitle: host.text('common.loading') } : {}),
             testID: `${idPrefix}${ns}-browse:${kind}`,
             openStep: buildShareSheetSelectionStep({ ...input, directoryKind: kind }) });
         if (!suggestionsShown) { if (!adapter.browseOnlyWhileAdding) collapsedControls.push(...controls); }
@@ -259,10 +233,10 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         const directory = model.directory.sections.find(section => section.kind === input.directoryKind);
         if (directory && input.directoryKind === 'account' && model.directory.query.trim() === '' && directory.status === 'idle'
             && !directory.hasMore && candidateOptions(directory.candidates).length === 0) sections.push({ kind: 'static',
-            id: 'directory-empty', options: [{ id: 'directory-empty', label: t('shareSheet.noConnectedPeople'), disabled: true,
-                content: <ShareConnectedPeoplePrompt testID={`${idPrefix}${ns}-directory-empty`} /> }] });
-        return { id: shareSheetStepId(ns, input.directoryKind), inputPlaceholder: t('shareSheet.addPlaceholder'),
-            disableInputFilter: true, emptyStateLabel: t('common.noMatches'), sections };
+            id: 'directory-empty', options: [{ id: 'directory-empty', label: host.text('shareSheet.noConnectedPeople'), disabled: true,
+                content: <ShareConnectedPeoplePrompt host={host} testID={`${idPrefix}${ns}-directory-empty`} /> }] });
+        return { id: shareSheetStepId(ns, input.directoryKind), inputPlaceholder: host.text('shareSheet.addPlaceholder'),
+            disableInputFilter: true, emptyStateLabel: host.text('common.noMatches'), sections };
     }
     sections.push(...adapterSections.trailing ?? []);
     if (searching) sections.push(...roster);
@@ -271,51 +245,23 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     // trail the list as an orphan legend; an inline sheet inside a host's form shows them in its footer.
     if (input.presentation !== 'inline' && (Object.values(adapter.levels).some(level => level.help) || adapter.notes?.length)) {
         // A disclosure row, not a heading: it carries its mark so it reads as something to open.
-        sections.push({ kind: 'static', id: 'help', options: [{ id: 'access-help', testID: `${idPrefix}${ns}-help`, label: t('common.details'),
-            icon: () => <ShareHelpIcon />, disclosure: true,
+        sections.push({ kind: 'static', id: 'help', options: [{ id: 'access-help', testID: `${idPrefix}${ns}-help`, label: host.text('common.details'),
+            icon: () => <host.Icon name="info" />, disclosure: true,
             onSelect: () => input.onExpand(input.expandedKey === 'access-help' ? null : 'access-help'), expandedContentInset: 'none',
-            expandedContent: () => <ShareHelp adapter={adapter} markNote={false} testID={`${idPrefix}${ns}-help-content`} /> }] });
+            expandedContent: () => <ShareHelp host={host} adapter={adapter} markNote={false} testID={`${idPrefix}${ns}-help-content`} /> }] });
     }
 
     const handoffs: SelectionListOption[] = [];
     if (input.presentation !== 'full' && input.copyLink) {
         const copyLink = input.copyLink;
-        handoffs.push({ id: 'copy-link', testID: `${idPrefix}${ns}-copy-link`, label: t('shareSheet.copyLink'),
-            ...(copyLink.copied ? { subtitle: t('shareSheet.linkCopied') } : {}),
-            icon: () => <ShareHandoffIcon name="link" />, onSelect: copyLink.onCopy });
+        handoffs.push({ id: 'copy-link', testID: `${idPrefix}${ns}-copy-link`, label: host.text('shareSheet.copyLink'),
+            ...(copyLink.copied ? { subtitle: host.text('shareSheet.linkCopied') } : {}),
+            icon: () => <host.Icon name="link" />, onSelect: copyLink.onCopy });
     }
-    if (input.presentation !== 'full' && adapter.sendCopy) handoffs.push({ id: 'send-copy', testID: `${idPrefix}${ns}-send-copy`, label: t('shareSheet.sendCopy'),
-        icon: () => <ShareHandoffIcon name="copy" />, onSelect: adapter.sendCopy });
+    if (input.presentation !== 'full' && adapter.sendCopy) handoffs.push({ id: 'send-copy', testID: `${idPrefix}${ns}-send-copy`, label: host.text('shareSheet.sendCopy'),
+        icon: () => <host.Icon name="copy" />, onSelect: adapter.sendCopy });
     if (handoffs.length) sections.push({ kind: 'static', id: 'handoffs', options: handoffs });
 
-    return { id: shareSheetStepId(ns), ...(model.editable ? { inputPlaceholder: adapter.searchPlaceholder ?? t('shareSheet.addPlaceholder') } : {}),
-        autoFocusFirstOption: false, disableInputFilter: true, emptyStateLabel: t('common.noMatches'), sections };
-}
-
-export function ShareHandoffIcon(props: Readonly<{ name: 'link' | 'copy' }>): React.ReactElement {
-    const { theme } = useUnistyles();
-    return <Icon name={props.name} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
-}
-
-function ShareHelpIcon(): React.ReactElement {
-    const { theme } = useUnistyles();
-    return <Icon name="info" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
-}
-
-function ShareDirectoryIcon(): React.ReactElement {
-    const { theme } = useUnistyles();
-    return <Icon name="users" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
-}
-
-function ShareAddIcon(): React.ReactElement {
-    const { theme } = useUnistyles();
-    return <Icon name="plus" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
-}
-
-function SharePublicLinkState(props: Readonly<{ stateLabel: string }>): React.ReactElement {
-    const { theme } = useUnistyles();
-    return <View style={{ flexDirection: 'row', alignItems: 'center', gap: PAGE_LIST_METRICS.groupHeadingGapPx }}>
-        <Text style={styles.helpLine}>{props.stateLabel}</Text>
-        <Icon name="caret-right" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-    </View>;
+    return { id: shareSheetStepId(ns), ...(model.editable ? { inputPlaceholder: adapter.searchPlaceholder ?? host.text('shareSheet.addPlaceholder') } : {}),
+        autoFocusFirstOption: false, disableInputFilter: true, emptyStateLabel: host.text('common.noMatches'), sections };
 }

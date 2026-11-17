@@ -67,6 +67,8 @@ export type {
     PluginUiActionResultFor,
     PluginUiActionTransportResult,
     PluginUiHostApi,
+    PluginUiDeviceStateRequestV1,
+    PluginUiDeviceStateResultV1,
     OpenManagedMachineConfigurationRequest,
     RevealSessionInputRequest,
     ReadMachineDisplayNameRequest,

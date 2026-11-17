@@ -251,6 +251,8 @@ type ActionContribution = Readonly<{
     )[];
     surfaces: readonly ('cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice')[];
     approvalScope?: PublicActionContribution['approvalScope'];
+    approvalInputCustody?: PublicActionContribution['approvalInputCustody'];
+    secretInputPaths?: Readonly<NonNullable<PublicActionContribution['secretInputPaths']>>;
     execution: PluginActionExecutionV2;
     operation?: ActionOperationDeclarationV1;
     placementBindings?: readonly PluginActionPlacement[];
@@ -301,6 +303,8 @@ export type PluginActionDeclaration = Readonly<{
     confirmVerb?: PluginLocalizedStringV2;
     irreversible?: true;
     approvalScope?: PublicActionContribution['approvalScope'];
+    approvalInputCustody?: PublicActionContribution['approvalInputCustody'];
+    secretInputPaths?: Readonly<NonNullable<PublicActionContribution['secretInputPaths']>>;
     description?: PluginLocalizedStringV2;
     icon?: string;
     slash?: Readonly<{ tokens: readonly string[] }>;
@@ -1349,6 +1353,7 @@ function projectAction(localId: string, definition: PluginActionDefinition): Act
     } = definition;
     const defaultScopes: ActionContribution['scopes'] = ['global'];
     const defaultSurfaces: ActionContribution['surfaces'] = ['cli'];
+    // Explicit exposure is the author's decision. Omission retains the CLI default.
     const projectedSurfaces: ActionContribution['surfaces'] = surfaces === undefined
         ? defaultSurfaces
         : [...surfaces];

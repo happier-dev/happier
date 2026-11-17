@@ -1,3 +1,4 @@
+import { PluginUiDeviceStateRequestV1Schema, PluginUiDeviceStateResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiPresentActionFailureRequestV1Schema, PluginUiActionFailurePresentationV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import {
     PluginUiSetPageNavigationRequestV1Schema,
@@ -1550,6 +1551,14 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             assertInstalled('setPageNavigation');
             const payload = PluginUiSetPageNavigationRequestV1Schema.parse({ navigation });
             await transport.request('setPageNavigation', payload, options?.signal ? { signal: options.signal } : undefined);
+        },
+        deviceState: async (input, options) => {
+            assertActive(options?.signal);
+            assertInstalled('deviceState');
+            const payload = PluginUiDeviceStateRequestV1Schema.parse(input);
+            const result = await transport.request('deviceState', payload, options?.signal ? { signal: options.signal } : undefined);
+            assertDeliveryActive(options?.signal);
+            return PluginUiDeviceStateResultV1Schema.parse(result);
         },
         setUnsavedChanges: async (isDirty, options) => {
             assertActive(options?.signal);

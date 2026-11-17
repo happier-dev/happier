@@ -13,10 +13,10 @@ import { z } from '../../zodRuntimePolicy.js';
  * Semantic API generations are independent of wire epoch 1 and package SemVer.
  * Installed 1.0 SDKs have a closed method enum and require an exact 1.0 reply.
  */
-export const PLUGIN_UI_HOST_API_VERSIONS_V1 = Object.freeze(['1.0.0', '1.1.0'] as const);
+export const PLUGIN_UI_HOST_API_VERSIONS_V1 = Object.freeze(['1.0.0', '1.1.0', '1.2.0'] as const);
 /** The pre-negotiation bootstrap carries no methods and retains its base shape. */
 export const PLUGIN_UI_HOST_API_BASE_VERSION_V1 = PLUGIN_UI_HOST_API_VERSIONS_V1[0];
-export const PLUGIN_UI_HOST_API_VERSION_V1 = PLUGIN_UI_HOST_API_VERSIONS_V1[1];
+export const PLUGIN_UI_HOST_API_VERSION_V1 = PLUGIN_UI_HOST_API_VERSIONS_V1[2];
 
 /** The default compatibility request is derived from the one semantic version. */
 export const PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1 = `^${PLUGIN_UI_HOST_API_VERSION_V1}` as const;
@@ -49,6 +49,7 @@ const HOST_METHOD_INTRODUCTION_VERSION = Object.freeze({
   replacePageLocation: '1.0.0',
   setPageNavigation: '1.1.0',
   setUnsavedChanges: '1.0.0',
+  deviceState: '1.2.0',
   notify: '1.0.0',
   confirm: '1.0.0',
   diagnostic: '1.0.0',

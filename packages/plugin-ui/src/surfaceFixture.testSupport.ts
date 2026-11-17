@@ -60,6 +60,7 @@ export function createHostApiStub(
     openResource: async () => unsupportedHostMethod(),
     replacePageLocation: async () => unsupportedHostMethod(),
     setUnsavedChanges: async () => unsupportedHostMethod(),
+    deviceState: async () => unsupportedHostMethod(),
     setPageNavigation: async () => unsupportedHostMethod(),
     notify: async () => undefined,
     confirm: async () => false,

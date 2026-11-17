@@ -6,6 +6,7 @@ import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/
 import { deriveActivationTargetRegistrationRights } from '../lifecycle/activation/targets';
 import type { PluginActionPresentUserGatePolicy, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -246,8 +247,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             const occurrenceId = params.readCurrentPluginOccurrenceId?.(entry.pluginId);
             const sourceCustody = params.readCurrentPluginSourceCustody?.(entry.pluginId);
             const secretInputPaths = [
-                ...(actionDefinition.inputHints?.fields ?? [])
-                    .filter(field => field.widget === 'secret').map(field => field.path),
+                ...readActionSecretInputPaths(actionDefinition, {}, { includeInactive: true }),
                 ...(nativeCredentialApplyKeys.has(buildQualifiedPluginContributionKey(actionIdentity))
                     ? ['bindings', 'ownedBindings'] : []),
             ];

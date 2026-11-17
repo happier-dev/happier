@@ -560,6 +560,10 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
   scopes: z.array(PluginActionScopeV2Schema).check(z.minLength(1)),
   /** Declares the admitted Environment or plugin-owned operand for this Action. */
   approvalScope: z.optional(PluginActionApprovalScopeV2Schema),
+  /** Retains executable operands only in the existing live approval waiter. */
+  approvalInputCustody: z.optional(z.literal('live_only')),
+  /** Confidential values consumed by the existing approval and diagnostic presenters. */
+  secretInputPaths: z.optional(z.array(ActionInputPathSchema)),
   surfaces: z.array(PluginActionSurfaceV2Schema).check(z.minLength(1)),
   execution: PluginActionDeclaredExecutionV2Schema,
   operation: z.optional(ActionOperationDeclarationV1Schema),

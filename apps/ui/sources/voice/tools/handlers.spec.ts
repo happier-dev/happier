@@ -509,6 +509,7 @@ async function createElevenLabsToolHarness() {
       readStoredImage: async () => unavailableUi(), watchLiveStream: async () => unavailableUi(),
       openSurface: async () => unavailableUi(), replacePageLocation: async () => unavailableUi(),
       setUnsavedChanges: async () => unavailableUi(),
+      deviceState: async () => unavailableUi(),
       notify: async () => unavailableUi(), confirm: async () => unavailableUi(), diagnostic: unavailableUi,
       readClipboard: async () => unavailableUi(), writeClipboard: async () => unavailableUi(),
       openExternalLink: async () => unavailableUi(),

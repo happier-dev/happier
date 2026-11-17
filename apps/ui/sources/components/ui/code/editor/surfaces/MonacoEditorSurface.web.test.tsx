@@ -557,6 +557,7 @@ describe('MonacoEditorSurface (web)', () => {
             getValue: () => text,
             getLineContent: (line: number) => text.split('\n')[line - 1],
             getValueInRange: () => 'rst\nsecond\n',
+            getOffsetAt: ({ lineNumber, column }: { lineNumber: number; column: number }) => [0, 6, 13][lineNumber - 1] + column - 1,
         };
         createModelSpy.mockReturnValueOnce(model);
         createEditorSpy.mockReturnValueOnce({
@@ -568,7 +569,7 @@ describe('MonacoEditorSurface (web)', () => {
         });
         const ref = React.createRef<CodeEditorHandle>();
         await renderScreen(<MonacoEditorSurface ref={ref} resetKey="selection" value={text} language="text" onChange={vi.fn()} />);
-        expect(ref.current?.getSelection?.()).toEqual({ startLine: 1, endLine: 2, text: 'rst\nsecond\n', collapsed: false, rect: { x: 120, y: 240, width: 0, height: 18 } });
+        expect(ref.current?.getSelection?.()).toEqual({ startLine: 1, endLine: 2, text: 'rst\nsecond\n', range: { start: 2, end: 13 }, collapsed: false, rect: { x: 120, y: 240, width: 0, height: 18 } });
         const listener = vi.fn();
         const unsubscribe = ref.current!.subscribeSelection!(listener);
         selection = { startLineNumber: 2, startColumn: 3, endLineNumber: 2, endColumn: 3 };
@@ -576,7 +577,7 @@ describe('MonacoEditorSurface (web)', () => {
         expect(listener).toHaveBeenCalledTimes(1);
         // A caret with no range shows no toolbar, so reading it must not force Monaco to lay the view out (every keystroke reads it).
         caretAnchor.mockClear();
-        expect(ref.current!.getSelection!()).toMatchObject({ startLine: 2, endLine: 2, text: 'second', collapsed: true, rect: null });
+        expect(ref.current!.getSelection!()).toMatchObject({ startLine: 2, endLine: 2, text: 'second', range: { start: 8, end: 8 }, collapsed: true, rect: null });
         expect(caretAnchor).not.toHaveBeenCalled();
         unsubscribe();
         listener.mockClear();

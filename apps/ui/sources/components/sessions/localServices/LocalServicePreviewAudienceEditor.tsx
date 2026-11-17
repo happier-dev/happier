@@ -1,6 +1,7 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 
-import { ShareSheet } from '@/components/sharing/ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import type { ShareSheetAdapter, ShareUiReason } from '@/components/sharing/shareSheetTypes';
 import { useAudienceDraftShareController, type ShareAudienceDraft } from '@/components/sharing/useAudienceDraftShareController';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -28,6 +29,6 @@ export function LocalServicePreviewAudienceEditor(props: Readonly<{
         levels: { view: { label: t('localServices.publicPreview.canOpen') } },
         showsLevelLock: () => true,
     }), []);
-    return <ShareSheet key={`${props.scope.serverId}:${props.scope.accountId}`} model={controller.model}
+    return <ShareSheet host={SHARE_SHEET_HOST} key={`${props.scope.serverId}:${props.scope.accountId}`} model={controller.model}
         actions={controller.actions} adapter={adapter} presentation="inline" testID={props.testID} />;
 }

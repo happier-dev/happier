@@ -1,3 +1,6 @@
+import type { HappierCodeEditorRequest } from '../presentation/content/CodeEditor.js';
+import type { ShareSheetHost } from '../components/shareSheetHost.js';
+import type { ShareGrantRowPresentation } from '../components/ShareGrantRow.js';
 import type { PluginUiActionBindingCommit } from './actionBindingPresentation.js';
 import type { IconButtonProps } from '../components/Button.js';
 import type { ToggleProps } from '../components/Form.js';
@@ -246,6 +249,9 @@ export type PluginUiPresentationHost = Readonly<{
   /** Same-realm hook: the app retains source acquisition, Action lifetime and per-path observation. */
   useScmFileViewed?(params: ScmFileViewedRequest, executeAction?: PluginUiHostApi['executeAction']): ScmFileViewedSource | null;
   /** Same-realm hook: the app's collaboration people directory (the share sheet's), read only while demanded. */
+  useShareGrantRowPresentation?(): ShareGrantRowPresentation;
+  shareSheet?: ShareSheetHost;
+  renderCodeEditor?(request: HappierCodeEditorRequest): ReactNode;
   usePeopleDirectory?(request: HostPeopleDirectoryRequest): HostPeopleDirectory | null;
   /** Device-local collection widths, already scoped to this plugin by the host. */
   panelSizing?: Readonly<{

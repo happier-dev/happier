@@ -1,7 +1,8 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import type {
   ShareSheetActions,
   ShareSheetModel,
@@ -46,7 +47,7 @@ function ScopedTaskShareSheet(
     retryContent: controller.retryContent,
   });
   return (
-    <ShareSheet
+    <ShareSheet host={SHARE_SHEET_HOST}
       model={controller.model}
       actions={controller.actions}
       adapter={adapter}
@@ -101,7 +102,7 @@ export function TaskShareSheet(props: TaskShareSheetProps): React.ReactElement {
     issue: presentTaskShareFailure('not_authenticated'),
   });
   return (
-    <ShareSheet
+    <ShareSheet host={SHARE_SHEET_HOST}
       model={UNSCOPED_MODEL}
       actions={UNSCOPED_ACTIONS}
       adapter={adapter}

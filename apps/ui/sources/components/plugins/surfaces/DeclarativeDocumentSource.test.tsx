@@ -298,6 +298,7 @@ function createDocumentHost(input: Readonly<{
         openSurface: async () => unexpectedHostApiCall('openSurface'),
         replacePageLocation: async () => unexpectedHostApiCall('replacePageLocation'),
         setUnsavedChanges: async () => unexpectedHostApiCall('setUnsavedChanges'),
+        deviceState: async () => unexpectedHostApiCall('deviceState'),
         notify: async () => unexpectedHostApiCall('notify'),
         confirm: async () => unexpectedHostApiCall('confirm'),
         // Both real transports refuse an unadvertised host method locally with

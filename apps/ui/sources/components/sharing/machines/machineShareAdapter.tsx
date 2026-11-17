@@ -1,3 +1,5 @@
+import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -8,8 +10,8 @@ import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard, type SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { t } from '@/text';
-import { ShareGrantRow, ShareLevelControl, ShareRowAction } from '../ShareGrantRow';
-import { SharePrincipalVisual } from '../buildShareSheetSelectionStep';
+import { ShareGrantRow, ShareLevelControl, ShareRowAction } from '@happier-dev/plugin-ui/components';
+import { SharePrincipalVisual } from '@happier-dev/plugin-ui/components';
 import type { ShareSheetAdapter } from '../shareSheetTypes';
 import type { MachineShareGrantRow, useMachineShareController } from './useMachineShareController';
 import { MachineShareTrustDisclosure } from './MachineShareTrustDisclosure';
@@ -66,7 +68,7 @@ export function createMachineShareAdapter(input: Readonly<{
                 <Text style={styles.detail} testID={`${context.idPrefix}machine-share-key-pending:${row.principal.key}`} accessibilityLiveRegion="polite">
                     {t('machines.sharing.pending', { machine })}
                 </Text>
-                {controller.model.editable ? <ShareRowAction label={t('common.retry')}
+                {controller.model.editable ? <ShareRowAction useHost={useShareGrantRowPresentation} label={t('common.retry')}
                     testID={`${context.idPrefix}machine-share-key-retry:${row.principal.key}`}
                     disabled={row.operation.kind === 'saving' || row.operation.kind === 'removing'}
                     onPress={() => controller.prepareKeys(row.grant)} /> : null}
@@ -110,16 +112,16 @@ export function createMachineShareAdapter(input: Readonly<{
             if (own && !context.directoryKind) leading.push({ kind: 'static', id: 'machine-own-access', title: t('machines.sharing.yourAccess'), options: [{
                 id: 'machine-viewer-access', testID: `${context.idPrefix}machine-share-your-access`, label: own.principal.displayName,
                 // The same person mark as the rows under it, so the card keeps one leading edge.
-                icon: () => <SharePrincipalVisual principal={own.principal} testID={`${context.idPrefix}machine-share-your-access-visual`} />,
+                icon: () => <SharePrincipalVisual host={SHARE_SHEET_HOST} principal={own.principal} testID={`${context.idPrefix}machine-share-your-access-visual`} />,
                 ...(through ? { subtitle: t('machines.sharing.through', { audience: through.displayName
                     ?? t(through.principal.kind === 'group' ? 'shareSheet.group' : 'shareSheet.team') }) } : {}),
                 onSelect: () => context.onExpand('machine-viewer-access'),
                 rightAccessoryOutsidePressable: true,
-                rightAccessory: () => <ShareLevelControl row={own} adapter={adapter} actions={controller.actions}
+                rightAccessory: () => <ShareLevelControl useHost={useShareGrantRowPresentation} row={own} adapter={adapter} actions={controller.actions}
                     onExpand={() => context.onExpand('machine-viewer-access')} editable={false}
                     testID={`${context.idPrefix}machine-share-own-level`} />,
                 expandedContentInset: 'text',
-                expandedContent: () => <ShareGrantRow row={own} adapter={adapter} actions={controller.actions}
+                expandedContent: () => <ShareGrantRow useHost={useShareGrantRowPresentation} row={own} adapter={adapter} actions={controller.actions}
                     context={{ ...context, editable: controller.canLeave }} />,
             }] });
             // Status lines sit on the grant rows' edge as one quiet state each, with their own next step.

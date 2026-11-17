@@ -1,9 +1,10 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import type { SavedSecretCatalogAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import type { ShareLevelPresentation, ShareSheetAdapter, ShareUiReason } from '../shareSheetTypes';
 import type { SavedSecretGrantDraft } from './savedSecretGrantDraft';
 import { useSavedSecretShareController } from './useSavedSecretShareController';
@@ -39,7 +40,7 @@ function ScopedSavedSecretShareSheet(props: SavedSecretShareSheetProps): React.R
         ...(props.retainedAudience ? { retainedAudience: props.retainedAudience } : {}),
     });
     const adapter = React.useMemo(() => createSavedSecretShareAdapter(controller.notice), [controller.notice]);
-    return <ShareSheet model={controller.model} actions={controller.actions} adapter={adapter}
+    return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions} adapter={adapter}
         presentation="inline" testID="saved-secret-access-editor" />;
 }
 

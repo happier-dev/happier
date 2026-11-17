@@ -350,13 +350,16 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const inlineRuntimeRef = React.useRef<ReturnType<typeof createMonacoInlineSuggestions> | null>(null);
     const nextEditRuntimeRef = React.useRef<ReturnType<typeof createMonacoNextEdit> | null>(null);
     const intelligenceRef = React.useRef<CodeEditorLanguageIntelligence | null>(null);
+    const completionSourceRef = React.useRef(props.completionSource);
+    completionSourceRef.current = props.completionSource;
     const intelligenceBindingRef = React.useRef<ReturnType<typeof bindMonacoLanguageIntelligence> | null>(null);
     const setLanguageIntelligence = React.useCallback((port: CodeEditorLanguageIntelligence | null) => {
         intelligenceBindingRef.current?.dispose(); intelligenceBindingRef.current = null;
         intelligenceRef.current = port;
         nextEditRuntimeRef.current?.setPort(port?.nextEditSuggestions ?? null, port?.nextEditKeys !== false);
-        if (port && editorRef.current && window.monaco) intelligenceBindingRef.current = bindMonacoLanguageIntelligence(window.monaco, editorRef.current, port);
+        if ((port || completionSourceRef.current) && editorRef.current && window.monaco) intelligenceBindingRef.current = bindMonacoLanguageIntelligence(window.monaco, editorRef.current, port, completionSourceRef.current);
     }, []);
+    React.useEffect(() => { setLanguageIntelligence(intelligenceRef.current); }, [props.completionSource, setLanguageIntelligence]);
     const documentHistoryRef = React.useRef(props.history);
     documentHistoryRef.current = props.history;
     const commandHistoryRef = React.useRef<'undo' | 'redo' | undefined>(undefined);
@@ -435,6 +438,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
             endLine: selection.endLineNumber > selection.startLineNumber && selection.endColumn === 1
                 ? selection.endLineNumber - 1 : selection.endLineNumber,
             text: empty ? model.getLineContent(selection.startLineNumber) : model.getValueInRange(selection),
+            range: { start: model.getOffsetAt({ lineNumber: selection.startLineNumber, column: selection.startColumn }),
+                end: model.getOffsetAt({ lineNumber: selection.endLineNumber, column: selection.endColumn }) },
             rect: position && bounds ? { x: bounds.left + position.left, y: bounds.top + position.top, width: 0, height: position.height } : null,
             collapsed: empty,
         };

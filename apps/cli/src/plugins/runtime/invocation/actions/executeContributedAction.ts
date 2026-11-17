@@ -800,9 +800,10 @@ export async function executeContributedAction(params: Readonly<{
       : params.requestCurrentIntent
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
           const projectedInput = projectTargetActionApprovalInput(request.action.input, request.action.secretInputPaths ?? []);
-          // Confidential input and Account hosts without a replay-placement
-          // producer belong to the existing live approval waiter.
+          // Declared live custody, confidential input and Account hosts without
+          // a replay-placement producer belong to the existing live waiter.
           const liveOnly = params.context.approvalInputCustody === 'live_only'
+            || action.definition.approvalInputCustody === 'live_only'
             || (projectedInput?.confidentialPaths.length ?? 0) > 0
             || (accountTarget && !runtimeRegistry.resolveCurrentPluginApprovalReplayPlacement);
           const requestedSurface = request.invocationSurface ?? request.surface;

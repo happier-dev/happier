@@ -351,6 +351,86 @@ describe('native CodeMirror WebView line endings', () => {
         expect(selections().at(-1)?.payload).toMatchObject({ startLine: 2, endLine: 2, text: 'second!' });
     });
 
+    it('carries original-document UTF-16 caret and selection offsets through the native bridge', async () => {
+        const text = '😀 same\r\nsame\r\nlast';
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(React.createElement(CodeMirrorWebViewSurface, {
+            ref, resetKey: 'offsets', value: text, language: 'sql', onChange: () => {},
+        }));
+        const outbound: string[] = [];
+        nativeBoundary.postMessage.mockImplementation(raw => { outbound.push(raw); });
+        const bridge = bootBridge(raw => nativeBoundary.onMessage?.({ nativeEvent: { data: raw } }));
+        cleanup = bridge.cleanup;
+        const deliver = (raw: string) => {
+            const envelope = JSON.parse(raw) as { type: string; payload: object };
+            bridge.send(envelope.type, envelope.payload);
+        };
+        nativeBoundary.postMessage.mockImplementation(deliver);
+        for (const raw of outbound) deliver(raw);
+        try {
+            const editor = bridge.getView();
+            expect(ref.current?.getSelection?.()).toMatchObject({ range: { start: 0, end: 0 } });
+            await act(async () => { editor.dispatch({ selection: { anchor: editor.state.doc.line(2).from + 2 } }); });
+            expect(ref.current?.getSelection?.()).toMatchObject({ range: { start: 11, end: 11 }, collapsed: true });
+            await act(async () => { editor.dispatch({ selection: { anchor: editor.state.doc.line(3).from, head: 3 } }); });
+            expect(ref.current?.getSelection?.()).toMatchObject({ range: { start: 3, end: 15 }, text: text.slice(3, 15), collapsed: false });
+        } finally {
+            nativeBoundary.postMessage.mockReset();
+            nativeBoundary.onMessage = null;
+            await screen.unmount();
+        }
+    });
+
+    it('requests and applies portable completions through the native editor without a workspace language server', async () => {
+        const text = '😀 same\r\nse';
+        const complete = vi.fn(async (_position: { offset: number; line: number; character: number; explicit: boolean }, _signal: AbortSignal) => [
+            { label: 'second', detail: 'text', range: { start: 9, end: 11 } },
+        ]);
+        const ref = React.createRef<CodeEditorHandle>();
+        const onChange = vi.fn();
+        const screen = await renderScreen(React.createElement(CodeMirrorWebViewSurface, {
+            ref, resetKey: 'completion', value: text, language: 'sql', onChange, completionSource: { complete },
+        }));
+        const outbound: string[] = [];
+        nativeBoundary.postMessage.mockImplementation(raw => { outbound.push(raw); });
+        const bridge = bootBridge(raw => nativeBoundary.onMessage?.({ nativeEvent: { data: raw } }));
+        cleanup = bridge.cleanup;
+        const deliver = (raw: string) => {
+            const envelope = JSON.parse(raw) as { type: string; payload: object };
+            bridge.send(envelope.type, envelope.payload);
+        };
+        nativeBoundary.postMessage.mockImplementation(deliver);
+        for (const raw of outbound) deliver(raw);
+        try {
+            const editor = bridge.getView();
+            editor.dispatch({ selection: { anchor: editor.state.doc.length } });
+            await act(async () => { autocomplete.startCompletion(editor); await vi.advanceTimersByTimeAsync(100); });
+            expect(complete).toHaveBeenCalledWith({ offset: 11, line: 2, character: 2, explicit: true }, expect.any(AbortSignal));
+            expect(autocomplete.currentCompletions(editor.state).map(item => item.label)).toEqual(['second']);
+            await act(async () => {
+                await vi.waitFor(() => expect(autocomplete.acceptCompletion(editor)).toBe(true));
+                await ref.current!.flushPendingChange();
+            });
+            expect(onChange).toHaveBeenLastCalledWith('😀 same\r\nsecond');
+            let pendingSignal: AbortSignal | undefined;
+            let settle: (items: Awaited<ReturnType<typeof complete>>) => void = () => {};
+            complete.mockResolvedValue([]).mockImplementationOnce((_position, signal) => {
+                pendingSignal = signal;
+                return new Promise(resolve => { settle = resolve; });
+            });
+            await act(async () => { autocomplete.startCompletion(editor); await vi.advanceTimersByTimeAsync(100); });
+            expect(pendingSignal?.aborted).toBe(false);
+            await act(async () => { editor.dispatch({ changes: { from: editor.state.doc.length, insert: 'x' } }); });
+            expect(pendingSignal?.aborted).toBe(true);
+            await act(async () => { settle([{ label: 'stale', detail: 'text', range: { start: 9, end: 11 } }]); await vi.advanceTimersByTimeAsync(100); });
+            expect(autocomplete.currentCompletions(editor.state).map(item => item.label)).not.toContain('stale');
+        } finally {
+            nativeBoundary.postMessage.mockReset();
+            nativeBoundary.onMessage = null;
+            await screen.unmount();
+        }
+    });
+
     it('forwards only configured editor shortcuts before native CodeMirror handlers and preserves composing input', () => {
         const bridge = bootBridge();
         cleanup = bridge.cleanup;

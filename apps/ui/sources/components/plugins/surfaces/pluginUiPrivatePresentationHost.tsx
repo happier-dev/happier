@@ -1,3 +1,7 @@
+import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
+import type { HappierCodeEditorRequest } from '@happier-dev/plugin-ui/presentation';
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
+import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
 import type { PluginSurfaceActionControls } from './pluginSurfaceActionControls';
 import { PluginInlineActionControl } from './MountedPluginActionControls';
 import { createPluginUiActionBindingPresentation } from '@happier-dev/plugin-ui/advanced';
@@ -362,6 +366,9 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     return Object.freeze({
     useScmFileViewed,
     usePeopleDirectory: usePluginUiPeopleDirectory,
+    renderCodeEditor({ editorRef, ...props }: HappierCodeEditorRequest) { return <CodeEditor {...props} ref={editorRef} />; },
+    useShareGrantRowPresentation,
+    shareSheet: SHARE_SHEET_HOST,
     taskShareSheet: {
         open({ taskRef, title, anchor }) {
             showTaskShareSheet({ ...taskRef, title,

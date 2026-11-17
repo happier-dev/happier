@@ -1,5 +1,6 @@
 import { CODE_GUTTER_METRICS, resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
 import { minimalCodeEditorEdit } from '../codeEditorDocumentEdit';
+import { codeMirrorDocumentOffset } from './codeMirrorDocumentOffsets';
 import { formatCodeEditorBlameMarkCss, formatCodeEditorChangeMarkCss, formatCodeEditorDiagnosticCss, formatCodeEditorNextEditCss, type CodeEditorTheme } from '../editorTheme';
 import { CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS, CODEMIRROR_WEBVIEW_BUNDLE_JS } from './codemirrorWebViewBundle.generated';
 
@@ -274,6 +275,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       let geometryWatch = [];
       let geometryFrame = 0;
       const minimalDocumentEdit = ${minimalCodeEditorEdit.toString()};
+      const documentOffset = ${codeMirrorDocumentOffset.toString()};
 
       function detectLineSeparator(doc) {
         const match = doc.match(/\\r\\n|\\r|\\n/);
@@ -763,6 +765,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             startLine: first.number,
             endLine: last.number > first.number && selection.to === last.from ? last.number - 1 : last.number,
             text: selection.empty ? first.text : editor.state.doc.sliceString(selection.from, selection.to, lineSeparator),
+            range: { start: documentOffset(editor.state.doc, selection.from, lineSeparator), end: documentOffset(editor.state.doc, selection.to, lineSeparator) },
             rect,
             collapsed: selection.empty,
           } });
@@ -904,8 +907,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           intelligenceRuntime?.dispose(); intelligenceRuntime = null;
           if (!view || !intelligenceCompartment) return;
           if (!config || !intelligenceFactory) { view.dispatch({ effects: intelligenceCompartment.reconfigure([]) }); return; }
-          intelligenceRuntime = intelligenceFactory({ ...config, subscribe: () => () => {}, getSnapshot: () => ({ capabilities: config.capabilities }),
-            request: (kind, options, signal) => new Promise(resolve => {
+          const request = (kind, options, signal) => new Promise(resolve => {
               if (signal?.aborted) { resolve(null); return; }
               const id = String(++intelligenceSequence);
               const abort = () => { intelligenceRequests.delete(id); sendEnvelope({ v: 1, type: 'intelligence.cancel', payload: { id } }); resolve(null); };
@@ -913,8 +915,13 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
               intelligenceRequests.set(id, result => { signal?.removeEventListener('abort', abort); resolve(result); });
               flushPendingDocChange();
               sendEnvelope({ v: 1, type: 'intelligence.request', payload: { id, kind, options } });
-            }),
-          }, help => sendEnvelope({ v: 1, type: 'intelligence.signature', payload: { help } }));
+            });
+          intelligenceRuntime = intelligenceFactory(config.capabilities ? { ...config, subscribe: () => () => {},
+            getSnapshot: () => ({ capabilities: config.capabilities }), request } : null,
+            help => sendEnvelope({ v: 1, type: 'intelligence.signature', payload: { help } }),
+            config.completion ? { triggerCharacters: config.completion.triggerCharacters,
+              complete: (position, signal) => request('portableCompletion', position, signal) } : undefined,
+            () => lineSeparator);
           view.dispatch({ effects: intelligenceCompartment.reconfigure(intelligenceRuntime.extensions) });
         }
 

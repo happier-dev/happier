@@ -1,3 +1,5 @@
+import type { PluginUiDeviceStateRequestV1, PluginUiDeviceStateResultV1 } from '@happier-dev/protocol/plugins/ui/client';
+export type { PluginUiDeviceStateRequestV1, PluginUiDeviceStateResultV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { EntityDragItemV1 } from '../entityDragDrop.js';
 export type {
     PluginUiDownloadFileRequestV1,
@@ -667,6 +669,8 @@ export interface PluginUiHostApi {
             view?: string;
         }>,
     ): Promise<Readonly<{ subPath: string }>>;
+    /** Device-local deliberate drafts, scoped by the mounted Home/Account/plugin occurrence. Negotiated in Host API 1.2. */
+    deviceState(request: PluginUiDeviceStateRequestV1, options?: PluginCancellationOptions): Promise<PluginUiDeviceStateResultV1>;
     /**
      * Declare this mounted appPage's unsaved edits. The host asks Keep editing / Discard
      * before Back, close or a changed page location. Publish false after saving.

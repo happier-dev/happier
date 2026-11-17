@@ -1912,6 +1912,7 @@ describe('definePlugin', () => {
         expect(plugin.manifest.contributes.actions).toEqual([
             expect.objectContaining({
                 id: 'inspect',
+                // U0 authoring: an explicit surface list is the exposure decision.
                 surfaces: ['ui'],
                 placementBindings: ['commandPalette'],
             }),

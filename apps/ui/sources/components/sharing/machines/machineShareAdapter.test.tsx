@@ -1,10 +1,11 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { MachineAccessGrantsListResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createMachineFixture, findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { MachineAdminPowerSection } from '@/components/machines/security/MachineAdminPowerSection';
 import { Item } from '@/components/ui/lists/Item';
 import { createMachineShareAdapter } from './machineShareAdapter';
@@ -143,7 +144,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
                 current = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                 return <><MachineAdminPowerSection serverId={scope.serverId} machineId="machine" machineName="Devbox"
                     online={true} metadataVersion={1} metadataReadable={true} canManage={true} shared={true} onOpenApproval={() => {}} />
-                  <ShareSheet model={current.model} actions={current.actions}
+                  <ShareSheet host={SHARE_SHEET_HOST} model={current.model} actions={current.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller: current })}
                     presentation={presentation} testID="machine-share-editor" /></>;
             }
@@ -227,7 +228,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
                 function Surface() {
                     const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                     current = controller;
-                    return <ShareSheet model={controller.model} actions={controller.actions}
+                    return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                         adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller, shared: true })}
                         presentation="full" testID="machine-share-editor" />;
                 }
@@ -270,7 +271,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                 current = controller;
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller, shared: true })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -375,7 +376,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -449,7 +450,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                 current = controller;
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -513,7 +514,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                 current = controller;
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -563,7 +564,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                 current = controller;
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -609,7 +610,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                 current = controller;
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -648,7 +649,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -674,7 +675,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -712,7 +713,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -751,7 +752,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
                     const setup = { retired: false }; setups.push(setup);
                     return () => { setup.retired = true; };
                 }, []);
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -790,7 +791,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             getStorage().setState({ profile: AccountProfileSchema.parse({ id: 'alice', firstName: 'Alice' }), profileScope: scope });
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -842,7 +843,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: false, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -924,7 +925,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
                 agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } }], true, { sourceServerId: scope.serverId });
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -973,7 +974,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'bob' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -1009,7 +1010,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'bob' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -1049,7 +1050,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'bob' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }
@@ -1081,7 +1082,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
-                return <ShareSheet model={controller.model} actions={controller.actions}
+                return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
                     adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
                     presentation="full" testID="machine-share-editor" />;
             }

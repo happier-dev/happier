@@ -40,6 +40,11 @@
       "types": "./dist/presentation/index.d.ts",
       "default": "./dist/presentation/index.js"
     },
+    "./presentation/codeEditor": {
+      "happier-source": "./src/presentation/content/CodeEditor.ts",
+      "types": "./dist/presentation/content/CodeEditor.d.ts",
+      "default": "./dist/presentation/content/CodeEditor.js"
+    },
     "./presentation/formatBytes": {
       "happier-source": "./src/presentation/data/formatBytes.ts",
       "types": "./dist/presentation/data/formatBytes.d.ts",

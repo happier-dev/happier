@@ -3022,6 +3022,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     const executeAction: PluginSurfaceHostApiMethodHandler = (request, options) => executeCurrentAction(request, options);
     const localHostHandlers = createPluginSurfaceLocalHostHandlers({
         surfaceContext: input.surfaceContext,
+        ...(input.actionAccountLifetime ? { deviceScope: input.actionAccountLifetime.scope } : {}),
         ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
         executeAction,
         resourceContext: { navigation: input.resourceNavigation },

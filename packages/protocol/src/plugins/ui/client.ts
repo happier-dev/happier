@@ -371,3 +371,5 @@ export * from './liveStream.js';
 export * from './widgetArea.js';
 
 export { PluginUiResourceContentV1Schema, type PluginUiResourceContentV1 } from './resourceContent.js';
+
+export * from './deviceState.js';

@@ -1,11 +1,12 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
-import { ShareSheet } from './ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { t } from '@/text';
 import { createDocumentShareAdapter } from './documents/documentShareAdapter';
-import { buildShareSheetSelectionStep } from './buildShareSheetSelectionStep';
+import { buildShareSheetSelectionStep } from '@happier-dev/plugin-ui/components';
 import type { ShareSheetActions, ShareSheetModel } from './shareSheetTypes';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -52,7 +53,7 @@ describe('ShareSheet full presentation', () => {
             cursor: null, hasMore: false, loadingMore: false, resolveCandidates: async () => [],
         })) };
         const render = (settled: boolean) => <SelectionList testID="directory-test" inputValue="Ada" onSelect={noop} onRequestClose={noop}
-            rootStep={buildShareSheetSelectionStep({ model: { ...model, revision: settled ? 1 : 0, directory: {
+            rootStep={buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: { ...model, revision: settled ? 1 : 0, directory: {
                 ...directory, sections: directory.sections.map(section => ({ ...section, status: settled ? 'idle' : 'loading', resolved: settled })),
             } }, actions, adapter, presentation: 'full', idPrefix: '', onExpand: noop })} />;
         const screen = await renderScreen(render(false));
@@ -83,7 +84,7 @@ describe('ShareSheet full presentation', () => {
                 principal, addition: { kind: 'allowed' as const }, operation: { kind: 'idle' as const },
             })),
         })) } };
-        const build = (query: string, revealSuggestions: boolean) => buildShareSheetSelectionStep({
+        const build = (query: string, revealSuggestions: boolean) => buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST,
             model: { ...state, directory: { ...state.directory, query } }, actions, adapter,
             presentation: 'full', idPrefix: '', onExpand: noop, revealSuggestions,
         });
@@ -108,7 +109,7 @@ describe('ShareSheet full presentation', () => {
         expect(build('', false).sections.map(section => section.id)).toEqual(collapsed.sections.map(section => section.id));
     });
     it('keeps browse entries above asynchronous suggestions', () => {
-        const step = buildShareSheetSelectionStep({ model: { ...model, directory: { query: '', sections: [{
+        const step = buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: { ...model, directory: { query: '', sections: [{
             kind: 'account', title: 'People', status: 'idle', candidates: [], cursor: null, hasMore: false,
             loadingMore: false, resolveCandidates: async () => [],
         }] } }, actions, adapter, presentation: 'full', idPrefix: '', onExpand: noop });
@@ -127,7 +128,7 @@ describe('ShareSheet full presentation', () => {
                 addition: { kind: 'allowed' as const }, operation: { kind: 'idle' as const },
             }] : [], [ownsTeam]);
             const resolve = React.useCallback(async () => { reads++; setResolved(true); return rows; }, [rows]);
-            return <ShareSheet model={{ ...model, directory: { query: '', sections: [{
+            return <ShareSheet host={SHARE_SHEET_HOST} model={{ ...model, directory: { query: '', sections: [{
                 kind, title: kind === 'team' ? 'Teams' : 'Groups', status: 'idle', candidates: resolved ? rows : [],
                 resolved, cursor: null, hasMore: false, loadingMore: false, resolveCandidates: resolve,
             }] } }} actions={actions} adapter={adapter} presentation="inline" testID="document-share-editor" />;
@@ -142,7 +143,7 @@ describe('ShareSheet full presentation', () => {
             expect(reads).toBeGreaterThan(0);
             if (ownsTeam) expect(screen.getTextContent()).toContain('Design');
             // Return to the root with the settled directory projection.
-            await screen.update(<ShareSheet model={{ ...model, directory: { query: '', sections: [{
+            await screen.update(<ShareSheet host={SHARE_SHEET_HOST} model={{ ...model, directory: { query: '', sections: [{
                 kind, title: 'Directory', status: 'idle', candidates: [], resolved: true,
                 cursor: null, hasMore: false, loadingMore: false, resolveCandidates: async () => [],
             }] } }} actions={actions} adapter={adapter} presentation="inline" testID="document-share-editor" />);
@@ -168,11 +169,11 @@ describe('ShareSheet full presentation', () => {
         })) };
         const templateAdapter = createDocumentShareAdapter({ artifactId: response.artifactId, kind: 'bot_template.v1',
             grants: response.grants, loading: false, readOnly: false, retryContent: noop });
-        const screen = await renderScreen(<ShareSheet model={roster} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={roster} actions={actions}
             adapter={templateAdapter} presentation="full" testID="document-share-editor" />);
         expect(screen.getTextContent()).toContain('Last reported 1.0.0 · copies: 2');
         expect(screen.getTextContent()).toContain('Last reported 2.0.0 · copies: 1');
-        const step = buildShareSheetSelectionStep({ model: roster, actions, adapter: templateAdapter,
+        const step = buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: roster, actions, adapter: templateAdapter,
             presentation: 'full', onExpand: noop, idPrefix: '' });
         const current = step.sections.find(section => section.id === 'current');
         if (current?.kind !== 'static') throw new Error('Expected existing recipient rows');
@@ -185,7 +186,7 @@ describe('ShareSheet full presentation', () => {
         await screen.pressByTestIdAsync('document-share-grant-account:maya');
         expect(screen.findByTestId('document-share-version-reports:account:maya')).not.toBeNull();
 
-        await screen.update(<ShareSheet model={roster} actions={actions} adapter={adapter}
+        await screen.update(<ShareSheet host={SHARE_SHEET_HOST} model={roster} actions={actions} adapter={adapter}
             presentation="full" testID="document-share-editor" />);
         expect(screen.getTextContent()).not.toContain('Last reported');
         expect(screen.getTextContent()).not.toContain('Version reports unavailable');
@@ -198,7 +199,7 @@ describe('ShareSheet full presentation', () => {
             candidates: [{ principal: { ref: { kind: 'account', accountId: 'maya' }, key: 'account:maya',
                 displayName: 'Maya', accessibilityLabel: 'Maya' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }],
         }] } };
-        const screen = await renderScreen(<ShareSheet model={candidates} actions={{ ...actions, addPrincipal: add }}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={candidates} actions={{ ...actions, addPrincipal: add }}
             adapter={adapter} presentation="full" testID="document-share-editor" />);
         await startAdding(screen);
         await flushHookEffects({ runOnlyPendingTimers: true });
@@ -215,7 +216,7 @@ describe('ShareSheet full presentation', () => {
             level: { kind: 'editable', value: 'view', options: ['view'] },
             removal: { kind: 'allowed' }, operation: { kind: 'idle' },
         }] };
-        const step = buildShareSheetSelectionStep({ model: roster, actions,
+        const step = buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: roster, actions,
             adapter: { ...adapter, principalTags: () => ['Encrypted access pending', 'Responsible'] },
             presentation: 'full', onExpand: noop, idPrefix: '' });
         const current = step.sections.find(section => section.id === 'current');
@@ -224,7 +225,7 @@ describe('ShareSheet full presentation', () => {
     });
     it('opens a public-link editor through the same roster row for every adapter', async () => {
         const open = vi.fn();
-        const screen = await renderScreen(<ShareSheet model={model} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={model} actions={actions}
             adapter={{ ...adapter, publicLink: { stateLabel: 'Off', onOpen: open } }} presentation="full" testID="document-share-editor" />);
         await screen.pressByTestIdAsync('document-share-public-link');
         expect(open).toHaveBeenCalledOnce();
@@ -240,7 +241,7 @@ describe('ShareSheet full presentation', () => {
             level: { kind: 'editable', value: 'view', options: ['view', 'edit', 'admin'] },
             removal: { kind: 'allowed' }, operation: { kind: 'idle' },
         }] };
-        const screen = await renderScreen(<ShareSheet model={roster} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={roster} actions={actions}
             adapter={machineAdapter} presentation="full" testID="machine-share-editor" />);
         expect(screen.findByTestId('machine-share-editor:document-share-help')).not.toBeNull();
         await screen.pressByTestIdAsync('machine-share-editor:document-share-grant-account:bob');
@@ -257,7 +258,7 @@ describe('ShareSheet full presentation', () => {
             level: { kind: 'locked', value: 'view', reason: { code: 'one_level', message: 'One level' } },
             removal: { kind: 'allowed' }, operation: { kind: 'idle' },
         }] };
-        const screen = await renderScreen(<ShareSheet model={roster} actions={{ ...actions, requestRemove }}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={roster} actions={{ ...actions, requestRemove }}
             adapter={oneLevel} presentation="inline" testID="secret-share" />);
         // The level is the same for everyone, so the row's one control is Remove, visible at rest.
         expect(screen.findByTestId('secret-share:document-share-level:account:bob')).toBeNull();
@@ -267,7 +268,7 @@ describe('ShareSheet full presentation', () => {
     it('keeps the level explanation outside the selectable roster and offers a direct completion action', async () => {
         const close = vi.fn();
         const sendCopy = vi.fn();
-        const screen = await renderScreen(<ShareSheet model={model} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={model} actions={actions}
             adapter={{ ...adapter, sendCopy }} presentation="full" onRequestClose={close} testID="document-share-editor" />);
 
         expect(screen.findByTestId('document-share-help')).not.toBeNull();
@@ -286,12 +287,12 @@ describe('ShareSheet full presentation', () => {
         const loading: ShareSheetModel = { ...model, directory: { query: '', sections: [{
             kind: 'account', title: 'People', status: 'loading', cursor: null, hasMore: false, loadingMore: false, candidates: [],
         }] } };
-        const screen = await renderScreen(<ShareSheet model={loading} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={loading} actions={actions}
             adapter={adapter} presentation="inline" testID="document-share-editor" />);
         await startAdding(screen);
         await flushHookEffects({ advanceTimersMs: 1 });
         expect(screen.getTextContent()).not.toContain(heading);
-        await screen.update(<ShareSheet model={{ ...loading, revision: 1, directory: { query: '', sections: [{
+        await screen.update(<ShareSheet host={SHARE_SHEET_HOST} model={{ ...loading, revision: 1, directory: { query: '', sections: [{
             ...loading.directory.sections[0]!, status: 'idle',
             candidates: [{ principal: { ref: { kind: 'account', accountId: 'maya' }, key: 'account:maya',
                 displayName: 'Maya', accessibilityLabel: 'Maya' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }],
@@ -310,7 +311,7 @@ describe('ShareSheet full presentation', () => {
             { kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [person('grace'), person('nora')] },
             { kind: 'team', title: 'Teams', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [team] },
         ] } });
-        const screen = await renderScreen(<ShareSheet model={directory('')} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={directory('')} actions={actions}
             adapter={adapter} presentation="inline" testID="document-share-editor" />);
         await flushHookEffects({ runOnlyPendingTimers: true });
         // At rest the sheet is the roster: no suggestion rows, but each directory stays browsable.
@@ -332,7 +333,7 @@ describe('ShareSheet full presentation', () => {
     it('leads with the matches while a query is typed, then who already has access', () => {
         const typed = (query: string): ShareSheetModel => ({ ...model, directory: { query, sections: [{
             kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [] }] } });
-        const sectionIds = (value: ShareSheetModel) => buildShareSheetSelectionStep({ model: value, actions,
+        const sectionIds = (value: ShareSheetModel) => buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: value, actions,
             adapter: { ...adapter, sections: () => ({ afterAccess: [{ kind: 'static', id: 'answerers', options: [] }],
                 trailing: [{ kind: 'static', id: 'agent-results', options: [] }] }) },
             presentation: 'inline', onExpand: noop, idPrefix: '', revealSuggestions: true }).sections.map(section => section.id);
@@ -349,7 +350,7 @@ describe('ShareSheet full presentation', () => {
         const searched = (query: string): ShareSheetModel => ({ ...model, directory: { query, sections: [{
             kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [],
             resolveCandidates: async () => [] }] } });
-        const optionIds = (value: ShareSheetModel) => buildShareSheetSelectionStep({ model: value, actions, adapter, presentation: 'full',
+        const optionIds = (value: ShareSheetModel) => buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: value, actions, adapter, presentation: 'full',
             onExpand: noop, idPrefix: '', revealSuggestions: true }).sections.flatMap(section => section.kind === 'static'
             ? section.options.map(option => option.id) : []);
         expect(optionIds(searched('qa-th'))).toContain('browse:account');
@@ -359,7 +360,7 @@ describe('ShareSheet full presentation', () => {
         const people = (partial: Partial<ShareSheetModel['directory']['sections'][number]>, query = ''): ShareSheetModel => ({ ...model,
             directory: { query, sections: [{ kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false,
                 loadingMore: false, candidates: [], ...partial }] } });
-        const sectionIds = (value: ShareSheetModel) => buildShareSheetSelectionStep({ model: value, actions, adapter, presentation: 'full',
+        const sectionIds = (value: ShareSheetModel) => buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: value, actions, adapter, presentation: 'full',
             onExpand: noop, idPrefix: '', directoryKind: 'account' }).sections.map(section => section.id);
         expect(sectionIds(people({}))).toContain('directory-empty');
         // Still loading, another page to come, a typed search and a directory with someone in it are not this state.
@@ -380,7 +381,7 @@ describe('ShareSheet full presentation', () => {
             candidates: [{ principal: { ref: { kind: 'account', accountId: 'grace' }, key: 'account:grace',
                 displayName: 'Grace', accessibilityLabel: 'Grace' }, addition: { kind: 'blocked', reason }, operation: { kind: 'idle' } }],
         }] } };
-        const screen = await renderScreen(<ShareSheet model={refused} actions={{ ...actions, explain, addPrincipal: add }}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={refused} actions={{ ...actions, explain, addPrincipal: add }}
             adapter={adapter} presentation="inline" testID="document-share-editor" />);
         await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('document-share-candidate-account:grace')).not.toBeNull();
@@ -398,7 +399,7 @@ describe('ShareSheet full presentation', () => {
             candidates: [{ principal: { ref: { kind: 'account', accountId: 'grace' }, key: 'account:grace',
                 displayName: 'Grace', accessibilityLabel: 'Grace' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }],
         }] } };
-        const screen = await renderScreen(<ShareSheet model={typed} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={typed} actions={actions}
             adapter={adapter} presentation="inline" testID="document-share-editor" />);
         await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('document-share-candidate-account:grace')).not.toBeNull();
@@ -410,16 +411,16 @@ describe('ShareSheet full presentation', () => {
             kind, title: kind === 'team' ? 'Teams' : 'Groups', candidates: [], status: 'loading',
             cursor: null, hasMore: false, loadingMore: false,
         })) } };
-        const screen = await renderScreen(<ShareSheet model={loadingModel} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={loadingModel} actions={actions}
             adapter={adapter} presentation="full" testID="document-share-editor" />);
         await flushHookEffects();
         for (const kind of directories) expect(screen.findByTestId(`document-share-browse:${kind}`)).toBeNull();
-        await screen.update(<ShareSheet model={{ ...loadingModel, revision: 1, directory: { query: '',
+        await screen.update(<ShareSheet host={SHARE_SHEET_HOST} model={{ ...loadingModel, revision: 1, directory: { query: '',
             sections: loadingModel.directory.sections.map(source => ({ ...source, status: 'idle' })) } }}
             actions={actions} adapter={adapter} presentation="full" testID="document-share-editor" />);
         await flushHookEffects();
         for (const kind of directories) expect(screen.findByTestId(`document-share-browse:${kind}`)).toBeNull();
-        await screen.update(<ShareSheet model={{ ...loadingModel, revision: 2, directory: { query: '',
+        await screen.update(<ShareSheet host={SHARE_SHEET_HOST} model={{ ...loadingModel, revision: 2, directory: { query: '',
             sections: loadingModel.directory.sections.map(source => ({ ...source, status: 'idle', hasMore: source.kind === 'team' })) } }}
             actions={actions} adapter={adapter} presentation="full" testID="document-share-editor" />);
         await flushHookEffects();
@@ -432,7 +433,7 @@ describe('ShareSheet full presentation', () => {
             kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [],
             resolveCandidates: async () => [] }] } });
         const resolvePeople = async (query: string) => {
-            const section = buildShareSheetSelectionStep({ model: searched(query), actions, adapter, presentation: 'compact',
+            const section = buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: searched(query), actions, adapter, presentation: 'compact',
                 onExpand: noop, idPrefix: '', revealSuggestions: true }).sections.find(entry => entry.id === 'directory:account');
             if (section?.kind !== 'dynamic') throw new Error('people suggestions missing');
             return (await section.resolve(query, new AbortController().signal)).options;
@@ -455,14 +456,14 @@ describe('ShareSheet full presentation', () => {
         }], directory: { query: 'Bob', sections: [{
             kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false, candidates: [],
             resolveCandidates: async () => [{ principal: bob, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }] }] } };
-        const section = buildShareSheetSelectionStep({ model: added, actions, adapter, presentation: 'compact',
+        const section = buildShareSheetSelectionStep({ host: SHARE_SHEET_HOST, model: added, actions, adapter, presentation: 'compact',
             onExpand: noop, idPrefix: '', revealSuggestions: true }).sections.find(entry => entry.id === 'directory:account');
         if (section?.kind !== 'dynamic') throw new Error('people suggestions missing');
         const options = (await section.resolve('Bob', new AbortController().signal)).options;
         expect(options.map(option => option.label)).not.toContain(t('shareSheet.noMatchingPeople', { query: 'Bob' }));
     });
     it('opens and closes the Details disclosure in place with the turning caret rows use elsewhere', async () => {
-        const screen = await renderScreen(<ShareSheet model={model} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={model} actions={actions}
             adapter={adapter} presentation="full" testID="document-share-editor" />);
         const caret = () => screen.findAllByType(DisclosureCaret).map(node => node.props.expanded as boolean);
         expect(caret()).toEqual([false]);
@@ -484,7 +485,7 @@ describe('ShareSheet full presentation', () => {
         const withTeam: ShareSheetModel = { ...model, directory: { query: '', sections: [{
             kind: 'team', title: 'Teams', candidates: [], status: 'idle', cursor: 'next', hasMore: true, loadingMore: false,
         }] } };
-        const screen = await renderScreen(<ShareSheet model={withTeam} actions={actions}
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={withTeam} actions={actions}
             adapter={disclosureAdapter} presentation="full" testID="document-share-editor" />);
         expect(screen.findByTestId('machine-trust')).not.toBeNull();
         await screen.pressByTestIdAsync('document-share-browse:team');

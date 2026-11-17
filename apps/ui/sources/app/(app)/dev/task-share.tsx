@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
@@ -5,7 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { presentShareSheet } from '@/components/sharing/presentShareSheet';
-import { ShareSheet } from '@/components/sharing/ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import type {
   ShareCandidateRowModel,
@@ -255,7 +256,7 @@ function SpecimenSheet(
     ...(specimen.issue ? { issue: specimen.issue } : {}),
   });
   return (
-    <ShareSheet
+    <ShareSheet host={SHARE_SHEET_HOST}
       model={{
         ...specimen.model,
         directory: { ...specimen.model.directory, query },

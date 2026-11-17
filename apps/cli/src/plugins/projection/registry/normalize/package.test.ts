@@ -43,6 +43,22 @@ function loaded(
   };
 }
 
+it('keeps producer-backed database Actions on the generic CLI catalogue with declared input custody', async () => {
+  const { definePlugin } = await import('@happier-dev/plugin-sdk');
+  const { createDatabaseActions } = await import('../../../../../../../packages/plugins/database-workbench/src/actions');
+  const { DATABASE_STATEMENT_RUN_ACTION_ID_V1, databaseActionLocalIdV1 } = await import('@happier-dev/database-protocol');
+  const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database',
+    actions: createDatabaseActions({ executeOperation: () => ({ ok: false, status: 'unavailable',
+      code: 'database_unavailable', reason: 'No driver in a declaration test' }) }),
+  });
+  const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded(plugin.manifest.id, plugin.manifest.contributes)] });
+  const run = registry.actions.find(action => action.identity.localId === databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1));
+  expect(run?.definition.surfaces).toMatchObject({ cli: true, ui: true, plugin: true, agent: false, mcp: false });
+  expect(run?.definition.readOnly).toEqual({ op: 'eq', path: 'mode', value: 'read' });
+  expect(run?.definition.approvalInputCustody).toBe('live_only');
+  expect(run?.definition.secretInputPaths).toEqual(['statement.parameters.[].value', 'statements.[].parameters.[].value']);
+});
+
 it('keeps conditional mutations visible in the static Action effect catalog', async () => {
   const { definePlugin } = await import('@happier-dev/plugin-sdk');
   const common = { title: 'Catalog effect', dangerLevel: 'safe', run: () => {} } as const;

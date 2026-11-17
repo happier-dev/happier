@@ -1,5 +1,5 @@
 import type * as Monaco from 'monaco-editor';
-import type { CodeEditorLanguageCommand, CodeEditorLanguageIntelligence } from '../codeEditorTypes';
+import type { CodeEditorCompletionSource, CodeEditorLanguageCommand, CodeEditorLanguageIntelligence } from '../codeEditorTypes';
 import type { LanguageIntelligenceCompletionItem, LanguageIntelligenceRange } from '@happier-dev/protocol/machines/languageIntelligence';
 import { applyWorkspaceFileTextEdits } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 
@@ -13,7 +13,8 @@ const tokenModifiers = ['declaration', 'definition', 'readonly', 'static', 'depr
 
 /** Public engine providers only translate shapes. Requests, sync, capabilities and server state belong to the controller. */
 export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Monaco.editor.IStandaloneCodeEditor,
-    port: Pick<CodeEditorLanguageIntelligence, 'request' | 'getSnapshot' | 'subscribe'> & Partial<Pick<CodeEditorLanguageIntelligence, 'path' | 'inlayHints' | 'semanticHighlighting' | 'referencePreview'>>): Monaco.IDisposable & { runCommand(command: CodeEditorLanguageCommand): Promise<void> } {
+    port: (Pick<CodeEditorLanguageIntelligence, 'request' | 'getSnapshot' | 'subscribe'> & Partial<Pick<CodeEditorLanguageIntelligence, 'path' | 'inlayHints' | 'semanticHighlighting' | 'referencePreview'>>) | null,
+    completionSource?: CodeEditorCompletionSource): Monaco.IDisposable & { runCommand(command: CodeEditorLanguageCommand): Promise<void> } {
     const model = editor.getModel();
     if (!model) return { dispose() {}, async runCommand() {} };
     let disposed = false;
@@ -24,10 +25,10 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
     const previews = new Map<string, { path: string; model?: Monaco.editor.ITextModel }>();
     const clearPreviews = () => { for (const preview of previews.values()) preview.model?.dispose(); previews.clear(); };
     let peek: AbortController | undefined;
-    const stopOpen = port.referencePreview ? monaco.editor.registerEditorOpener({
+    const stopOpen = port?.referencePreview ? monaco.editor.registerEditorOpener({
         async openCodeEditor(_source, resource, selection) {
             const preview = previews.get(resource.toString());
-            if (disposed || !preview || !port.referencePreview) return false;
+            if (disposed || !preview || !port?.referencePreview) return false;
             const selected = selection && 'startLineNumber' in selection ? range(selection)
                 : { start: selection ? position(selection) : { line: 0, character: 0 }, end: selection ? position(selection) : { line: 0, character: 0 } };
             await port.referencePreview.openLocation({ path: preview.path, range: selected });
@@ -39,7 +40,7 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
     const stopEdit = editor.onDidChangeModelContent(cancel);
     const request = async (candidate: Monaco.editor.ITextModel, token: Monaco.CancellationToken,
         kind: Parameters<CodeEditorLanguageIntelligence['request']>[0], options: Parameters<CodeEditorLanguageIntelligence['request']>[1]) => {
-        if (disposed || candidate !== model || token.isCancellationRequested) return null;
+        if (!port || disposed || candidate !== model || token.isCancellationRequested) return null;
         const version = model.getVersionId();
         const abort = new AbortController(); pending.add(abort);
         const stop = token.onCancellationRequested(() => abort.abort());
@@ -49,7 +50,7 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
         } finally { pending.delete(abort); stop.dispose(); }
     };
     const provideReferences = async (candidate: Monaco.editor.ITextModel, at: Monaco.IPosition, token: Monaco.CancellationToken): Promise<Monaco.languages.Location[] | null> => {
-        if (disposed || candidate !== model || token.isCancellationRequested) return null;
+        if (!port || disposed || candidate !== model || token.isCancellationRequested) return null;
         const version = model.getVersionId();
         peek?.abort(); clearPreviews();
         const abort = new AbortController(); peek = abort; pending.add(abort);
@@ -101,29 +102,51 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
         completionItems.set(value, { item, version: model.getVersionId() });
         return value;
     };
-    let previousCapabilities: ReturnType<typeof port.getSnapshot>['capabilities'];
+    let previousCapabilities: ReturnType<CodeEditorLanguageIntelligence['getSnapshot']>['capabilities'];
+    let installed = false;
     function install() {
-        const caps = port.getSnapshot().capabilities;
-        if (caps === previousCapabilities) return;
+        const caps = port?.getSnapshot().capabilities;
+        if (installed && caps === previousCapabilities) return;
+        installed = true;
         previousCapabilities = caps;
         for (const provider of providers.splice(0)) provider.dispose();
         // This is a global Monaco option: use the Account preference, not one document's capabilities.
-        editor.updateOptions({ occurrencesHighlight: caps?.documentHighlight ? 'singleFile' : 'off',
-            'semanticHighlighting.enabled': port.semanticHighlighting !== false });
+        if (port) editor.updateOptions({ occurrencesHighlight: caps?.documentHighlight ? 'singleFile' : 'off',
+            'semanticHighlighting.enabled': port?.semanticHighlighting !== false });
         const selector = '*'; // Providers reject every model except this editor's exact incumbent model.
         if (caps?.references) providers.push(monaco.languages.registerReferenceProvider(selector, {
             provideReferences: (candidate, at, _context, token) => provideReferences(candidate, at, token),
         }));
-        if (caps?.completion) providers.push(monaco.languages.registerCompletionItemProvider(selector, {
-            triggerCharacters: caps.completionTriggerCharacters,
+        if (completionSource || caps?.completion) providers.push(monaco.languages.registerCompletionItemProvider(selector, {
+            triggerCharacters: completionSource?.triggerCharacters ? [...completionSource.triggerCharacters] : caps?.completionTriggerCharacters,
             async provideCompletionItems(candidate, at, context, token) {
+                if (completionSource) {
+                    if (disposed || candidate !== model || token.isCancellationRequested) return null;
+                    const version = model!.getVersionId();
+                    const abort = new AbortController(); pending.add(abort);
+                    const stop = token.onCancellationRequested(() => abort.abort());
+                    try {
+                        const items = await completionSource.complete({ offset: candidate.getOffsetAt(at), line: at.lineNumber,
+                            character: at.column - 1, explicit: context.triggerKind === 0 }, abort.signal);
+                        if (!items || disposed || abort.signal.aborted || model!.getVersionId() !== version || editor.getModel() !== model) return null;
+                        const word = candidate.getWordUntilPosition(at);
+                        return { suggestions: items.map(item => {
+                            const start = item.range ? candidate.getPositionAt(item.range.start) : { lineNumber: at.lineNumber, column: word.startColumn };
+                            const end = item.range ? candidate.getPositionAt(item.range.end) : { lineNumber: at.lineNumber, column: word.endColumn };
+                            return { label: item.label, insertText: item.insertText ?? item.label, kind: monaco.languages.CompletionItemKind.Text,
+                                ...(item.detail === undefined ? {} : { detail: item.detail }),
+                                range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column } };
+                        }) };
+                    } catch { return null; }
+                    finally { pending.delete(abort); stop.dispose(); }
+                }
                 const result = await request(candidate, token, 'completion', { position: position(at), completionContext: {
                     triggerKind: context.triggerKind === 1 ? 2 : context.triggerKind === 2 ? 3 : 1, ...(context.triggerCharacter ? { triggerCharacter: context.triggerCharacter } : {}) } });
                 return result?.status === 'ok' && result.kind === 'completion' ? { incomplete: result.isIncomplete, suggestions: result.items.map(item => completion(item, at)) } : null;
             },
             async resolveCompletionItem(item, token) {
                 const captured = completionItems.get(item);
-                if (!captured || captured.version !== model!.getVersionId() || !caps.completionResolve) return item;
+                if (!captured || captured.version !== model!.getVersionId() || !caps?.completionResolve) return item;
                 const result = await request(model!, token, 'completionResolve', { serverId: captured.item.serverId, itemId: captured.item.itemId });
                 const itemRange = 'insert' in item.range ? item.range.insert : item.range;
                 return result?.status === 'ok' && result.kind === 'completionResolve' ? completion({ ...captured.item, ...result.item },
@@ -144,7 +167,7 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
         const format = async (candidate: Monaco.editor.ITextModel, token: Monaco.CancellationToken, options: Monaco.languages.FormattingOptions, selection?: Monaco.IRange) => {
             const result = await request(candidate, token, selection ? 'rangeFormatting' : 'formatting', {
                 formattingOptions: { tabSize: options.tabSize, insertSpaces: options.insertSpaces }, ...(selection ? { range: range(selection) } : {}) });
-            if (result?.status !== 'ok' || (result.kind !== 'formatting' && result.kind !== 'rangeFormatting') || result.files.some(file => file.path !== port.path || file.renameTo)) return [];
+            if (result?.status !== 'ok' || (result.kind !== 'formatting' && result.kind !== 'rangeFormatting') || result.files.some(file => file.path !== port?.path || file.renameTo)) return [];
             // The existing semantic edit-set transform validates the complete set before Monaco changes its buffer.
             const file = result.files[0]; if (!file) return [];
             applyWorkspaceFileTextEdits(model!.getValue(), file.edits);
@@ -152,19 +175,19 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
         };
         if (caps?.formatting) providers.push(monaco.languages.registerDocumentFormattingEditProvider(selector, { provideDocumentFormattingEdits: (candidate, options, token) => format(candidate, token, options) }));
         if (caps?.rangeFormatting) providers.push(monaco.languages.registerDocumentRangeFormattingEditProvider(selector, { provideDocumentRangeFormattingEdits: (candidate, selection, options, token) => format(candidate, token, options, selection) }));
-        if (caps?.inlayHint && port.inlayHints !== 'off') providers.push(monaco.languages.registerInlayHintsProvider(selector, {
+        if (caps?.inlayHint && port?.inlayHints !== 'off') providers.push(monaco.languages.registerInlayHintsProvider(selector, {
             async provideInlayHints(candidate, requested, token) {
                 const clipped = visible(requested); if (!clipped) return null;
                 const result = await request(candidate, token, 'inlayHint', { range: clipped });
                 if (result?.status !== 'ok' || result.kind !== 'inlayHint') return null;
-                return { hints: result.hints.filter(hint => port.inlayHints !== 'parameters' || hint.kind === 2).map(hint => ({
+                return { hints: result.hints.filter(hint => port?.inlayHints !== 'parameters' || hint.kind === 2).map(hint => ({
                     label: hint.label, position: { lineNumber: hint.position.line + 1, column: hint.position.character + 1 },
                     kind: hint.kind === 2 ? monaco.languages.InlayHintKind.Parameter : monaco.languages.InlayHintKind.Type,
                     paddingLeft: hint.paddingLeft, paddingRight: hint.paddingRight, tooltip: markdown(hint.tooltip),
                 })), dispose() {} };
             },
         }));
-        if ((caps?.semanticTokensRange || caps?.semanticTokensDelta) && port.semanticHighlighting !== false) providers.push(monaco.languages.registerDocumentRangeSemanticTokensProvider(selector, {
+        if ((caps?.semanticTokensRange || caps?.semanticTokensDelta) && port?.semanticHighlighting !== false) providers.push(monaco.languages.registerDocumentRangeSemanticTokensProvider(selector, {
             getLegend: () => ({ tokenTypes, tokenModifiers }),
             async provideDocumentRangeSemanticTokens(candidate, requested, token) {
                 const clipped = visible(requested); if (!clipped) return null;
@@ -208,7 +231,7 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
         }));
     }
     install();
-    const stop = port.subscribe(install);
+    const stop = port?.subscribe(install);
     return {
         async runCommand(command) {
             if (disposed || editor.getModel() !== model) return;
@@ -221,12 +244,12 @@ export function bindMonacoLanguageIntelligence(monaco: typeof Monaco, editor: Mo
             if (command in actions) { await editor.getAction(actions[command as keyof typeof actions])?.run(); return; }
             const version = model.getVersionId();
             if (command === 'organizeImports') {
-                const result = await port.request('organizeImports');
-                if (disposed || model.getVersionId() !== version || result?.status !== 'ok' || result.kind !== 'organizeImports' || result.files.some(file => file.path !== port.path || file.renameTo)) return;
+                const result = await port?.request('organizeImports');
+                if (disposed || model.getVersionId() !== version || result?.status !== 'ok' || result.kind !== 'organizeImports' || result.files.some(file => file.path !== port?.path || file.renameTo)) return;
                 const edits = result.files.flatMap(file => file.edits); applyWorkspaceFileTextEdits(model.getValue(), edits);
                 editor.pushUndoStop(); editor.executeEdits('happier.organizeImports', edits.map(edit => ({ text: edit.text, range: engineRange(edit.range) }))); editor.pushUndoStop();
             }
         },
-        dispose() { disposed = true; cancel(); clearPreviews(); stopOpen?.dispose(); stopEdit.dispose(); stop(); for (const provider of providers.splice(0)) provider.dispose(); editor.updateOptions({ occurrencesHighlight: 'off' }); },
+        dispose() { disposed = true; cancel(); clearPreviews(); stopOpen?.dispose(); stopEdit.dispose(); stop?.(); for (const provider of providers.splice(0)) provider.dispose(); if (port) editor.updateOptions({ occurrencesHighlight: 'off' }); },
     };
 }

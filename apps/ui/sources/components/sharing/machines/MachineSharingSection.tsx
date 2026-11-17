@@ -1,3 +1,4 @@
+import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { View } from 'react-native';
@@ -5,7 +6,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
-import { ShareSheet } from '../ShareSheet';
+import { ShareSheet } from '@happier-dev/plugin-ui/components';
 import { presentShareSheet, type ShareSheetAnchor } from '../presentShareSheet';
 import type { ShareSheetPresentation } from '../shareSheetTypes';
 import { createMachineShareAdapter } from './machineShareAdapter';
@@ -34,7 +35,7 @@ function ScopedMachineShareSheet(props: MachineShareSheetProps) {
         nativeAsleep: presence.nativeState === 'asleep', controller, shared: props.shared,
         openApproval: artifactId => router.push(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.scope.serverId)}`),
     });
-    return <ShareSheet model={controller.model} actions={controller.actions} adapter={adapter}
+    return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions} adapter={adapter}
         presentation={props.presentation} onRequestClose={props.onRequestClose} testID={props.testID} />;
 }
 

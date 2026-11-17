@@ -1,3 +1,4 @@
+import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
 import type { DiscussionParticipantRoster } from './useDiscussionParticipantManagement';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
@@ -36,7 +37,7 @@ import { resolveAccountActorPresentation } from '@/sync/domains/account/accountA
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import type { useDiscussionParticipantManagement } from './useDiscussionParticipantManagement';
-import { ShareRowAction } from '@/components/sharing/ShareGrantRow';
+import { ShareRowAction } from '@happier-dev/plugin-ui/components';
 import type { SharePrincipalPresentation } from '@/components/sharing/shareSheetTypes';
 import { SelectionList, type SelectionListOption, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
@@ -648,7 +649,7 @@ function useDiscussionRosterAgentSections(
                 rightAccessory: () => (
                   <View style={styles.rowControls}>
                     {canRetry ? (
-                      <ShareRowAction
+                      <ShareRowAction useHost={useShareGrantRowPresentation}
                         testID={`${testID}:retry`}
                         label={t('session.collaboration.discussion.retry')}
                         onPress={retry}

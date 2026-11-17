@@ -3,6 +3,7 @@ import type * as Monaco from 'monaco-editor';
 import { createCodeIntelligenceController } from '@/sync/domains/workspaces/languageIntelligence/createCodeIntelligenceController';
 import type { LanguageIntelligenceQueryInput, LanguageIntelligenceQueryResult } from '@happier-dev/protocol/machines/languageIntelligence';
 import { bindMonacoLanguageIntelligence } from './monacoLanguageIntelligence';
+import type { CodeEditorCompletionPosition } from '../codeEditorTypes';
 
 // The fake engine supplies coordinates only; these providers never invoke Position/Range prototype methods.
 const enginePosition = (lineNumber: number, column: number) => ({ lineNumber, column } as Monaco.Position);
@@ -78,6 +79,34 @@ function fixture(nativeRange = true) {
 }
 
 describe('Monaco language intelligence adapter', () => {
+    it('offers portable completions without a workspace and cancels their pending result when the model changes', async () => {
+        const f = fixture();
+        // Monaco owns text coordinates; the real adapter must use these engine facts.
+        Object.assign(f.model, { getOffsetAt: (at: Monaco.IPosition) => at.column - 1,
+            getPositionAt: (offset: number) => enginePosition(1, offset + 1) });
+        const complete = vi.fn(async (_position: CodeEditorCompletionPosition, _signal: AbortSignal) => [
+            { label: 'answer', detail: 'integer', range: { start: 0, end: 3 } },
+        ]);
+        const binding = bindMonacoLanguageIntelligence(f.monaco, f.editor, null, { complete });
+        try {
+            const result = await f.completion().provideCompletionItems(f.model, enginePosition(1, 4), { triggerKind: 0 }, f.token);
+            expect(complete).toHaveBeenCalledWith({ offset: 3, line: 1, character: 3, explicit: true }, expect.any(AbortSignal));
+            expect(result?.suggestions).toEqual([expect.objectContaining({ label: 'answer', insertText: 'answer', detail: 'integer',
+                range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 4 } })]);
+            let signal: AbortSignal | undefined;
+            let settle: (items: Awaited<ReturnType<typeof complete>>) => void = () => {};
+            complete.mockImplementationOnce((_position, abort) => {
+                signal = abort;
+                return new Promise(resolve => { settle = resolve; });
+            });
+            const pending = f.completion().provideCompletionItems(f.model, enginePosition(1, 4), { triggerKind: 0 }, f.token);
+            f.edit();
+            expect(signal?.aborted).toBe(true);
+            settle([{ label: 'stale', detail: 'integer', range: { start: 0, end: 3 } }]);
+            expect(await pending).toBeNull();
+            expect(f.requests).toEqual([]);
+        } finally { binding.dispose(); f.controller.dispose(); }
+    });
     it('peeks every referenced file, reads each unique target once and opens it through the File owner', async () => {
         const f = fixture(); await f.controller.activate();
         const readText = vi.fn(async () => 'export const answer = 42;\nanswer;');

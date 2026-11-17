@@ -1720,3 +1720,4 @@ export { UsageMeterRow, UsageMeterStack, USAGE_METER_METRICS, type UsageMeterRow
 
 export { OfferedChoices, OfferedChoiceFeedbackInput, type OfferedChoice, type OfferedChoicesProps, type OfferedChoiceButtonProps, type OfferedChoiceFeedbackInputProps, type OfferedChoiceFeedbackInputHostProps } from './interaction/OfferedChoices.js';
 export { resolveHappierFieldTextColors } from './form/fieldColors.js';
+export * from './content/CodeEditor.js';

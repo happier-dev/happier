@@ -1,3 +1,4 @@
+import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
 import type { ArtifactAccessGrantRowV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -7,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import type { SelectionListOption } from '@/components/ui/selectionList';
 import { t } from '@/text';
 import type { ShareAccessLevel, ShareLevelPresentation, ShareSheetAdapter, ShareUiError, ShareUiReason } from '../shareSheetTypes';
-import { ShareRowAction } from '../ShareGrantRow';
+import { ShareRowAction } from '@happier-dev/plugin-ui/components';
 import { sharePrincipalKey } from '../sharePrincipalPresentation';
 
 const styles = StyleSheet.create((theme) => ({
@@ -140,10 +141,10 @@ export function createDocumentShareAdapter(input: Readonly<{
                         ...(choice.issue ? { subtitle: choice.issue.message }
                             : choice.service && !hasRepairs ? { subtitle: t('shareSheet.documents.privateChoices.authoredInput', { widget: choice.widget }) } : {}),
                         ...(hasRepairs ? { onSelect: () => context.onExpand(choice.id), expandedContentInset: 'text' as const, expandedContent: () => <View>
-                            {choice.letViewersPick ? <ShareRowAction label={t('shareSheet.documents.privateChoices.letViewersPick')}
+                            {choice.letViewersPick ? <ShareRowAction useHost={useShareGrantRowPresentation} label={t('shareSheet.documents.privateChoices.letViewersPick')}
                                 testID={`${context.idPrefix}document-share-private-viewer:${choice.id}`}
                                 onPress={choice.letViewersPick} disabled={!context.editable || input.readOnly || choice.loading} /> : null}
-                            {choice.removeChoice ? <ShareRowAction label={t('shareSheet.documents.privateChoices.removeChoice')}
+                            {choice.removeChoice ? <ShareRowAction useHost={useShareGrantRowPresentation} label={t('shareSheet.documents.privateChoices.removeChoice')}
                                 testID={`${context.idPrefix}document-share-private-remove:${choice.id}`}
                                 onPress={choice.removeChoice} disabled={!context.editable || input.readOnly || choice.loading} /> : null}
                         </View> } : {}) };
