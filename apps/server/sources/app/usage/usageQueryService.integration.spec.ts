@@ -66,6 +66,7 @@ async function querySession(
         filters: { sessionIds: [sessionId] },
         granularity: "day",
         includeSeries: true,
+        includePriceCatalog: true,
         ...overrides,
     }));
 }
@@ -525,7 +526,7 @@ describe("usageQueryService scoped aggregation", () => {
         expect(result.leaders?.models?.[0]?.key).toBe('z-model');
         expect(result.modelTimeline?.[0]?.leaders[0]?.key).toBe('z-model');
         expect(result.breakdowns?.model?.[0]?.key).toBe('z-model');
-        const privatelyRepriced = repriceUsageAnalyticsResponse(result, result.priceCatalog,
+        const privatelyRepriced = repriceUsageAnalyticsResponse(result, result.priceCatalog!,
             { 'a-model': { kind: 'rates', inputUsdPerMillion: 10, outputUsdPerMillion: 10 } }, 'api_equivalent');
         expect(privatelyRepriced.leaders?.models?.[0]?.key).toBe('a-model');
         expect(privatelyRepriced.modelTimeline?.[0]?.leaders[0]?.key).toBe('a-model');
@@ -555,14 +556,14 @@ describe("usageQueryService scoped aggregation", () => {
         // prices promote three candidates, with an exact tie across the cutoff.
         const privatePrices = Object.fromEntries(['z-model', 'c-model', 'b-model'].map(modelId => [modelId,
             { kind: 'rates' as const, inputUsdPerMillion: 10, outputUsdPerMillion: 10 }]));
-        const privatelyRepriced = repriceUsageAnalyticsResponse(result, result.priceCatalog, privatePrices, 'api_equivalent');
+        const privatelyRepriced = repriceUsageAnalyticsResponse(result, result.priceCatalog!, privatePrices, 'api_equivalent');
         const privateLeaders = ['b-model', 'c-model'];
         expect(privatelyRepriced.leaders?.models?.map(row => row.key)).toEqual(privateLeaders);
         expect(privatelyRepriced.modelTimeline?.[0]?.leaders.map(row => row.key)).toEqual(privateLeaders);
         expect(privatelyRepriced.breakdowns?.model?.map(row => row.key)).toEqual(privateLeaders);
         const repeated = await query();
         expect(repeated.leaders?.models?.map(row => row.key)).toEqual(serverLeaders);
-        expect(repriceUsageAnalyticsResponse(repeated, repeated.priceCatalog, privatePrices, 'api_equivalent')).toEqual(privatelyRepriced);
+        expect(repriceUsageAnalyticsResponse(repeated, repeated.priceCatalog!, privatePrices, 'api_equivalent')).toEqual(privatelyRepriced);
     });
 
     it("re-prices historical API-equivalent tokens from the effective catalog without rewriting reported or retained estimates", async () => {
