@@ -1,5 +1,6 @@
 import { areCurrentSessionInputMachineTargetsInTx, readStoredCommittedSessionInputMachineTarget } from '@/app/session/messages/sessionInputAdmission';
 import { getDbProviderFromEnv } from '@/storage/db';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import { readManagedWakeTargetBindingsInTx } from './managedWakeBinding';
@@ -34,7 +35,7 @@ export async function readManagedWakePublicationAccountIdsInTx(tx: Tx, input: Re
     const targetList = [...targets.values()];
     const machineIds = [...new Set(targetList.map(target => target.machineId))];
     const accountIds = new Set<string>();
-    if (machineIds.length > 0 && getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+    if (machineIds.length > 0 && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         const machines = await tx.$queryRawUnsafe<Array<{ accountId: string }>>(
             'SELECT "accountId" FROM "Machine" WHERE "id" = ANY($1::text[])', machineIds);
         for (const machine of machines) accountIds.add(machine.accountId);

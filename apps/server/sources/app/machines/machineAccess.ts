@@ -28,6 +28,7 @@ import { inTx, type Tx } from '@/storage/inTx';
 import { withManagedWakeAvailabilityInTx } from './managed/managedWakeAvailability';
 import type { MachineSerializationRow } from './machineSerialization';
 import { getDbProviderFromEnv } from '@/storage/db';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { projectResourceGrantRows, resourceGrantArmWheres, validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
@@ -475,10 +476,10 @@ type MachineAdmissionsInput = Omit<MachineAdmissionInput, 'machineId'> & Readonl
 /** Mixed-requester placement reads share one graph and recipient-material acquisition. */
 export async function resolveMachineTargetAdmissionsInTx(tx: Tx, targets: readonly MachineActor[]): Promise<readonly MachineAdmission[]> {
     if (targets.length === 0) return [];
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     const machineIds = [...new Set(targets.map(target => target.machineId))];
     const rows: MachineResourceFacts[] = [];
-    if (provider === 'postgres') {
+    if (dialect === 'postgres') {
         const accountFields = Object.keys(MACHINE_RESOURCE_FACTS_SELECT.account.select)
             .flatMap(field => [`'${field}'`, `a."${field}"`]).join(', ');
         const managedFields = Object.keys(MACHINE_RESOURCE_FACTS_SELECT.managedResource.select)
@@ -503,7 +504,7 @@ export async function resolveMachineTargetAdmissionsInTx(tx: Tx, targets: readon
     const materials = new Map<string, Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>>();
     const recipientIds = [...new Set(encrypted.map(target => target.actorAccountId))];
     const recipients: NonNullable<Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>['recipient']>[] = [];
-    if (recipientIds.length > 0 && provider === 'postgres') {
+    if (recipientIds.length > 0 && dialect === 'postgres') {
         const fields = Object.keys(RECIPIENT_READINESS_SELECT).map(field => `"${field}"`).join(', ');
         recipients.push(...await tx.$queryRawUnsafe<typeof recipients>(`SELECT ${fields} FROM "Account" WHERE "id" = ANY($1::text[])`, recipientIds));
     } else for (const ids of portableQueryChunks({ values: recipientIds, bindingsPerValue: 1, fixedBindings: 1 })) {
@@ -517,7 +518,7 @@ export async function resolveMachineTargetAdmissionsInTx(tx: Tx, targets: readon
         return [JSON.stringify(id), id];
     })).values()];
     const envelopes: MachineKeyEnvelope[] = [];
-    if (envelopeIds.length > 0 && provider === 'postgres') {
+    if (envelopeIds.length > 0 && dialect === 'postgres') {
         envelopes.push(...await tx.$queryRawUnsafe<MachineKeyEnvelope[]>(
             `SELECT e.* FROM "MachineKeyEnvelope" e
              JOIN jsonb_to_recordset($1::jsonb) AS requested("machineId" text, "recipientAccountId" text)
@@ -730,7 +731,7 @@ async function publishMutationInTx(tx: Tx, impacts: Awaited<ReturnType<typeof mu
 export async function lockMachinePublicationInTx(tx: Tx, machineId: string): Promise<void> {
     // Content Account admission permits peer PostgreSQL Machine writes. MySQL's
     // exclusive Account admission and SQLite's single writer already exclude peers.
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         await tx.$queryRawUnsafe('SELECT "id" FROM "Machine" WHERE "id" = $1 FOR NO KEY UPDATE', machineId);
     }
 }

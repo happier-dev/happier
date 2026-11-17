@@ -10,6 +10,7 @@ import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGua
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { getDbProviderFromEnv } from '@/storage/db';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import { ManagedMachineError, hasBoundManagedLifecycle, projectManagedMachine, readManagedController,
@@ -52,10 +53,10 @@ export async function readManagedWakeTargetBindingsInTx(tx: Tx, targets: readonl
     if (targets.length === 0) return [];
     const homeId = await readCurrentServerIdentityId(process.env, tx);
     if (!homeId) return targets.map(() => undefined);
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     const guestIds = [...new Set(targets.map(target => target.machineId))];
     const rows: StoredManagedMachine[] = [];
-    if (provider === 'postgres') rows.push(...await tx.$queryRawUnsafe<StoredManagedMachine[]>(
+    if (dialect === 'postgres') rows.push(...await tx.$queryRawUnsafe<StoredManagedMachine[]>(
         'SELECT * FROM "ManagedMachine" WHERE "enrolledMachineId" = ANY($1::text[])', guestIds));
     else for (const ids of portableQueryChunks({ values: guestIds, bindingsPerValue: 1, fixedBindings: 1 })) {
         rows.push(...await tx.managedMachine.findMany({ where: { enrolledMachineId: { in: [...ids] } } }));
@@ -64,7 +65,7 @@ export async function readManagedWakeTargetBindingsInTx(tx: Tx, targets: readonl
     const byGuest = new Map(rows.map(row => [row.enrolledMachineId, row]));
     const machineIds = [...new Set([...guestIds, ...rows.flatMap(row => row.controllerMachineId ? [row.controllerMachineId] : [])])];
     const machines: WakeMachine[] = [];
-    if (provider === 'postgres') machines.push(...await tx.$queryRawUnsafe<WakeMachine[]>(
+    if (dialect === 'postgres') machines.push(...await tx.$queryRawUnsafe<WakeMachine[]>(
         `SELECT m.*, jsonb_build_object('status', a."status") AS "account" FROM "Machine" m
          JOIN "Account" a ON a."id" = m."accountId" WHERE m."id" = ANY($1::text[])`, machineIds).then(decodeMachineStoredContent));
     else for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 2 })) {

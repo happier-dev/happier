@@ -5,6 +5,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { areCurrentSessionInputMachineTargetsInTx } from '@/app/session/messages/sessionInputAdmission';
 import { readPendingSessionInputAdmission } from '@/app/session/pending/pendingInputAdmission';
 import { getDbProviderFromEnv } from '@/storage/db';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import { sameManagedInput } from './managedRows';
@@ -19,7 +20,7 @@ export type ManagedWakeSession = Prisma.SessionGetPayload<{ select: typeof sessi
 export async function readManagedWakeSessionsInTx(tx: Tx, sessionIds: readonly string[]): Promise<ManagedWakeSession[]> {
     const ids = [...new Set(sessionIds)];
     if (ids.length === 0) return [];
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') return tx.$queryRawUnsafe<ManagedWakeSession[]>(
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') return tx.$queryRawUnsafe<ManagedWakeSession[]>(
         `SELECT "id", "accountId", "archivedAt", "runtimeMachineTarget", "pendingActivationStatus",
          "pendingActivationRequestId", "pendingActivationRequestedAt", "pendingActivationManagedTarget"
          FROM "Session" WHERE "id" = ANY($1::text[])`, ids);
@@ -69,7 +70,7 @@ export async function readPendingManagedWakeTargetsInTx(tx: Tx, sessions: readon
         retained.map(({ session, target }) => ({ actorAccountId: session.accountId, machineId: target.enrolledMachineId })));
     const pendingIds = retained.map(({ session }) => ({ sessionId: session.id, localId: session.pendingActivationRequestId! }));
     const pendingRows: SessionPendingMessage[] = [];
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') pendingRows.push(...await tx.$queryRawUnsafe<SessionPendingMessage[]>(
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') pendingRows.push(...await tx.$queryRawUnsafe<SessionPendingMessage[]>(
         `SELECT p.* FROM "SessionPendingMessage" p
          JOIN jsonb_to_recordset($1::jsonb) AS requested("sessionId" text, "localId" text)
          ON p."sessionId" = requested."sessionId" AND p."localId" = requested."localId"
