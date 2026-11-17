@@ -3,6 +3,7 @@ import { View, type LayoutChangeEvent } from 'react-native';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import type { SimulatorPreviewActions } from '@/sync/domains/devices/simulator/useSimulatorPreview';
@@ -68,6 +69,14 @@ export function SimulatorPreviewPane(props: Readonly<{
                 style={[simulatorStreamStyles.paneRoot, { paddingBottom: bottomChromeHeight }]}
                 onLayout={onLayout}
             >
+                {viewModel.resource && viewModel.snapshotRefreshState === 'error' ? (
+                    <SurfaceStateCard
+                        kind="warning"
+                        size="line"
+                        title={t('simulatorPreview.viewer.inventoryUnavailable')}
+                        testID={`${props.testID}-inventory-error`}
+                    />
+                ) : null}
                 {!resource ? (
                     <SimulatorDevicePicker
                         devices={viewModel.devices}

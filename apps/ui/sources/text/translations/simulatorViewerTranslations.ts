@@ -2,6 +2,7 @@ import type { SupportedLanguage } from '../_all';
 
 type SimulatorViewerCopy = Readonly<{
   discoveryTitle: string;
+  inventoryUnavailable: string;
   discoveryDescription: string;
   emptyTitle: string;
   emptyBody: string;
@@ -22,6 +23,7 @@ type SimulatorViewerCopy = Readonly<{
 
 export const simulatorViewerTranslations = {
   en: {
+    inventoryUnavailable: 'Could not refresh devices. Showing the last known devices.',
     discoveryTitle: 'Choose a device',
     discoveryDescription: 'Simulators and emulators running on this machine.',
     emptyTitle: 'No simulators running',
@@ -42,6 +44,7 @@ export const simulatorViewerTranslations = {
     more: 'More',
   },
   fr: {
+    inventoryUnavailable: 'Impossible d’actualiser les appareils. Affichage des derniers appareils connus.',
     discoveryTitle: 'Choisir un appareil',
     discoveryDescription:
       'Simulateurs et émulateurs en cours sur cette machine.',
@@ -64,6 +67,7 @@ export const simulatorViewerTranslations = {
     more: 'Plus',
   },
   de: {
+    inventoryUnavailable: 'Geräte konnten nicht aktualisiert werden. Die zuletzt bekannten Geräte werden angezeigt.',
     discoveryTitle: 'Gerät auswählen',
     discoveryDescription:
       'Simulatoren und Emulatoren, die auf dieser Maschine laufen.',
@@ -85,6 +89,7 @@ export const simulatorViewerTranslations = {
     more: 'Mehr',
   },
   es: {
+    inventoryUnavailable: 'No se pudieron actualizar los dispositivos. Se muestran los últimos dispositivos conocidos.',
     discoveryTitle: 'Elige un dispositivo',
     discoveryDescription:
       'Simuladores y emuladores que se ejecutan en esta máquina.',
@@ -106,6 +111,7 @@ export const simulatorViewerTranslations = {
     more: 'Más',
   },
   it: {
+    inventoryUnavailable: 'Impossibile aggiornare i dispositivi. Sono mostrati gli ultimi dispositivi noti.',
     discoveryTitle: 'Scegli un dispositivo',
     discoveryDescription:
       'Simulatori ed emulatori in esecuzione su questa macchina.',
@@ -127,6 +133,7 @@ export const simulatorViewerTranslations = {
     more: 'Altro',
   },
   pt: {
+    inventoryUnavailable: 'Não foi possível atualizar os dispositivos. Exibindo os últimos dispositivos conhecidos.',
     discoveryTitle: 'Escolha um dispositivo',
     discoveryDescription: 'Simuladores e emuladores em execução nesta máquina.',
     emptyTitle: 'Nenhum simulador em execução',
@@ -147,6 +154,7 @@ export const simulatorViewerTranslations = {
     more: 'Mais',
   },
   ca: {
+    inventoryUnavailable: 'No s’han pogut actualitzar els dispositius. Es mostren els últims dispositius coneguts.',
     discoveryTitle: 'Tria un dispositiu',
     discoveryDescription:
       'Simuladors i emuladors que s’executen en aquesta màquina.',
@@ -168,6 +176,7 @@ export const simulatorViewerTranslations = {
     more: 'Més',
   },
   pl: {
+    inventoryUnavailable: 'Nie udało się odświeżyć urządzeń. Wyświetlono ostatnio znane urządzenia.',
     discoveryTitle: 'Wybierz urządzenie',
     discoveryDescription: 'Symulatory i emulatory działające na tej maszynie.',
     emptyTitle: 'Brak uruchomionych symulatorów',
@@ -188,6 +197,7 @@ export const simulatorViewerTranslations = {
     more: 'Więcej',
   },
   ru: {
+    inventoryUnavailable: 'Не удалось обновить устройства. Показаны последние известные устройства.',
     discoveryTitle: 'Выберите устройство',
     discoveryDescription: 'Симуляторы и эмуляторы, запущенные на этой машине.',
     emptyTitle: 'Нет запущенных симуляторов',
@@ -208,6 +218,7 @@ export const simulatorViewerTranslations = {
     more: 'Ещё',
   },
   ja: {
+    inventoryUnavailable: 'デバイスを更新できませんでした。最後に確認したデバイスを表示しています。',
     discoveryTitle: 'デバイスを選択',
     discoveryDescription:
       'このマシンで実行中のシミュレーターとエミュレーター。',
@@ -229,6 +240,7 @@ export const simulatorViewerTranslations = {
     more: 'その他',
   },
   'zh-Hans': {
+    inventoryUnavailable: '无法刷新设备。正在显示上次已知的设备。',
     discoveryTitle: '选择设备',
     discoveryDescription: '此机器上正在运行的模拟器。',
     emptyTitle: '没有正在运行的模拟器',
@@ -249,6 +261,7 @@ export const simulatorViewerTranslations = {
     more: '更多',
   },
   'zh-Hant': {
+    inventoryUnavailable: '無法重新整理裝置。正在顯示上次已知的裝置。',
     discoveryTitle: '選擇裝置',
     discoveryDescription: '此機器上正在執行的模擬器。',
     emptyTitle: '沒有正在執行的模擬器',

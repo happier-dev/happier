@@ -91,6 +91,7 @@ export type SimulatorPreviewStreamState = Pick<
 
 export type SimulatorPreviewViewModel = Readonly<{
     kind: 'loading' | 'unavailable' | 'empty' | 'selected';
+    snapshotRefreshState?: SimulatorPreviewDaemonState['refreshState'];
     viewerId: string;
     devices: readonly SimulatorPreviewDeviceOption[];
     selectedSimulatorId: string | null;

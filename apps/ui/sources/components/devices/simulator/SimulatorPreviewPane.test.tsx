@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
 
+import { SimulatorPreviewPane } from './SimulatorPreviewPane';
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key, params) => {
@@ -72,11 +74,45 @@ function selectedViewModel(overrides: Partial<SimulatorPreviewViewModel> = {}): 
 }
 
 async function renderPane(viewModel: SimulatorPreviewViewModel, actions: Record<string, unknown> = {}, sessionId?: string) {
-    const { SimulatorPreviewPane } = await import('./SimulatorPreviewPane');
     return renderScreen(<SimulatorPreviewPane viewModel={viewModel} actions={actions} sessionId={sessionId} testID="simulator-preview" />);
 }
 
 describe('SimulatorPreviewPane', () => {
+    it('qualifies retained devices after a failed inventory read without replacing the playing stream', async () => {
+        const { selectSimulatorPreviewViewModel } = await import('@/sync/domains/devices/simulator/selectors');
+        const { createSimulatorPreviewDaemonState, applySimulatorPreviewDaemonSnapshot } = await import('@/sync/domains/devices/simulator/runtimeState');
+        const healthy = selectedViewModel();
+        const loaded = applySimulatorPreviewDaemonSnapshot(createSimulatorPreviewDaemonState(), {
+            v: 1, machineId: 'machine_1', generatedAt: 1, refreshState: 'idle',
+            resources: [healthy.resource!], diagnostics: [],
+        });
+        const select = (state: typeof loaded) => selectSimulatorPreviewViewModel({
+            resources: state.resources ?? [], snapshotState: state, viewerId: 'viewer_1',
+            selectedSimulatorId: 'sim_1', playerStatesBySimulatorId: { sim_1: healthy.stream }, nowMs: 1,
+        });
+        const screen = await renderPane(select(loaded));
+        const player = screen.findByTestId('simulator-preview-stream-player');
+        expect(player).toBeTruthy();
+        expect(screen.findHostByTestId('simulator-preview-inventory-error')).toBeNull();
+
+        const failed = applySimulatorPreviewDaemonSnapshot(loaded, {
+            v: 1, machineId: 'machine_1', generatedAt: 2, refreshState: 'error',
+            resources: [], diagnostics: [],
+        });
+        await screen.update(<SimulatorPreviewPane viewModel={select(failed)} actions={{}} testID="simulator-preview" />);
+        expect(screen.findHostByTestId('simulator-preview-inventory-error')).toBeTruthy();
+        expect(screen.findByTestId('simulator-preview-stream-player')).toBe(player);
+        expect(screen.findByTestId('simulator-preview-stream-player-frame')?.props.source).toEqual({ uri: healthy.stream.lastFrameUrl });
+
+        const recovered = applySimulatorPreviewDaemonSnapshot(failed, {
+            v: 1, machineId: 'machine_1', generatedAt: 3, refreshState: 'idle',
+            resources: [healthy.resource!], diagnostics: [],
+        });
+        await screen.update(<SimulatorPreviewPane viewModel={select(recovered)} actions={{}} testID="simulator-preview" />);
+        expect(screen.findHostByTestId('simulator-preview-inventory-error')).toBeNull();
+        expect(screen.findByTestId('simulator-preview-stream-player')).toBe(player);
+    });
+
     it('stays detect→launch: no free-URL, address or arbitrary-target input anywhere in the pane', async () => {
         const screen = await renderPane(selectedViewModel(), { selectDevice: vi.fn() });
 

@@ -334,6 +334,7 @@ export function selectSimulatorPreviewViewModel(input: SimulatorPreviewSelection
 
     return {
         kind,
+        snapshotRefreshState: input.snapshotState?.refreshState,
         viewerId: input.viewerId,
         devices,
         selectedSimulatorId,
