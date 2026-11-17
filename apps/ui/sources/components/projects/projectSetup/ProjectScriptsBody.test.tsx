@@ -2609,3 +2609,52 @@ describe('ProjectScriptsBody with thousands of found scripts', () => {
     expect(mountedRows(screen, 'scripts.detected')).toBeGreaterThan(opened);
   });
 });
+
+describe('Project setup layers on the Scripts page (plan A L6)', () => {
+  it('lists the scripts that run from every layer and names where each non-repository one comes from', async () => {
+    const effectiveManifest = { version: 1, scripts: {
+      test: { source: nativeRef('test') },
+      seed: { source: { kind: 'command', command: './scripts/seed-dev.sh' } },
+      lint: { source: nativeRef('lint') },
+    } };
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
+      effectiveDefinition: { effectiveManifest,
+        sharedBasis: { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash },
+        origins: [
+          { path: ['scripts', 'test'], layer: 'repository', overridden: false },
+          { path: ['scripts', 'seed'], layer: 'shared', overridden: false },
+          { path: ['scripts', 'lint'], layer: 'personal', overridden: false },
+        ] } };
+    const screen = await render('page', 'scripts.script:seed');
+    // The Machine runs the composed definition, so the page lists what runs, not only the repository file.
+    expect(textOf(screen, 'scripts.script:test.status')).not.toContain('projects.scripts.origin');
+    expect(textOf(screen, 'scripts.script:seed.status')).toContain('projects.scripts.origin.shared');
+    expect(textOf(screen, 'scripts.script:lint.status')).toContain('projects.scripts.origin.personal');
+    expect(screen.getTextContent()).toContain('projects.scripts.layers.personal');
+  });
+  it('offers the shared setup update check only when a shared setup is attached, and reads nothing upstream before it', async () => {
+    const { Modal } = await import('@/modal');
+    const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'shared-setup-update');
+    onTestFinished(() => { show.mockRestore(); });
+    const origins = [{ path: ['scripts', 'test'], layer: 'repository', overridden: false }];
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
+      effectiveDefinition: { effectiveManifest: declared, origins } };
+    const plain = await render('page', 'scripts.script:test');
+    expect(plain.findAllHostsByTestId('scripts.more')).toHaveLength(0);
+    await plain.unmount();
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
+      effectiveDefinition: { effectiveManifest: declared, origins,
+        sharedBasis: { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash } } };
+    const screen = await render('page', 'scripts.more');
+    expect(shared.calls.some(call => call.actionId === 'projects.inspect'
+      && (call.input as { reviewSharedSetup?: unknown }).reviewSharedSetup !== undefined)).toBe(false);
+    await act(async () => { await screen.pressByTestIdAsync('scripts.more'); });
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'scripts.more:menu')!;
+    expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(['checkShared']);
+    await act(async () => { menu.props.onSelect('checkShared'); });
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({
+      props: expect.objectContaining({ sourceId: 'src-acme-web' }),
+      chrome: expect.objectContaining({ testID: 'project-shared-setup-update' }) }));
+  });
+});

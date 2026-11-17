@@ -37,6 +37,8 @@ type EffectLine = Readonly<{
   value: string;
   note?: string;
   mono: boolean;
+  /** Where the line comes from when the review shows layers (lab L6: "repository", "Acme web setup", "just for you"). */
+  origin?: string | null;
   /** Safe producer identity for U5's personal/shared binding presentation. */
   binding?: ProjectSetupReviewPresentation['bindings'][number];
 }>;
@@ -45,8 +47,15 @@ type EffectLine = Readonly<{
 export function listProjectSetupEffect(
   manifest: ProjectManifestV1,
   reviewedEffect?: unknown,
+  options: Readonly<{
+    /** Names each line's layer; omitted where the review shows one file. */
+    layerOf?: (path: readonly string[]) => string | null;
+    /** The update review also lists the dev servers the setup starts. */
+    services?: boolean;
+  }> = {},
 ): readonly EffectLine[] {
   const lines: EffectLine[] = [];
+  const layerOf = options.layerOf;
   const toolchain = manifest.toolchain;
   if (toolchain && toolchain.kind !== 'host') {
     const tool =
@@ -59,6 +68,7 @@ export function listProjectSetupEffect(
       value: tool,
       mono: true,
       ...(toolchain.configPath ? { note: toolchain.configPath } : {}),
+      ...(layerOf ? { origin: layerOf(['toolchain']) } : {}),
     });
   }
   // The producer's resolved effect (B9 `reviewedEffect`) wins over the declared anatomy when present:
@@ -66,7 +76,8 @@ export function listProjectSetupEffect(
   const resolved = listReviewedSetupCommands(reviewedEffect);
   if (resolved) {
     resolved.forEach((command, index) => {
-      lines.push({ key: `step:${index}`, label: t('projects.scripts.setup.step', { n: index + 1 }), value: command, mono: true });
+      lines.push({ key: `step:${index}`, label: t('projects.scripts.setup.step', { n: index + 1 }), value: command, mono: true,
+        ...(layerOf ? { origin: layerOf(['workspace', 'setup']) } : {}) });
     });
   } else (manifest.workspace?.setup ?? []).forEach((source, index) => {
     lines.push({
@@ -74,8 +85,16 @@ export function listProjectSetupEffect(
       label: t('projects.scripts.setup.step', { n: index + 1 }),
       value: describeProjectCommandSource(source).reference,
       mono: true,
+      ...(layerOf ? { origin: layerOf(['workspace', 'setup']) } : {}),
     });
   });
+  if (options.services) {
+    for (const [name, service] of Object.entries(manifest.services ?? {})) {
+      lines.push({ key: `service:${name}`, label: t('projects.scripts.setup.service'), value: name, mono: true,
+        note: describeProjectCommandSource(service.source).reference,
+        ...(layerOf ? { origin: layerOf(['services', name]) } : {}) });
+    }
+  }
   const presentation = readProjectSetupReviewPresentation(reviewedEffect);
   if (presentation) {
     for (const binding of presentation.bindings) {
@@ -136,36 +155,14 @@ function describeSetupProvenance(presentation: ProjectSetupReviewPresentation | 
 /** A review of a reviewed effect alone (approval page and card, Session ask): no manifest is read. */
 const REVIEWED_EFFECT_ONLY_MANIFEST: ProjectManifestV1 = { version: 1 };
 
-/** Safe review anatomy shared by the page, Session and approvals; the producer projection is the sole parser. */
-export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFacts(
-  props: Readonly<{
-    testID: string;
-    /** Omitted when the review is the producer's reviewed effect alone (approvals, Session ask). */
-    manifest?: ProjectManifestV1;
-    machineName: string;
-    /** A teammate's shared Machine: name the OS user it runs as (D6/D24). */
-    sharedRunAs: string | null;
-    sharedTrustDetail?: string | null;
-    /** Safe resolved effect from the D18 review, when the producer supplied it. */
-    reviewedEffect?: unknown;
-    /** The effect rows on a sheet of their own (the pushed page); on a card they sit on the card. */
-    framed?: boolean;
-    onViewFile?: () => void;
-  }>,
+/** The setup effect as label-value lines, with each line's layer at its end when the review shows layers. */
+export const ProjectSetupEffectLines = React.memo(function ProjectSetupEffectLines(
+  props: Readonly<{ testID: string; lines: readonly EffectLine[]; framed?: boolean }>,
 ) {
   const { theme } = useUnistyles();
-  const effect = React.useMemo(
-    () => listProjectSetupEffect(props.manifest ?? REVIEWED_EFFECT_ONLY_MANIFEST, props.reviewedEffect),
-    [props.manifest, props.reviewedEffect],
-  );
-  const provenance = React.useMemo(
-    () => describeSetupProvenance(readProjectSetupReviewPresentation(props.reviewedEffect)),
-    [props.reviewedEffect],
-  );
   return (
-    <View style={styles.facts}>
       <View style={props.framed ? styles.effectSheet : styles.effect}>
-        {effect.map((line, index) => (
+        {props.lines.map((line, index) => (
           <View
             key={line.key}
             testID={`${props.testID}.effect:${line.key}`}
@@ -195,9 +192,47 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
               </Text>
               {line.note ? `  ${line.note}` : ''}
             </Text>
+            {line.origin ? (
+              <Text numberOfLines={1} style={[styles.effectOrigin, { color: theme.colors.text.tertiary }]}>{line.origin}</Text>
+            ) : null}
           </View>
         ))}
       </View>
+  );
+});
+
+/** Safe review anatomy shared by the page, Session and approvals; the producer projection is the sole parser. */
+export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFacts(
+  props: Readonly<{
+    testID: string;
+    /** Omitted when the review is the producer's reviewed effect alone (approvals, Session ask). */
+    manifest?: ProjectManifestV1;
+    machineName: string;
+    /** A teammate's shared Machine: name the OS user it runs as (D6/D24). */
+    sharedRunAs: string | null;
+    sharedTrustDetail?: string | null;
+    /** Safe resolved effect from the D18 review, when the producer supplied it. */
+    reviewedEffect?: unknown;
+    /** Names each effect line's layer when the project's setup has more than the repository file (lab L6). */
+    layerOf?: ((path: readonly string[]) => string | null) | null;
+    /** The effect rows on a sheet of their own (the pushed page); on a card they sit on the card. */
+    framed?: boolean;
+    onViewFile?: () => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const effect = React.useMemo(
+    () => listProjectSetupEffect(props.manifest ?? REVIEWED_EFFECT_ONLY_MANIFEST, props.reviewedEffect,
+      props.layerOf ? { layerOf: props.layerOf } : {}),
+    [props.manifest, props.reviewedEffect, props.layerOf],
+  );
+  const provenance = React.useMemo(
+    () => describeSetupProvenance(readProjectSetupReviewPresentation(props.reviewedEffect)),
+    [props.reviewedEffect],
+  );
+  return (
+    <View style={styles.facts}>
+      <ProjectSetupEffectLines testID={props.testID} lines={effect} framed={props.framed} />
       <View style={styles.provenance}>
         <Icon name="file-text" size={14} color={theme.colors.text.tertiary} />
         <Text
@@ -265,16 +300,19 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
 
 /** One setup decision control, with the consequence of the current choice (lab `s-scripts` SETUP). */
 export const ProjectSetupScopeChoice = React.memo(function ProjectSetupScopeChoice(
-  props: Readonly<{ testID: string; scope: ProjectSetupScope; onChange: (scope: ProjectSetupScope) => void }>,
+  props: Readonly<{ testID: string; scope: ProjectSetupScope; onChange: (scope: ProjectSetupScope) => void;
+    /** An update choice has no Skip: Keep current setup is its way out. */
+    allowSkip?: boolean }>,
 ) {
   const { theme } = useUnistyles();
+  const allowSkip = props.allowSkip !== false;
   // A phone has the room for the three choices to share the width; a wide host keeps them compact.
   const phone = useDeviceType() === 'phone';
   const tabs = React.useMemo(() => [
     { id: 'thisTime' as const, label: t('projects.scripts.setup.thisTime') },
     { id: 'untilChanged' as const, label: t('projects.scripts.setup.untilChanged') },
-    { id: 'skip' as const, label: t('common.skip') },
-  ], []);
+    ...(allowSkip ? [{ id: 'skip' as const, label: t('common.skip') }] : []),
+  ], [allowSkip]);
   return (
     <View style={[styles.scope, phone ? styles.scopePhone : null]}>
       <SegmentedTabBar
@@ -306,6 +344,7 @@ type ProjectSetupReviewBodyProps = Readonly<{
   sharedRunAs: string | null;
   sharedTrustDetail?: string | null;
   reviewedEffect?: unknown;
+  layerOf?: ((path: readonly string[]) => string | null) | null;
   framed?: boolean;
   scope: ProjectSetupScope;
   onScopeChange: (scope: ProjectSetupScope) => void;
@@ -380,6 +419,7 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
     pending: boolean;
     onRun: (scope: ProjectSetupScope) => void;
     reviewedEffect?: unknown;
+    layerOf?: ((path: readonly string[]) => string | null) | null;
     /** The chosen scope belongs to the review's owner, so the card and the phone page share it. */
     scope: ProjectSetupScope;
     onScopeChange: (scope: ProjectSetupScope) => void;
@@ -436,6 +476,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
+  // The layer word sits at the line's end in the meta role; it gives way before the command does.
+  effectOrigin: { ...Typography.default(), ...happierPageTextMetrics('meta'), flexShrink: 1, textAlign: 'right' },
   provenance: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   shared: {
     flexDirection: 'row',

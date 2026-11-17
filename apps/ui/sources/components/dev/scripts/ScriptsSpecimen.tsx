@@ -21,6 +21,12 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ProjectSetupReview } from '@/components/projects/projectSetup/ProjectSetupReview';
 import { ActionOperationDetailModal } from '@/components/inbox/actionOperations/ActionOperationDetailModal';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { ProjectSharedSetupChangeV1Schema } from '@happier-dev/protocol/projects/projectSetupChangeV1';
+import { ProjectEffectiveDefinitionV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import { ProjectSharedSetupUpdateView, readProjectSharedSetupUpdateRows } from '@/components/projects/projectSetup/ProjectSharedSetupUpdateSheet';
+import type { ProjectSharedSetupReviewSnapshot } from '@/components/projects/projectSetup/projectSharedSetupReview';
+import type { ProjectSetupScope } from '@/components/projects/projectSetup/ProjectSetupReview';
 
 /**
  * Dev-only specimen of the Scripts page, project file editor and setup review (Lane 12 lab
@@ -146,6 +152,54 @@ const FIRST_SUMMARY = {
 const EMPTY_DETECTION: ProjectDefinitionDetectionV1 = {
   entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
 };
+
+/**
+ * Lab L6: a shared setup adds a seed script and a personal change runs lint with --fix. The composed
+ * definition is what the Machine sends; the repository file stays MANIFEST.
+ */
+const SHARED_SEED = { source: { kind: 'command', command: './scripts/seed-dev.sh --orders 200' } } as const;
+const LAYERED_MANIFEST = { ...MANIFEST, scripts: { ...MANIFEST.scripts, seed: SHARED_SEED,
+  lint: { source: { kind: 'command', command: 'yarn lint --fix' } } } };
+const LAYER_ORIGINS = [
+  ...Object.keys(MANIFEST.scripts).filter(name => name !== 'lint')
+    .map(name => ({ path: ['scripts', name], layer: 'repository' as const, overridden: false })),
+  { path: ['scripts', 'lint'], layer: 'repository' as const, overridden: true },
+  { path: ['scripts', 'lint'], layer: 'personal' as const, overridden: false },
+  { path: ['scripts', 'seed'], layer: 'shared' as const, overridden: false },
+];
+const SHARED_BASIS = { sourceId: 'src-specimen-web-setup', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: HASH };
+const LAYERED_DEFINITION = ProjectEffectiveDefinitionV1Schema.parse({ effectiveManifest: LAYERED_MANIFEST, origins: LAYER_ORIGINS, sharedBasis: SHARED_BASIS });
+/** The upstream change the update sheet reviews: seed orders 200 → 500, a redis service added, storybook removed. */
+function sharedUpdateSnapshot(state: string): ProjectSharedSetupReviewSnapshot | null {
+  if (state === 'checking') return { kind: 'initial', pending: true };
+  if (state === 'unreadable') return { kind: 'ready', pending: false,
+    change: { kind: 'upstreamUnavailable', code: 'project_setup_review_unavailable' }, request: null };
+  const selection = SHARED_BASIS;
+  if (state === 'current') return { kind: 'ready', pending: false, change: { kind: 'current', selection }, request: null };
+  const before = { ...LAYERED_DEFINITION, effectiveManifest: { ...LAYERED_MANIFEST,
+    scripts: { ...LAYERED_MANIFEST.scripts, storybook: { source: pkg('storybook') } } } };
+  const after = { ...LAYERED_DEFINITION, effectiveManifest: { ...LAYERED_MANIFEST,
+    scripts: { ...LAYERED_MANIFEST.scripts, seed: { source: { kind: 'command', command: './scripts/seed-dev.sh --orders 500' } } },
+    services: { redis: { source: { kind: 'command', command: 'redis-server --port 6380' } } } } };
+  const change = ProjectSharedSetupChangeV1Schema.parse({ kind: 'changed', selection, before, after,
+    setupReadiness: { kind: 'notRequired', reviewedEffectDigest: 'specimen' } });
+  if (change.kind !== 'changed') return null;
+  return { kind: 'ready', pending: false, change,
+    request: { projectRef: { serverId: SERVER, projectKey: 'specimen' }, expectedRevision: 'absent', review: change } };
+}
+
+function SharedUpdateFrame(props: Readonly<{ state: string }>) {
+  const [scope, setScope] = React.useState<ProjectSetupScope>('thisTime');
+  const snapshot = React.useMemo(() => sharedUpdateSnapshot(props.state), [props.state]);
+  const rows = React.useMemo(() => readProjectSharedSetupUpdateRows(snapshot), [snapshot]);
+  return (
+    <View style={styles.sheet}>
+      <ProjectSharedSetupUpdateView snapshot={snapshot} rows={rows} sourceName="Acme web setup" machineName={MACHINE}
+        scope={scope} onScopeChange={setScope}
+        busy={null} failure={null} onRetry={() => {}} onDecide={() => {}} onClose={() => {}} />
+    </View>
+  );
+}
 
 function definition(manifest: unknown): ProjectManifestFileSnapshot {
   const bytes = `${JSON.stringify(manifest, null, 2)}\n`;
@@ -302,6 +356,8 @@ function controller(frame: string): ProjectScriptsController {
     openSetupReview: () => {},
     reviewScope: null,
     setReviewScope: () => {},
+    decideSharedSetupUpdate: async () => null,
+    sharedSetupUpdatePending: false,
   };
 }
 
@@ -310,7 +366,7 @@ function OutputFrame() {
 }
 
 export function ScriptsSpecimen(
-  props: Readonly<{ frame: string | null; phone: boolean }>,
+  props: Readonly<{ frame: string | null; phone: boolean; state?: string | null }>,
 ) {
   const frame = props.frame ?? 'PAGE';
   React.useMemo(() => seedRuns(frame), [frame]);
@@ -334,10 +390,13 @@ export function ScriptsSpecimen(
       : frame !== 'NATIVE' && frame !== 'RAIL' ? { detectionSummary: PAGE_SUMMARY } : {}),
     importCandidates: [],
     ...(frame === 'NATIVE' ? { setupReadiness: { kind: 'needsReview' as const, code: 'setup_changed' } } : {}),
+    ...(frame === 'LAYERS' ? { effectiveDefinition: LAYERED_DEFINITION } : {}),
   };
   const body =
     frame === 'OUTPUT' ? (
       <OutputFrame />
+    ) : frame === 'UPDATE' ? (
+      <SharedUpdateFrame state={props.state ?? 'changed'} />
     ) : frame === 'SHARED' ? (
       <ItemGroup>
         <ProjectSetupReview testID="scripts-specimen.shared" manifest={MANIFEST as never} machineName="build-01" sharedRunAs="ben"
@@ -391,4 +450,6 @@ const styles = StyleSheet.create((theme) => ({
   frame: { flex: 1, width: '100%', maxWidth: 1440 },
   phone: { maxWidth: 390 },
   rail: { width: 460, alignSelf: 'flex-end', paddingHorizontal: theme.space.s12 },
+  // The update sheet's own card width, so the frame reads like the opened dialog.
+  sheet: { width: '100%', maxWidth: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, alignSelf: 'center', paddingTop: theme.space.s24 },
 }));

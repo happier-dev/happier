@@ -1,6 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { ProjectEffectiveDefinitionV1Schema, resolveProjectDefinitionV1, type ProjectEffectiveDefinitionV1, type ProjectDefinitionOriginV1 } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
+import { ProjectEffectiveDefinitionV1Schema, resolveProjectDefinitionV1, createProjectDefinitionOriginLookupV1, type ProjectEffectiveDefinitionV1, type ProjectDefinitionOriginV1 } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import type { ProjectManifestV1, ProjectCommandSourceV1 } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectSetupReviewV1Schema, ProjectSetupReadinessV1Schema } from '../actions/projectSetupConsentFailure.js';
@@ -104,20 +104,9 @@ export function projectSharedSetupChangeRowsV1(
   const rows: ProjectSharedSetupChangeRowV1[] = [];
   const previous = before.effectiveManifest;
   const next = after.effectiveManifest;
-  const originIndex = (definition: ProjectEffectiveDefinitionV1) => new Map(definition.origins
-    .filter(origin => !origin.overridden).map(origin => [JSON.stringify(origin.path), origin]));
-  const previousOrigins = originIndex(before);
-  const nextOrigins = originIndex(after);
-  const originAt = (index: Map<string, ProjectDefinitionOriginV1>, path: readonly string[]) => {
-    for (let length = path.length; length > 0; length--) {
-      const origin = index.get(JSON.stringify(path.slice(0, length)));
-      if (origin) return origin;
-    }
-    return null;
-  };
-  const origin = (path: readonly string[]) => ({
-    before: originAt(previousOrigins, path), after: originAt(nextOrigins, path),
-  });
+  const previousOrigin = createProjectDefinitionOriginLookupV1(before);
+  const nextOrigin = createProjectDefinitionOriginLookupV1(after);
+  const origin = (path: readonly string[]) => ({ before: previousOrigin(path), after: nextOrigin(path) });
   for (const phase of ['setup', 'teardown'] as const) {
     const previousCommands = previous?.workspace?.[phase] ?? [];
     const nextCommands = next?.workspace?.[phase] ?? [];

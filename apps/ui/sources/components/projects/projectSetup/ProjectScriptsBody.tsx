@@ -48,7 +48,14 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeBindings, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { useProjectSource } from '@/components/projects/sources/useProjectSources';
+import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
+import { readProjectSetupLayers } from './projectSetupLayers';
+import { openProjectSharedSetupUpdate } from './ProjectSharedSetupUpdateSheet';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
@@ -272,6 +279,7 @@ export function ProjectScriptsBody({
         workspace={workspace}
         initialManagedConfiguration={initialManagedConfiguration}
         inspection={read.value}
+        binding={binding}
         controller={controller}
         page={page}
         glance={glance}
@@ -349,6 +357,8 @@ export function ProjectScriptsContent(
     initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
     workspace: WorkspaceAddressV1;
     inspection: ProjectDefinitionInspection;
+    /** The Account reading this checkout; names a shared setup's Source. Absent in the dev specimen. */
+    binding?: ServerCredentialAccountScopeBinding | null;
     controller: ScriptsController;
     page: boolean;
     /** The Overview widget: scripts as glance rows (name and status), not the runnable sheet. */
@@ -365,6 +375,7 @@ export function ProjectScriptsContent(
 ) {
   const { definition, detection } = props.inspection;
   const document = definition.document;
+  const effective = readProjectEffectiveDefinition(props.inspection);
   // Nix/devenv definitions are read once the environment is evaluated; that is a fact about the
   // environment, not a failed read, and Retry cannot change it.
   const unreadable = detection.diagnostics.filter((diagnostic) => diagnostic.code !== 'unevaluated_nix');
@@ -428,7 +439,11 @@ export function ProjectScriptsContent(
   return (
     <>
       {/* Found scripts and services continue the list; Workers and Agents (settings) follow them. */}
-      <DeclaredScripts {...props} manifest={document.manifest}>
+      {/* The Machine runs the composed definition (repository, shared setup, changes just for you), so the
+          page lists that; the repository's own bytes belong to the editor. */}
+      <DeclaredScripts {...props} manifest={effective.kind === 'available' && effective.value.effectiveManifest
+        ? effective.value.effectiveManifest : document.manifest}
+        layersDefinition={effective.kind === 'available' ? effective.value : null}>
         {partial}
         <FoundMore
           {...props}
@@ -451,6 +466,9 @@ function DeclaredScripts(
     initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
     workspace: WorkspaceAddressV1;
     manifest: ProjectManifestV1;
+    /** The composed definition's origins and shared basis, when the Machine sent them. */
+    layersDefinition?: ProjectEffectiveDefinitionV1 | null;
+    binding?: ServerCredentialAccountScopeBinding | null;
     inspection: ProjectDefinitionInspection;
     controller: ScriptsController;
     page: boolean;
@@ -494,12 +512,24 @@ function DeclaredScripts(
   const managed = props.manifest.toolchain !== undefined && props.manifest.toolchain.kind !== 'host';
   // Installed versions are inspection facts; without them the configuration file names the source.
   const versions = describeProjectToolVersions(props.inspection.tools).join(' · ');
+  const sharedSourceId = props.layersDefinition?.sharedBasis?.sourceId ?? null;
+  const sharedSource = useProjectSource(props.page ? props.binding ?? null : null, sharedSourceId);
+  const sharedName = sharedSource.source?.source.name ?? null;
+  const layers = React.useMemo(() => readProjectSetupLayers(props.layersDefinition ?? null, sharedName),
+    [props.layersDefinition, sharedName]);
   const meta = React.useMemo(() => [
     { key: 'file', text: '.happier/project.json', icon: <Icon name="file-text" size={14} color={theme.colors.text.secondary} /> },
     ...(managed || versions ? [{ key: 'toolchain',
       text: [toolchain.title, versions || toolchain.config].filter(Boolean).join(' · '),
       icon: <Icon name="wrench" size={14} color={theme.colors.text.secondary} /> }] : []),
-  ], [toolchain.config, toolchain.title, managed, versions, theme.colors.text.secondary]);
+    // One fact per layer that isn't the repository's own (lab L6 header meta).
+    ...(layers.sharedSourceId ? [{ key: 'shared', text: sharedName
+      ? t('projects.scripts.layers.shared', { name: sharedName }) : t('projects.scripts.layers.sharedUnnamed'),
+      icon: <Icon name="users" size={14} color={theme.colors.text.secondary} /> }] : []),
+    ...(layers.personalChanges > 0 ? [{ key: 'personal',
+      text: t('projects.scripts.layers.personal', { count: layers.personalChanges }),
+      icon: <Icon name="user-circle" size={14} color={theme.colors.text.secondary} /> }] : []),
+  ], [toolchain.config, toolchain.title, managed, versions, theme.colors.text.secondary, layers, sharedName]);
   const phone = useDeviceType() === 'phone';
   const editButton = props.onEdit ? (
     <RoundButton
@@ -511,6 +541,15 @@ function DeclaredScripts(
       onPress={() => props.onEdit?.(false)}
     />
   ) : undefined;
+  const binding = props.binding ?? null;
+  const decideSharedSetupUpdate = props.controller.decideSharedSetupUpdate;
+  const sharedMenu = props.page && sharedSourceId && binding ? (
+    <ProjectSetupHeaderMenu testID={`${props.testID}.more`} onCheckShared={() => openProjectSharedSetupUpdate({
+      workspace: props.workspace, binding, sourceId: sharedSourceId, sourceName: sharedName, machineName,
+      decide: decideSharedSetupUpdate })} />
+  ) : null;
+  // Without a shared setup the header keeps its one action; the "…" joins it only when there is something to offer.
+  const headerActions = sharedMenu ? <View style={styles.headerActions}>{editButton}{sharedMenu}</View> : editButton;
   return (
     <>
     {props.page ? (
@@ -525,8 +564,8 @@ function DeclaredScripts(
           ? t('projects.scripts.purposeSetup', { project, machine: machineName })
           : t('projects.scripts.purpose', { project, machine: machineName })}
         meta={meta}
-        actions={!phone ? editButton : undefined}
-        details={phone && editButton ? <View style={styles.phoneEdit}>{editButton}</View> : undefined}
+        actions={!phone ? headerActions : undefined}
+        details={phone && headerActions ? <View style={styles.phoneEdit}>{headerActions}</View> : undefined}
         testID={`${props.testID}.header`}
       />
     ) : null}
@@ -583,6 +622,7 @@ function DeclaredScripts(
           phoneReview={props.phoneReview ?? null}
           testID={`${props.testID}.setup`}
           onViewFile={props.onEdit ? () => props.onEdit?.(false, 'raw') : null}
+          layerOf={layers.sharedSourceId || layers.personalChanges > 0 ? layers.layerOf : null}
         />
       ) : null}
       {scripts.length === 0 ? (
@@ -602,6 +642,7 @@ function DeclaredScripts(
             manifest={props.manifest}
             declaration={declaration}
             invocation={props.glance ? findProjectInvocation(props.inspection, declaration.source) : undefined}
+            origin={layers.originOf(['scripts', name])}
             controller={props.controller}
             compact={!props.page}
             glance={false}
@@ -701,6 +742,7 @@ function DeclaredScriptRow(
     manifest: ProjectManifestV1;
     declaration: NonNullable<ProjectManifestV1['scripts']>[string];
     invocation: ReturnType<typeof findProjectInvocation>;
+    origin?: string | null;
     controller: ScriptsController;
     compact: boolean;
     /** The Overview widget's glance row (name and status, no source and no Run control). */
@@ -734,6 +776,7 @@ function DeclaredScriptRow(
       badge={props.glance ? null : source.badge}
       glance={props.glance}
       command={source.command ?? (source.target === props.name ? null : source.target)}
+      origin={props.origin ?? null}
       nativeSource={props.declaration.source.kind === 'command' ? undefined : props.declaration.source}
       accountId={props.controller.accountId}
       portable={props.declaration.execution === 'portable'}
@@ -787,6 +830,8 @@ function SetupRow(
     compact: boolean;
     phoneReview: PhoneSetupReview | null;
     onViewFile: (() => void) | null;
+    /** Each effect line's layer, when the project's setup has more than the repository file. */
+    layerOf?: ((path: readonly string[]) => string | null) | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -954,6 +999,7 @@ function SetupRow(
             sharedTrustDetail={reviewMachine.sharedTrustDetail}
             pending={pending}
             reviewedEffect={review.reviewedEffect}
+            layerOf={props.layerOf ?? null}
             scope={review.scope}
             onScopeChange={review.setScope}
             onRun={review.run}
@@ -1471,7 +1517,52 @@ function useSetupOpening(
   };
 }
 
+/** The header's "…" beside Edit project file (lab L6 menu): what you can do with a shared setup. */
+const ProjectSetupHeaderMenu = React.memo(function ProjectSetupHeaderMenu(
+  props: Readonly<{ testID: string; onCheckShared: () => void }>,
+) {
+  const [open, setOpen] = React.useState(false);
+  const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => [
+    { id: 'checkShared', testID: `${props.testID}:checkShared`, title: t('projects.scripts.sharedUpdate.check'),
+      icon: <Icon name="arrows-clockwise" size={16} /> },
+  ], [props.testID]);
+  const { onCheckShared } = props;
+  const select = React.useCallback((id: string) => {
+    setOpen(false);
+    if (id === 'checkShared') onCheckShared();
+  }, [onCheckShared]);
+  return (
+    <DropdownMenu
+      testID={`${props.testID}:menu`}
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      onSelect={select}
+      placement="bottom"
+      popoverAnchorAlign="end"
+      matchTriggerWidth={false}
+      maxWidthCap={320}
+      showCategoryTitles={false}
+      popoverPortalWebTarget="body"
+      trigger={({ toggle }) => (
+        <IconButton
+          testID={props.testID}
+          iconName="dots-three"
+          variant="plain"
+          accessibilityLabel={t('projects.scripts.moreActions')}
+          tooltip={t('projects.scripts.moreActions')}
+          tooltipHidden={open}
+          hasPopup="menu"
+          expanded={open}
+          onPress={toggle}
+        />
+      )}
+    />
+  );
+});
+
 const styles = StyleSheet.create((theme) => ({
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   phoneEditor: { flex: 1, minHeight: 0 },
   body: { gap: theme.space.s12 },
   phoneEdit: { alignSelf: 'flex-start', marginTop: theme.space.s10, marginBottom: theme.space.s8 },

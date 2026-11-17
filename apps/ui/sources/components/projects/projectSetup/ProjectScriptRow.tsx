@@ -55,6 +55,8 @@ export type ProjectScriptRowProps = Readonly<{
   badge: string | null;
   /** What runs, as declared: a native target or a literal command. */
   command: string | null;
+  /** Where the declaration comes from when it isn't the repository's own ("from Acme web setup"); quiet text, never a pill. */
+  origin?: string | null;
   nativeSource?: ProjectNativeRefV1;
   accountId?: string | null;
   portable: boolean;
@@ -214,7 +216,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
           <RowStatusLine
             // Phone rows omit command text but keep their source badge (plan 30 phone composition).
             lead={props.compact || phone ? null : props.command}
-            text={statusText}
+            text={[props.origin, statusText].filter(Boolean).join(' · ')}
             tone={projectRunStatusTone(tone)}
             // The row's run glyph already carries the state.
             marked

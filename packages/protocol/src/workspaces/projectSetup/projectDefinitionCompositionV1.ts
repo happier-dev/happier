@@ -13,6 +13,22 @@ export const ProjectEffectiveDefinitionV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export type ProjectEffectiveDefinitionV1 = z.infer<typeof ProjectEffectiveDefinitionV1Schema>;
 
+/**
+ * The layer that decides one declaration path: the deepest non-overridden origin at or above it.
+ * Scripts rows and update reviews read origins through this one lookup.
+ */
+export function createProjectDefinitionOriginLookupV1(definition: Pick<ProjectEffectiveDefinitionV1, 'origins'>) {
+  const index = new Map(definition.origins.filter(origin => !origin.overridden)
+    .map(origin => [JSON.stringify(origin.path), origin] as const));
+  return (path: readonly string[]): ProjectDefinitionOriginV1 | null => {
+    for (let length = path.length; length > 0; length--) {
+      const origin = index.get(JSON.stringify(path.slice(0, length)));
+      if (origin) return origin;
+    }
+    return null;
+  };
+}
+
 /** Ordered authored layers, never execution placement, private bindings or runtime assignments. */
 export function resolveProjectDefinitionV1(input: Readonly<{
   repositoryManifest: ProjectManifestV1 | null;
