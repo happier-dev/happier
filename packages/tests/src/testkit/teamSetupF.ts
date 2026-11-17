@@ -14,6 +14,7 @@ import { waitForAssistantMessageContaining } from './providers/scenarios/session
 export async function startTeamSetupFFixture(params: Readonly<{
   testDir: string;
   dbProvider?: 'postgres' | 'sqlite';
+  guestReachableHome?: Parameters<typeof startProjectDaemonFixture>[0]['guestReachableHome'];
   observeActionRequests?: boolean;
   /** Observe requested/returned saved-health Trigger locators without exposing envelopes. */
   observeSavedHealthSourceSelections?: boolean;
@@ -23,7 +24,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
   serverEnv?: Parameters<typeof startProjectDaemonFixture>[0]['serverEnv'];
 }>) {
   const core = await startProjectDaemonFixture({ testDir: params.testDir,
-    dbProvider: params.dbProvider, serverEnv: params.serverEnv,
+    dbProvider: params.dbProvider, guestReachableHome: params.guestReachableHome, serverEnv: params.serverEnv,
     ...((params.observeActionRequests || params.observeSavedHealthSourceSelections || params.beforeHttpRequest || params.captureRequestBody)
       ? { requestObservation: {
         onRequestStart: params.beforeHttpRequest,

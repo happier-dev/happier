@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -135,8 +136,10 @@ export async function startProjectDaemonFixture(params: Readonly<{
             const opened = await execute('approval.request.get', { artifactId: approval.data.artifactId });
             if (!opened.ok) throw new Error(`Journey approval read refused (${opened.errorCode})`);
             const detail = ApprovalRequestGetResultV1Schema.parse(opened.result);
-            const { execution: { executedAtMs: _executedAtMs, ...execution } } = ApprovalRequestPublicSettlementSchema.parse(detail.request);
-            result = execution.ok ? { ok: true, result: execution.result } : ActionExecuteFailureSchema.parse(execution);
+            ApprovalRequestPublicSettlementSchema.parse(detail.request);
+            const execution = buildActionExecuteResultFromRecordedApprovalExecution(detail.request);
+            if (!execution) throw new Error('Journey approval has no settled execution');
+            result = execution;
           }
         },
         async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
@@ -244,13 +247,13 @@ export type ProjectDaemonFixture = Awaited<ReturnType<typeof startProjectDaemonF
 /** Await real CLI login and its Machine registration before exposing a target. */
 export async function enrollProjectDaemonHome(params: Readonly<{
   serverUrl: string;
-  env?: NodeJS.ProcessEnv;
   serverId: string;
   sourceOptions: string;
   account: Readonly<{ uiCredentials: TestAccountCliAuthCredentials; auth: Readonly<{ token: string }> }>;
   testDir: string;
   homeDir: string;
   cliLaunchSpec?: CliTestLaunchSpec;
+  env?: EnvOverrides;
 }>) {
   const { account, cliLaunchSpec, homeDir } = params;
   const login = await startCliAuthLoginForTerminalConnect({ testDir: join(params.testDir, 'login'),
