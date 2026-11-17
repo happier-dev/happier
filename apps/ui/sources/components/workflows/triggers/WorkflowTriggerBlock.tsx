@@ -381,9 +381,10 @@ function ActionTrackRows(
             selectedId={selectedId}
             placeholder={t('workflows.triggers.card.chooseAction')}
             searchPlaceholder={t('workflows.page.blocks.actionSearch')}
-            emptyLabel={catalog.phase === 'loading'
-              ? t('workflows.triggers.card.actionsLoading')
-              : t('workflows.triggers.card.noActions')}
+            emptyLabel={catalog.phase === 'ready' ? t('workflows.triggers.card.noActions')
+              : catalog.phase === 'error' ? t('common.requestFailed')
+              : catalog.phase === 'loading' ? t('workflows.triggers.card.actionsLoading')
+              : t('common.unavailable')}
             onSelect={(id) => props.onChange({ ...when, actionIds: [id] })}
           />
         </View>

@@ -137,7 +137,10 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const actionGlyph = spec?.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : WORKFLOW_BLOCK_KIND_GLYPH.action;
     // Unnamed, the heading carries the card's identity and the card shows only its rows.
     const headingCarriesCard = resolveWorkflowUnnamedHeading(block) === 'card';
-    const actionSource = spec?.plugin?.title ?? (spec === null ? t('workflows.page.blocks.actionNotInCatalog') : 'Happier');
+    const catalogReadLabel = catalog.phase === 'ready' ? null : catalog.phase === 'error'
+        ? t('common.requestFailed') : catalog.phase === 'loading' ? t('common.loading') : t('common.unavailable');
+    const actionSource = spec?.plugin?.title ?? (spec === null
+        ? catalogReadLabel ?? t('workflows.page.blocks.actionNotInCatalog') : 'Happier');
 
     // At rest, fields the workflow fills from its inputs read as one line; selecting the step opens them.
     const askedRows = props.selected === true ? NO_ROWS : rows.filter((row) =>
@@ -192,14 +195,14 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 source={actionSource}
                 header={!headingCarriesCard}
                 note={spec === null
-                    ? t('workflows.page.blocks.actionUnavailable', { action: displayName })
+                    ? catalogReadLabel ?? t('workflows.page.blocks.actionUnavailable', { action: displayName })
                     : t('workflows.page.blocks.actionSub')}
                 footAccessory={props.onOpenOptions === undefined || !editable ? undefined : (
                     <WorkflowStepOptionsMore onOpen={props.onOpenOptions} blockLabel={displayName} testID={`${rowPrefix}-options`} />
                 )}
             >
             {spec?.projectionError ? <Text testID={`${rowPrefix}-projection-error`} accessibilityRole="alert"
-                style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.actionUnavailable', { action: displayName })}</Text> : rows.length === 0 ? (
+                style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.actionUnavailable', { action: displayName })}</Text> : rows.length === 0 ? spec === null ? null : (
                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.noFields')}</Text>
             ) : <>{askedLine === null ? null : editable ? (
                 <HappierPressable testID={`${rowPrefix}-asks`} accessibilityRole="button" accessibilityLabel={askedLine}
