@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
-import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { create as createTar } from 'tar';
 import { describe, expect, it } from 'vitest';
 import { createNativeComposeImageIdentity } from './nativeComposeImageIdentity';
 import { nativeRegistryPause310 as fixture } from './nativeComposeImageRegistry.testkit';
+import { nativeDocker29LocalBuild } from './nativeComposeImageDocker29.testkit';
 
-function boundary(options: Readonly<{ corruptIndex?: boolean; corruptManifest?: boolean; defaultArm64Variant?: boolean; armOnly?: boolean; duplicateFirst?: boolean }> = {}) {
+function boundary(options: Readonly<{ corruptIndex?: boolean; corruptManifest?: boolean; defaultArm64Variant?: boolean; armOnly?: boolean; duplicateFirst?: boolean; publishedBuild?: boolean }> = {}) {
     const requests: string[][] = [];
     const repository = fixture.reference;
     const source = JSON.parse(fixture.index);
@@ -24,7 +25,9 @@ function boundary(options: Readonly<{ corruptIndex?: boolean; corruptManifest?: 
             signal?.throwIfAborted();
             requests.push([...args]);
             // Native Docker and registry IO are the only substituted boundary.
-            if (args[0] === 'image' && args[1] === 'inspect') { expect(registry).toBeUndefined(); return { stdout: '', exitCode: 1 }; }
+            if (args[0] === 'image' && args[1] === 'inspect') { expect(registry).toBeUndefined(); return options.publishedBuild
+                ? { stdout: JSON.stringify([{ ...nativeDocker29LocalBuild.inspect[0], Identity: { Build: nativeDocker29LocalBuild.inspect[0].Identity.Build, Pull: [{ Repository: 'registry.k8s.io/pause' }] } }]), exitCode: 0 }
+                : { stdout: '', exitCode: 1 }; }
             if (args.slice(0, 3).join(' ') !== 'buildx imagetools inspect') throw new Error(`Unexpected native request ${args.join(' ')}`);
             expect(registry).toBeNull(); // Explicit anonymous registry demand, not ambient/source credentials.
             const reference = args.at(-1);
@@ -55,6 +58,11 @@ describe('preapproval native immutable index and variant discovery', () => {
         expect(await single.native.resolveVariants({ service: 'app', reference: `${fixture.reference}@${variant.digest}` }))
             .toEqual([{ service: 'app', platform: variant.platform, manifestDigest: variant.digest,
                 configDigest: JSON.parse(variant.manifest).config.digest, registryReference: `${fixture.reference}@${variant.digest}` }]);
+    });
+    it('keeps registry index discovery for a build with engine-reported push/pull provenance', async () => {
+        const input = boundary({ publishedBuild: true });
+        expect(await input.native.resolveVariants({ service: 'app', reference: fixture.reference, platforms: ['linux/amd64', 'linux/arm64'] }))
+            .toMatchObject(input.variants.map(variant => ({ platform: variant.platform, indexDigest: input.indexDigest, registryReference: `${fixture.reference}@${variant.digest}` })));
     });
     it('uses native default arm64/v8 equivalence without admitting a different explicit variant', async () => {
         const input = boundary({ defaultArm64Variant: true });
@@ -89,6 +97,35 @@ describe('preapproval native immutable index and variant discovery', () => {
                 .toEqual([{ service: 'app', platform: 'linux/amd64', configDigest, manifestDigest }]);
             await expect(identity.resolveVariants({ service: 'app', reference: 'private:local', platforms: ['linux/amd64', 'linux/arm64'] }))
                 .rejects.toMatchObject({ code: 'deployment_image_unavailable' });
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+    it('retains a Docker29 local index with RepoDigests without registry acquisition or child-ID lookup', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-docker29-'));
+        try {
+            const captured = nativeDocker29LocalBuild;
+            for (const [path, bytes] of Object.entries(captured.entries)) {
+                await mkdir(join(root, path, '..'), { recursive: true });
+                await writeFile(join(root, path), bytes);
+            }
+            const archive = join(root, 'local.tar');
+            await createTar({ cwd: root, file: archive }, Object.keys(captured.entries));
+            const reference = captured.inspect[0].RepoTags[0];
+            const identity = createNativeComposeImageIdentity({ async directory() { return root; }, async run(args) {
+                // Docker is the substituted external boundary. Child IDs are not addressable.
+                if (args[0] !== 'image') throw new Error('Local build queried registry');
+                if (args[1] === 'inspect') return { stdout: JSON.stringify(args.includes('--platform') ? captured.platformInspect : captured.inspect), exitCode: 0 };
+                if (args[1] === 'save') {
+                    expect(args.at(-1)).toBe(captured.inspect[0].RepoDigests[0]);
+                    await copyFile(archive, args[args.indexOf('--output') + 1]!);
+                    return { stdout: '', exitCode: 0 };
+                }
+                throw new Error('Unexpected Docker effect');
+            } });
+            const expected = [{ service: 'app', platform: 'linux/amd64',
+                manifestDigest: captured.platformInspect[0].Descriptor.digest,
+                configDigest: JSON.parse(captured.entries['manifest.json'])[0].Config.replace('blobs/sha256/', 'sha256:') }];
+            expect(await identity.resolveVariants({ service: 'app', reference, platforms: ['linux/amd64'] })).toEqual(expected);
+            expect(await identity.resolveVariants({ service: 'app', reference })).toEqual(expected);
         } finally { await rm(root, { recursive: true, force: true }); }
     });
     it('pins only the needed review variant and later derives another platform solely from the approved index', async () => {

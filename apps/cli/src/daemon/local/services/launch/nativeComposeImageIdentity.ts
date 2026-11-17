@@ -75,6 +75,17 @@ function record(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Docker29 containerd synthesizes RepoDigests for local builds too. Identity
+ * comes from engine build-reference/distribution-source labels, not tag shape.
+ * Successful pushes also populate Pull, so those keep registry index discovery.
+ * https://github.com/moby/moby/blob/docker-v29.9.0/api/types/image/identity.go */
+function isNativeComposeLocalOnlyImage(native: Record<string, unknown>): boolean {
+    if (!Array.isArray(native.RepoDigests) || native.RepoDigests.length === 0) return true;
+    const identity = record(native.Identity) ? native.Identity : undefined;
+    return identity !== undefined && Array.isArray(identity.Build) && identity.Build.length > 0
+        && (identity.Pull === undefined || Array.isArray(identity.Pull) && identity.Pull.length === 0);
+}
+
 /** Only a single-manifest descriptor identifies the exact receipt manifest.
  * An index digest cannot prove the config/platform of its local variants. */
 export function readNativeComposeImageManifestDigest(native: unknown): string | undefined {
@@ -337,7 +348,8 @@ export function createNativeComposeImageIdentity(input: Readonly<{
                 : repoDigests.find(ref => selection.reference.includes('@') ? ref === selection.reference : true)?.split('@').at(-1);
             if (!manifestDigest || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)
                 || selection.reference.includes('@') && !selection.reference.endsWith(`@${manifestDigest}`)) return refuse('deployment_image_manifest_mismatch');
-            const reference = selection.reference.includes('@') ? selection.reference
+            const localOnly = isNativeComposeLocalOnlyImage(native);
+            const reference = localOnly ? undefined : selection.reference.includes('@') ? selection.reference
                 : repoDigests.find(ref => ref.endsWith(`@${manifestDigest}`));
             // Native references can contain bound secrets; scratch names must
             // not publish a dictionary-testable digest of that reference.
@@ -347,7 +359,10 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             try {
                 // A mutable tag may move after inspection. Native Id is only an
                 // invocation-local save alias; archive bytes establish CONFIG.
-                const saveReference = reference ?? (typeof native.Id === 'string' ? native.Id : refuse('deployment_image_identity_unavailable'));
+                // Containerd's platform child Id may not be addressable. Its
+                // root RepoDigest is an immutable local alias, not registry proof.
+                const saveReference = reference ?? (localOnly ? repoDigests[0] : undefined)
+                    ?? (typeof native.Id === 'string' ? native.Id : refuse('deployment_image_identity_unavailable'));
                 await input.run(['image', 'save', '--platform', selection.platform, '--output', file, saveReference], options?.signal);
                 const saved = await verifyNativeComposeImageArchive(file, { manifestDigest, platform: selection.platform });
                 const manifestType = record(native.Descriptor) ? native.Descriptor.mediaType : undefined;
@@ -388,7 +403,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
                 if (inspection.exitCode === undefined || inspection.exitCode === 0) {
                     const local: unknown = JSON.parse(inspection.stdout);
                     if (Array.isArray(local) && local.length === 1 && record(local[0])
-                        && (!Array.isArray(local[0].RepoDigests) || local[0].RepoDigests.length === 0)) {
+                        && isNativeComposeLocalOnlyImage(local[0])) {
                         // A local-only image has no registry index provenance. Its
                         // exact native archive can serve only its proved platform.
                         if (platforms && platforms.length !== 1) return unavailable();
