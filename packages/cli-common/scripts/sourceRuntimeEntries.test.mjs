@@ -1,4 +1,4 @@
-import { cp, mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
+import { chmod, cp, mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -8,11 +8,53 @@ import { createRequire, findPackageJSON } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { createWorkspaceSourceResolver, readCliSourceEntries, readWorkspacePackages, resolveWorkspaceSource, workspaceSourceCompilerPaths } from '../sourceRuntimeEntries.mjs';
+import { bundleCliSourceSidecars, createWorkspaceSourceResolver, readCliSourceEntries, readWorkspacePackages, resolveWorkspaceSource, workspaceSourceCompilerPaths } from '../sourceRuntimeEntries.mjs';
+
+import { CLI_RUNTIME_SIDECAR_ENTRIES } from '../cliRuntimeSidecars.mjs';
 
 import { initialize, resolve as resolveSourceImport } from '../sourceRuntimeEntries.mjs';
 
 describe('CLI source entry ownership', () => {
+  it('builds sidecars from read-only source without changing source permissions', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'happier-sidecars-readonly-'));
+    const source = join(fixture, 'apps/cli/scripts');
+    const output = join(fixture, 'payload/scripts');
+    const content = 'module.exports = { answer: 43 };\n';
+    async function writable(directory) {
+      await chmod(directory, 0o700);
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) await writable(path);
+        else await chmod(path, 0o600);
+      }
+    }
+    try {
+      await mkdir(source, { recursive: true });
+      for (const [name] of CLI_RUNTIME_SIDECAR_ENTRIES) {
+        const path = join(source, name);
+        if (name.includes('.')) await writeFile(path, content, { mode: 0o444 });
+        else {
+          await mkdir(path);
+          await writeFile(join(path, 'nested.cjs'), content, { mode: 0o444 });
+          await chmod(path, 0o555);
+        }
+      }
+      await chmod(source, 0o555);
+      await bundleCliSourceSidecars({ repoDir: fixture, outputDir: output, build,
+        workspacePackages: new Map(), requireFromProject: createRequire(import.meta.url) });
+      const require = createRequire(import.meta.url);
+      expect(require(join(output, 'childProcessOptions.cjs')).answer).toBe(43);
+      expect(require(join(output, 'runtime/nested.cjs')).answer).toBe(43);
+      expect(await readFile(join(source, 'childProcessOptions.cjs'), 'utf8')).toBe(content);
+      if (process.platform !== 'win32') {
+        expect((await stat(join(source, 'childProcessOptions.cjs'))).mode & 0o777).toBe(0o444);
+        expect((await stat(join(source, 'runtime'))).mode & 0o777).toBe(0o555);
+      }
+    } finally {
+      await writable(fixture);
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
   it('keeps source module-format lookup from parsing the publication export map', async () => {
     const source = new URL('../../protocol/src/zodRuntimePolicy.ts', import.meta.url);
     const scope = JSON.parse(await readFile(findPackageJSON(source), 'utf8'));

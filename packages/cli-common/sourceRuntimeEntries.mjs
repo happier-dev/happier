@@ -1,6 +1,6 @@
 import { isAscii } from 'node:buffer';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { isBuiltin } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -442,10 +442,15 @@ export async function bundleCliSourceSidecars({repoDir, outputDir, build, worksp
   const sourceDir = join(repoDir, 'apps/cli/scripts');
   const codeFiles = [];
   async function visit(directory) {
+    // Captured source may be read-only; only the staged output is rewritten.
+    await chmod(directory, (await stat(directory)).mode | 0o200);
     for (const entry of await readdir(directory, {withFileTypes:true})) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await visit(path);
-      else if (/\.(?:cjs|mjs|js)$/.test(entry.name)) codeFiles.push(path);
+      else if (/\.(?:cjs|mjs|js)$/.test(entry.name)) {
+        await chmod(path, (await stat(path)).mode | 0o200);
+        codeFiles.push(path);
+      }
     }
   }
   await mkdir(outputDir, {recursive:true});
