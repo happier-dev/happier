@@ -17,6 +17,7 @@ import { DeploymentMissingRequiredSecretsV1Schema, readDeploymentBackupMaintenan
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import type { DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { ManagedMachineControllerError, readManagedNativeFailureDetails } from '@/machines/managed/controllerErrors';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentTargetRoleResultV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
 /** Throwing host readers retain the Artifact owner's code-only validation cause. */
@@ -133,7 +134,7 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
         ?? (pluginError?.code === errorCode ? readManagedNativeFailureDetails({
             ok: false, errorCode, error: errorCode, details: pluginError.data,
         }) : undefined)
-        ?? (!pluginError && normalized?.errorCode === errorCode ? normalizedDetails : undefined);
+        ?? (!isPluginError(error) && normalized?.errorCode === errorCode ? normalizedDetails : undefined);
     const failure: ActionExecuteFailure = { ...(normalized?.errorCode === errorCode ? normalizedMetadata : {}),
         ok: false, errorCode, error: errorCode,
         ...(retainedDetails === undefined ? {} : { details: retainedDetails }),

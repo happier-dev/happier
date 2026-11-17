@@ -15,6 +15,19 @@ import { ManagedMachineControllerError } from '@/machines/managed/controllerErro
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 
 describe('deployment failure diagnostics', () => {
+    it('retains closed Domain recovery facts through an Action error carrier', () => {
+        const details = { environmentId: 'environment', domainId: 'domain', step: 'native_execution' as const,
+            requiredFact: 'caddyAdminConfig' as const, remedy: 'Review the Caddy admin service.',
+            failure: { kind: 'native_effect_failed' as const, reason: 'native_effect_failed' as const,
+                requiredFact: 'caddyAdminConfig' as const, errorCode: 'HTTP_503' } };
+        const failureCause = { phase: 'deployment.domain.native_execution', errorClass: 'Error', errorCode: null, httpStatus: 503 };
+        const error = createActionExecuteFailureError({ ok: false, errorCode: 'native_effect_failed',
+            error: 'native_effect_failed', details, failureCause });
+        expect(projectDeploymentException(error)).toMatchObject({ errorCode: 'native_effect_failed', details, failureCause });
+        const opaque = new PluginError({ code: 'native_effect_failed',
+            details: { ...details, token: 'private-domain-token' }, failureCause });
+        expect(JSON.stringify(projectDeploymentException(opaque))).not.toContain('private-domain-token');
+    });
     it.each([true, false] as const)('preserves the Action producer effect bit %s in deployment receipts', effectAttempted => {
         const error = createActionExecuteFailureError({ ok: false, errorCode: 'database_transaction_timeout',
             error: 'database_transaction_timeout', effectAttempted,

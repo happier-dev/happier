@@ -269,7 +269,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
                     expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision });
                 expect(DeploymentDomainContentV1Schema.parse(contents.get(input.contentArtifactId))).toEqual({
                     hostname: 'app.example.test', target: { service: 'web', containerPort: 80, path: '/app' },
-                    ...(outcome === 'noProbe' ? {} : { healthCheck: { path: '/ready', expectStatus: 204 } }) });
+                    healthCheck: outcome === 'noProbe' ? { path: '/' } : { path: '/ready', expectStatus: 204 } });
                 environment.environment.revision++;
                 domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: input.domainId, environmentId: input.environmentId,
                     targetLinkId: input.targetLinkId, revision: 1, state: 'pending', contentArtifactId: input.contentArtifactId,
