@@ -4,12 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { CollectionDraftTitleScope, useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { CollectionDraftRow } from '@/components/ui/lists/collection/CollectionList';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
 import { QualifiedAccountDetailView } from './QualifiedAccountDetailView';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -1162,6 +1163,8 @@ describe('ConnectedAccountSetupController real ownership', () => {
         platform.dismissTo.mockClear();
         platform.confirm.mockReset().mockResolvedValue(true);
         vi.mocked(Modal.confirm).mockImplementation(platform.confirm);
+        // restoreAllMocks retires each case's presentation spy; observe the real modal boundary anew.
+        vi.spyOn(Modal, 'show');
         authenticationCommands.length = 0;
         authenticationRequestIds.length = 0;
         controlRequestIds.length = 0;
@@ -3703,7 +3706,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(controlCommands.filter((command) => command.operation === 'revokeAccount')).toEqual([]);
     });
 
-    it('tests the focused account through the shared Action from Sign-in and overflow, then explains unsupported', async () => {
+    it('tests the focused account through the shared Sign-in Action, then explains unsupported', async () => {
         const saved = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'account-1' },
             status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision,
             configurationReady: true, configurationRevision: null });
@@ -3724,16 +3727,14 @@ describe('ConnectedAccountSetupController real ownership', () => {
             { operation: 'testConnection', account: saved.ref },
         ]);
         supported = false;
-        const menu = screen.findAllByType(DropdownMenu).find(candidate => candidate.props.items.some((item: { id: string }) => item.id === 'test-connection'))!;
-        await act(async () => { await menu.props.onSelect('test-connection'); });
+        await screen.pressByTestIdAsync('qualified-account-detail:action:test-connection');
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('This service does not offer a connection test.'));
-        const unavailable = screen.findAllByType(DropdownMenu).find(candidate => candidate.props.items.some((item: { id: string }) => item.id === 'test-connection'))!;
-        expect(unavailable.props.items.find((item: { id: string }) => item.id === 'test-connection')).toMatchObject({ disabled: true });
+        expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')?.props.accessibilityState?.disabled).toBe(true);
         expect(controlCommands.filter(command => command.operation === 'testConnection')).toHaveLength(2);
         // The entity owner remounts local Action state by the full qualified account identity.
         platform.params = { ...service, accountId: 'account-2' };
         await screen.update(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
-        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')?.props.disabled).not.toBe(true));
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')?.props.accessibilityState?.disabled).toBe(false));
         expect(screen.getTextContent()).not.toContain('This service does not offer a connection test.');
         const late = deferredReply();
         handleControl = command => command.operation === 'testConnection' ? late.promise : nativeControl(command);
@@ -3746,7 +3747,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         } }));
         await pending;
         expect(screen.getTextContent()).not.toContain('A late result for the other account.');
-        expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')?.props.disabled).not.toBe(true);
+        expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')?.props.accessibilityState?.disabled).toBe(false);
     });
 
     it('opens the canonical credential Share sheet from the account header overflow', async () => {
@@ -3754,14 +3755,24 @@ describe('ConnectedAccountSetupController real ownership', () => {
             account: { service, accountId: 'account-1' } };
         const show = vi.spyOn(Modal, 'show');
         show.mockClear();
-        const screen = await renderScreen(<QualifiedAccountDetailView account={source.account} serviceLabel="Acme Work"
-            presentation={{ primaryLabel: 'Work account', accessibilityLabel: 'Work account' }} shareSource={source} />);
-        await vi.waitFor(() => expect(screen.findAllByType(DropdownMenu)
-            .some(menu => menu.props.items.some((item: { id: string }) => item.id === 'share'))).toBe(true));
-        const menu = screen.findAllByType(DropdownMenu).find(candidate => candidate.props.items.some((item: { id: string }) => item.id === 'share'))!;
-        expect(menu.props.items.find((item: { id: string }) => item.id === 'share').testID).toBe('qualified-account-detail:share');
-        await act(async () => { menu.props.onSelect('share'); });
-        expect(show).toHaveBeenCalledOnce();
+        const screen = await renderScreen(<OverlayPortalProvider>
+            <QualifiedAccountDetailView account={source.account} serviceLabel="Acme Work"
+                presentation={{ primaryLabel: 'Work account', accessibilityLabel: 'Work account' }} shareSource={source} />
+            <OverlayPortalHost />
+        </OverlayPortalProvider>, { createNodeMock: () => ({
+            // Host layout/ref measurement is absent from react-test-renderer.
+            offsetTop: 0,
+            offsetHeight: 120,
+            getBoundingClientRect: () => ({ x: 0, y: 60, left: 0, top: 60, width: 390, height: 120, right: 390, bottom: 180 }),
+            measureInWindow: (read: (x: number, y: number, width: number, height: number) => void) => read(0, 60, 390, 120),
+        }) });
+        await act(async () => invokeTestInstanceHandler(screen.findHostByTestId('qualified-account-detail'), 'onLayout', {
+            nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 844 } },
+        }));
+        await screen.pressByTestIdAsync('qualified-account-detail:more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:share'), screen.getTextContent()).not.toBeNull());
+        await screen.pressByTestIdAsync('qualified-account-detail:share');
+        await vi.waitFor(() => expect(show).toHaveBeenCalledOnce());
         expect(show).toHaveBeenCalledWith(expect.objectContaining({ props: {
             source, scope: getActiveServerAccountScope(),
         } }));
@@ -4461,13 +4472,23 @@ describe('ConnectedAccountSetupController real ownership', () => {
         };
         await transferPurposeDefaults();
         platform.params = { ...service, groupId: group.ref.groupId };
-        platform.confirm.mockResolvedValue(outcome !== 'cancelled');
         await publishServedPoolGroups();
         const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-services-pool-detail:delete'),
             JSON.stringify({ tree: screen.tree.toJSON(), requests: httpRequests.map((url) => url.pathname) })).not.toBeNull());
+        vi.mocked(Modal.show).mockClear();
         await screen.pressByTestIdAsync('connected-services-pool-detail:delete');
-        await vi.waitFor(() => expect(platform.confirm).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(vi.mocked(Modal.show).mock.calls.some(([config]) =>
+            config.chrome?.testID === 'actions.confirmation-review.modal'
+                && config.props?.actionId === 'connectedServices.pools.delete')).toBe(true));
+        const review = vi.mocked(Modal.show).mock.calls.find(([config]) =>
+            config.chrome?.testID === 'actions.confirmation-review.modal'
+                && config.props?.actionId === 'connectedServices.pools.delete')?.[0];
+        const answer = review?.props?.onAnswer;
+        if (typeof answer !== 'function') throw new Error('Pool deletion review has no decision port');
+        // The family presenter's typed DELETE interaction has its own owner tests.
+        await act(async () => { answer(outcome !== 'cancelled'); });
+        expect(platform.confirm).not.toHaveBeenCalled();
         if (outcome !== 'cancelled') await vi.waitFor(() => expect(deletedRequests).toHaveLength(1));
         if (outcome === 'failed') await vi.waitFor(() => expect(screen.findHostByTestId('connected-services-pool-detail:error')).not.toBeNull());
         await vi.waitFor(() => expect(purposeBoundary!.readBindings())
