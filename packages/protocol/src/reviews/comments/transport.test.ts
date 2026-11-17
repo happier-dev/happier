@@ -22,6 +22,37 @@ const create = { workspace, anchor: { kind: 'file' as const, filePath: 'a.ts' },
   metadata: { tags: ['PRIVATE-tag'], taxonomyIds: ['PRIVATE-taxonomy'], reviewGroupIds: ['PRIVATE-group'] } };
 
 describe('canonical Review Comment client transport', () => {
+  it('opens only the demanded encrypted candidate page, keeping continuation when no private filter matches', async () => {
+    const stored = (id: string, filePath: string): StoredReviewCommentV1 => {
+      const comment: ReviewCommentV1 = { v: 1, id, accountId: context.accountId, workspace,
+        anchor: { kind: 'file', filePath }, snapshot: create.snapshot, body: id, bodyVersion: 1,
+        edits: [], author: actor, state: 'open', flags: {}, dispositions: {}, threadId: id,
+        transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1 };
+      const split = splitReviewCommentV1(comment);
+      return { v: 1, structural: split.structural, sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({
+        ...split, mode: 'e2ee', material: context.material!, randomBytes: (length) => new Uint8Array(length).fill(88),
+      }) };
+    };
+    const requests: Record<string, unknown>[] = [];
+    const read = (cursor?: string) => executeReviewCommentTransportV1({
+      actionId: 'reviews.comments.list', input: { workspace, filePath: 'target.ts', limit: 2, ...(cursor ? { cursor } : {}) },
+      context, actor, randomBytes: (length) => new Uint8Array(length), request: async ({ query }) => {
+        requests.push(query ?? {});
+        return query?.cursor ? { items: [stored('match', 'target.ts')], cursor: null }
+          : { items: [stored('a', 'other.ts'), stored('b', 'elsewhere.ts')], cursor: 'next-candidates' };
+      },
+    }).then((result) => ReviewCommentActionOutputSchemasV1['reviews.comments.list'].parse(result));
+    const first = await read();
+    expect(first.items).toEqual([]);
+    expect(first.cursor).toEqual(expect.any(String));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).not.toHaveProperty('filePath');
+    const second = await read(first.cursor!);
+    expect(second.items.map(({ id }) => id)).toEqual(['match']);
+    expect(second.cursor).toBeNull();
+    expect(requests).toHaveLength(2);
+  });
+
   it('retains classic validation errors and issue paths for malformed stored responses', async () => {
     const result = executeReviewCommentTransportV1({
       actionId: 'reviews.comments.get', input: { commentId: 'comment-1' },

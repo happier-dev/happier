@@ -113,7 +113,7 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
         const items: ReviewCommentV1[] = [];
         do {
             const page = parseClassic(z.strictObject({ items: z.array(sourceSchema), cursor: z.nullable(z.string().check(z.minLength(1))) }), await params.request({ method: 'get', path: '/v1/reviews/comments', query: {
-                    ...publicFilters, limit: allPages ? parsed.limit : parsed.limit - items.length, stored: true,
+                    ...publicFilters, limit: parsed.limit, stored: true,
                     ...(publicFilters.workspace ? { workspace: JSON.stringify(publicFilters.workspace) } : {}),
                     ...(serverCursor ? { cursor: serverCursor } : {}),
                 } }));
@@ -125,7 +125,8 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
             if (page.cursor && page.cursor === serverCursor)
                 fail('review_comment_invalid_filter');
             serverCursor = page.cursor ?? undefined;
-        } while (serverCursor && (allPages || items.length < parsed.limit));
+        // Private filters may leave a page empty. Only an explicit all-pages Action asks for more.
+        } while (serverCursor && allPages);
         return ReviewCommentActionOutputSchemasV1[params.actionId].parse({ items,
             cursor: serverCursor ? encodeCursor(filterKey, serverCursor) : null });
     }

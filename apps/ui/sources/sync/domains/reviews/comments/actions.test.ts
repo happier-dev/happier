@@ -53,6 +53,19 @@ describe('review comments UI actions', () => {
         webLocks.restore();
     });
 
+    it('cancels a retired list demand through the real Action HTTP owner', async () => {
+        homes.answer(homeId, '/v1/reviews/comments?projectId=project-1&states=open&includeHistory=false&limit=50&stored=true', {
+            body: { items: [], cursor: null },
+        });
+        const { createReviewCommentsHttpActionExecutor } = await import('./api');
+        const { createReviewCommentsActions } = await import('./actions');
+        const controller = new AbortController();
+        controller.abort();
+        const actions = createReviewCommentsActions({ execute: createReviewCommentsHttpActionExecutor() });
+        await expect(actions.list({ projectId: 'project-1', states: ['open'] }, { signal: controller.signal }))
+            .rejects.toMatchObject({ name: 'AbortError' });
+    });
+
     it('executes durable comment operations through their real Action HTTP owner', async () => {
         const row = comment();
         const split = splitReviewCommentV1(row);

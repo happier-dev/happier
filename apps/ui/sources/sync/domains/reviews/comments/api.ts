@@ -276,9 +276,12 @@ export async function executeReviewCommentProtocolAction<TActionId extends Revie
         execute: ReviewCommentUiActionExecutor;
         actionId: TActionId;
         input: unknown;
+        options?: Parameters<ReviewCommentUiActionExecutor>[2];
     }>,
 ): Promise<unknown> {
     const input = parseReviewCommentInput<unknown>(params.actionId, params.input);
-    const output = await params.execute(params.actionId, input);
+    const output = params.options
+        ? await params.execute(params.actionId, input, params.options)
+        : await params.execute(params.actionId, input);
     return parseReviewCommentOutput(params.actionId, output);
 }

@@ -9,10 +9,11 @@ export type CreateReviewCommentsActionsParams = Readonly<{
 
 export function createReviewCommentsActions(params: CreateReviewCommentsActionsParams) {
     return Object.freeze({
-        list: async (input: unknown) => await executeReviewCommentProtocolAction({
+        list: async (input: unknown, options?: Parameters<ReviewCommentUiActionExecutor>[2]) => await executeReviewCommentProtocolAction({
             execute: params.execute,
             actionId: 'reviews.comments.list',
             input,
+            options,
         }),
         create: async (input: unknown) => await executeReviewCommentProtocolAction({
             execute: params.execute,
