@@ -15,12 +15,12 @@ const manifest = { publisher: 'sample', name: 'palette', version: '1.0.0', contr
   { label: 'Night', uiTheme: 'vs-dark', path: './themes/night.json' },
   { label: 'Day', uiTheme: 'vs', path: './themes/day.json' },
 ] } };
-async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: boolean; absentLicense?: boolean; cycle?: boolean; missing?: boolean }> = {}) {
+async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: boolean; absentLicense?: boolean; cycle?: boolean; missing?: boolean; caseMismatch?: boolean }> = {}) {
   const writer = new ZipWriter(new Uint8ArrayWriter());
   for (const [path, text] of Object.entries({
     'extension/package.json': JSON.stringify(options.badIdentity ? { ...manifest, version: '2.0.0' } : manifest),
-    'extension/themes/base.json': JSON.stringify({ colors: { 'editor.foreground': '#eeeeee' } }),
-    'extension/themes/night.json': JSON.stringify({ include: options.cycle ? './night.json' : options.missing ? './missing.json' : './base.json', colors: { 'editor.background': '#111111' } }),
+    [options.caseMismatch ? 'extension/themes/Base.json' : 'extension/themes/base.json']: JSON.stringify({ colors: { 'editor.foreground': '#eeeeee' } }),
+    [options.caseMismatch ? 'extension/themes/Night.json' : 'extension/themes/night.json']: JSON.stringify({ include: options.cycle ? './night.json' : options.missing ? './missing.json' : './base.json', colors: { 'editor.background': '#111111' } }),
     'extension/themes/day.json': JSON.stringify({ include: './base.json', colors: { 'editor.background': '#ffffff' } }),
     'extension/unrelated.bin': 'x'.repeat(500000),
   })) await writer.add(path, new Uint8ArrayReader(new TextEncoder().encode(text)), { useWebWorkers: false });
@@ -64,6 +64,13 @@ describe('Open VSX theme acquisition through the registry host', () => {
     expect(acquired.op).toBe('read');
     if (acquired.op !== 'read' || acquired.item.payload.kind !== 'theme' || acquired.item.payload.state !== 'ready') return;
     expect(acquired.item.payload.themes.map(face => face.mode)).toEqual(['dark', 'light']);
+    expect(acquired.item.payload.themes[0]!.document.profile.overrides.dark).toMatchObject({ 'background.canvas': '#111111', 'text.primary': '#eeeeee' });
+    expect(f.calls).toHaveLength(4);
+  });
+  it('acquires a unique case-mismatched theme and its include without another fetch', async () => {
+    const f = await fixture({ caseMismatch: true });
+    const acquired = await f.host.readRegistryTheme({ sourceId: source.id, itemId: 'sample/palette', version: '1.0.0' });
+    expect(acquired.item.payload.themes).toHaveLength(2);
     expect(acquired.item.payload.themes[0]!.document.profile.overrides.dark).toMatchObject({ 'background.canvas': '#111111', 'text.primary': '#eeeeee' });
     expect(f.calls).toHaveLength(4);
   });

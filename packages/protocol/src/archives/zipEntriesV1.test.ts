@@ -2,6 +2,22 @@ import { expect, it } from 'vitest';
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from '@zip.js/zip.js';
 import { openZipEntriesV1 } from './zipEntriesV1.js';
 
+it('uses one case-insensitive match only when the exact entry is missing', async () => {
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  for (const [path, value] of [['Theme.json', 1], ['include/Base.json', 2], ['include/base.json', 3]] as const) {
+    await writer.add(path, new Uint8ArrayReader(new Uint8Array([value])), { useWebWorkers: false });
+  }
+  const archive = await openZipEntriesV1(await writer.close());
+  try {
+    const exact = await archive.read('Theme.json');
+    expect(await archive.read('theme.json')).toBe(exact);
+    expect(await archive.read('include/Base.json')).toEqual(new Uint8Array([2]));
+    expect(await archive.read('include/base.json')).toEqual(new Uint8Array([3]));
+    await expect(archive.read('include/BASE.json')).rejects.toThrow('zip_entry_unreadable');
+    await expect(archive.read('missing.json')).rejects.toThrow('zip_entry_unreadable');
+  } finally { await archive.close(); }
+});
+
 it('indexes unrelated compressed entries without decoding them and reuses selected bytes', async () => {
   const writer = new ZipWriter(new Uint8ArrayWriter());
   const selected = new Uint8Array([0, 255, 128, 65]);

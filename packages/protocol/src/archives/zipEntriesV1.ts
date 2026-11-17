@@ -30,7 +30,13 @@ export async function openZipEntriesV1(bytes: Uint8Array, signal?: AbortSignal) 
     return {
       entries,
       read(path: string): Promise<Uint8Array> {
-        const entry = byPath.get(path);
+        let entry = byPath.get(path);
+        if (entry === undefined) {
+          // Some manifests spell a file's case differently; never guess between entries.
+          const foldedPath = path.toLowerCase();
+          const matches = entries.filter(candidate => candidate.path.toLowerCase() === foldedPath);
+          entry = matches.length === 1 ? matches[0] : undefined;
+        }
         return entry ? entry.read() : Promise.reject(new Error('zip_entry_unreadable'));
       },
       close: () => reader.close(),

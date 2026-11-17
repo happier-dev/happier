@@ -122,6 +122,10 @@ projection, leaving no empty grid cell. Acquisition uses the near-viewport owner
 existing prebuild margin so discovery can finish before a card enters view;
 late exclusions reflow through the same list layout. Network/parse failures
 remain recoverable failures, never negative theme classifications.
+Selected ZIP paths prefer an exact entry. When it is absent, one unique
+case-insensitive match is accepted for theme files and includes; zero or
+multiple matches remain unreadable. All-entry skill ZIP imports retain their
+archive entries and original paths.
 
 Versioned `appearance.themes.store.get` inputs require matching unreleased 0.3
 UI and Protocol readers; older development readers reject the added version.
