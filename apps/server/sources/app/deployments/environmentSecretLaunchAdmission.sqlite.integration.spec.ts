@@ -789,9 +789,13 @@ describe('private installed Environment secret launch transport', () => {
                     readRequest('deployments.environments.get', `/v1/deployments/environments/${row.id}?serverId=${serverId}`),
                     readRequest('deployments.receipts.get', `/v1/deployments/receipts/${deploymentId}?serverId=${serverId}&environmentId=${row.id}`),
                     readRequest(actionId, `/v1/artifacts/${row.contentArtifactId}`),
+                    // The installed role admission host signs its metadata reads with the
+                    // admitted root (createDeploymentTargetRoleAdmissionHost), not a sibling.
+                    readRequest(actionId, `/v1/deployments/environments/${row.id}?serverId=${serverId}`),
+                    readRequest(actionId, `/v1/deployments/receipts/${deploymentId}?serverId=${serverId}&environmentId=${row.id}`),
                 ]) {
                     const response = await app.inject(read);
-                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.statusCode, `${read.url}: ${response.body}`).toBe(200);
                     expect(response.json()).toMatchObject(read.url.startsWith('/v1/artifacts/')
                         ? { id: row.contentArtifactId } : { ok: true });
                 }

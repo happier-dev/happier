@@ -2746,6 +2746,19 @@ function readDeploymentEnvironmentAccessPurpose(verified: VerifiedExternalAction
         && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, parsed.data)) ? parsed.data : null;
 }
 
+/**
+ * The declared read a finite deployment read admission spends. A provider-role admission host
+ * (createDeploymentTargetRoleAdmissionHost) signs its Environment and receipt metadata reads with the
+ * admitted root, as action.invoke's does; they spend the same declared-read scope as a sibling.
+ */
+function readDeclaredDeploymentReadActionId(verified: VerifiedSignedChildRequest,
+    proof: ExternalActionExecutionRequestProof): string | undefined {
+    if (verified.signedChildPurpose.sibling.deploymentRead) return verified.effectActionId;
+    if (verified.effectActionId !== verified.binding.actionId) return undefined;
+    return isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof) ? DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+        : isAccountActionHttpOperation(DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, proof) ? DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 : undefined;
+}
+
 /** Finite reads consume their signed scope; open logs retain current access admission. */
 async function readDeploymentNativeReadHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, exactTransportPurpose: boolean): Promise<Pick<VerifiedExternalActionExecutionRequest,
@@ -2762,12 +2775,7 @@ async function readDeploymentNativeReadHttpPurpose(verified: VerifiedSignedChild
         || verified.effectActionId === verified.binding.actionId)) return {};
     const access = openLogs ? readDeploymentEnvironmentAccessPurpose(verified, proof) : null;
     if (access) return access.environmentIds.length === 1 && access.environmentIds[0] === admission.environmentId ? {} : false;
-    // A provider-role admission host (createDeploymentTargetRoleAdmissionHost) signs its Environment and receipt
-    // metadata reads with the root, as action.invoke's does. They spend the same declared-read scope as a sibling.
-    const rootMetadataRead = verified.effectActionId !== verified.binding.actionId ? undefined
-        : isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof) ? DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
-            : isAccountActionHttpOperation(DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, proof) ? DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 : undefined;
-    const declaredRead = verified.signedChildPurpose.sibling.deploymentRead ? verified.effectActionId : rootMetadataRead;
+    const declaredRead = readDeclaredDeploymentReadActionId(verified, proof);
     if (declaredRead) {
         if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, declaredRead, proof)) return false;
         return openLogs ? {} : { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId,
@@ -2827,17 +2835,16 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             && (!('service' in admission) || materialization.service === admission.service)
             && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, body)) ? {} : false;
     }
-    if (verified.signedChildPurpose.sibling.deploymentRead) {
-        if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)) return false;
+    const declaredRead = readDeclaredDeploymentReadActionId(verified, proof);
+    if (declaredRead) {
+        if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, declaredRead, proof)) return false;
         return { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId,
-            ...(verified.effectActionId === 'deployments.receipts.get'
+            ...(declaredRead === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1
                 ? 'deploymentId' in admission ? { deploymentId: admission.deploymentId }
                     : 'databaseTarget' in admission && admission.databaseTarget.kind === 'deployment_service'
                         ? { deploymentId: admission.databaseTarget.deploymentId } : {} : {}),
             contentCustody: true } } };
     }
-    if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.effectActionId === admission.actionId
-        && await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(db, verified.binding, proof)) return {};
     if (verified.effectActionId !== admission.actionId || !isReadOnlyArtifactHttpPurpose(proof)) return false;
     if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
     const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
