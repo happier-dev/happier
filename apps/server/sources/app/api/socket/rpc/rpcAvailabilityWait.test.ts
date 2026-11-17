@@ -10,6 +10,27 @@ function createCandidate(id: string) {
 }
 
 describe("waitForRpcTargetAvailability", () => {
+    it('parks an unbounded observation without timers or repeated discovery, and releases it on cancellation', async () => {
+        vi.useFakeTimers();
+        const cancel = new AbortController();
+        const discoverTargets = vi.fn(async () => []);
+        const unsubscribe = vi.fn();
+        const pending = waitForRpcTargetAvailability({ graceMs: null, pollMs: 5,
+            signal: cancel.signal, discoverTargets, subscribeToAvailability: () => unsubscribe });
+        let settled = false;
+        void pending.then(() => { settled = true; });
+        try {
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(settled).toBe(false);
+            expect(vi.getTimerCount()).toBe(0);
+            expect(discoverTargets).toHaveBeenCalledTimes(1);
+        } finally {
+            cancel.abort();
+            await pending;
+        }
+        expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
     afterEach(() => {
         vi.useRealTimers();
     });

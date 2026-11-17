@@ -8,7 +8,7 @@ import { isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/mach
 import { type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { type AnyClientUpgradeRequiredV1 } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { isSocketIoAckTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { type SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import {
@@ -139,8 +139,32 @@ function rpcLogCorrelation(params: Readonly<{
     } : null;
 }
 
-export async function forwardRpcCall(params: Parameters<typeof executeRpcForwardCall>[0]): Promise<RpcForwardResult> {
-    const result = await executeRpcForwardCall(params);
+export async function forwardRpcCall(params: Omit<Parameters<typeof executeRpcForwardCall>[0], 'observationReconnectGraceMs'>): Promise<RpcForwardResult> {
+    // Only the retained Run observer is replayable. Effects keep their original
+    // disconnect/unknown contract; no inbound flag can opt a write into replay.
+    const observation = isRetainedRunObservation(params.method);
+    const timeoutMs = resolveRpcForwardTimeoutMs(params.timeoutMs);
+    const deadlineAtMs = timeoutMs === null ? null : Date.now() + timeoutMs;
+    let reconnecting = false;
+    let result: RpcForwardResult;
+    for (;;) {
+        const remainingMs = deadlineAtMs === null ? null : Math.max(0, deadlineAtMs - Date.now());
+        if (observation && remainingMs === 0) {
+            result = { ok: false, error: 'operation has timed out', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE };
+            break;
+        }
+        try {
+            result = await executeRpcForwardCall({ ...params, ...(observation ? {
+                timeoutMs: remainingMs,
+                ...(reconnecting ? { observationReconnectGraceMs: remainingMs } : {}),
+            } : {}) });
+            break;
+        } catch (error) {
+            if (!observation || params.cancellation?.signal.aborted
+                || !(error instanceof Error) || !('code' in error) || error.code !== 'SOCKET_DISCONNECTED') throw error;
+            reconnecting = true;
+        }
+    }
     const method = params.method.slice(params.method.indexOf(':') + 1);
     const failure = projectRpcFailureDiagnostic(params.method, result, 'rpc.forward');
     if (failure) {
@@ -153,6 +177,10 @@ export async function forwardRpcCall(params: Parameters<typeof executeRpcForward
     return result;
 }
 
+function isRetainedRunObservation(method: string): boolean {
+    return method.slice(method.indexOf(':') + 1) === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT;
+}
+
 async function executeRpcForwardCall(params: Readonly<{
     io: Server;
     targetUserId: string;
@@ -161,6 +189,8 @@ async function executeRpcForwardCall(params: Readonly<{
     /** Existing Machine registration carrying an unchanged Session-bound encrypted decision. */
     sessionDecisionTargetMethod?: string;
     timeoutMs?: number | null;
+    /** Internal replay discovery consumes the original observation's remaining lifetime. */
+    observationReconnectGraceMs?: number | null;
     authorization?: SocketRpcAuthorizationContext;
     /** Home-owned current Machine routing facts; never copied from inbound fields. */
     machineAdmission?: SocketRpcMachineAdmissionContextV1;
@@ -229,15 +259,16 @@ async function executeRpcForwardCall(params: Readonly<{
         && params.method === `${params.machineAdmission.machineId}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`
         ? undefined : params.callerSocketId;
     const selection = await waitForRpcTargetAvailability({
-        graceMs: resolveRpcMethodAvailabilityGraceMs(params.method),
+        graceMs: params.observationReconnectGraceMs !== undefined
+            ? params.observationReconnectGraceMs : resolveRpcMethodAvailabilityGraceMs(params.method),
         pollMs: resolveRpcMethodAvailabilityPollMs(),
         subscribeToAvailability: listener => subscribeToSocketRoomJoins(params.io, buildRpcMethodRoom({
             userId: params.targetUserId, method: params.sessionDecisionTargetMethod ?? params.method,
         }), listener),
-        signal: params.cancellation?.signal,
+        signal: params.cancellation?.signal ?? params.callerLifetime?.signal,
         excludedSocketId,
         answeringClient: params.answeringClient,
-        ...(params.callerLifetime ? { callerLifetime: params.callerLifetime } : {}),
+        ...(params.callerLifetime && params.observationReconnectGraceMs === undefined ? { callerLifetime: params.callerLifetime } : {}),
         discoverTargets: async () => {
             const discovery = await discoverRpcTargets({
                 io: params.io,
@@ -287,6 +318,10 @@ async function executeRpcForwardCall(params: Readonly<{
     }
 
     if (selection.type === "not-available") {
+        if (params.observationReconnectGraceMs !== undefined && params.observationReconnectGraceMs !== null
+            && !params.cancellation?.signal.aborted && Date.now() - callStartedAt >= params.observationReconnectGraceMs) {
+            return { ok: false, error: 'operation has timed out', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE };
+        }
         if (discoveryFailure) {
             recordRpcCallFailure(params.method, 'request_error');
             observeRpcCall({ method: params.method, durationMs: Date.now() - callStartedAt, result: 'error' });
@@ -396,7 +431,12 @@ async function executeRpcForwardCall(params: Readonly<{
         if (params.cancellation?.signal.aborted) {
             throw new Error("RPC request cancelled by caller");
         }
-        const timeoutMs = resolveRpcForwardTimeoutMs(params.timeoutMs);
+        const requestedTimeoutMs = resolveRpcForwardTimeoutMs(params.timeoutMs);
+        const timeoutMs = isRetainedRunObservation(params.method)
+            && requestedTimeoutMs !== null ? Math.max(0, requestedTimeoutMs - (Date.now() - callStartedAt)) : requestedTimeoutMs;
+        if (isRetainedRunObservation(params.method) && timeoutMs === 0) {
+            return { ok: false, error: 'operation has timed out', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE };
+        }
         const targetRequestId = params.cancellation?.targetRequestId
             ?? (params.createCallerInputAuthorization ? `rpc_${randomUUID()}` : undefined);
         const request: SocketRpcRequestPayload = {
@@ -549,6 +589,9 @@ async function executeRpcForwardCall(params: Readonly<{
                 : {}),
         };
     } catch (error) {
+        if (isRetainedRunObservation(params.method)
+            && !params.cancellation?.signal.aborted
+            && error instanceof Error && 'code' in error && error.code === 'SOCKET_DISCONNECTED') throw error;
         if (requestSubmitted) params.onSubmittedUnknown?.();
         recordRpcCallFailure(params.method, "request_error");
         observeRpcCall({

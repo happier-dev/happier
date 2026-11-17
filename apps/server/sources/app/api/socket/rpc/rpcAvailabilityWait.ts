@@ -3,7 +3,7 @@ import { selectRpcTarget } from "./rpcTargetSelection";
 import type { SocketRpcAnsweringClientV1 } from '@happier-dev/protocol/socketRpc';
 
 export async function waitForRpcTargetAvailability(params: Readonly<{
-    graceMs: number;
+    graceMs: number | null;
     /** Existing authority revalidation cadence, only for admitted caller lifetimes. */
     pollMs: number;
     subscribeToAvailability: (listener: () => void) => () => void;
@@ -32,16 +32,16 @@ export async function waitForRpcTargetAvailability(params: Readonly<{
             return selection;
         }
 
-        if (!params.callerLifetime && params.graceMs <= 0) {
+        if (!params.callerLifetime && params.graceMs !== null && params.graceMs <= 0) {
             return selection;
         }
 
-        const deadline = Date.now() + params.graceMs;
-        while (params.callerLifetime || Date.now() < deadline) {
+        const deadline = params.graceMs === null ? null : Date.now() + params.graceMs;
+        while (params.callerLifetime || deadline === null || Date.now() < deadline) {
             if (!await current()) return { type: 'not-available' };
             if (!changed) await new Promise<void>((resolve) => {
                 const settle = () => {
-                    clearTimeout(timer);
+                    if (timer !== null) clearTimeout(timer);
                     signal?.removeEventListener('abort', settle);
                     wake = undefined;
                     resolve();
@@ -49,13 +49,14 @@ export async function waitForRpcTargetAvailability(params: Readonly<{
                 // The finite grace is a deadline, not a discovery tick. Admitted lifetime
                 // currentness has no push source in its predicate contract; keep its existing
                 // cadence without using those checks to launch another cluster census.
-                const timer = setTimeout(settle, params.callerLifetime ? params.pollMs : Math.max(0, deadline - Date.now()));
+                const timer = !params.callerLifetime && deadline === null ? null
+                    : setTimeout(settle, params.callerLifetime ? params.pollMs : Math.min(2_147_483_647, Math.max(0, deadline! - Date.now())));
                 wake = settle;
                 signal?.addEventListener('abort', settle, { once: true });
                 if (signal?.aborted || changed) settle();
             });
             if (!await current()) return { type: 'not-available' };
-            if (!params.callerLifetime && Date.now() >= deadline) break;
+            if (!params.callerLifetime && deadline !== null && Date.now() >= deadline) break;
             if (!changed) continue;
             changed = false;
             selection = selectRpcTarget({

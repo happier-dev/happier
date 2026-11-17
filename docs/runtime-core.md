@@ -5025,6 +5025,14 @@ and the completion barrier below, rather than interpreting send success as outpu
 
 Terminal and combined terminal matches, including an initially terminal public snapshot, cross the host's completion barrier and then re-read the settled result. A terminal projection alone can precede transcript publication and retained completion custody, whose failure can change the Run's final status. Expiration during that barrier returns an observation timeout rather than matched completion. Passive state snapshots remain immediate projections, and an attention-only observation does not treat terminal state as an attention match.
 
+In 0.3 development, Home reissues `execution.run.wait` after its target socket
+disconnects, waiting on the existing method-registration push. The replacement
+observation reads the host's retained state, including completion during the
+gap. The original caller deadline includes discovery and offline time; a target
+that remains offline settles with the existing timeout result. An unbounded
+caller parks without a reconnect timer, and caller cancellation releases the
+wait. Effectful RPCs retain their disconnect/unknown result and are never replayed.
+
 The same observer accepts terminal, permission-attention, or combined conditions.
 Attention is a projection of outstanding requests for the live controller
 occurrence in the existing permission store, not a second permission ledger.
