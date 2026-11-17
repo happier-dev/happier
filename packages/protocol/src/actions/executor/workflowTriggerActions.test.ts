@@ -2324,6 +2324,25 @@ describe('workflow trigger Automation composition', () => {
     if (!result.ok) throw new Error('Expected selected attached facts');
     expectDeclaredActionOutput('workflow.trigger.list', result.result);
   });
+  it('hydrates one exact owned trigger set with its current revision and complete controls', async () => {
+    const { deps, rows, actions, executor } = fixture();
+    const first = await actions.add({ workflow, project, trigger });
+    const second = await actions.add({ workflow, project, trigger: { ...trigger, enabled: false } });
+    const row = rows.get(first.set.automationId)!;
+    rows.set('session-only', { ...row, id: 'session-only', scopeSessionId: 'session-one' });
+    const read = createWorkflowTriggerActions({ ...deps, automations: { ...deps.automations,
+      list: async () => { throw new Error('exact_set_must_not_list_definitions'); },
+      listDetails: async () => { throw new Error('exact_set_must_not_list_private_details'); } } });
+    const result = await executor(read).execute('workflow.trigger.list', { automationId: first.set.automationId }, ownCaller);
+    expect(result).toEqual({ ok: true, result: { sets: [second.set] } });
+    if (!result.ok) throw new Error('Expected the exact owned set');
+    expectDeclaredActionOutput('workflow.trigger.list', result.result);
+    expect(second.set.triggers.map(item => item.id)).toEqual([first.triggerId, second.triggerId]);
+    for (const automationId of ['another-account-set', 'session-only']) {
+      expect(await executor(read).execute('workflow.trigger.list', { automationId }, ownCaller))
+        .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    }
+  });
   it('lists saved check choices through the Action boundary without enrolling new probes', async () => {
     const f = fixture();
     const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations,

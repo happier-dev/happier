@@ -2109,6 +2109,8 @@ export type WorkflowsActionInputById = {
         automationId: string;
         triggerId: string;
     } | {
+        automationId: string;
+    } | {
         backupFreshness: {
             automationId: string;
         };

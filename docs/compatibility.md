@@ -1511,6 +1511,12 @@ uses the existing structural Action array: PostgreSQL has phase-specific GIN
 indexes added by migration; SQLite and MySQL use native JSON membership without
 an equivalent array-membership index.
 
+The exact-set selection `{ automationId }` opens one owned Automation through the
+existing private reader and returns its complete current Trigger set for editing.
+It does not widen shared attachment access, cross Session scope, list other
+definitions or perform legacy conversion; `{ automationId, review: true }`
+retains its separate present-user conversion contract.
+
 The saved-check-only `workflow.subjects.list` Action follows the same matching
 development-reader contract. It adds no persisted format or probe enrollment.
 

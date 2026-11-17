@@ -7,6 +7,11 @@ import { AutomationTriggerListItemSchema } from '../../automations/automationTri
 import { AutomationDeleteResponseSchema } from '../../automations/automationApiV3.js';
 
 describe('workflow trigger Action boundary', () => {
+  it('accepts one exact owned set without mixing it with an inventory', () => {
+    const schema = WorkflowActionInputSchemasV1['workflow.trigger.list'];
+    expect(schema.parse({ automationId: 'selected-set' })).toEqual({ automationId: 'selected-set' });
+    expect(schema.safeParse({ automationId: 'selected-set', scope: 'account_all' }).success).toBe(false);
+  });
   it('selects one Action phase without accepting a mixed inventory or resource selection', () => {
     const schema = WorkflowActionInputSchemasV1[WorkflowActionIdV1Schema.parse('workflow.trigger.list')];
     const request = { actionId: 'session.archive', phase: 'after', limit: 1, cursor: 'trigger-one' };

@@ -194,6 +194,7 @@ export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ lifetimeSession: z.pick(WorkflowTriggerLifetimeSessionV1Schema, { sessionId: true }) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema }),
+  z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema) }),
 ]));
 const WorkflowTriggerLifetimeSessionV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: asProtocolZod(SessionIdSchema),

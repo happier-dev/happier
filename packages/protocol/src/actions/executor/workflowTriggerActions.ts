@@ -1065,6 +1065,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (!row.templateCiphertext || !await deps.requiresLegacyReview?.(row) || !deps.convertLegacy) refuseInput('legacy_conversion_review_invalid');
         return { sets: [await projection(row, await deps.convertLegacy(row, caller))] };
       }
+      if ('automationId' in input) {
+        return { sets: [await projection(await read(input.automationId))] };
+      }
       if ('scope' in input && input.scope === 'account_source_unavailable') {
         const summaries = await automationRows(deps.automations.list, { scope: 'account_saved' });
         const sources = await Promise.allSettled([...new Set(summaries.flatMap(row => row.workflowDefinitionId ? [row.workflowDefinitionId] : []))].map(async ref => {
