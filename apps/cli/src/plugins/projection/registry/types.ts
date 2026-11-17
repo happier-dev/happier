@@ -30,6 +30,7 @@ import type {
   PluginWorkflowContributionV1,
   PluginInputTypeContributionV1,
   PluginAtmospherePictureContributionV1,
+  PluginThemeContributionV1,
   PluginDragSourceContributionV1,
   PluginDropTargetContributionV1,
   PluginSessionHeaderActionDescriptorV1,
@@ -128,6 +129,7 @@ export type ResolvedWorkflowContribution = ResolvedTargetUiContribution<PluginWo
 export type ResolvedBotTemplateContribution = ResolvedTargetUiContribution<PluginBotTemplateContributionV1>;
 export type ResolvedInputTypeContribution = ResolvedTargetUiContribution<PluginInputTypeContributionV1>;
 export type ResolvedAtmospherePictureContribution = ResolvedTargetUiContribution<PluginAtmospherePictureContributionV1>;
+export type ResolvedThemeContribution = ResolvedTargetUiContribution<PluginThemeContributionV1> & Readonly<{ pluginName?: string }>;
 export type ResolvedRegistrySourceContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginRegistrySourceContributionV1> & Readonly<{
     pluginRootPath: string;
 }>;
@@ -861,6 +863,7 @@ export type ResolvedContributionInputs = Readonly<{
     botTemplates?: readonly ResolvedBotTemplateContribution[];
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
+    themes?: readonly ResolvedThemeContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
     backupDestinations?: readonly ResolvedBackupDestinationContribution[];
     machineRoles?: readonly ResolvedMachineRoleContribution[];
@@ -940,6 +943,7 @@ export type ResolvedContributionRegistry = Readonly<{
     botTemplates?: readonly ResolvedBotTemplateContribution[];
     inputTypes?: readonly ResolvedInputTypeContribution[];
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
+    themes?: readonly ResolvedThemeContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
     backupDestinations: readonly ResolvedBackupDestinationContribution[];
     machineRoles?: readonly ResolvedMachineRoleContribution[];

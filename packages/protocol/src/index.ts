@@ -9911,6 +9911,7 @@ export * from './workspaces/projectSetup/projectManifestDocument.js';
 export { parseOauthAuthorizationResponse, type OauthAuthorizationResponse } from './connect/oauthAuthorizationResponse.js';
 
 export { PluginAtmospherePictureContributionV1Schema, type PluginAtmospherePictureContributionV1 } from './plugins/contributions/atmospherePictures.js';
+export { PluginThemeContributionV1Schema, type PluginThemeContributionV1 } from './plugins/contributions/themes.js';
 export { PluginRegistrySourceContributionV1Schema, type PluginRegistrySourceContributionV1 } from './plugins/contributions/registrySources.js';
 export { PluginSkillContributionV1Schema, projectPluginSkillDeclarationV1, type PluginSkillContributionV1 } from './plugins/contributions/skills.js';
 export { PluginProjectedSkillEntryV1Schema, type PluginProjectedSkillEntryV1 } from './daemon/contributionRegistryProjection.js';

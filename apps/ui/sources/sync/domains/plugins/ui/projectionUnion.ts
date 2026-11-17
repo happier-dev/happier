@@ -21,6 +21,7 @@ import {
     type PluginUiResourceProjection,
     type PluginUiInputTypeProjection,
     type PluginUiAtmospherePictureProjection,
+    type PluginUiThemeProjection,
     type PluginUiRegistrySourceProjection,
     type PluginUiSubjectKindProjection,
     type PluginUiStoreKindProjection,
@@ -322,6 +323,7 @@ function deriveInstalledPluginUiProjection(
         composerReferencesById: merge(model => model.composerReferencesById),
         voiceProvidersById: merge(model => model.voiceProvidersById),
         atmospherePicturesById: merge(model => model.atmospherePicturesById),
+        themesById: merge(model => model.themesById),
         registrySourcesById: merge(model => model.registrySourcesById),
         subjectKindsById: merge(model => model.subjectKindsById),
         storeKindsById: merge(model => model.storeKindsById),
@@ -1863,6 +1865,7 @@ function derivePluginUiProjectionUnion(
     const resourcesById: Record<string, PluginUiResourceProjection> = {};
     const inputTypesById: Record<string, PluginUiInputTypeProjection> = {};
     const atmospherePicturesById: Record<string, PluginUiAtmospherePictureProjection> = {};
+    const themesById: Record<string, PluginUiThemeProjection> = {};
     const registrySourcesById: Record<string, PluginUiRegistrySourceProjection> = {};
     const subjectKindsById: Record<string, PluginUiSubjectKindProjection> = {};
     const storeKindsById: Record<string, PluginUiStoreKindProjection> = {};
@@ -2072,6 +2075,14 @@ function derivePluginUiProjectionUnion(
                 : null;
             if (origin) publishFirstAdmitted(member, atmospherePicturesById, id, entry, origin);
         }
+        for (const [id, entry] of families.themesById) {
+            const origin = entryHasCurrentOccurrence(model, entry)
+                && (readPluginUiProjectionEntryExecutionOrigin(entry) === null
+                    || selectedOriginOwnsEntry({ entry, machineId: member.machineId, selectedOriginsByPluginId }))
+                ? originFor(entry)
+                : null;
+            if (origin) publishFirstAdmitted(member, themesById, id, entry, origin);
+        }
         // A package catalog fact has no contribution-level origin stamp of its
         // own. It is therefore visible in an app union only after one of that
         // same plugin's actual declarations were observed for this member —
@@ -2102,7 +2113,7 @@ function derivePluginUiProjectionUnion(
     // keep their reported supplies for Administration's origin picker.
     const publishedMaps: readonly Record<string, unknown>[] = [translationsByPluginId, sessionHeaderActionsById, searchProvidersById,
         hostedWebById, reactNativeBundlesById, surfacePlacementsById, settingsGroupsById, settingsPagesById, actionsById,
-        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, registrySourcesById, subjectKindsById, storeKindsById, backupDestinationsById, machineRecipesById, machineSetupPresetsById, notificationCategoriesById, skillsById, listExtensionsById, unknownEntriesById, inputTypesById,
+        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, themesById, registrySourcesById, subjectKindsById, storeKindsById, backupDestinationsById, machineRecipesById, machineSetupPresetsById, notificationCategoriesById, skillsById, listExtensionsById, unknownEntriesById, inputTypesById,
         composerControlsById, composerRegionsById, composerReferencesById, resourcesById];
     for (const [index, map] of publishedMaps.entries()) {
         for (const [key, entry] of Object.entries(map)) {
@@ -2134,6 +2145,7 @@ function derivePluginUiProjectionUnion(
         + Object.keys(resourcesById).length
         + Object.keys(inputTypesById).length
         + Object.keys(atmospherePicturesById).length
+        + Object.keys(themesById).length
         + Object.keys(registrySourcesById).length
         + Object.keys(subjectKindsById).length
         + Object.keys(storeKindsById).length
@@ -2194,6 +2206,7 @@ function derivePluginUiProjectionUnion(
         connectedAccountDescriptorsById: EMPTY_PLUGIN_UI_PROJECTION.connectedAccountDescriptorsById,
         inputTypesById: Object.freeze(inputTypesById),
         atmospherePicturesById: Object.freeze(atmospherePicturesById),
+        themesById: Object.freeze(themesById),
         registrySourcesById: Object.freeze(registrySourcesById),
         subjectKindsById: Object.freeze(subjectKindsById),
         storeKindsById: Object.freeze(storeKindsById),

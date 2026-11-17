@@ -54,6 +54,7 @@ import { workflowsProjectionFamily } from '../workflows';
 import { inputTypesProjectionFamily } from '../inputTypes';
 import { botTemplatesProjectionFamily } from '../botTemplates';
 import { atmospherePicturesProjectionFamily } from '../atmospherePictures';
+import { themesProjectionFamily } from '../themes';
 import { registrySourcesProjectionFamily } from '../registrySources';
 import { backupDestinationsProjectionFamily } from '../backupDestinations';
 import { deploymentTargetsProjectionFamily } from '../deploymentTargets';
@@ -439,6 +440,9 @@ function collectPluginContributionMetadata(
     }
     for (const picture of registry.atmospherePictures ?? []) {
         upsert(picture);
+    }
+    for (const theme of registry.themes ?? []) {
+        upsert(theme);
     }
     for (const source of registry.registrySources ?? []) {
         upsert(source);
@@ -1141,6 +1145,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         botTemplatesProjectionFamily,
         inputTypesProjectionFamily,
         atmospherePicturesProjectionFamily,
+        themesProjectionFamily,
         registrySourcesProjectionFamily,
         backupDestinationsProjectionFamily,
         deploymentTargetsProjectionFamily,

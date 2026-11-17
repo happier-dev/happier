@@ -20,6 +20,7 @@ import type {
   PluginWorkflowContributionV1,
   PluginInputTypeContributionV1,
   PluginAtmospherePictureContributionV1,
+  PluginThemeContributionV1,
   PluginRegistrySourceContributionV1,
   PluginSkillContributionV1,
   PluginDragSourceContributionV1,
@@ -189,6 +190,7 @@ export type PluginContributionRegistry = Readonly<{
   botTemplates: readonly PluginOwnedContribution<PluginBotTemplateContributionV1>[];
   inputTypes: readonly PluginOwnedContribution<PluginInputTypeContributionV1>[];
   atmospherePictures: readonly PluginOwnedContribution<PluginAtmospherePictureContributionV1>[];
+  themes: readonly PluginOwnedContribution<PluginThemeContributionV1>[];
   registrySources: readonly PluginOwnedContribution<PluginRegistrySourceContributionV1>[];
   backupDestinations: readonly PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[];
   machineRoles: readonly PluginOwnedContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>[];
@@ -420,6 +422,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
   const botTemplates: PluginOwnedContribution<PluginBotTemplateContributionV1>[] = [];
   const inputTypes: PluginOwnedContribution<PluginInputTypeContributionV1>[] = [];
   const atmospherePictures: PluginOwnedContribution<PluginAtmospherePictureContributionV1>[] = [];
+  const themes: PluginOwnedContribution<PluginThemeContributionV1>[] = [];
   const registrySources: PluginOwnedContribution<PluginRegistrySourceContributionV1>[] = [];
   const backupDestinations: PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[] = [];
   const machineRoles: PluginOwnedContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>[] = [];
@@ -1205,6 +1208,15 @@ export function projectPluginContributionRegistry(params: Readonly<{
         sourceSpec: plugin.sourceSpec, definition,
       });
     }
+    for (const definition of readSemanticDefinitions<PluginThemeContributionV1>('themes')) {
+      themes.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
 
     for (const definition of readSemanticDefinitions<AccessProviderContributionV1>('accessProviders')) {
       accessProviders.push({
@@ -1327,6 +1339,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     botTemplates: Object.freeze(botTemplates),
     inputTypes: Object.freeze(inputTypes),
     atmospherePictures: Object.freeze(atmospherePictures),
+    themes: Object.freeze(themes),
     registrySources: Object.freeze(registrySources),
     backupDestinations: Object.freeze(backupDestinations),
     machineRoles: Object.freeze(machineRoles),

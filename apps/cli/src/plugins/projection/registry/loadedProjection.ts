@@ -1,3 +1,4 @@
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { loadInstalledPlugins } from '../../discovery/load/installed';
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import type { PluginContributionRegistry } from './normalize/registry';
@@ -23,6 +24,7 @@ import type {
     ResolvedInputTypeContribution,
     ResolvedBotTemplateContribution,
     ResolvedAtmospherePictureContribution,
+    ResolvedThemeContribution,
     ResolvedRegistrySourceContribution,
     ResolvedLanguageServerContribution,
     ResolvedSkillContribution,
@@ -293,6 +295,7 @@ export function projectLoadedPluginRegistry(
     const botTemplateCandidates: ResolvedBotTemplateContribution[] = [];
     const inputTypeCandidates: ResolvedInputTypeContribution[] = [];
     const atmospherePictureCandidates: ResolvedAtmospherePictureContribution[] = [];
+    const themeCandidates: ResolvedThemeContribution[] = [];
     const registrySourceCandidates: ResolvedRegistrySourceContribution[] = [];
     const backupDestinationCandidates: import('./types').ResolvedBackupDestinationContribution[] = [];
     const machineRoleCandidates: import('./types').ResolvedMachineRoleContribution[] = [];
@@ -944,6 +947,14 @@ export function projectLoadedPluginRegistry(
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
+    const pluginNames = new Map(params.loadResult.loadedPlugins.map(plugin => [plugin.pluginId,
+        resolvePluginLocalizedStringV2Text(plugin.manifest.displayName)]));
+    for (const contribution of pluginRegistry.themes) {
+        themeCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            pluginName: pluginNames.get(contribution.pluginId),
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
 
     for (const contribution of pluginRegistry.accessProviders) {
         accessProviderCandidates.push({
@@ -1085,6 +1096,7 @@ export function projectLoadedPluginRegistry(
         botTemplates: Object.freeze(botTemplateCandidates),
         inputTypes: Object.freeze(inputTypeCandidates),
         atmospherePictures: Object.freeze(atmospherePictureCandidates),
+        themes: Object.freeze(themeCandidates),
         registrySources: Object.freeze(registrySourceCandidates),
         backupDestinations: Object.freeze(backupDestinationCandidates),
         machineRoles: Object.freeze(machineRoleCandidates),

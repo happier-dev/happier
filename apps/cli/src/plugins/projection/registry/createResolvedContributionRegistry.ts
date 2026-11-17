@@ -241,6 +241,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
     const atmospherePictures = Object.freeze([...(inputs.atmospherePictures ?? [])].sort((left, right) =>
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
+    const themes = Object.freeze([...(inputs.themes ?? [])].sort((left, right) =>
+        buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))));
     const botTemplates = freezeQualifiedContributions(inputs.botTemplates ?? []);
     const registrySources = freezeQualifiedContributions(inputs.registrySources ?? []);
     const backupDestinations = freezeQualifiedContributions(inputs.backupDestinations ?? []);
@@ -528,6 +530,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         botTemplates,
         inputTypes,
         atmospherePictures,
+        themes,
         registrySources,
         backupDestinations,
         machineRoles,
@@ -1076,6 +1079,7 @@ export function createMergedContributionRegistry(
         botTemplates: Object.freeze([...(builtIn.botTemplates ?? []), ...(plugin.botTemplates ?? [])]),
         inputTypes: Object.freeze([...(builtIn.inputTypes ?? []), ...(plugin.inputTypes ?? [])]),
         atmospherePictures: Object.freeze([...(builtIn.atmospherePictures ?? []), ...(plugin.atmospherePictures ?? [])]),
+        themes: Object.freeze([...(builtIn.themes ?? []), ...(plugin.themes ?? [])]),
         registrySources: Object.freeze([...(builtIn.registrySources ?? []), ...(plugin.registrySources ?? [])]),
         backupDestinations: Object.freeze([...(builtIn.backupDestinations ?? []), ...(plugin.backupDestinations ?? [])]),
         machineRoles: Object.freeze([...(builtIn.machineRoles ?? []), ...(plugin.machineRoles ?? [])]),
