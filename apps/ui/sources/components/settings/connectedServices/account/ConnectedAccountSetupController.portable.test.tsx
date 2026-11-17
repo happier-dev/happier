@@ -143,6 +143,11 @@ if (!coderDescriptor?.authentication.account) throw new Error('Missing Coder Acc
 await prepareAuthenticationInventory(packaged, { manifest: CODER_MANIFEST, target: coderDescriptor.authentication.account,
     projectPath: 'packages/plugins/machine-coder', entryPath: 'packages/plugins/machine-coder/src/account.ts',
     packageName: '@happier-dev/plugins-machine-coder' });
+const { plugin: vercelDeploymentPlugin } = await import('../../../../../../../packages/plugins/deploy-vercel/src/manifest');
+await prepareAuthenticationInventory(packaged, { manifest: vercelDeploymentPlugin.manifest,
+    target: { artifactId: 'account-runtime', exportName: 'activateAccount' },
+    projectPath: 'packages/plugins/deploy-vercel', entryPath: 'packages/plugins/deploy-vercel/src/account.ts',
+    packageName: '@happier-dev/plugins-deploy-vercel' });
 
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 // react-native aliases this module; bypass the renderer's module mock to reach
@@ -205,6 +210,8 @@ async function restorePortableFixture(requestedService = service, homeClient = f
         accountEncryptionMode: 'plain' });
     const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId }, connectedServices: {
         ...createRootLayoutFeaturesResponse().capabilities.connectedServices,
+        // Match the current Home API exercised by these authentication flows.
+        qualifiedAccounts: { protocolVersion: 4 },
         ...(homeClient ? { publicOAuthClients: [{ service: requestedService, clientId: 'home-cloudflare-client',
             scopesByMode: { oauth: ['account:read'] } }] } : {}),
     } }, features: {
@@ -907,13 +914,29 @@ it('shows a fresh Connect as in progress while the Account description loads, th
 }));
 
 it.each([
-    { service: coder, fieldId: 'endpoint', value: 'https://coder-fixture.test' },
-    { service: vercel, fieldId: 'teamId', value: 'team_fixture' },
-])('connects $service.pluginId with one fresh inline submission', async ({ service, fieldId, value }) => {
+    { service: coder, fieldId: 'endpoint', value: 'https://coder-fixture.test', fromDeployment: false },
+    { service: vercel, fieldId: 'teamId', value: 'team_fixture', fromDeployment: true },
+])('connects $service.pluginId with one fresh inline submission', async ({ service, fieldId, value, fromDeployment }) => {
     const fixture = await restorePortableFixture(service);
     const onConnected = vi.fn();
-    const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={service} sheet onCancel={() => {}} onConnected={onConnected} />);
+    const { ModalProvider } = await import('@/modal');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(fixture.serverId);
+    const screen = await renderScreen(fromDeployment
+        ? <InjectedAuthProvider credentials={fixture.credentials}><AppShellPluginUiProjectionProvider><ModalProvider>{null}</ModalProvider></AppShellPluginUiProjectionProvider></InjectedAuthProvider>
+        : <PortableSetup credentials={fixture.credentials} service={service} sheet onCancel={() => {}} onConnected={onConnected} />);
     try {
+        if (fromDeployment) {
+            const { showDeploymentPlatformTargetSheet } = await import('@/components/projects/deployments/DeploymentPlatformTargetSheet');
+            const { createDeploymentActions } = await import('@/components/projects/deployments/deploymentActions');
+            await act(async () => showDeploymentPlatformTargetSheet({ name: 'First Vercel app',
+                environment: { id: 'fresh-environment', revision: 1, projectSourceId: '' },
+                ownerAccountId: 'portable-controller', lifetime: account.accountLifetime,
+                actions: createDeploymentActions(account.accountLifetime, ''), onApproval: () => {},
+                initialTargetKey: 'happier.deploy.vercel/runtime' }));
+            await vi.waitFor(() => expect(screen.findHostByTestId('project-deployments.platform.connect.add'), screen.getTextContent()).not.toBeNull());
+            await screen.pressByTestIdAsync('project-deployments.platform.connect.add');
+        }
         await vi.waitFor(() => expect(screen.findHostByTestId(`connected-account-configuration:${fieldId}`), screen.getTextContent()).not.toBeNull());
         await act(async () => {
             screen.changeTextByTestId(`connected-account-configuration:${fieldId}`, value);
@@ -921,15 +944,24 @@ it.each([
         });
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:submit')!.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('connected-account-manual:submit');
-        await vi.waitFor(() => expect(onConnected, screen.getTextContent()).toHaveBeenCalledOnce(), { timeout: 10_000 });
-        expect(fixture.promotions).toHaveLength(1);
+        await vi.waitFor(() => expect(fixture.promotions, screen.getTextContent()).toHaveLength(1), { timeout: 10_000 });
         const credential = fixture.promotions[0]!.connectedAccountCredentialMutation;
         if (!credential || !('initialConfiguration' in credential)) throw new Error('Missing initial Account configuration');
         expect(credential.initialConfiguration).toMatchObject({ expectedConfigurationRevision: null,
             replacementContentEnvelope: { t: 'plain', v: { values: { [fieldId]: value } } } });
         expect(fixture.creates).toBe(1);
         expect(fixture.machineRpcs).toBe(0);
-    } finally { await screen.unmount(); }
+        if (fromDeployment) {
+            const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
+            await vi.waitFor(() => expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)
+                .map(node => node.props.value), screen.getTextContent()).toContainEqual({ kind: 'account', account: credential.ref }));
+            expect(screen.findHostByTestId('project-deployments.platform.connect')).toBeNull();
+            expect(screen.findHostByTestId('project-deployments.platform.check')).not.toBeNull();
+            expect(fixture.vendorRequests).toContain('https://api.vercel.com/v2/teams/team_fixture');
+        } else {
+            await vi.waitFor(() => expect(onConnected, screen.getTextContent()).toHaveBeenCalledOnce());
+        }
+    } finally { await screen.unmount(); account.dispose(); }
 });
 
 
