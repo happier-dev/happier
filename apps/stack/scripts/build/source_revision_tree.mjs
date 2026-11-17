@@ -246,7 +246,11 @@ async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDi
     if (existsSync(join(dir, BASE_MARKER))) return { dir, identity };
     const staging = `${dir}.tmp-${randomUUID()}`;
     try {
-      const snapshotted = await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (_env, publication) => {
+      // This is an optional snapshot of an already published installation, not
+      // a request to install the moving checkout's dependency inputs. A dirty
+      // manifest must never trigger its remote refresh while preparing a revision.
+      const snapshotEnv = { ...env, HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1' };
+      const snapshotted = await withBuildInputDependencies({ sourceDir: repoDir, env: snapshotEnv, signal }, async (_env, publication) => {
         if (publication.state.identity !== identity) return false;
         for (const workspaceDir of ['', ...workspaceDirs]) {
           const installed = await realpath(join(repoDir, workspaceDir, 'node_modules')).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));

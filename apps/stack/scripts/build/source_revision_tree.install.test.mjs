@@ -121,3 +121,15 @@ test('a base reuses the checkout installation when it is exactly the revision\'s
   const baseDep = await realpath(join(baseDir, 'apps/server/node_modules/fixture-dep/index.js'));
   assert.equal((await lstat(baseDep)).ino, (await lstat(checkoutDep)).ino, 'the snapshot shares the checkout\'s installed bytes instead of installing again');
 });
+
+test('remote revision preparation never refreshes a dirty checkout manifest against its committed lockfile', async t => {
+  const context = await createPnpmRevisionFixture(t);
+  await publishCheckoutInstall(context);
+  await context.write('apps/server/package.json', context.serverManifest('dep-two'));
+  context.env.HAPPIER_DEV_TARGET_EXECUTION = '1';
+  const { baseDir } = await prepareHeadBase(context, 'dirty-manifest');
+  assert.equal(loadFixtureDep(baseDir), 'committed');
+  assert.equal(loadFixtureDep(context.repoDir), 'committed', 'revision preparation leaves the live installation alone');
+  assert.equal(JSON.parse(await readFile(join(baseDir, 'apps/server/package.json'), 'utf8')).dependencies['fixture-dep'],
+    'file:../../vendor/dep-one');
+});
