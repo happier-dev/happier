@@ -247,6 +247,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     executeSourceReadAction?: import('@/scm/hostingProviders/resolveRefForHost').ExecuteScmSourceReadAction;
     /** The Machine's SCM backends for reviewed checkout work; absent uses the installed runtime. */
     scmRegistry?: import('@/scm/registry').ScmBackendRegistry;
+    resolveRepositoryRemovalRuntime?: import('./admittedCheckoutRepositoryFiles').ResolveRepositoryCheckoutRemovalRuntime;
     teardownBoundary?: DeploymentTeardownBoundary;
     /** Re-enters the incumbent executor's policy/review path, not another operation runner. */
     executePreparedPendingDeploy?(input: DeploymentDeployInputV1, context: ActionExecutorContext):
@@ -1068,7 +1069,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         readSource: publicationSources.projectSourcesRead! };
     // Every repository effect of a reviewed composition stays inside its admitted checkout.
     const repositoryFiles = (cwd: string, context: ActionExecutorContext): RepositoryFilesPullRequestHost =>
-        createAdmittedCheckoutRepositoryFiles({ root: cwd, context, ...(host.scmRegistry ? { registry: host.scmRegistry } : {}) });
+        createAdmittedCheckoutRepositoryFiles({ root: cwd, context, ...(host.scmRegistry ? { registry: host.scmRegistry } : {}),
+            resolveRemovalRuntime: host.resolveRepositoryRemovalRuntime });
     const moveToRepository = createDeploymentMoveToRepositoryForHost({ ...host, assertCurrent, requireDefinitionManage,
         ...sharedRepositoryWorkspace, repositoryFiles,
         // A definition Move consumes only Environment content; Home admits no target-link reads for it.

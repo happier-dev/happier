@@ -1955,6 +1955,26 @@ cannot establish readiness, including unresolved plugin-native setup, it returns
 typed `unknown`. Native evaluation belongs to the admitted execution lifetime after
 setup consent; inspection neither evaluates setup nor grants consent.
 
+Development-source SCM removal, PR temporary-worktree disposal, Storage checkout deletion/retirement and committed
+Sync-copy retirement consume
+`projectCheckoutRemoval.ts` at their existing filesystem effect boundary. The
+owner captures the accepted Account workspace and Project association before
+bytes or references move, and runs `projects.prepare` with `phase:'teardown'`
+under the containing removal operation's review, Stop and output lifetime.
+Cleanup failure preserves the checkout; the removal's explicit `skipCleanup` choice
+removes it without executing cleanup. Storage's final Trash collection and
+restoration do not repeat teardown. Successful removal publishes the existing
+Machine Service observation after filesystem and reference effects settle,
+using the captured original root and identity; an unassociated folder has null
+workspace and Project fields. Private managed Session deletion carries its original
+requester and removal operation to the directory owner while the Session exists;
+cleanup and the exact native removal closure are prepared before Home deletion.
+After Home confirms deletion, that retained closure removes the directory and
+settles the fact. A Home refusal preserves the directory. The post-deletion listener
+supplies no executable authority. Remote Sync retirement carries the same live
+operation through its admitted target request, so target cleanup review, output
+and Stop remain part of the source retirement operation.
+
 `projectFiniteAction.ts` owns `projects.prepare`, `projects.script.run` and
 `projects.compute.exec` intake through the shared Action policy and authenticated
 requester/currentness boundary. Ad-hoc argv and cwd retain their exact semantic

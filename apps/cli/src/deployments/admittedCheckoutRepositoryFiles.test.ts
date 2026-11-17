@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
 import {
   createLocalScmRepositoryFixture,
   runScmExecutable,
@@ -68,6 +69,21 @@ it('runs SCM and file effects inside the reviewed checkout', async () => {
   expect(await readFile(join(root, 'deploy/compose.yaml'), 'utf8')).toBe(
     'changed\n',
   );
+});
+
+it('preserves a PR temporary worktree when original cleanup custody is unavailable', async () => {
+  runScmExecutable(root, 'git', ['config', 'user.name', 'Project test']);
+  runScmExecutable(root, 'git', ['config', 'user.email', 'project@example.test']);
+  await writeFile(join(root, 'tracked.txt'), 'original\n');
+  runScmExecutable(root, 'git', ['add', 'tracked.txt']);
+  runScmExecutable(root, 'git', ['commit', '--quiet', '-m', 'Initial']);
+  const worktreePath = join(root, 'temporary-pr');
+  runScmExecutable(root, 'git', ['worktree', 'add', '--quiet', '-b', 'temporary-pr', worktreePath]);
+  const files = createAdmittedCheckoutRepositoryFiles({ root, context: own(), registry });
+  await expect(files.executeScm('scm.worktree.remove', { cwd: root, worktreePath, confirmed: true,
+    authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN })).rejects.toMatchObject({ code: 'project_setup_operation_unavailable' });
+  expect(await readFile(join(worktreePath, 'tracked.txt'), 'utf8')).toBe('original\n');
+  expect(existsSync(join(root, '.git'))).toBe(true);
 });
 
 it.each([

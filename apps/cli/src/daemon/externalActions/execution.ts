@@ -597,6 +597,11 @@ resolveServerFeaturesSnapshot?: () =>
         resolveRequesterIdentity: async context => apiMachineForSessions
           ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)
           : { kind: 'unknown', reason: 'requester_authority_unavailable' },
+        resolveRepositoryRemovalRuntime: async context => {
+          const ingress = resolveRequesterIngress(context);
+          const runtime = ingress && apiMachineForSessions ? await apiMachineForSessions.resolveProjectFiniteRuntime(ingress) : null;
+          return runtime && ingress ? { runtime, ingress } : null;
+        },
         acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
         executeSourceReadAction: (action, input, context) => executeScmSourceReadForRequester(executor, action, input, context),
         executePreparedPendingDeploy: (input, context) => executor.execute('deployments.deploy', input, context),

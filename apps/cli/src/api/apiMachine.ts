@@ -3224,6 +3224,7 @@ export class ApiMachineClient {
             },
             resolveRequesterIdentity: context => this.resolveDeploymentSourceRequesterIdentity(context),
             resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
+            resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
             resolveRequesterRuntime: async ingress => {
                 if (!this.machineRuntimeInstallationId) return null;
                 return resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: this.machineRuntimeServerId,

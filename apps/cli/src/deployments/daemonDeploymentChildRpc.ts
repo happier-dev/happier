@@ -26,6 +26,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
     executeManagedSnapshot?: import('./daemonDeploymentNativeSnapshot').ExecuteManagedNativeSnapshot;
     resolveRequesterIdentity: import('./readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
     resolveRequesterRuntime(ingress: RpcHandlerContext): Promise<AdmittedRequesterAccountReadRuntime | null>;
+    resolveProjectRuntime?: (ingress: RpcHandlerContext) => Promise<import('@/workspaces/projectSetup/projectFiniteAction').ProjectFiniteActionRuntime | null>;
     resolveInstalledRuntime(signal: AbortSignal, accountId: string): Promise<InstalledRuntime | null>;
     acquirePluginRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
     ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
@@ -109,6 +110,12 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             ...(host.ensureServiceObservations ? { ensureServiceObservations: host.ensureServiceObservations } : {}),
             ...(host.captureNativeSetup ? { captureNativeSetup: host.captureNativeSetup } : {}),
             resolveRequesterIdentity: host.resolveRequesterIdentity,
+            resolveRepositoryRemovalRuntime: async context => {
+                const removalIngress = { ...ingress, signal: context.signal ?? ingress.signal, localActionContext: context,
+                    callerInputAuthorization: context.externalActionExecutionAuthorization ?? ingress.callerInputAuthorization };
+                const runtime = await host.resolveProjectRuntime?.(removalIngress);
+                return runtime ? { runtime, ingress: removalIngress } : null;
+            },
             installedCredentials: installed.credentials,
             savedSecretOperationContext: requester.savedSecretOperationContext, serverId: job.input.serverId,
             serverHttpBaseUrl: requesterRuntime.serverHttpBaseUrl, machineId: host.machineId,

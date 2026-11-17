@@ -4,6 +4,12 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+
+export type ResolveRepositoryCheckoutRemovalRuntime = (context: ActionExecutorContext) => Promise<Readonly<{
+  runtime: ProjectFiniteActionRuntime; ingress: RpcHandlerContext;
+}> | null>;
 
 /** Another Account's live repository work needs its receiving identity, which this host does not provide. */
 export const ADMITTED_CHECKOUT_OWNER_REQUIRED = 'checkout_owner_required';
@@ -22,6 +28,8 @@ export function createAdmittedCheckoutRepositoryFiles(
     context: ActionExecutorContext;
     /** The Machine's SCM backends; absent uses the installed runtime, as the SCM RPC handler does. */
     registry?: ScmBackendRegistry;
+    /** Original admitted requester and containing operation, retained by the native host. */
+    resolveRemovalRuntime?: ResolveRepositoryCheckoutRemovalRuntime;
   }>,
 ): RepositoryFilesPullRequestHost {
   const { context } = input;
@@ -82,6 +90,21 @@ export function createAdmittedCheckoutRepositoryFiles(
         workingDirectory: root,
         accessPolicy,
         ...(input.registry ? { registry: input.registry } : {}),
+        removeWorktree: async removal => {
+          const admittedRuntime = await input.resolveRemovalRuntime?.(context);
+          if (!admittedRuntime) throw Object.assign(new Error('project_setup_operation_unavailable'), { code: 'project_setup_operation_unavailable' });
+          const { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } = await import('@/workspaces/projectSetup/projectCheckoutRemoval');
+          const { runtime, ingress } = admittedRuntime;
+          const operation = requireProjectCheckoutRemovalOperation(context);
+          let preparation: ReturnType<typeof prepareProjectCheckoutRemoval> | undefined;
+          const removed = await removal.remove(async () => {
+            preparation ??= prepareProjectCheckoutRemoval({ runtime, ingress, context, operation,
+              worktreePath: removal.worktreePath, skipCleanup: removal.request.skipCleanup === true });
+            await preparation;
+          });
+          if (removed.success && preparation) (await preparation).settle('deleted');
+          return removed;
+        },
         ...signal,
       });
     },

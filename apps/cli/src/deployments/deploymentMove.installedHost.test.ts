@@ -1,10 +1,11 @@
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import axios from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { rm } from 'node:fs/promises';
-import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import {
   ARTIFACT_PLAIN_DATA_KEY_MARKER,
   encodePlainArtifactStoredContent,
@@ -43,6 +44,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';
+import { createDeploymentRepositoryRemovalFixture } from './deploymentRepositoryRemoval.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
 
 afterEach(() => {
@@ -234,8 +236,11 @@ async function createInstalledMoveHost(
       };
     throw new Error(`Unexpected Home request ${request.method} ${path}`);
   });
+  const removal = await createDeploymentRepositoryRemovalFixture({ serverId: 'home', serverHttpBaseUrl: 'https://move.test',
+    machineId: 'controller', accountId: 'account', credentials, installedPluginRuntime: true });
   const host = {
     credentials,
+    resolveRepositoryRemovalRuntime: removal.resolveRemovalRuntime,
     accountArtifacts: createCredentialedAccountArtifactStore(credentials),
     serverId: 'home',
     serverHttpBaseUrl: 'https://move.test',
@@ -256,6 +261,10 @@ async function createInstalledMoveHost(
     runtime,
     ...(options.scmRegistry ? { scmRegistry: options.scmRegistry } : {}),
   });
+  const move = deps.deploymentMoveToRepository!;
+  deps.deploymentMoveToRepository = (input, context, execute) => input.mode === 'preview'
+    ? move(input, context, execute)
+    : removal.run('deployments.environments.moveToRepository', input, context, operation => move(input, operation, execute));
   const context = {
     serverId: 'home',
     runtimeAccountId: 'account',
@@ -278,6 +287,7 @@ async function createInstalledMoveHost(
     definition,
     artifactReads,
     artifactWrites,
+    operationRuntime: removal.operationRuntime,
   };
 }
 
@@ -449,8 +459,17 @@ it.each([false, true])('previews, opens the pull request and switches after merg
       { resolveScmHostingProviderRegistry: async () => forge.hosting },
       createLocalGitForgeTransport({ url, remotePath: remote.remotePath }),
     );
-    const { deps, context, environment, definition, artifactWrites } =
+    const { deps, context, environment, definition, artifactWrites, operationRuntime } =
       await createInstalledMoveHost({ checkout: git, scmRegistry });
+    const removals: WorktreeRemovedEventV1[] = [];
+    const subscription = runtime!.registry.stableEventsBroker!.subscribeHost({
+      target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
+      privileged: true, isCurrent: () => true, listener: event => {
+        if (event.eventId === MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 && event.payload.kind === 'worktreeRemoved')
+          removals.push(event.payload.removal);
+      },
+    });
+    onTestFinished(() => subscription.dispose());
     const home = createHomeChildTransport(environment.revision);
     const input = {
       mode: 'preview' as const,
@@ -511,6 +530,12 @@ it.each([false, true])('previews, opens the pull request and switches after merg
         '--porcelain',
       ]).match(/^worktree /gmu),
     ).toHaveLength(1);
+
+    await expect.poll(() => removals.length).toBe(1);
+    const containing = operationRuntime.store.list({ accountId: 'account', machineId: 'controller' }).items;
+    expect(containing).toMatchObject([{ actionId: 'deployments.environments.moveToRepository', state: 'succeeded' }]);
+    expect(removals).toEqual([{ workspace: null, project: null, machineId: 'controller',
+      operationId: containing[0]!.operationId, worktreePath: expect.any(String), outcome: 'removed', removalKind: 'deleted' }]);
 
     // The forge merges the pull request into the base branch.
     runScmExecutable(remote.remotePath, 'git', [
@@ -586,6 +611,7 @@ it.each([false, true])('previews, opens the pull request and switches after merg
     });
     expect(artifactWrites).toHaveLength(1);
     expect(home.transported).toEqual(signed ? [] : ['deployments.environments.update']);
+    expect(removals).toHaveLength(1);
   } finally {
     await hostGit.cleanup();
     await rm(git.rootPath, { recursive: true, force: true });
