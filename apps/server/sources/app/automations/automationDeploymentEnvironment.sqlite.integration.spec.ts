@@ -109,6 +109,14 @@ describe('Environment-owned Automation controller assignment', () => {
                         executionRecipe: { ...recipe, deploymentEnvironment: { ...reference, projectSourceId: crypto.randomUUID() } } } });
                 expect(foreignSource.statusCode).toBe(400);
             }
+            const unknownRole = await app.inject({ method: 'POST', url: '/v3/automations',
+                headers: { 'x-test-user-id': owner.id }, payload: {
+                    automationId: crypto.randomUUID(), name: 'Unknown preview role', enabled: true, triggers: [],
+                    assignments: [{ machineId: machine.id }], executionRecipe: { ...recipe, deploymentEnvironment: {
+                        serverId, projectSourceId: source.source.id, environmentId: environment.environmentId, previewRole: 'other',
+                    } },
+                } });
+            expect(unknownRole.statusCode).toBe(400);
         });
     });
 
