@@ -146,6 +146,24 @@ describe('serverFetch auth invalidation', () => {
         expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toEqual({ token: replacementToken, secret: 'secret-a' });
     });
 
+    it('retains requester credentials for a typed daemon invalid_token refusal', async () => {
+        await TokenStorage.setCredentials({ token: rejectedToken });
+        // Home has authenticated the bearer; this HTTP boundary represents a
+        // refused daemon proof, not rejection of that bearer.
+        installRejectedBearerBoundary(async () => Response.json(
+            { error: 'invalid_request', code: 'invalid_token' }, { status: 400 },
+        ));
+        const { serverId, serverUrl } = getActiveServerSnapshot();
+        const { createServerFetchAtEndpoint } = await import('./client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: serverUrl, serverId,
+            credentials: { token: rejectedToken }, recoverStoredCredentials: true });
+        const response = await request('/v1/actions/machines.services.list', { method: 'POST' });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'invalid_request', code: 'invalid_token' });
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toMatchObject({ token: rejectedToken });
+        expect(events).toEqual([]);
+    });
+
     it('invalidates stored credentials when the server returns 401 for an authenticated request', async () => {
         await TokenStorage.setCredentials({ token: rejectedToken });
         const requests = installRejectedBearerBoundary();

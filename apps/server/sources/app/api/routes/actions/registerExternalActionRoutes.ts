@@ -1136,6 +1136,15 @@ export function registerExternalActionRoutes(
                 );
             }
             if (result.kind === "invalid_request") {
+                if (result.errorCode === 'invalid_token') {
+                    // The Home already authenticated the requester. A daemon's
+                    // refused proof must not retire that person's credential.
+                    return sendExternalActionJson(reply, 400, {
+                        error: 'invalid_request', code: result.errorCode,
+                        ...(envelope.data.v === 2 ? { requestId: envelope.data.requestId } : {}),
+                        ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
+                    });
+                }
                 return sendExternalActionHttpError(
                     reply,
                     result.errorCode,
