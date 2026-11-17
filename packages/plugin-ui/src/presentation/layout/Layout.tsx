@@ -183,6 +183,16 @@ export function HappierStack({
 }
 
 /** Set inside a scroll area: a nested scroller is never the pane's primary body. */
+const FOCUSABLE_CONTROL_SELECTOR = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+/** Whether a web scroll area's own content already gives the keyboard a way in. */
+function scrollAreaHoldsControl(scrollView: ScrollView | null): boolean {
+  if (Platform.OS !== 'web') return false;
+  const node = (scrollView as unknown as { getScrollableNode?: () => { querySelector?: (selector: string) => unknown } | null } | null)
+    ?.getScrollableNode?.();
+  return typeof node?.querySelector === 'function' && node.querySelector(FOCUSABLE_CONTROL_SELECTOR) != null;
+}
+
 const HappierScrollAreaNestedContext = createContext(false);
 const useNoPaneHeaderReporter = (): ((distancePx: number) => void) | null => null;
 
@@ -234,12 +244,14 @@ export function HappierScrollArea({
   }, [selection]);
   // A keyboard reaches a scroll area only through a focusable child; one whose content runs past it with none
   // (an empty state a few pixels taller than its card) takes focus itself while, and only while, it overflows.
+  // On the web, content that already holds a control adds no tab stop (the browser's keyboard-focusable scrollers).
   const viewportRef = useRef({ width: 0, height: 0 });
   const contentRef = useRef({ width: 0, height: 0 });
   const [overflowing, setOverflowing] = useState(false);
   const axis = scrollProps.horizontal === true ? 'width' : 'height';
   const remeasureOverflow = () => {
-    const next = viewportRef.current[axis] > 0 && contentRef.current[axis] > viewportRef.current[axis] + 0.5;
+    const next = viewportRef.current[axis] > 0 && contentRef.current[axis] > viewportRef.current[axis] + 0.5
+      && !scrollAreaHoldsControl(scrollSourceRef.current);
     setOverflowing(previous => previous === next ? previous : next);
   };
   const createTracker = host?.createScrollActivityTracker;

@@ -3,7 +3,7 @@ import { create, type ReactTestRenderer } from 'react-test-renderer';
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const platform = vi.hoisted(() => ({ OS: 'ios' as 'ios' | 'android' }));
+const platform = vi.hoisted(() => ({ OS: 'ios' as 'ios' | 'android' | 'web' }));
 
 vi.mock('react-native', () => ({
   I18nManager: { isRTL: false },
@@ -79,6 +79,27 @@ describe('HappierScrollArea keyboard reach', () => {
     expect(area().props.focusable).toBe(true);
     layoutTo(area(), { width: 497, height: 232 }, { width: 497, height: 200 });
     expect(area().props.focusable).toBeUndefined();
+  });
+
+  it('adds no tab stop on the web when the overflowing content already holds a control', () => {
+    // Like the browser's own keyboard-focusable scrollers: a page body full of rows is reached through its rows.
+    platform.OS = 'web';
+    let holdsControl = true;
+    const scrollable = { querySelector: () => (holdsControl ? {} : null) };
+    try {
+      act(() => {
+        renderer = create(<HappierScrollArea testID="area" />, {
+          createNodeMock: () => ({ getScrollableNode: () => scrollable }),
+        });
+      });
+      layoutTo(area(), { width: 497, height: 232 }, { width: 497, height: 400 });
+      expect(area().props.focusable).toBeUndefined();
+      holdsControl = false;
+      layoutTo(area(), { width: 497, height: 232 }, { width: 497, height: 401 });
+      expect(area().props.focusable).toBe(true);
+    } finally {
+      platform.OS = 'ios';
+    }
   });
 
   it('measures a horizontal strip along its own axis, and never focuses a scroll area that cannot scroll', () => {
