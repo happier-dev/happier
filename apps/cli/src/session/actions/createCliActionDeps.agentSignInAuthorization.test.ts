@@ -66,13 +66,14 @@ describe('CLI admitted Machine sign-in lifecycle', () => {
       });
       const input = { machineId: 'target', serverId: 'home', agentId: 'fixture/agent', terminalId: 'old-terminal' };
       const executor = createActionExecutor(deps);
+      const statusActionId = ACTION_ID_FAMILIES_V1.machine_agent_sign_in.find(id => id.endsWith('.status'))!;
       // Status already preserves its own admission: prove the boundary first.
       const statusContext: ActionExecutorContext = { ...context, externalActionExecutionAuthorization: {
         ...context.externalActionExecutionAuthorization!, binding: { ...context.externalActionExecutionAuthorization!.binding,
-          actionId: ACTION_ID_FAMILIES_V1.machine_agent_sign_in.find(id => id.endsWith('.status'))!,
+          actionId: statusActionId,
         },
       } };
-      expect(await executor.execute(statusContext.externalActionExecutionAuthorization!.binding.actionId,
+      expect(await executor.execute(statusActionId,
         { machineId: input.machineId, agentId: input.agentId }, statusContext))
         .toMatchObject({ ok: true, result: { status: 'signedOut' } });
       const result = await executor.execute(actionId, operation === 'start'
