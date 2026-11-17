@@ -348,7 +348,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
                 : repoDigests.find(ref => selection.reference.includes('@') ? ref === selection.reference : true)?.split('@').at(-1);
             if (!manifestDigest || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)
                 || selection.reference.includes('@') && !selection.reference.endsWith(`@${manifestDigest}`)) return refuse('deployment_image_manifest_mismatch');
-            const localOnly = isNativeComposeLocalOnlyImage(native);
+            const localOnly = !selection.reference.includes('@') && isNativeComposeLocalOnlyImage(native);
             const reference = localOnly ? undefined : selection.reference.includes('@') ? selection.reference
                 : repoDigests.find(ref => ref.endsWith(`@${manifestDigest}`));
             // Native references can contain bound secrets; scratch names must
