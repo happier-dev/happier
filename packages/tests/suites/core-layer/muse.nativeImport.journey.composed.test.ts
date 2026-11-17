@@ -165,7 +165,8 @@ process.stdout.write = (chunk, ...args) => writeBoundary(selectedNativeId
       actionCaller: { kind: 'host' as const } };
     const progressEvents: ExternalSessionOperationSharedPresentationV1[] = [];
     unsubscribeProgress = storage.subscribe(state => {
-      for (const row of Object.values(state.sessions)) {
+      for (const sessionId of Object.keys(state.sessions)) {
+        const row = state.sessions[sessionId];
         const presentation = readExternalSessionOperationPresentationFromMetadata(row.metadata);
         if (presentation) progressEvents.push(presentation);
       }

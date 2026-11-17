@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionTranscriptGetSemanticSuccessSchema } from '../../../protocol/src/actions/specs/session/transcript';
@@ -158,7 +159,7 @@ undici.fetch = (input, init) => {
   });
   expect(models, JSON.stringify(models)).toMatchObject({ ok: true });
   if (!models.ok) throw new Error('Signed-in Muse catalog Action failed');
-  const listedModels = readMuseRecord(models.result).items;
+  const listedModels = readMuseRecord(StrictJsonValueSchema.parse(models.result)).items;
   if (!Array.isArray(listedModels)) throw new Error('Muse catalog Action did not settle populated');
   expect(listedModels).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'meta/muse-wonder-1.0' }),

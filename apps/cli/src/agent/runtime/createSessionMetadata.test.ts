@@ -22,11 +22,12 @@ const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
 
 function createMetadata(
-    options: Omit<Parameters<typeof createSessionMetadata>[0], 'launchControlMetadata'> &
-        Partial<Pick<Parameters<typeof createSessionMetadata>[0], 'launchControlMetadata'>>,
+    options: Omit<Parameters<typeof createSessionMetadata>[0], 'launchControlMetadata' | 'machineId'> &
+        Partial<Pick<Parameters<typeof createSessionMetadata>[0], 'launchControlMetadata' | 'machineId'>>,
 ) {
     return createSessionMetadata({
         ...options,
+        machineId: options.machineId ?? 'test-machine',
         launchControlMetadata:
             options.launchControlMetadata ?? captureSessionLaunchControlMetadata(),
     });

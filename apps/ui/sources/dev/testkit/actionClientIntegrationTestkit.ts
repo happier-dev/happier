@@ -9,6 +9,7 @@ import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -102,9 +103,17 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
                 } finally { voiceSession.resetVoiceSessionStoreForTests(); }
             },
             isAccountReady: () => Boolean(getActiveServerAccountScope()),
+            readSessionAgentState: (sessionId: string) => selectHomeQualifiedSession(storage.getState(),
+                sessionId, serverId, serverId)?.agentState ?? null,
             isMachineActive: (machineId: string) => {
                 const machine = storage.getState().machines[machineId];
                 return machine ? readMachineActivity(machine).active === true : false;
+            },
+            // ApiMachine publishes running only after core registration ACKs
+            // and its operation-capability publication have completed.
+            isMachineControlReady: (machineId: string) => {
+                const machine = storage.getState().machines[machineId];
+                return Boolean(machine && readMachineActivity(machine).active === true && machine.daemonState?.status === 'running');
             },
             close,
         };
