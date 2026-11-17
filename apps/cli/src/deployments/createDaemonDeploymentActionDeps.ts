@@ -899,7 +899,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             };
             const materializeCreate = createPrepareEnvironmentCreateForHost(createHost);
             let hostReviewedChildren: HostReviewedChildrenPreparationV1 | undefined;
-            const prepared = await materializeCreate({ input: { ...authored, ...defaults.values },
+            const { telemetry, ...creationValues } = defaults.values;
+            const prepared = await materializeCreate({ input: { ...authored, ...creationValues }, telemetry,
                 projectOwner: defaults.projectOwner, context, copy, nativeOrigin, admittedPreview: preview }, async (input, content) => {
                     hostReviewedChildren = await preparePreviewCreateContinuation(preview, input, content, context);
                 });

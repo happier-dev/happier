@@ -564,7 +564,8 @@ describe('authored Environment creation through protected preparation and the ex
         expect(environmentWrites).toHaveLength(0);
         const nativeOrigin = adopted ? { projectName: 'existing-app', dockerEndpoint: 'unix:///var/run/docker.sock',
             workingDirectory: '/srv/existing-app' } : undefined;
-        const prepared = await materialize({ input, context: {}, projectOwner, nativeOrigin });
+        const telemetry = { metrics: true, appLlmCost: false, exceptions: true };
+        const prepared = await materialize({ input, context: {}, projectOwner, nativeOrigin, telemetry });
         if ('errorCode' in prepared) throw new Error(prepared.errorCode);
         expect(prepared.managedRetention).toBe('keep');
         expect(artifactWrites).toHaveLength(2);
@@ -581,7 +582,8 @@ describe('authored Environment creation through protected preparation and the ex
         const opened = readDeploymentEnvironmentArtifactV1(prepared, artifact);
         if (!opened.ok || opened.content.definition.kind !== 'stored') throw new Error('Expected opened stored definition');
         const definition = opened.content.definition;
-        expect(opened.content).toMatchObject({ name: input.name, retainPreviousDeployments: 0, bindings: [] });
+        expect(opened.content).toMatchObject({ name: input.name, retainPreviousDeployments: 0, bindings: [], telemetry });
+        expect(prepared).not.toHaveProperty('telemetry');
         expect(opened.content.ownServer).toEqual({ rollout: 'recreate', autoRestorePreviousRelease: true,
             backupBeforeMigration: true, migrationFailurePolicy: 'ask', serviceExports: [] });
         expect(JSON.parse(definition.document)).toEqual({ services: { app: { image: 'example/app:1', expose: ['8080'] } } });

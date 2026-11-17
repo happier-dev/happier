@@ -41,13 +41,16 @@ export function resolveDeploymentCreationDefaultsV1(input: DeploymentCreationDef
     input.target.kind === 'ownServer' ? firstRuntime : input.target.creatingMachineId);
   const retention = resolveValue(input.explicit?.retainPreviousDeployments, project?.retainPreviousDeployments,
     account?.retainPreviousDeployments, DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1);
+  const telemetry = resolveValue(input.explicit?.telemetry, project?.telemetry, undefined, undefined);
   return {
     values: {
+      ...(telemetry.value !== undefined ? { telemetry: structuredClone(telemetry.value) } : {}),
       ...(build.value !== undefined ? { buildMachineId: build.value } : {}),
       ...(controller.value !== undefined ? { controllerMachineId: controller.value } : {}),
       retainPreviousDeployments: retention.value,
     },
     sources: {
+      ...(telemetry.value !== undefined ? { telemetry: telemetry.source } : {}),
       ...(build.value !== undefined ? { buildMachineId: build.source } : {}),
       ...(controller.value !== undefined ? { controllerMachineId: controller.source } : {}),
       retainPreviousDeployments: retention.source,

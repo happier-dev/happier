@@ -2608,9 +2608,19 @@ the collector receives only its SHA-256 hash after a successful runtime launch.
 Changing collectors requires confirmation before deleting the old Environment
 partition, including reconciliation when that Machine next comes online.
 
+The same Action independently selects Metrics, App LLM cost and Exceptions in
+private Environment content. Missing choices are off. Project and Source creation
+defaults preselect new Environments only. One changed binding CAS also projects
+the choices to the collector's authenticated assignments; a repeated selection
+does no write. Disabling one takes effect at the next ingest admission while
+traces, logs and the other choices remain independent. Regression automation uses
+its existing Workflow's armed state rather than another stored telemetry flag.
+
 Native launch preserves a project's authored telemetry values. Empty declared
 slots receive the managed OTLP HTTP/protobuf endpoint, authorization header,
-service name and resource attributes. A same-Machine container reaches the
+service name and resource attributes. The managed `OTEL_METRICS_EXPORTER` value is
+`otlp` only when Metrics is selected,
+and `none` otherwise. A same-Machine container reaches the
 loopback receiver through `privateServiceContainerBridge`. Sampling variables
 remain absent unless a person selects a ratio; explicit sampling uses the
 standard `parentbased_traceidratio` sampler and argument through ordinary

@@ -277,6 +277,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(input.environment.retainPreviousDeployments === undefined ? {} : { retainPreviousDeployments: input.environment.retainPreviousDeployments }) } : undefined });
         const content = DeploymentEnvironmentContentV1Schema.parse(current ? { ...current.content, definition }
             : { name, retainPreviousDeployments: defaults.values.retainPreviousDeployments, definition, bindings: [],
+                ...(defaults.values.telemetry ? { telemetry: defaults.values.telemetry } : {}),
                 ownServer: createOwnServerEnvironmentConfigurationV1() });
         for (const secret of prepared.generatedSecrets) validateDeploymentTemplateGeneratedSecretProfileForHost({ name: `${name} · ${secret.name}`, profile: secret.profile });
         context.signal?.throwIfAborted();

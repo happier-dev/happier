@@ -114,7 +114,7 @@ declaration; this guide does not yet certify the Iroh connection journey.
 ## Production telemetry in development
 
 The unreleased telemetry integration connects an app that already exports
-OpenTelemetry traces and logs to a Machine with the **Telemetry** role. It does
+OpenTelemetry traces, logs and selected metrics to a Machine with the **Telemetry** role. It does
 not instrument the app automatically. The collector stores telemetry on that
 Machine; the Home does not receive the captured SQL, traces, or log content.
 
@@ -124,8 +124,15 @@ connects the app to it. Docker Desktop and non-Linux container bridges are not
 supported. Cross-Machine and platform collector routes are still being integrated;
 do not treat a configured Environment as proof that such a route is reachable.
 
+Metrics is off until selected for the Environment. App LLM cost and Exceptions
+are separate choices in the same development setup; Regression uses an armed
+Workflow. Project and Source defaults preselect new Environments without changing
+existing ones. Turning Metrics off stops new metric batches at the next request
+and leaves traces and logs available.
+
 Each Environment has its own ingest token in a Saved Secret. The collector receives
-only its hash. Setup changes apply on the next deployment. Rotation keeps the
+its hash and the selected capabilities. Exporter configuration changes apply on
+the next deployment. Rotation keeps the
 previous token working until a successful deployment delivers its replacement.
 Moving or turning off the collector requires confirmation and deletes that
 Environment's telemetry from the previous collector, without copying it to the

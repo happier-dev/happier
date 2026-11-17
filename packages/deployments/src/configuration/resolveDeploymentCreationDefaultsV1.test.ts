@@ -6,6 +6,21 @@ const ownServer = { kind: 'ownServer', machines: ['runtime-one', 'runtime-two'] 
 const projectOwner = { kind: 'account', accountId: 'owner' } as const;
 
 describe('deployment creation defaults', () => {
+  it('snapshots telemetry capability defaults for creation without enabling omitted choices', () => {
+    const project = DeploymentCreationDefaultsV1Schema.parse({ telemetry: { metrics: true, exceptions: false } });
+    const result = resolve({ projectOwner, projectSourceId: 'source', target: ownServer,
+      projectDefaults: { projectSourceId: 'source', deploymentDefaults: project } });
+    expect(result.values).toMatchObject({ telemetry: { metrics: true, exceptions: false } });
+    expect(result.sources).toMatchObject({ telemetry: 'project' });
+    expect(resolve({ projectOwner, projectSourceId: 'source', target: ownServer,
+      projectDefaults: { projectSourceId: 'source', deploymentDefaults: project },
+      explicit: { telemetry: { metrics: false, appLlmCost: true } } })).toMatchObject({
+      values: { telemetry: { metrics: false, appLlmCost: true } }, sources: { telemetry: 'explicit' },
+    });
+    expect(resolve({ projectOwner, target: ownServer }).values).not.toHaveProperty('telemetry');
+    expect(resolve({ projectOwner, target: ownServer,
+      account: { accountId: 'owner', defaults: { telemetry: { metrics: true } } } }).values).not.toHaveProperty('telemetry');
+  });
   it('resolves strict partial layers per field, preserving an explicit zero and review source', () => {
     const result = resolve({ projectSourceId: 'source', projectOwner, target: ownServer,
       explicit: DeploymentCreationDefaultsV1Schema.parse({ retainPreviousDeployments: 0 }),

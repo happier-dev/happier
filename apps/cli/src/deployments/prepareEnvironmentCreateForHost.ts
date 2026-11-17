@@ -36,6 +36,7 @@ export { resolveEnvironmentCreateCopyForHost, type EnvironmentCreateCopyResoluti
 
 export type EnvironmentCreateRequest = Readonly<{ input: DeploymentEnvironmentCreateIntentInputV1; context: ActionExecutorContext;
     projectOwner: ProjectSourceOwnerV1; copy?: EnvironmentCreateCopyResolution;
+    telemetry?: import('@happier-dev/protocol/deployments/deploymentTelemetryV1').DeploymentTelemetryCapabilitiesV1;
     admittedPreview?: EnvironmentCreatePreviewResolution;
     /** Captured on the target host, never an operand of the public create Action. */
     nativeOrigin?: DeploymentNativeComposeOriginV1 }>;
@@ -155,7 +156,7 @@ export async function resolveEnvironmentCreatePreviewForHost(
 /** Called once by Action preparation after defaults resolve, never by the prepared storage carrier. */
 export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHost) {
     const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
-    return async ({ input, context, projectOwner, copy, nativeOrigin, admittedPreview }: EnvironmentCreateRequest,
+    return async ({ input, context, projectOwner, copy, nativeOrigin, admittedPreview, telemetry }: EnvironmentCreateRequest,
         retainPreparedPreview?: (prepared: DeploymentEnvironmentCreateInputV1,
             content: import('@happier-dev/deployment-protocol').DeploymentEnvironmentContentV1) => Promise<void>,
     ): Promise<DeploymentEnvironmentCreateInputV1 | ActionExecuteFailure> => {
@@ -191,6 +192,7 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
                 : await normalizeStoredComposeDefinitionInput(input.definition);
             const content = DeploymentEnvironmentContentV1Schema.parse({ name: input.name,
                 retainPreviousDeployments: input.retainPreviousDeployments, definition, bindings: [],
+                ...(telemetry ? { telemetry } : {}),
                 ownServer: preview.nativeTemplate?.serviceExports ? { ...createOwnServerEnvironmentConfigurationV1(),
                     serviceExports: preview.nativeTemplate.serviceExports }
                     : copy?.content?.ownServer ?? createOwnServerEnvironmentConfigurationV1(),
