@@ -145,3 +145,25 @@ test('a concurrent publisher keeps the bundles an in-flight preparation has writ
     assert.deepEqual(await bundles(), current.assetPaths.map(path => basename(path)).sort(),
         'a finished preparation that never published releases its bundle');
 });
+
+test('a preparation under another storage root keeps the bundles a first root\'s record names until that record is gone', async t => {
+    const { fixture, put, publish, bundles } = await localeFixture(t, 'happier-locale-roots-');
+    const previous = process.env.HAPPIER_STACK_STORAGE_DIR;
+    t.after(() => { if (previous === undefined) delete process.env.HAPPIER_STACK_STORAGE_DIR; else process.env.HAPPIER_STACK_STORAGE_DIR = previous; });
+    // This process prepares under storage root B (a QA bed, a lane HOME, a routed guest).
+    process.env.HAPPIER_STACK_STORAGE_DIR = fixture.path('root-b');
+    const served = await publish('un');
+    // A Stack under storage root A publishes the record its inventory serves.
+    const staged = fixture.path('root-a/repo-dev/expo-dev/instance/plugin-ui/.happier-plugin-ui-stage-x/inputs/source-assets.json');
+    const record = fixture.path('root-a/repo-dev/expo-dev/instance/plugin-ui/source-assets.json');
+    await put(staged, JSON.stringify({ assetPaths: served.assetPaths, publications: [] }));
+    await publishSourceUiAssets({ recordPath: staged, outputPath: record });
+    await rm(dirname(dirname(staged)), { recursive: true });
+    const current = await publish('deux');
+    assert.deepEqual(await bundles(), [...served.assetPaths, ...current.assetPaths].map(path => basename(path)).sort(),
+        'root B\'s publication keeps the bundles root A\'s record names');
+    await rm(record);
+    await publish('deux');
+    assert.deepEqual(await bundles(), current.assetPaths.map(path => basename(path)).sort(),
+        'once the record is gone its bundles retire, so the store stays bounded');
+});

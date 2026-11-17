@@ -29,6 +29,14 @@ async function writeChanged(path, contents) {
     await rename(temporary, path);
 }
 
+/** Every source asset record is written here, so the locale store it names
+ * learns about it whatever storage root or HOME this process runs under. */
+async function writeSourceUiAssetsRecord(path, record) {
+    await writeChanged(path, `${JSON.stringify(record)}\n`);
+    const { registerLocaleReferences } = await import('./prepareLocaleAssets.mjs');
+    await registerLocaleReferences(path, record.assetPaths ?? []);
+}
+
 /** Publish references only after the containing owner admits their asset files. */
 export async function publishSourceUiAssets({ recordPath, outputPath = recordPath }) {
     const prepared = readSourceUiAssetsRecord(recordPath);
@@ -46,7 +54,7 @@ export async function publishSourceUiAssets({ recordPath, outputPath = recordPat
     // A published record has no pending candidates. Keep the record shape
     // readable after in-place publication without retaining compiler scratch.
     const published = { ...prepared, publications: [] };
-    await writeChanged(outputPath, `${JSON.stringify(published)}\n`);
+    await writeSourceUiAssetsRecord(outputPath, published);
     return published;
 }
 
@@ -162,7 +170,7 @@ async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, 
         publications,
         groups,
     };
-    await writeChanged(recordPath, `${JSON.stringify(prepared)}\n`);
+    await writeSourceUiAssetsRecord(recordPath, prepared);
     if (!deferPublication) await publishSourceUiAssets({ recordPath });
     console.log(`[source-ui] phase=source-asset-input-reuse compiled=${compiled} reused=${specs.length - compiled}`);
     return prepared;
