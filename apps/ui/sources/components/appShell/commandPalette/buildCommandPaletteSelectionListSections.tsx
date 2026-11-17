@@ -6,6 +6,7 @@ import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 
 import type { Command } from './types';
+import { ThemeCommandMark } from '@/components/settings/appearance/ThemeModePreview';
 
 /**
  * Presentation adapter between the canonical command catalog
@@ -22,26 +23,44 @@ export function buildCommandPaletteOptionId(commandId: string): string {
 }
 
 const commandPresentation = Symbol('commandPresentation');
+const commandActivation = Symbol('commandActivation');
 type CommandOption = SelectionListOption & Readonly<{
-    [commandPresentation]?: Readonly<Pick<Command, 'icon' | 'mark' | 'shortcut'>>;
+    [commandPresentation]?: Readonly<Pick<Command, 'icon' | 'mark' | 'shortcut' | 'loadCommands'>>;
+    [commandActivation]?: Command;
 }>;
+
+/** Nested rows carry the same command into Search's ordinary dismiss/activate path. */
+export function readCommandPaletteOptionCommand(option: SelectionListOption): Command | null {
+    return (option as CommandOption)[commandActivation] ?? null;
+}
 
 function buildOption(command: Command, previous?: SelectionListOption): CommandOption {
     const icon = command.icon;
     const shortcut = command.shortcut;
     const presentation = (previous as CommandOption | undefined)?.[commandPresentation];
+    const themeMark = typeof command.mark === 'object' ? command.mark : null;
     if (previous && presentation && previous.label === command.title
         && previous.subtitle === (command.subtitle || undefined)
-        && presentation.icon === icon && presentation.mark === command.mark && presentation.shortcut === shortcut) return previous;
+        && presentation.icon === icon && presentation.mark === command.mark && presentation.shortcut === shortcut
+        && presentation.loadCommands === command.loadCommands) return previous;
     return {
-        [commandPresentation]: { icon, mark: command.mark, shortcut },
+        [commandPresentation]: { icon, mark: command.mark, shortcut, loadCommands: command.loadCommands },
+        [commandActivation]: command,
         id: buildCommandPaletteOptionId(command.id),
         testID: `command-palette:option:${command.id}`,
         label: command.title,
         ...(command.subtitle ? { subtitle: command.subtitle } : {}),
         ...(command.mark === 'askHappier' ? { icon: () => <AskHappierMark size={ICON_SIZE.md} /> }
+            : themeMark ? { icon: () => <ThemeCommandMark miniature={themeMark.miniature} /> }
             : icon ? { icon: () => <Icon name={icon} size={ICON_SIZE.md} /> } : {}),
         ...(shortcut ? { rightAccessory: () => <KeyHint label={shortcut} /> } : {}),
+        ...(command.loadCommands ? { openStep: {
+            id: `commands:${command.id}`, title: command.title, inputPlaceholder: command.title,
+            sections: [{ kind: 'dynamic' as const, id: `commands:${command.id}:entries`,
+                seedFromInput: () => '',
+                resolve: async () => ({ options: (await command.loadCommands!()).map(child => buildOption(child)) }),
+            }],
+        } } : {}),
     } satisfies CommandOption;
 }
 

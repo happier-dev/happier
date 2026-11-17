@@ -11,12 +11,15 @@ import { structuredToolValueToCode, type StructuredToolFact } from './structured
 import { toolTextBlock } from './toolDisplayTextTypes';
 
 export type StructuredToolCardProps = Readonly<{
-    title: string;
+    /** The card's label; a typed result whose body names itself (a theme card) leaves it out. */
+    title?: string;
     inputFacts?: readonly StructuredToolFact[];
     resultFacts?: readonly StructuredToolFact[];
     rawInput?: unknown | null;
     rawResult?: unknown | null;
     messageId?: string;
+    /** A typed result's own body, drawn in the card after its facts (the theme card's miniature and actions). */
+    children?: React.ReactNode;
 }>;
 
 export function projectStructuredToolCardDisplayText(props: StructuredToolCardProps) {
@@ -45,7 +48,7 @@ export const StructuredToolCard = React.memo(function StructuredToolCard(props: 
     return (
         <ToolSectionView>
             <View style={styles.container}>
-                <ToolFindText messageId={props.messageId} blockId="tool-card-title" text={props.title} style={styles.title} />
+                {props.title ? <ToolFindText messageId={props.messageId} blockId="tool-card-title" text={props.title} style={styles.title} /> : null}
                 {inputFacts.length > 0 ? (
                     <View style={styles.section}>
                         {inputFacts.map((fact, index) => (
@@ -68,6 +71,7 @@ export const StructuredToolCard = React.memo(function StructuredToolCard(props: 
                     </View>
                 ) : null}
                 {rawResult !== null ? <CodeView code={structuredToolValueToCode(rawResult)} findRanges={find.ranges('tool-result')} /> : null}
+                {props.children}
             </View>
         </ToolSectionView>
     );

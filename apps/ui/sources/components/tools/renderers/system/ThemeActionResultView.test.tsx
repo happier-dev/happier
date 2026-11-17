@@ -1,0 +1,148 @@
+import * as React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+
+vi.mock(
+  'expo-router',
+  async () =>
+    (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
+);
+vi.mock('react-native', async () =>
+  (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
+);
+vi.mock('react-native-unistyles', async () =>
+  (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+);
+
+const { ThemeActionResultView } = await import('./ThemeActionResultView');
+type Props = import('./themeActionResultViewTypes').ThemeActionResultViewProps;
+
+const MINIATURE = {
+  mode: 'light',
+  canvas: '#EFE8DA',
+  raised: '#FAF6EE',
+  text: '#2A251E',
+  mutedText: '#6E6557',
+  accent: '#9C5A2E',
+  border: '#E0D8C8',
+  radius: 'round',
+} as const;
+
+function props(overrides: Partial<Props> = {}): Props {
+  return {
+    theme: {
+      name: 'Notebook',
+      mode: 'light',
+      miniature: MINIATURE,
+      created: true,
+    },
+    phase: { kind: 'trying' },
+    busy: null,
+    here: 'this Mac',
+    onKeep: vi.fn(),
+    onUndo: vi.fn(),
+    onRedo: vi.fn(),
+    onRetry: vi.fn(),
+    onTryOption: vi.fn(),
+    onEdit: vi.fn(),
+    onUseOtherDevices: vi.fn(),
+    testID: 'card',
+    ...overrides,
+  };
+}
+
+const has = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
+  screen.tree.findAll((node) => node.props?.testID === id).length > 0;
+
+describe('ThemeActionResultView', () => {
+  it('shows supported layout changes in B4 even when the palette and radius are unchanged', async () => {
+    const { prepareThemeCss } = await import('@/theme/css/prepareThemeCss');
+    const { ThemePalettePreview } = await import('@/components/settings/appearance/ThemeModePreview');
+    const before = prepareThemeCss('[data-surface="composer"] { height: 12px; }').light;
+    const after = prepareThemeCss('[data-surface="composer"] { height: 28px; }').light;
+    const screen = await renderScreen(<ThemeActionResultView {...props({
+      before: MINIATURE,
+      beforeSurfaceStyles: before,
+      theme: { ...props().theme, surfaceStyles: after },
+    })} />);
+    const faces = screen.tree.findAllByType(ThemePalettePreview);
+    // The host renderer has no layout engine: inspect final layout inputs of the
+    // rendered composers after the real compiler and card composition.
+    const composerHeights = faces.map(face => face.findAll(node => {
+      const style = Array.isArray(node.props.style) ? Object.assign({}, ...node.props.style) : node.props.style;
+      return style?.position === 'absolute' && style?.bottom === '6%';
+    }).map(node => {
+      const style = Array.isArray(node.props.style) ? Object.assign({}, ...node.props.style) : node.props.style;
+      return style.height;
+    }).at(-1));
+    expect(composerHeights).toEqual([12, 28]);
+    await screen.unmount();
+  });
+
+  it('offers Keep and Undo while trying, and other devices only after Keep (try first, finding 2)', async () => {
+    const trying = props();
+    const screen = await renderScreen(<ThemeActionResultView {...trying} />);
+    expect(has(screen, 'card:keep')).toBe(true);
+    expect(has(screen, 'card:undo')).toBe(true);
+    expect(
+      has(screen, 'card:devices'),
+      'an unsaved try is never distributed',
+    ).toBe(false);
+    await pressTestInstanceAsync(
+      screen.tree.findAll((node) => node.props?.testID === 'card:keep')[0]!,
+    );
+    expect(trying.onKeep).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+
+    const kept = await renderScreen(
+      <ThemeActionResultView {...props({ phase: { kind: 'kept' } })} />,
+    );
+    expect(has(kept, 'card:keep'), 'Keep leaves once the theme is kept').toBe(
+      false,
+    );
+    expect(has(kept, 'card:devices')).toBe(true);
+    await kept.unmount();
+  });
+
+  it('shows a failure with its typed code and a retry, never a generic outcome (P02)', async () => {
+    const failed = props({
+      phase: {
+        kind: 'failed',
+        operation: 'keep',
+        code: 'theme_undo_handle_unknown',
+      },
+    });
+    const screen = await renderScreen(<ThemeActionResultView {...failed} />);
+    const code = screen.tree.findAll(
+      (node) => node.props?.testID === 'card:code',
+    )[0];
+    expect(code?.props.children).toBe('theme_undo_handle_unknown');
+    expect(has(screen, 'card:retry')).toBe(true);
+    await screen.unmount();
+  });
+
+  it('offers Redo after Undo, and only the facts the result carries', async () => {
+    const screen = await renderScreen(
+      <ThemeActionResultView
+        {...props({ phase: { kind: 'undone', restoredName: 'Happier' } })}
+      />,
+    );
+    expect(has(screen, 'card:redo')).toBe(true);
+    expect(has(screen, 'card:coverage')).toBe(false);
+    expect(has(screen, 'card:hides')).toBe(false);
+    await screen.unmount();
+    const reshaped = await renderScreen(
+      <ThemeActionResultView
+        {...props({
+          coverage: { total: 14, native: 11, webOnly: 3 },
+          hides: ['sidebar'],
+          onRevealWebOnly: vi.fn(),
+        })}
+      />,
+    );
+    expect(has(reshaped, 'card:coverage')).toBe(true);
+    expect(has(reshaped, 'card:which')).toBe(true);
+    expect(has(reshaped, 'card:hides')).toBe(true);
+    await reshaped.unmount();
+  });
+});
