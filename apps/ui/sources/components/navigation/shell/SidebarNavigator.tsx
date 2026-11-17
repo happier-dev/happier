@@ -205,6 +205,7 @@ const FullSidebarNavigator = React.memo(() => {
     });
     React.useEffect(() => registerShellColumnActionOwner('navigation', () => columnActionRef.current), []);
 
+    const columnLandmark = React.useMemo(() => ({ role: 'navigation' as const, label: t('settingsKeyboard.paneRegions.navigation') }), []);
     const columnContent = (
         <ResizableDockedPane
             widthPx={sidebarWidth}
@@ -219,15 +220,17 @@ const FullSidebarNavigator = React.memo(() => {
             onCollapseArmedChange={setSidebarCollapseArmed}
             onCollapse={handleSidebarCollapse}
             onResetRequest={handleSidebarWidthReset}
+            // The column is the navigation landmark, its resize handle included.
+            landmark={columnLandmark}
         >
             <View
                 ref={columnFocus.ref}
                 onFocus={columnFocus.onFocus}
-                accessibilityLabel={t('settingsKeyboard.paneRegions.navigation')}
+                accessibilityLabel={Platform.OS === 'web' ? undefined : columnLandmark.label}
                 focusable
                 style={{ flex: 1, flexShrink: 0, minHeight: 0 }}
                 {...(Platform.OS === 'web'
-                    ? { role: 'navigation' as const, tabIndex: -1, onFocusCapture: columnFocus.onFocusCapture, onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb }
+                    ? { tabIndex: -1, onFocusCapture: columnFocus.onFocusCapture, onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb }
                     : {})}
             >
                 <AppShellPeekCovered><AppShellColumn column={column} /></AppShellPeekCovered>

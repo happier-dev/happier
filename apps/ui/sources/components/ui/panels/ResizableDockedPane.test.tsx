@@ -287,6 +287,20 @@ describe('ResizableDockedPane (web pointer drag)', () => {
         expect(await order('left')).toEqual(['handle', 'content']);
     });
 
+    it('stands for the landmark its host names, so its own resize handle sits inside that landmark', async () => {
+        // C77: the column's "Resize panel" slider sat beside the navigation landmark, outside every landmark.
+        const { ResizableDockedPane } = await import('./ResizableDockedPane');
+        const screen = await renderScreen(
+            <ResizableDockedPane testID="pane" widthPx={320} minWidthPx={200} maxWidthPx={480} resizeEdge="right"
+                onCommitWidthPx={vi.fn()} landmark={{ role: 'navigation', label: 'Navigation column' }}>
+                <ViewStub />
+            </ResizableDockedPane>,
+        );
+        const pane = screen.findHostByTestId('pane')!;
+        expect([pane.props.role, pane.props['aria-label']]).toEqual(['navigation', 'Navigation column']);
+        expect(pane.findAll(node => node.type === 'Pressable')).toHaveLength(1);
+    });
+
     it('paints the pane above the neighbour its handle\'s target reaches into', async () => {
         // The handle's web target reaches past the pane edge, over the neighbour (the page beside the
         // settings rail). The neighbour comes later and would paint over that part unless the pane is lifted.

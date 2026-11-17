@@ -201,6 +201,18 @@ describe('MainAppTabBar', () => {
             && node.props.testID.includes('more'))).toHaveLength(0);
     });
 
+    it('is the app navigation landmark on the web, its tabs and More inside it (C77 region)', async () => {
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+        const { t } = await import('@/text');
+        const screen = await renderTabBar(
+            <MainAppTabBar activeTab="sessions" onTabPress={() => {}} more={() => React.createElement('MoreAction')} />,
+        );
+        const landmark = screen.tree.root.findAll((node) => node.props.role === 'navigation')[0]!;
+        expect(landmark.props.accessibilityLabel).toBe(t('settingsKeyboard.paneRegions.rail'));
+        expect(landmark.findAll((node) => node.props.accessibilityRole === 'tablist')).not.toHaveLength(0);
+        expect(landmark.findAllByType('MoreAction' as never)).toHaveLength(1);
+    });
+
     // Owner 11-06: the person puts each destination on the bar or in More; a bar item never moves to
     // More on its own. When the bar holds more than fits, it scrolls sideways, Sessions fixed.
     it('keeps every pinned destination on a bar wider than the phone, reachable by swiping it', async () => {
@@ -224,6 +236,7 @@ describe('MainAppTabBar', () => {
         expect(tracks(narrow)[0]!.findAllByType('MoreAction' as never)).toHaveLength(0);
         expect(narrow.tree.root.findAllByType('MoreAction' as never)).toHaveLength(1);
         await act(async () => { narrow.findHostByTestId('tabbar-tab-bots')?.props.onPress(); });
+        await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
         expect(pressed).toEqual(['bots']);
         await narrow.unmount();
 
@@ -291,6 +304,7 @@ describe('MainAppTabBar', () => {
             preventDefault,
         });
         expect(preventDefault).toHaveBeenCalledOnce();
+        await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
         expect(onTabPress).toHaveBeenCalledOnce();
         expect(onTabPress).toHaveBeenLastCalledWith('projects');
 
@@ -302,6 +316,7 @@ describe('MainAppTabBar', () => {
         expect(onTabPress).toHaveBeenCalledOnce();
 
         projectsTab?.props.onPress();
+        await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
         expect(onTabPress).toHaveBeenCalledTimes(2);
         expect(onTabPress).toHaveBeenLastCalledWith('projects');
 

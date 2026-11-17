@@ -30,6 +30,11 @@ export type ResizableDockedPaneProps = Readonly<{
      * 390 px window).
      */
     fill?: boolean;
+    /**
+     * The web landmark this pane stands for (the navigation column). It names the pane itself, not its content,
+     * so the pane's own resize handle sits inside the landmark rather than beside it.
+     */
+    landmark?: Readonly<{ role: 'navigation' | 'complementary'; label: string }>;
     children: React.ReactNode;
     testID?: string;
 }>;
@@ -90,6 +95,7 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
     return (
         <View
             testID={props.testID}
+            {...(Platform.OS === 'web' && props.landmark ? { role: props.landmark.role, 'aria-label': props.landmark.label } : null)}
             style={{
                 ...(props.fill ? { flex: 1, minWidth: 0 } : { width: props.drawnWidthPx ?? effectiveSizePx, flexShrink: 0 }),
                 position: 'relative',

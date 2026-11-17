@@ -25,6 +25,7 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
 import { resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX, resolveCockpitTrackViewportWidth } from './cockpitTrackReveal';
 import { CockpitBarFoldedContext } from '../pageBarChromeFold';
+import { t } from '@/text';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -256,7 +257,9 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
     return (
         <FloatingTabBarSurface testID={props.barTestId} bottomInset={props.bottomInset} opaqueBand={props.opaqueBand ?? true}
             trailingAccessory={props.trailingAccessory}>
+            {/* The phone bar is the app's navigation landmark, as the rail is on a wide window: tabs and More inside it. */}
             <Animated.View {...{ dataSet: themeSurfaceDataSet('tab-bar', 'root', 'default') }}
+                {...(Platform.OS === 'web' ? { role: 'navigation' as const, accessibilityLabel: t('settingsKeyboard.paneRegions.rail') } : null)}
                 style={[styles.innerContainer, { gap: metrics.rowGap }, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'root' } : undefined)]}>
                 {/* The tablist owns only the tabs; More and other trailing controls are buttons beside it (C77). */}
                 <View accessibilityRole="tablist" style={[styles.innerContainer, styles.tablist, { gap: metrics.rowGap }]}>
