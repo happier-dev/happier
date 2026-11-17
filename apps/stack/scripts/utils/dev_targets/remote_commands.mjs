@@ -1813,7 +1813,9 @@ export function buildRemoteExecCommand(
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--preparation-scope=${policy.preparationScope}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}${FOCUSED_TEST_ADMISSION_CLASSES.includes(policy.heavyClass) ? ' --focused-test' : ''}`);
+      // P03 ORCH 2026-11-17: preparation steps are admitted at the rank of the run they prepare.
+      const preparesEnv = admissionClass ? ` ${posixQuote(`HAPPIER_ADMISSION_PREPARES_CLASS=${admissionClass}`)}` : '';
+      body.push(`${cacheEnv}${preparesEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--preparation-scope=${policy.preparationScope}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}${FOCUSED_TEST_ADMISSION_CLASSES.includes(policy.heavyClass) ? ' --focused-test' : ''}`);
     }
     body.push(`cd -- ${posixQuote(workingDirectory)}`);
     let payloadCommand = '';

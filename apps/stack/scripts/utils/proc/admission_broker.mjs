@@ -47,7 +47,15 @@ const HEAD_PRIORITY_RANKS = new Map([
 ]);
 const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
 const PRODUCER_RANK = 2;
+// P03 ORCH 2026-11-17: a preparation is a prerequisite step of the run it
+// prepares, so it is admitted at that run's class rank (never a script rank and
+// never a rank of its own). Only preparation classes take `preparesClass`.
+const PREPARATION_CLASSES = new Set(['native-custody']);
 function headPriorityRank(request) {
+  const preparation = PREPARATION_CLASSES.has(request.resourceClass ?? request.className);
+  if (preparation && typeof request.preparesClass === 'string' && !PREPARATION_CLASSES.has(request.preparesClass)) {
+    return headPriorityRank({ className: request.preparesClass });
+  }
   const classPriority = HEAVYWEIGHT_COMMAND_RESOURCES[request.resourceClass ?? request.className]?.headPriority;
   if (classPriority !== undefined) return classPriority;
   if (FOCUSED_TEST_CLASSES.has(request.resourceClass ?? request.className)) return FOCUSED_TEST_PRIORITY_RANK;
@@ -267,8 +275,16 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
 
   // Higher priority ranks go first; arrival orders waiters within a rank.
-  const compareArrival = (left, right) => right.headPriority - left.headPriority
+  // Owner 2026-11-13 (capped head reservation): a waiter past the measured bound
+  // has a guaranteed start, so overdue waiters are served first, in arrival order,
+  // whatever their rank. Without this, ranked arrivals headed nl1's queue for
+  // 2.5 h while rank-0 work never reserved (P03-ADMISSION-3, 2026-11-17).
+  const overdue = (item, now) => now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
+  const compareService = now => (left, right) => Number(overdue(right, now)) - Number(overdue(left, now))
+    || (overdue(left, now) ? 0 : right.headPriority - left.headPriority)
     || left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
+  // Order is a function of time; re-derive it on every pass, never on a timer.
+  const orderWaiting = () => waiting.sort(compareService(Date.now()));
 
   function slotResourceBudget() {
     let reservedMemoryKiB = 0;
@@ -349,6 +365,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       else nextOverrunAt = nextOverrunAt === null ? thresholdAt + 1 : Math.min(nextOverrunAt, thresholdAt + 1);
     }
     const budget = slotResourceBudget();
+    orderWaiting();
     const head = waiting.find(canReserveHead);
     const reservation = headReservation(head);
     // Only catalog symbols and numeric resource facts leave this private queue.
@@ -424,6 +441,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   function publishQueuePositions() {
     if (closing) return;
+    orderWaiting();
     const queued = waiting.filter(item => !item.slot);
     let snapshot;
     for (const [index, item] of queued.entries()) {
@@ -650,6 +668,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     let head;
     let lendableKiB = 0;
     let headStartAt;
+    orderWaiting();
     const pledgingHead = waiting.find(canReserveHead);
     const reservation = headReservation(pledgingHead);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
@@ -844,6 +863,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         || (request.resourceClass !== undefined && typeof request.resourceClass !== 'string')
         || (request.component !== undefined && typeof request.component !== 'string')
         || (request.entry !== undefined && typeof request.entry !== 'string')
+        || (request.preparesClass !== undefined && typeof request.preparesClass !== 'string')
         || (request.projects !== undefined && (!Array.isArray(request.projects)
           || request.projects.some(project => typeof project !== 'string')))
         || typeof request.repoDir !== 'string' || (request.cacheBaseDir !== undefined && typeof request.cacheBaseDir !== 'string')
@@ -861,7 +881,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       // The existing client carries its first arrival through reconnects.
       // Connection order breaks ties, but cannot replace that original age.
-      const next = waiting.findIndex(other => compareArrival(item, other) < 0);
+      const next = waiting.findIndex(other => compareService(Date.now())(item, other) < 0);
       waiting.splice(next < 0 ? waiting.length : next, 0, item);
       refreshWatchers();
       let disk;

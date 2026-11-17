@@ -218,6 +218,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       pid: process.pid, arrivedAt: Date.now(),
       repoDir, cacheBaseDir, noWait, locks, projects,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
+      // The routed run this preparation step belongs to; the broker ranks a preparation class by it.
+      ...(env.HAPPIER_ADMISSION_PREPARES_CLASS ? { preparesClass: env.HAPPIER_ADMISSION_PREPARES_CLASS } : {}),
       ...(floorOptions ? { floorOptions } : {}) };
     if (locks.length) {
       const { createWorkspaceBuildResourcePriorityScope } = await import('./workspace_build_admission.mjs');

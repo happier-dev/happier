@@ -685,7 +685,16 @@ unchanged. Waiting clients survive a broker succession: each reconnects with its
 original arrival and the successor admits it in that order. Focused test runs (the `focusedTest` classes in `command_resources.mjs`:
 an explicit selection of up to ten existing test files, owner ruling 2026-11-16) rank
 between the producers and the commit gate compiler, so a routed focused run starts at the
-next free slot. The sample's `head.headPriority` is the head's rank (0 = ordinary).
+next free slot. A CLI test's `native-custody` preparation (the Session holder and
+Go helper builds) is a step of the run it prepares, so it takes that run's class rank
+(P03 ORCH, 2026-11-17): the routed body exports the run's admission class to the
+preparation as `HAPPIER_ADMISSION_PREPARES_CLASS`, the client sends it as
+`preparesClass`, and the broker honors it only for preparation classes. Ranks order only
+waiters within the 22m24s bound: a waiter that has waited past it is served first, in
+arrival order, whatever its rank, so sustained ranked arrivals cannot starve rank-0 work
+(the bound's guaranteed start, owner 2026-11-13; on nl1 on 2026-11-17 package-dist and
+native-custody waited 2.5 h while focused runs and producers kept heading the queue).
+The sample's `head.headPriority` is the head's rank (0 = ordinary).
 Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation
 and removes that slot's pathname, so a killed holder leaves no socket file behind.

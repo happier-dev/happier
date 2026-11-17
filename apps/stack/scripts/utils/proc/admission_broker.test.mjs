@@ -527,6 +527,13 @@ const priorityIdentity = (root, kind) => ({
     entry: `node ${root}/scripts/workspaces/commitPackageTypecheck.mjs` },
   // Owner ruling 2026-11-16: a focused test run (class named by the command policy).
   focused: { className: 'validation', resourceClass: 'focused-validation-ui', component: 'apps/ui', entry: 'pnpm exec vitest' },
+  // P03 ORCH 2026-11-17: a native-custody preparation is a step of the run it prepares
+  // (a routed focused CLI test), so it is admitted at that run's rank, not as a class rank.
+  preparation: { className: 'package-dist', resourceClass: 'native-custody', preparesClass: 'focused-validation-cli',
+    component: 'packages/iroh-native', entry: 'cargo build' },
+  ordinaryPreparation: { className: 'package-dist', resourceClass: 'native-custody', preparesClass: 'validation',
+    component: 'packages/iroh-native', entry: 'cargo build' },
+  claimedPreparation: { className: 'compilation', preparesClass: 'focused-validation-cli', component: '.', entry: 'node scripts/build.mjs' },
 })[kind];
 for (const [scenario, earlier, later, laterFirst] of [
   ['commit compiler before an earlier ordinary job', 'ordinary', 'commit', true],
@@ -541,6 +548,9 @@ for (const [scenario, earlier, later, laterFirst] of [
   ['an ordinary caller cannot claim priority', 'ordinary', 'claimed', false],
   ['focused test run before an earlier commit compiler', 'commit', 'focused', true],
   ['runtime producer before an earlier focused test run', 'focused', 'producer', true],
+  ['native-custody preparation of a focused run before an earlier commit compiler', 'commit', 'preparation', true],
+  ['native-custody preparation of an ordinary run stays ordinary', 'ordinary', 'ordinaryPreparation', false],
+  ['only a preparation class takes the rank of the run it prepares', 'ordinary', 'claimedPreparation', false],
 ]) {
   test(`head priority: ${scenario}`, linux, async t => {
     const { root } = await fixture(t);
@@ -581,6 +591,29 @@ test('head priority: the rolling HEAD typecheck and focused test runs share a ra
   await holder.release();
   const started = await rolling.admit();
   await started.release();
+  await focused.admit();
+});
+
+test('a waiter past the reservation bound heads the queue ahead of later priority waiters', linux, async t => {
+  // nl1 2026-11-17: ranked arrivals (focused runs, producers) kept heading the queue,
+  // so rank-0 package-dist and native-custody waiters sat 2.5 h behind them and never
+  // reserved. Owner 2026-11-13: once a waiter has waited past the bound it gets a
+  // guaranteed start; within the bound ranks still order the queue.
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 100, t)).admit();
+  const overdue = await acquire(root, 60, t, { ...priorityIdentity(root, 'ordinary'), arrivedAt: Date.now() - headReservationDelayMs });
+  const focused = await acquire(root, 60, t, priorityIdentity(root, 'focused'));
+  // A relocatable producer (source bundles are host-bound and may use any pledge first).
+  const producer = await acquire(root, 60, t, priorityIdentity(root, 'export'));
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.head.headPriority, 0, 'the overdue ordinary waiter is the head');
+  assert.equal(sample.head.reservationActive, true);
+  await holder.release();
+  const started = await overdue.admit();
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 2, 'later ranked waiters wait behind it');
+  await started.release();
+  const next = await producer.admit();
+  await next.release();
   await focused.admit();
 });
 

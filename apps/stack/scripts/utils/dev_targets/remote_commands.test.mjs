@@ -3437,8 +3437,8 @@ test('preparation precedes payload admission, preserves cwd/env and stops on pre
   executable('getconf', 'printf "8\\n"');
   executable('systemctl', 'exit 1');
   executable('awk', 'case "$*" in */proc/meminfo*) printf "25480397 28311552\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac');
-  executable('node', `case "$*" in *service_memory.mjs*|*worker_disk_budget.mjs*|*workspace_build_admission.mjs*|*remote_commands.mjs*|*admission_client.mjs*|*admission_broker.mjs*) exec '${process.execPath}' "$@" ;; esac\n[ -z "$HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT" ] || exit 99\ncase "$*" in *remote_dependency_bootstrap*) stage=bootstrap ;; *) stage=prepare ;; esac\nprintf "%s\\n" "$stage" >> "$TRACE"\n[ "$FAIL_STAGE" != "$stage" ] || exit 42`);
-  executable('probe-command', '[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT" ] || exit 99\nprintf "payload:%s:%s\\n" "$PWD" "$VALUE" >> "$TRACE"');
+  executable('node', `case "$*" in *service_memory.mjs*|*worker_disk_budget.mjs*|*workspace_build_admission.mjs*|*remote_commands.mjs*|*admission_client.mjs*|*admission_broker.mjs*) exec '${process.execPath}' "$@" ;; esac\n[ -z "$HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT" ] || exit 99\ncase "$*" in *remote_dependency_bootstrap*) stage=bootstrap ;; *) stage="prepare:\${HAPPIER_ADMISSION_PREPARES_CLASS-}" ;; esac\nprintf "%s\\n" "$stage" >> "$TRACE"\n[ "\${FAIL_STAGE}" != "\${stage%%:*}" ] || exit 42`);
+  executable('probe-command', '[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT" ] || exit 99\nprintf "payload:%s:%s:%s\\n" "$PWD" "$VALUE" "${HAPPIER_ADMISSION_PREPARES_CLASS-}" >> "$TRACE"');
   const localTarget = { ...posix, repoDir: checkout, cliHomeDir: join(root, 'cli-home'), remotePath: [bin, '/usr/bin', '/bin'] };
   const trace = join(root, 'trace');
   const request = failStage => buildRemoteExecCommand(localTarget, {
@@ -3448,13 +3448,14 @@ test('preparation precedes payload admission, preserves cwd/env and stops on pre
       HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' },
   });
   await execFileAsync('/bin/bash', ['-c', request('')], { env: buildNativeAdmissionFixtureEnv() });
-  assert.equal(readFileSync(trace, 'utf8'), `bootstrap\nprepare\npayload:${checkout}/apps/cli:literal '$value'\n`);
+  // The preparation step carries its run's admission class (its broker rank); the payload does not.
+  assert.equal(readFileSync(trace, 'utf8'), `bootstrap\nprepare:targeted-validation\npayload:${checkout}/apps/cli:literal '$value':\n`);
   writeFileSync(trace, '');
   await assert.rejects(execFileAsync('/bin/bash', ['-c', request('bootstrap')], { env: buildNativeAdmissionFixtureEnv() }), error => error.code === 42);
   assert.equal(readFileSync(trace, 'utf8'), 'bootstrap\n');
   writeFileSync(trace, '');
   await assert.rejects(execFileAsync('/bin/bash', ['-c', request('prepare')], { env: buildNativeAdmissionFixtureEnv() }), error => error.code === 42);
-  assert.equal(readFileSync(trace, 'utf8'), 'bootstrap\nprepare\n');
+  assert.equal(readFileSync(trace, 'utf8'), 'bootstrap\nprepare:targeted-validation\n');
 });
 
 test('remote payload admission delegates finite publishers on the selected host', { skip: process.platform !== 'linux' }, async t => {
