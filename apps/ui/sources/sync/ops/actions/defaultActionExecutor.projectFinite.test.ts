@@ -390,6 +390,25 @@ describe('Project finite delivery through the default UI Action host', () => {
                     installationPublicKey: encodeBase64(installation.publicKey), revokedAt: null, replacedByMachineId: null };
                 homes.answer(requesterHomeId, '/v1/machines', { body: [machine] });
                 homes.answer(requesterHomeId, 'GET /v1/machines/source', { body: { machine } });
+                // Deferred agent approval returns its receipt to the originating Session.
+                // Keep that cold Home read and Pending delivery real beneath the HTTP boundary.
+                const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+                const sessionAnswer = { body: { session: createPlainSessionWithDisplayRecordFixture({ id: caller.sessionId,
+                    active: true, metadata: { machineId: 'source', path: '/repo', host: 'tester.local' } }) } };
+                homes.answer(requesterHomeId, `/v2/sessions/${caller.sessionId}`, sessionAnswer);
+                homes.answer(requesterHomeId, `/v2/sessions/${caller.sessionId}?accessProjectionVersion=1`, sessionAnswer);
+                const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+                const { PENDING_INPUT_PROTOCOL_VERSION_V4 } = await import('@happier-dev/protocol/clientCompatibility/primitives');
+                const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+                const baseFeatures = createRootLayoutFeaturesResponse();
+                const features = createRootLayoutFeaturesResponse({ capabilities: {
+                    serverIdentity: { serverIdentityId: 'srv_finite_requester' }, session: {
+                        ...baseFeatures.capabilities.session, pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 },
+                    },
+                } });
+                homes.answer(requesterHomeId, '/v1/features', { body: features });
+                homes.answer(requesterHomeId, '/v1/features/authenticated', { body: features });
+                expect(await getServerFeaturesSnapshot({ serverId, force: true })).toMatchObject({ status: 'ready' });
             }
             const requested = await executor.execute('projects.prepare', input, { serverId, surface,
                 authority: surface === 'cli' && outcome === 'approve' ? 'present_user' : 'account_automation',
@@ -433,6 +452,10 @@ describe('Project finite delivery through the default UI Action host', () => {
                 await homes.switchAccount(requesterHomeId, 'requester', { token: requesterToken });
                 account = await captureLazyActionAccountContext(serverId);
             }
+            if (signed) homes.answer(requesterHomeId, `/v2/sessions/${caller.sessionId}/pending`, { select: input => {
+                expect(input).toMatchObject({ localId: `approval-result:${created.artifactId}`, requestedAction: { v: 1, kind: 'enqueue' } });
+                return { body: { requestedAction: { v: 1, kind: 'enqueue' }, pending: { localId: `approval-result:${created.artifactId}` } } };
+            } });
             const decided = await decideApprovalAsInbox(serverId, created.artifactId,
                 outcome === 'changed' || outcome === 'retired' ? 'approve' : outcome);
             expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: {
@@ -446,6 +469,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                 if (typeof settled?.body !== 'string') throw new Error('Expected a persisted approval execution receipt');
                 expect(ApprovalRequestV2Schema.parse(JSON.parse(settled.body))).toMatchObject({ status: 'executed', execution: { ok: true } });
             }
+            if (signed) expect(homes.requestsFor(`/v2/sessions/${caller.sessionId}/pending`)).toHaveLength(1);
             expect(reviewReads()).toHaveLength(outcome === 'approve' ? 4 : outcome === 'changed' ? 3 : outcome === 'retired' ? 2 : 1);
             expect(ownFiniteRelayRequests('projects.prepare')).toEqual([]);
             expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
@@ -1289,7 +1313,11 @@ describe('Project finite delivery through the default UI Action host', () => {
                         scope: { accountId: 'requester', machineId: 'source' } }),
                 });
                 expect(controller.getCurrent().setupOperation?.snapshot.setupReview).toBeUndefined();
+                // Resolve the retained invocation once, then refresh its executable review
+                // before remembering Trust and observe that same invocation after the write.
                 expect(calls).toEqual([expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
+                    method: `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, params: { operationId: 'remembered-setup' },
+                }) }), expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
                     method: `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, params: { operationId: 'remembered-setup', refreshSetupReview: true },
                 }) }), expect.objectContaining({ token: requesterToken, request: expect.objectContaining({
                     method: `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, params: { operationId: 'remembered-setup', refreshSetupReview: true },
