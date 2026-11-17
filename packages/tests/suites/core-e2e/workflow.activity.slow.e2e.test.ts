@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { WorkflowRunGetResultV1Schema, WorkflowRunListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowRunGetResultV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { waitFor } from '../../src/testkit/timing';
@@ -17,6 +17,7 @@ describe('Workflow activity through the Account Action executor', () => {
   beforeAll(async () => {
     fixture = await startTeamSetupFFixture({ testDir: await mkdtemp(join(tmpdir(), 'workflow-activity-')),
       dbProvider: 'postgres', observeActionRequests: true,
+      captureRequestBody: request => request.path === '/v3/automations/runs/workflow-storage',
       serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1' } });
     account = await fixture.createAccount('activity-reader');
   }, 0);
@@ -117,8 +118,25 @@ describe('Workflow activity through the Account Action executor', () => {
       await fixture.assertKnownGoodSessionControl(account, machine);
       expect(column).toHaveLength(beforeClosed);
       expect(companion).toHaveLength(beforeClosed);
-      expect(fixture.takeRequestObservations().filter(request => request.path === '/v3/automations/runs/workflow-storage'))
-        .toEqual([]);
+      const closedStorageReads = fixture.requestProxy?.entries()
+        .filter(request => request.path === '/v3/automations/runs/workflow-storage')
+        .flatMap(request => {
+          expect(request.body?.complete).toBe(true);
+          expect(request.body?.truncated).toBe(false);
+          const body: unknown = JSON.parse(request.body!.text);
+          if (!body || typeof body !== 'object' || !('operation' in body)) throw new Error('Workflow operation unavailable');
+          if (body.operation === 'list') {
+            const input = WorkflowRunListRequestV1Schema.parse('request' in body ? body.request : undefined);
+            if (input.projection === 'membership') return [{ operation: 'activity_membership' }];
+            // Account changes still hydrate exact shared Run summaries, independently of Events demand.
+            expect(input.runIds?.length).toBeGreaterThan(0);
+          } else if (body.operation === 'get' && (!('projection' in body) || body.projection === undefined)) {
+            return [{ operation: 'private_detail' }];
+          }
+          return [];
+        });
+      expect(closedStorageReads).toEqual([]);
+      fixture.takeRequestObservations();
       const reopened: WorkflowActivityLiveFact[] = [];
       let reopenedPage: unknown;
       releases.push(source.acquire({ onLive: (rows: readonly WorkflowActivityLiveFact[]) => reopened.push(...rows),
