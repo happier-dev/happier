@@ -22,6 +22,7 @@ import { readSessionAppearanceWorkspaceKey } from '@/sync/domains/session/organi
 import { createEffectiveSessionAppearanceColorsSelector } from '@/sync/store/selectors/sessionAppearance';
 import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { useInboxPluginSessionRows } from './useInboxPluginSessionRows';
+import { InboxPluginDeclarationDemand } from './InboxPluginDeclarationDemand';
 import { InboxExecutionRunSourceBoundary, useInboxExecutionRunSource } from './useInboxExecutionRunSource';
 import { InboxArtifactSourceBoundary, useInboxArtifactRowDemand, useInboxArtifactSource } from './useInboxArtifactSource';
 import { useFullWorkflowAttentionSource, useAutomationAttentionSource, WorkflowAttentionSourceBoundary } from './useWorkflowAttentionSource';
@@ -212,9 +213,9 @@ export function InboxWorkProjectionBoundary(props: Readonly<{ children: React.Re
     const existing = React.useContext(ProjectionContext);
     const [store] = React.useState(() => createStore<InboxWorkProjection | null>(() => null));
     return <ProjectionContext.Provider value={existing ?? store}>
-        {(props.enabled ?? true) && !existing ? <InboxArtifactSourceBoundary><WorkflowAttentionSourceBoundary>
+        {(props.enabled ?? true) && !existing ? <><InboxPluginDeclarationDemand /><InboxArtifactSourceBoundary><WorkflowAttentionSourceBoundary>
             <InboxExecutionRunSourceBoundary><ProjectionPublisher store={store} /></InboxExecutionRunSourceBoundary>
-        </WorkflowAttentionSourceBoundary></InboxArtifactSourceBoundary> : null}
+        </WorkflowAttentionSourceBoundary></InboxArtifactSourceBoundary></> : null}
         {props.children}
     </ProjectionContext.Provider>;
 }

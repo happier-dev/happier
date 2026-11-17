@@ -33,6 +33,7 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 const projectionRuntime = vi.hoisted(() => ({
     describe: vi.fn<(machineId: string, options?: unknown) => Promise<unknown>>(),
     targeted: vi.fn<(machineId: string, options?: unknown) => Promise<unknown>>(),
+    resource: vi.fn<(request: unknown) => Promise<unknown>>(),
     pendingReplies: new Map<() => void, Promise<void>>(),
 }));
 const paletteRoute = vi.hoisted(() => ({ segments: [] as string[] }));
@@ -51,7 +52,13 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
             : params.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ
                 ? projectionRuntime.targeted
                 : null;
-        if (!read) throw new Error(`Unexpected currentness fixture RPC: ${params.method}`);
+        if (!read) {
+            if (params.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
+                || params.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN
+                || params.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT
+                || params.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return projectionRuntime.resource(params);
+            throw new Error(`Unexpected currentness fixture RPC: ${params.method}`);
+        }
         // Pending external replies belong to the test Home transport. A case
         // may deliver a late answer, but disposing the fixture must settle
         // unanswered reads rather than leaking them into the next Account.
@@ -296,6 +303,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         await assertProjectionFixtureReady();
         projectionRuntime.describe.mockReset();
         projectionRuntime.targeted.mockReset();
+        projectionRuntime.resource.mockReset();
     });
 
     afterEach(async () => {
@@ -1005,6 +1013,81 @@ describe('usePluginUiProjectionCurrentness', () => {
             await flushHookEffects({ advanceTimersMs: 180_000, cycles: 1 });
             expect(projectionRuntime.describe).toHaveBeenCalledTimes(reads);
         } finally { vi.useRealTimers(); await screen.unmount(); }
+    });
+
+    it('acquires cold Inbox declarations only while its work projection is presented and preserves a pending Resource read', async () => {
+        const { InboxWorkProjectionBoundary, useInboxWorkProjection } = await import('@/hooks/inbox/useInboxWorkProjection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const pluginId = 'qa.inbox-i04-1116';
+        const occurrenceId = 'inbox-currentness-1';
+        const executionOrigin = { serverIdentityId, sourceRef: { machineId: 'machine-1', pluginId,
+            sourceCustody: { kind: 'development' as const, registeredRootId: '/tmp/qa-inbox-i04' } } };
+        const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+            projectionDigest: 'd'.repeat(64), projection: { v: 2, generation: 41,
+                installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Inbox fixture', enabled: true,
+                    occurrenceId, version: '0.1.0', source: { kind: 'local', locator: '/tmp/qa-inbox-i04' }, executionOrigin } },
+                resourcesById: Object.fromEntries(['inbox', 'session-detail'].map(id => [`${pluginId}/${id}`, {
+                    id, pluginId, occurrenceId, executionOrigin, resourceKind: 'config',
+                    contentType: 'application/json', scope: id === 'inbox' ? 'surface' : 'session',
+                    ...(id === 'inbox' ? { sessionInbox: { detailResourceId: 'session-detail' } } : {}),
+                }])),
+            } });
+        const deferred = buildDeferredDaemonProjectionSections(response);
+        projectionRuntime.describe.mockImplementation(async (_machineId, options) => {
+            const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse((options as { payload: unknown }).payload);
+            return request.sectionRead ? deferred.read(request.sectionRead.digest, request.sectionRead.offset,
+                request.sectionRead.includeDigests) : deferred.manifest;
+        });
+        const ready = createDeferred<void>();
+        let readsStarted = 0;
+        projectionRuntime.resource.mockImplementation(async raw => {
+            const request = raw as { method: string; payload: { resource: unknown; subscriptionId: string }; signal?: AbortSignal };
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                readsStarted += 1;
+                await ready.promise;
+                return { ok: true, resource: request.payload.resource, kind: 'config', contentType: 'application/json',
+                    digest: `sha256:${'a'.repeat(64)}`,
+                    bytesBase64: Buffer.from(JSON.stringify({ kind: 'ready', rows: [], nextCursor: null })).toString('base64') };
+            }
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) return {
+                ok: true, subscriptionId: request.payload.subscriptionId, digest: `sha256:${'a'.repeat(64)}` };
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return { ok: true };
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT) {
+                await new Promise<void>(resolve => request.signal?.aborted ? resolve()
+                    : request.signal?.addEventListener('abort', () => resolve(), { once: true }));
+                return { ok: true, status: 'idle' };
+            }
+            throw new Error(`Unexpected Inbox fixture RPC: ${request.method}`);
+        });
+        let inbox: ReturnType<typeof useInboxWorkProjection>;
+        let shell: ReturnType<typeof useAppShellPluginUiProjection> | undefined;
+        function Probe() { inbox = useInboxWorkProjection(); shell = useAppShellPluginUiProjection(); return null; }
+        const view = (presented: boolean, mounted = true) => <AppShellPluginUiProjectionProvider>
+            <PluginSurfaceFocusEligibilityProvider active={presented}>
+                {mounted ? <InboxWorkProjectionBoundary><Probe /></InboxWorkProjectionBoundary> : null}
+            </PluginSurfaceFocusEligibilityProvider>
+        </AppShellPluginUiProjectionProvider>;
+        const rendered = await renderWithAppProviders(view(false));
+        try {
+            expect(projectionRuntime.describe).not.toHaveBeenCalled();
+            expect(readsStarted).toBe(0);
+            await rendered.update(view(true));
+            await waitForHomeGovernance(() => expect(readsStarted).toBe(1));
+            expect(shell?.phase).toBe('current');
+            expect(shell?.pluginUiProjection?.resourcesById[`${pluginId}/inbox`]?.sessionInbox).toEqual({ detailResourceId: 'session-detail' });
+            expect(inbox!.pluginSessionInbox).toMatchObject({ rows: [], loading: true, failed: false });
+            await act(async () => ready.resolve());
+            await waitForHomeGovernance(() => expect(inbox!.pluginSessionInbox).toMatchObject({ rows: [], loading: false, failed: false }));
+            await rendered.update(view(false));
+            const reads = projectionRuntime.describe.mock.calls.length;
+            await act(async () => invalidateProjection());
+            await flushHookEffects();
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(reads);
+            await rendered.update(view(false, false));
+            await act(async () => invalidateProjection());
+            await flushHookEffects();
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(reads);
+        } finally { ready.resolve(); await rendered.unmount(); }
     });
 
     it('publishes a selected Machine daemon-only descriptor into the real cold Connect More catalog', async () => {
