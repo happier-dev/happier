@@ -81,6 +81,22 @@ export const SessionModelRefSchema = lazyZodSchema(() => z.union([
 ]));
 export type SessionModelRef = z.infer<typeof SessionModelRefSchema>;
 
+/** Native Execution Actions retain their existing split model selectors. */
+export function projectSessionModelRefToExecutionModelSelection(ref: SessionModelRef):
+  | Readonly<{ modelSelection: SessionModelSelectionV1['ref']; teamCredentialModel?: never }>
+  | Readonly<{ teamCredentialModel: TeamCredentialProviderModelSelectionV1; modelSelection?: never }> {
+  if (!('source' in ref)) return { modelSelection: ref };
+  if (ref.source === 'team_resource') {
+    const { source: _source, ...teamRef } = ref;
+    return { teamCredentialModel: { kind: 'team_credential_provider_model', ...teamRef } };
+  }
+  return { modelSelection: {
+    agentTargetKey: ref.agentTargetKey,
+    providerConnectionId: ref.source === 'native' ? null : ref.providerConnectionId,
+    modelId: ref.modelId,
+  } };
+}
+
 const SessionModelSelectionV2BaseShape = {
   v: z.literal(2),
   updatedAt: z.number().check(z.nonnegative()),

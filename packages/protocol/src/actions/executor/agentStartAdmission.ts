@@ -10,7 +10,7 @@ import { normalizeConnectedServiceSelectionInput } from '../../connect/normalize
 import { AgentStartBaselineSelectionErrorV1, resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
 export { resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
-import { projectSessionModelSelectionV2ToV1, SessionModelSelectionSchema, type SessionModelSelection } from '../../providers/selection/v2.js';
+import { projectSessionModelRefToExecutionModelSelection, projectSessionModelSelectionV2ToV1, SessionModelSelectionSchema, type SessionModelSelection } from '../../providers/selection/v2.js';
 import { parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
 import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
@@ -109,15 +109,6 @@ export function readActionWorkflowTargetInputFieldV1(actionId: string): 'agentTa
         : actionId === 'execution.run.start' ? 'backendTarget'
             : actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys';
 }
-/** Native Execution Actions retain their existing split model selectors. */
-function projectExecutionModelSelectionV1(selection: SessionModelSelection) {
-    if (selection.v === 2 && selection.ref.source === 'team_resource') {
-        const { source: _source, ...ref } = selection.ref;
-        return { teamCredentialModel: { kind: 'team_credential_provider_model' as const, ...ref } };
-    }
-    const legacy = selection.v === 1 ? selection : projectSessionModelSelectionV2ToV1(selection);
-    return { modelSelection: legacy?.ref };
-}
 /** Workflow selection fields shared by static validation and native admission. */
 export function projectActionWorkflowSelectionInputV1(
     actionId: string,
@@ -144,7 +135,7 @@ export function projectActionWorkflowSelectionInputV1(
         && selected.modelSelection !== undefined) {
         if (actionId === 'session.spawn_new' || selected.modelSelection === null)
             projected.modelSelection = selected.modelSelection;
-        else Object.assign(projected, projectExecutionModelSelectionV1(selected.modelSelection));
+        else Object.assign(projected, projectSessionModelRefToExecutionModelSelection(selected.modelSelection.ref));
     }
     if (actionId !== 'session.spawn_new' && projected.sessionConfigOptionOverrides === undefined && projected.configOptions === undefined
         && selected.sessionConfigOptionOverrides !== undefined) projected.sessionConfigOptionOverrides = selected.sessionConfigOptionOverrides;
@@ -585,7 +576,7 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
             result.modelSelection = selected;
         else {
             result.modelId = stamped.engine.modelId;
-            Object.assign(result, projectExecutionModelSelectionV1(selected));
+            Object.assign(result, projectSessionModelRefToExecutionModelSelection(selected.ref));
         }
     }
     if (stamped.profileId)
