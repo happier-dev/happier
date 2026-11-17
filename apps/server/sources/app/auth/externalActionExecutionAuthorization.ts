@@ -205,7 +205,7 @@ import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
-import { isUsagePriceActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { KvMutationRequestSchema } from '@/app/kv/kvMutate';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { bindPublicProfilePreparedHttpRequestV1, isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -1139,8 +1139,7 @@ function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: 
 function isPersonalUsageReadEffect(rootActionId: string, effectActionId: string): boolean {
     if (rootActionId === 'usage.calendar.export') return effectActionId === 'connectedServices.quota.get';
     return (rootActionId === 'usage.query' || rootActionId === 'usage.export'
-        || rootActionId === 'usage.recap.private.compose' || rootActionId === 'usage.recap.private.export'
-        || rootActionId === 'usage.recap.private.deliver'
+        || isUsagePrivateRecapActionIdV1(rootActionId)
         || rootActionId === 'usage.coach.dismiss' || rootActionId === 'usage.coach.snooze'
         || rootActionId === 'usage.coach.apply' || rootActionId === 'usage.coach.undo')
         && (effectActionId === 'usage.query' || effectActionId === 'connectedServices.quota.get');
@@ -3403,7 +3402,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
                 `/v1/kv/${encodeURIComponent(USAGE_COACH_SUPPRESSIONS_KV_KEY)}`].includes(proof.path)
             && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, {}));
     }
-    if (root === 'usage.recap.compose' || root === 'usage.recap.export' || root === 'usage.recap.deliver') {
+    if (isUsagePublicRecapActionIdV1(root)) {
         // The installed executor signs this consumed safe-view read under its
         // unchanged recap root. No owner record or private Usage grant follows.
         return verified.effectActionId === root && proof.method.toUpperCase() === 'GET'

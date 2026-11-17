@@ -101,10 +101,14 @@ describe('Usage source Action admission', () => {
       const actionId = ActionIdSchema.parse(id);
       expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
         context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
-      if (id !== 'usage.sources.history.delete') {
-        expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), requiredByPolicy: true,
-          context: { surface: 'cli', authority: 'present_user' } }).flow).toBe('deferred');
-      }
+      // Private input retains its invocation; live results stay with the original
+      // person. Durable automated requests defer the result to the deciding person.
+      expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), requiredByPolicy: true,
+        context: { surface: 'cli', authority: 'present_user' } }).flow)
+        .toBe(id === 'usage.sources.history.delete' ? 'deferred' : 'blocking');
+      expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), requiredByPolicy: true,
+        context: { surface: 'cli', authority: 'account_automation' } }).flow)
+        .toBe(id === 'usage.sources.root.set' ? 'blocking' : 'deferred');
     }
   });
 
@@ -167,14 +171,16 @@ describe('Usage source Action admission', () => {
       usageSourceAction: createUsageSourceActionPort({ serverId: 'home', assertCurrent: () => {}, rpc: async () => output }),
     });
     const result = await executor.execute(actionId, input, context);
-    if (result.ok && result.result && typeof result.result === 'object'
-      && 'kind' in result.result && result.result.kind === 'approval_request_created') {
+    if (actionId === 'usage.sources.root.set') {
+      // Approval permits the effect, not disclosure of its private result to the Agent.
+      expect(result).toMatchObject({ ok: false, errorCode: 'approval_result_held' });
+      expect(JSON.stringify(result)).not.toContain('/private/new-root');
+    } else {
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval', actionId } });
       // A detached CLI approval is decided through the real owner, not a forged approved fixture.
       expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'owner', actionCaller: { kind: 'host' },
       })).toMatchObject({ ok: true });
-    } else {
-      expect(result).toEqual({ ok: true, result: output });
     }
     expect(persisted.length).toBeGreaterThan(0);
     const open = persisted[0]!;

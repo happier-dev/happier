@@ -158,8 +158,12 @@ describe('usage recap Action composition', () => {
     };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     const input = { query, selectedFields: ['tokens'], intent: 'share' };
-    const context = { surface: 'ui' as const, actionCaller: { kind: 'host' as const } };
-    expect(await executor.execute('usage.recap.private.deliver', input, context)).toMatchObject({ ok: true,
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
+    // A UI label without host-stamped person authority cannot authorize private delivery.
+    expect(await executor.execute('usage.recap.private.deliver', input, { ...context, authority: undefined }))
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    const delivered = await executor.execute('usage.recap.private.deliver', input, context);
+    expect(delivered, JSON.stringify(delivered)).toMatchObject({ ok: true,
       result: { kind: 'cancelled', compose: { kind: 'composed', facts: { tokens: { total: 12 } } } } });
     expect(await executor.execute('usage.recap.private.deliver', { ...input, base64: 'forged' }, context))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });

@@ -4,7 +4,8 @@ import { UsageExportInputSchema, buildUsageFileResult } from '../../usage/usageE
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
 import type { UsageActionId } from '../specs/usage.js';
-import { USAGE_HISTORY_ACTION_IDS, USAGE_PRICE_ACTION_IDS, isUsagePriceActionIdV1 } from '../../usage/usageActionIdsV1.js';
+import { USAGE_HISTORY_ACTION_IDS, USAGE_PRICE_ACTION_IDS, USAGE_PUBLIC_RECAP_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS,
+  isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '../../usage/usageActionIdsV1.js';
 import { UsageHistoryReadInputSchema, UsageHistoryReadStateSchema, type UsageHistoryReadInput, type UsageHistoryReadState } from '../../inputs/usageQuery.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { UsageRecapPrivateComposeInputSchema, UsageRecapPublicComposeInputSchema, UsageRecapExportResultSchema,
@@ -89,11 +90,11 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     return 'ok' in result ? result : { ok: true, result: projectUsageQueryDelivery(result,
       context.surface === 'agent' || context.surface === 'mcp' ? context.surface : undefined) };
   }
-  if (actionId === 'usage.recap.compose' || actionId === 'usage.recap.export' || actionId === 'usage.recap.deliver'
-    || actionId === 'usage.recap.private.compose' || actionId === 'usage.recap.private.export' || actionId === 'usage.recap.private.deliver') {
-    const privateSource = actionId === 'usage.recap.private.compose' || actionId === 'usage.recap.private.export'
-      || actionId === 'usage.recap.private.deliver';
-    const delivery = actionId === 'usage.recap.deliver' || actionId === 'usage.recap.private.deliver'
+  const publicRecap = isUsagePublicRecapActionIdV1(actionId);
+  if (publicRecap || isUsagePrivateRecapActionIdV1(actionId)) {
+    const privateSource = !publicRecap;
+    const recapActionIds = privateSource ? USAGE_PRIVATE_RECAP_ACTION_IDS : USAGE_PUBLIC_RECAP_ACTION_IDS;
+    const delivery = actionId === recapActionIds.deliver
       ? (privateSource ? UsageRecapPrivateDeliveryInputSchema : UsageRecapPublicDeliveryInputSchema).parse(value) : null;
     const request = delivery ? (({ intent: _intent, ...compose }) => compose)(delivery)
       : (privateSource ? UsageRecapPrivateComposeInputSchema : UsageRecapPublicComposeInputSchema).parse(value);
@@ -130,7 +131,7 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
       return composeUsageRecap({ input: { ...request, query }, snapshot });
     })();
     if ('ok' in compose) return compose;
-    if (actionId === 'usage.recap.compose' || actionId === 'usage.recap.private.compose') return { ok: true, result: compose };
+    if (actionId === recapActionIds.compose) return { ok: true, result: compose };
     if (compose.kind !== 'composed') return { ok: true, result: { kind: 'unavailable', reason: 'compose_unavailable', compose } };
     if (!ports.renderRecap) return { ok: true, result: { kind: 'unavailable', reason: 'render_target_unavailable', compose } };
     const rendered = await ports.renderRecap(compose, context);

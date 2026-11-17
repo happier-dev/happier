@@ -232,7 +232,7 @@ import { readInputPath } from '../inputs/inputPredicates.js';
 import { SecretFillSettlementV1Schema } from '../computer/v1.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { executeUsageAction } from './executor/usageActions.js';
-import { isUsageActionIdV1 } from '../usage/usageActionIdsV1.js';
+import { isUsageActionIdV1, USAGE_PUBLIC_RECAP_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { isPublicProfilePreparationActionIdV1 } from '../account/publicProfileActionIds.js';
 import { preparePublicProfileAction, executePublicProfileAction } from './executor/publicProfileActions.js';
 import { executeUsageCoachAction } from './executor/usageCoachActions.js';
@@ -4164,8 +4164,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         // The recap explicitly serves headless callers with compose data. Only a declared
         // no-client result falls back; denied or uncertain issued requests stay terminal.
-        if ((actionId === 'usage.recap.export' || actionId === 'usage.recap.deliver'
-          || actionId === 'usage.recap.private.export' || actionId === 'usage.recap.private.deliver') && !delivered.ok && delivered.errorCode === 'unavailable'
+        if ((actionId === USAGE_PUBLIC_RECAP_ACTION_IDS.export || actionId === USAGE_PUBLIC_RECAP_ACTION_IDS.deliver
+          || actionId === USAGE_PRIVATE_RECAP_ACTION_IDS.export || actionId === USAGE_PRIVATE_RECAP_ACTION_IDS.deliver) && !delivered.ok && delivered.errorCode === 'unavailable'
           && delivered.error === 'noClient' && deps.usageActions) {
           return await executeUsageAction(actionId, admittedInput, { query: deps.usageActions.query,
             readPublicProfile: deps.usageActions.readPublicProfile }, ctx);

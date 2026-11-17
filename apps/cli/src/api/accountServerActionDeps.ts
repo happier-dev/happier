@@ -92,6 +92,7 @@ import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetRe
 import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
+import { USAGE_PUBLIC_RECAP_ACTION_IDS, isUsagePublicRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { admitUsageCoachRemedies, applyUsageCoachPreferences } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
@@ -581,10 +582,10 @@ export function createAccountServerActionDeps(input: Readonly<{
         if (mismatch) return mismatch;
         if (context.signal?.aborted) return failure('cancelled');
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
-        const effectActionId = context.externalActionExecutionAuthorization?.binding.actionId ?? 'usage.recap.compose';
+        const effectActionId = context.externalActionExecutionAuthorization?.binding.actionId ?? USAGE_PUBLIC_RECAP_ACTION_IDS.compose;
         // Only the captured recap invocation may consume this Account-scoped
         // current view. Neither a caller handle nor a caller public DTO is accepted.
-        if (!['usage.recap.compose', 'usage.recap.export', 'usage.recap.deliver'].includes(effectActionId)) {
+        if (!isUsagePublicRecapActionIdV1(effectActionId)) {
           return externalTransportUnsupported(context);
         }
         const path = '/v1/account/public-profile/view';
