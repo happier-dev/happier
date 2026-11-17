@@ -15,7 +15,7 @@ import { resolveSessionSpawnConnectedServicesDefaultsPayload } from './spawnConn
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
   runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-    runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+    runtimeOptions: { pluginIds: ['happier.agent.codex', 'happier.agent.claude'] } });
 });
 afterAll(async () => { await runtime.dispose(); });
 
