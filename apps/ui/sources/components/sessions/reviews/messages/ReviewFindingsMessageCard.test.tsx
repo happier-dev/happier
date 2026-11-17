@@ -799,6 +799,12 @@ describe('ReviewFindingsMessageCard', () => {
             gotOnly: [...new Set(sessionExecutionRunGetSpy.mock.calls.map(([, request]) => request.runId))] })
             .toEqual({ lists: 0, gets: 6, gotOnly: ['run_2'] });
         expect(screen.getTextContent()).toContain('Codex finished.');
+
+        // A failed re-read keeps the finished result rather than the older listed status.
+        sessionExecutionRunGetSpy.mockResolvedValue({ ok: false, error: 'unavailable' });
+        notifyExecutionRunActivity({ serverId: home.serverId, sessionId: 'sess_1' }, { runId: 'run_2' });
+        await flush();
+        expect(screen.getTextContent()).toContain('Codex finished.');
     });
 
     it('withdraws another Home\'s reviewer results when the new Home cannot load the group', async () => {

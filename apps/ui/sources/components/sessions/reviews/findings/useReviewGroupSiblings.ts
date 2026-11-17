@@ -43,8 +43,11 @@ export function useReviewGroupSiblings(params: Readonly<{
     // The listed run of each current reviewer: its identity, and its status while a read fails.
     const listedRef = React.useRef<ReadonlyMap<string, ExecutionRunPublicState>>(new Map());
 
-    const readSibling = React.useCallback(async (run: ExecutionRunPublicState, readScope: ServerAccountScope): Promise<ReviewGroupSibling> => {
+    const readSibling = React.useCallback(async (run: ExecutionRunPublicState, readScope: ServerAccountScope,
+        options: Readonly<{ keepOnFailure?: boolean }> = {}): Promise<ReviewGroupSibling | null> => {
         const got = await sessionExecutionRunGet(sessionId, { runId: run.runId, includeStructured: true }, { serverId: readScope.serverId, scope: readScope });
+        // A failed re-read keeps what the reviewer last showed instead of the older listed status.
+        if (options.keepOnFailure && !('run' in got)) return null;
         const payload = 'run' in got ? readReviewPayload(got.structuredMeta, got.reviewFindings) : null;
         return {
             runId: run.runId,
@@ -72,7 +75,7 @@ export function useReviewGroupSiblings(params: Readonly<{
         const next = await Promise.all(members.map((run) => readSibling(run, scope)));
         if (!isCurrent()) return;
         listedRef.current = new Map(members.map((run) => [run.runId, run]));
-        publish(() => next);
+        publish(() => next.filter((sibling): sibling is ReviewGroupSibling => sibling !== null));
     }, [groupId, publish, readSibling, scope, selfRunId, sessionId]);
 
     /** A reviewer's own activity changes only that reviewer: re-read its run, not the Session's run list. */
@@ -81,9 +84,9 @@ export function useReviewGroupSiblings(params: Readonly<{
         if (!listedRun || !scope) return;
         const order = (readOrder.get(runId) ?? 0) + 1;
         readOrder.set(runId, order);
-        const next = await readSibling(listedRun, scope);
+        const next = await readSibling(listedRun, scope, { keepOnFailure: true });
         // A later report for the same reviewer supersedes this read.
-        if (!isCurrent() || readOrder.get(runId) !== order) return;
+        if (!next || !isCurrent() || readOrder.get(runId) !== order) return;
         publish((siblings) => siblings.map((sibling) => (sibling.runId === runId ? next : sibling)));
     }, [publish, readSibling, scope]);
 
