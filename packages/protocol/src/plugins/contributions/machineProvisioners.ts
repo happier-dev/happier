@@ -660,8 +660,8 @@ export const MachineProvisionerSizeV1Schema = projectRoleSchema(lazyDefinition((
 export const MachineProvisionerSnapshotResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('unsupported'), code: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('confirmed'), snapshotId: defineProtocolString({ minLength: 1 }),
-    coverage: projectRoleSchema(MachineProvisionerSnapshotFactsV1Schema.shape.coverage),
-    cost: projectRoleSchema(MachineProvisionerSnapshotFactsV1Schema.shape.cost),
+    coverage: projectRoleSchema(lazyDefinition(() => MachineProvisionerSnapshotFactsV1Schema.shape.coverage)),
+    cost: projectRoleSchema(lazyDefinition(() => MachineProvisionerSnapshotFactsV1Schema.shape.cost)),
     consistency: projectRoleSchema(MachineProvisionerSnapshotConsistencyV1Schema) }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }),
     nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),

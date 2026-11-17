@@ -27,6 +27,26 @@ async function importInFreshProcess(relativeEntryPath: string, afterImport = '',
 
 describe('protocol ESM import safety', () => {
   it.each([
+    'machines/managed/providerFactsV1.ts',
+    'plugins/contributions/machineProvisioners.ts',
+    'index.ts',
+  ])('consumes snapshot price facts with %s first under the native source runtime', async (entryPath) => {
+    const provisioners = pathToFileURL(path.join(__dirname, 'plugins/contributions/machineProvisioners.ts')).href;
+    await importInFreshProcess(entryPath, `
+      const { strict: assert } = await import('node:assert');
+      const { MachineProvisionerSnapshotResultV1Schema } = await import(${JSON.stringify(provisioners)});
+      const result = { kind: 'confirmed', snapshotId: 'snapshot-1',
+        coverage: { rootDisk: true, attachedVolumes: false },
+        cost: { kind: 'billed', source: 'provider', price: {
+          amount: '0.02', currency: 'USD', unit: 'hour', source: 'provider', observedAt: 1,
+        } }, consistency: 'stopped' };
+      assert.deepEqual(JSON.parse(JSON.stringify(MachineProvisionerSnapshotResultV1Schema.parse(result))), result);
+      assert.equal(MachineProvisionerSnapshotResultV1Schema.safeParse({ ...result,
+        cost: { ...result.cost, price: { ...result.cost.price, amount: 'invalid' } } }).success, false);
+    `, true);
+  }, MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
+  it.each([
     'automations/automationActionSpecsV1.ts',
     'automations/automationEventV1.ts',
   ])('imports Event HTTP schemas with %s first under the native source runtime', async (entryPath) => {
