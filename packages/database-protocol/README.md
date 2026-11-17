@@ -91,6 +91,10 @@ selection independently of Metrics; missing prices or lost observations remain
 inconclusive. Release comparisons price both selected windows in one viewer
 context and retain the catalog revision in finite health evidence.
 
+`DATABASE_CAPTURE_RESOURCE_REF_V1` identifies the demanded `capture-view`
+Resource. Its `costs` view reads the same admitted cost Action and refreshes
+from the collector's existing push subscription until the host disposes it.
+
 ## Evolving the ABI
 
 Follow the [protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution).

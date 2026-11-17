@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { DatabaseFailureV1Schema } from './databaseOperations.js';
+import { DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
 import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 export { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 
@@ -96,13 +97,14 @@ export const DatabaseCaptureConfigureInputV1Schema = z.strictObject({
 });
 export const DatabaseCaptureConfigureResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({ ok: z.literal(true), enabled: z.boolean() })]);
 
-export const DATABASE_CAPTURE_RESOURCE_ID_V1 = 'capture' as const;
+export const DATABASE_CAPTURE_RESOURCE_ID_V1 = 'capture-view' as const;
 /** Qualified identity derives from the one Action catalogue's capture owner. */
 export const DATABASE_CAPTURE_RESOURCE_REF_V1 = {
     pluginId: DATABASE_CAPTURE_STATUS_ACTION_ID_V1.split('/actions/')[0]!,
     contributionId: DATABASE_CAPTURE_RESOURCE_ID_V1,
 } as const;
 export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view', [
+    z.strictObject({ view: z.literal('costs'), input: DatabaseCaptureCostsReadInputV1Schema }),
     z.strictObject({ view: z.literal('status'), input: DatabaseCaptureStatusInputV1Schema }),
     z.strictObject({ view: z.literal('queries'), input: DatabaseCaptureQueriesListInputV1Schema }),
     z.strictObject({ view: z.literal('query'), input: DatabaseCaptureQueryGetInputV1Schema }),
@@ -112,6 +114,7 @@ export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view',
     z.strictObject({ view: z.literal('endpoints'), input: DatabaseCaptureEndpointsListInputV1Schema }),
 ]);
 export const DatabaseCaptureResourceSnapshotV1Schema = z.discriminatedUnion('view', [
+    z.strictObject({ view: z.literal('costs'), result: DatabaseCaptureCostsReadResultV1Schema }),
     z.strictObject({ view: z.literal('status'), result: DatabaseCaptureStatusResultV1Schema }),
     z.strictObject({ view: z.literal('queries'), result: DatabaseCaptureQueriesListResultV1Schema }),
     z.strictObject({ view: z.literal('query'), result: DatabaseCaptureQueryGetResultV1Schema }),

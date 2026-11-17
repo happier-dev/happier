@@ -1,11 +1,12 @@
 import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES, LOCAL_CAPTURE_ENVIRONMENT_NAMES } from './contribution.js';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-sdk/protocol';
-import { databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { telemetryExceptionManifestParts } from './exceptions/contribution.js';
 import { createCaptureActions, createCapturePublicActionProducers } from './actions.js';
+import { createCaptureResourceRuntime } from './resources.js';
 import { telemetryPartition } from './telemetry/assignments.js';
 import { telemetryHealthActions } from './health.js';
 import { keyFlowConfigSchema } from './healthSchemas.js';
@@ -35,6 +36,10 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
   telemetry: { title: 'Telemetry', description: 'Collect telemetry from deployed applications.', defaultActive: DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1[0].defaultActive, backgroundServices: ['telemetry-collector'] },
  },
  daemonDatabases: { capture: localCaptureBackground.databaseDefinition },
+ resources: { [DATABASE_CAPTURE_RESOURCE_ID_V1]: {
+  source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
+  runtime: createCaptureResourceRuntime({ subscribe: localCaptureBackground.subscribe }),
+ } },
  actions: { ...createCaptureActions(captureReads), ...telemetryHealthActions, ...telemetryRegressionActions, ...telemetryExceptionManifestParts.actions },
  accountCollections: telemetryExceptionManifestParts.accountCollections,
  notifications: telemetryExceptionManifestParts.notifications,
