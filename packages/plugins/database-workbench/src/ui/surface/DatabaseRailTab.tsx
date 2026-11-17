@@ -25,6 +25,7 @@ import {
   type RailIntent,
 } from './WorkbenchRail.js';
 import { WorkbenchMain } from './WorkbenchPage.js';
+import { InsightsDetailsTab, InsightsRailList } from './insights/InsightsRail.js';
 import {
   databaseTargetKey,
   readWorkbenchLaunchInput,
@@ -228,13 +229,23 @@ function RailTab(
             picker.select(key);
           }}
         />
-        <WorkbenchRailList
+        {railTabOf(props.context) === 'insights' ? (
+          <InsightsRailList
+            key={current.targetKey}
+            context={props.context}
+            launch={props.launch}
+            targetKey={current.targetKey}
+            detailsView={detailsViewId(props.context)}
+          />
+        ) : (
+          <WorkbenchRailList
             key={current.targetKey}
             targetKey={current.targetKey}
             selected={selected}
             onOpen={open}
             showOverview={false}
           />
+        )}
       </Stack>
     </ScrollArea>
   );
@@ -282,7 +293,9 @@ function DatabaseRailSurface(context: RenderContext) {
   }
   return (
     <WorkbenchProvider instance={instance}>
-      {inDetails ? (
+      {inDetails && railTabOf(context) === 'insights' ? (
+        <InsightsDetailsTab context={context} targetKey={targetKey} />
+      ) : inDetails ? (
         <DetailsTab targetKey={targetKey} />
       ) : (
         <RailTab context={context} launch={launch} />

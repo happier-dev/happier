@@ -6,6 +6,7 @@ const MODES: readonly WorkbenchLocation['mode'][] = [
   'structure',
   'console',
   'overview',
+  'insights',
 ];
 
 /** The page's shareable place: mode and relation. Filters, sort and paging stay page-local. */

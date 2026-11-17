@@ -38,6 +38,7 @@ function rowsLabel(approxRows: string | null): string | undefined {
 export type RailIntent = Readonly<
   | { mode: 'overview' }
   | { mode: 'console' }
+  | { mode: 'insights' }
   | { mode: 'data' | 'structure'; relation: DatabaseRelationV1 }
 >;
 
@@ -294,6 +295,13 @@ export function WorkbenchRailList(
           selected={mode === 'console'}
           onPress={() => props.onOpen({ mode: 'console' })}
         />
+        {props.showOverview ? (
+          <Item
+            title={translate('plugins.database.rail.insights', 'Insights')}
+            selected={mode === 'insights'}
+            onPress={() => props.onOpen({ mode: 'insights' })}
+          />
+        ) : null}
       </ItemGroup>
       {status === 'loading' && schemas.length === 0 ? (
         <LoadingState layout="line" rows={6} rowShape="compact" />
@@ -350,7 +358,7 @@ export function WorkbenchRail(props: Readonly<{ targetKey: string }>) {
       void location.navigate(
         intent.mode === 'overview'
           ? { mode: 'overview', relation: undefined }
-          : intent.mode === 'console'
+          : intent.mode === 'console' || intent.mode === 'insights'
             ? { mode: intent.mode }
             : { mode: intent.mode, relation: intent.relation },
       );

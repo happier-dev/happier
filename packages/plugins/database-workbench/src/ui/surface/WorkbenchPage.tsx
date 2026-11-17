@@ -19,6 +19,7 @@ import {
 } from '../hooks.js';
 import type { WorkbenchLocation } from '../models.js';
 import { DatabaseConsole } from './DatabaseConsole.js';
+import { InsightsPane } from './insights/InsightsPane.js';
 import { RelationData } from './RelationData.js';
 import { RelationStructure } from './RelationStructure.js';
 import { StagedBar, StagedReview } from './StagedChanges.js';
@@ -126,6 +127,8 @@ export function WorkbenchMain(props: Readonly<{ targetKey: string }>) {
   const relation = location.relation;
   if (location.mode === 'console')
     return <DatabaseConsole targetKey={props.targetKey} />;
+  if (location.mode === 'insights')
+    return <InsightsPane targetKey={props.targetKey} />;
   if (!relation || location.mode === 'overview')
     return <OverviewPane targetKey={props.targetKey} />;
   if (reviewing)
@@ -193,7 +196,7 @@ function WorkbenchPage(context: RenderContext) {
 
 function WorkbenchLayout(props: Readonly<{ targetKey: string }>) {
   const location = useWorkbenchLocation();
-  const chosen = location.mode === 'console' || location.relation !== undefined;
+  const chosen = location.mode === 'console' || location.mode === 'insights' || location.relation !== undefined;
   return (
     <ListDetailLayout
       minListWidth={232}
