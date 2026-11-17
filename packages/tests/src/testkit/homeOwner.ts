@@ -5,13 +5,14 @@ import { HomeOwnerClaimCommandOutputV1Schema, HOME_OWNER_CLAIM_COMMAND_ARGUMENT_
 import { renderServerLightSqliteDatabaseUrl, resolveServerLightDatabaseUrlEnv, resolveServerStartLaunchSpec,
   type StartedServer, type TestDbProvider } from './process/serverLight';
 import { runLoggedCommand } from './process/spawnProcess';
+import type { EnvOverrides } from './env';
 
 /** Operator claim against this fixture's disposable Home, through its real server command. */
 export async function claimTestHomeOwner(input: Readonly<{
   server: StartedServer;
   accountId: string;
   dbProvider: TestDbProvider;
-  env: NodeJS.ProcessEnv;
+  env: EnvOverrides;
 }>): Promise<HomeOwnerClaimCommandOutputV1> {
   const env: NodeJS.ProcessEnv = { ...process.env, ...input.env,
     HAPPIER_DB_PROVIDER: input.dbProvider, HAPPY_DB_PROVIDER: input.dbProvider,

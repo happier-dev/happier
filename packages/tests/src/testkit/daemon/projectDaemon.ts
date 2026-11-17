@@ -93,8 +93,9 @@ export async function startProjectDaemonFixture(params: Readonly<{
     }
     const actionServerApiUrl = requestProxy?.baseUrl ?? server.baseUrl;
     const features = await fetchJson<unknown>(`${server.baseUrl}/v1/features`);
-    const serverId = FeaturesResponseSchema.parse(features.data).capabilities.serverIdentity.serverIdentityId;
-    if (!serverId) throw new Error('Fixture Home identity unavailable');
+    const advertisedServerId = FeaturesResponseSchema.parse(features.data).capabilities.serverIdentity.serverIdentityId;
+    if (!advertisedServerId) throw new Error('Fixture Home identity unavailable');
+    const serverId = advertisedServerId;
     async function createAccount(name: string) {
       const auth = await createTestAuth(server.baseUrl);
       const terminal = await createTestTerminalAuth(server.baseUrl, auth);
