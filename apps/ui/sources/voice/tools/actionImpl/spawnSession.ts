@@ -96,7 +96,23 @@ function resolveSpawnTarget(state: StorageState): VoiceSpawnTarget | null {
   return null;
 }
 
+/**
+ * An AI session's spawn request (executed here after Inbox approval) is governed by the requesting
+ * CLI's spawn policy, permission ceiling and parent inheritance, which this app executor cannot apply.
+ * Refuse it so approval records a failure instead of starting a session with different permissions,
+ * title or environment than the request asked for.
+ */
+function isSessionAgentSpawnRequest(params: SessionSpawnNewActionInput): boolean {
+  return params.surface === 'session_agent' || params.callerSurface === 'session_agent';
+}
+
 export async function spawnSessionForVoiceTool(params: SessionSpawnNewActionInput): Promise<unknown> {
+  if (isSessionAgentSpawnRequest(params)) {
+    throw Object.assign(
+      new Error('Sessions requested by an AI session cannot be started from an approval in the app. Start the session manually instead.'),
+      { code: 'unsupported' },
+    );
+  }
   const state = storage.getState();
 
   const requestedHost = normalizeNonEmptyString(params.host);
