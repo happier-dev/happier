@@ -14,7 +14,6 @@ import { registerAccountSignInRevokedHandler, registerSignInPolicyChangeHandler 
 import { registerClusterPushReconcile } from '@/app/events/clusterPushReconcile';
 import { evictSignInIneligibleSockets, recheckSocketAdmittedUnderOlderSignInPolicy, registerAccountSignInRevocation,
     registerSignInPolicyEviction } from '@/app/auth/signInPolicyEviction';
-import { LEGACY_MACHINE_HEARTBEAT_EVENT } from '@/app/events/connectionEventRouter';
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
 import { log, warn } from "@/utils/logging/log";
@@ -401,11 +400,6 @@ export function startSocket(app: Fastify): () => Promise<void> {
         void eventRouter.receiveAccountChangeRowsDelivery(io.local, delivery);
     });
     const releasePresenceDeadlineNotifications = registerPresenceDeadlineNotifications(io, schedulePresenceDeadline);
-    io.on(LEGACY_MACHINE_HEARTBEAT_EVENT, (observation: unknown) => {
-        void eventRouter.receiveLegacyMachineHeartbeat(observation).catch(error => {
-            log({ module: 'machine-presence', error }, 'Failed to deliver legacy Machine heartbeat');
-        });
-    });
     const releaseMachineAccessLoss = registerMachineAccessLossHandler(io, input => eventRouter.receiveMachineAccessLoss(input));
     const releaseSignInPolicyChange = registerSignInPolicyChangeHandler(io, () => eventRouter.receiveSignInPolicyChange());
     const releaseSignInPolicyEviction = registerSignInPolicyEviction({ sockets: () => io.of('/').sockets.values(),

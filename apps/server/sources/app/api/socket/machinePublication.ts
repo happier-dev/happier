@@ -150,8 +150,6 @@ export async function publishMachineAliveObservation(userId: string, machineId: 
             userId: accountId, payload, recipientFilter: { type: 'user-scoped-only' },
         });
         if (presence.wasOffline) await submitMachineRemoteAlerts({ machines: [{ machineId, accountId: userId }], phase: 'recovered' });
-    } else {
-        await eventRouter.publishLegacyMachineHeartbeat({ machineId, activeAt: timestamp });
     }
     if (workSummaryChanged) {
         const recipientAccountIds = presence.wasOffline ? presence.recipientAccountIds

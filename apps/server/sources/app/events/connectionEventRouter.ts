@@ -36,15 +36,12 @@ import { admitLiveSessionDelivery, withdrawSessionConsumption } from '@/app/api/
 import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAccessLoss';
 import { ACCOUNT_SIGN_IN_REVOKED_EVENT, SIGN_IN_POLICY_CHANGED_EVENT } from './signInPolicyChange';
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
-import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
-import { db, getDbProviderFromEnv } from '@/storage/db';
+import { getDbProviderFromEnv } from '@/storage/db';
 import {
     isAccountChangeRowVisibleToCompatibility, projectAccountChangesPage, readAccountChangeRowsPendingRunIds,
     readAccountChangeRowsSessionAccess, withAccountChangesReads, type AccountChangeRowFacts,
 } from '@/app/changes/readAccountChangesPage';
 import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, type PushedAccountChangesPageV1 } from '@happier-dev/protocol/changes';
-
-export const LEGACY_MACHINE_HEARTBEAT_EVENT = 'happier:legacy-machine-heartbeat:v1';
 
 import {
     getAccountChangeRowsSocketRoom,
@@ -105,7 +102,6 @@ type AccountChangeRowsGroup = {
 class EventRouter {
     private accountChangeRowsTails = new Map<string, Promise<void>>();
     private userConnections = new Map<string, Set<ClientConnection>>();
-    private legacyMachinePresenceConnections = new Set<ClientConnection>();
     private io: SocketRoomEmitter | null = null;
     private serverOwnedRpcForwarder: ServerOwnedRpcForwarder | null = null;
     private broadcastServerSideEvent: NonNullable<SocketRoomEmitter['serverSideEmit']> | null = null;
@@ -119,14 +115,9 @@ class EventRouter {
             this.userConnections.set(userId, new Set());
         }
         this.userConnections.get(userId)!.add(connection);
-        if (connection.connectionType === 'user-scoped'
-            && readAccountStoredContentCompatibilityForSocket(connection.socket).outcome === 'legacy-missing') {
-            this.legacyMachinePresenceConnections.add(connection);
-        }
     }
 
     removeConnection(userId: string, connection: ClientConnection): void {
-        this.legacyMachinePresenceConnections.delete(connection);
         const connections = this.userConnections.get(userId);
         if (connections) {
             connections.delete(connection);
@@ -187,26 +178,6 @@ class EventRouter {
     /** Recovery enrolls peer deadlines without replaying content or heartbeat fanout. */
     broadcastPresenceDeadline(observation: PresenceDeadlineNotification): void {
         this.broadcastServerSideEvent?.(PRESENCE_DEADLINE_EVENT, observation);
-    }
-
-    /** Released 0.2 readers need real observations; current readers use transitions. */
-    async publishLegacyMachineHeartbeat(observation: Readonly<{ machineId: string; activeAt: number }>): Promise<void> {
-        this.broadcastServerSideEvent?.(LEGACY_MACHINE_HEARTBEAT_EVENT, observation);
-        await this.receiveLegacyMachineHeartbeat(observation);
-    }
-
-    /** Each receiving Home qualifies its own sockets, including in a cluster. */
-    async receiveLegacyMachineHeartbeat(value: unknown): Promise<void> {
-        if (typeof value !== 'object' || value === null || !('machineId' in value) || !('activeAt' in value)
-            || typeof value.machineId !== 'string' || !value.machineId
-            || typeof value.activeAt !== 'number' || !Number.isFinite(value.activeAt)) return;
-        // No audience query, room broadcast or UI work when only current clients are attached.
-        if (this.legacyMachinePresenceConnections.size === 0) return;
-        const recipients = new Set(await resolveCurrentMachineRecipientAccountIdsInTx(db, value.machineId));
-        for (const connection of this.legacyMachinePresenceConnections) if (recipients.has(connection.userId)) {
-            connection.socket.emit('ephemeral', { type: 'machine-activity', id: value.machineId,
-                active: true, activeAt: value.activeAt });
-        }
     }
 
     /** The live Socket.IO adapter only; domain owners supply their currentness guard. */
