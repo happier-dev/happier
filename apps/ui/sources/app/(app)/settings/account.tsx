@@ -25,7 +25,7 @@ import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useSetupDevice } from '@/components/hub/setup/useSetupDevice';
+import { isComputerForDeviceSetup } from '@/components/hub/setup/useSetupDevice';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { Icon } from '@/components/ui/icons/Icon';
 import { accountErasureFailureNotice } from '@/components/settings/home/governance/homeGovernanceLabels';
@@ -65,7 +65,7 @@ export const WorkspaceRouteBody = React.memo(() => {
     const router = useRouter();
     const accountScope = useAccountSettingsScope();
     const accountExecution = useMountedActionExecution(accountScope);
-    const { isComputer: showAddYourPhone } = useSetupDevice();
+    const showAddYourPhone = isComputerForDeviceSetup();
     const [accountDeletionPending, setAccountDeletionPending] = useState(false);
     const [analyticsOptOut, setAnalyticsOptOut] = useSettingMutable('analyticsOptOut');
     const [crashReportsOptOut, setCrashReportsOptOut] = useSettingMutable('crashReportsOptOut');

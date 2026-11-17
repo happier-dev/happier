@@ -16,7 +16,7 @@ export function readMachineAddRoutePath(value: string | string[] | undefined): M
  * path answers "is this computer set up?" with the computer itself instead of a setup (lab agent-setup S1).
  */
 export type MachineAddPath = Readonly<{ id: MachineAddPathId; runs: 'task' | 'command'; connectedMachineId?: string }>;
-export type MachineAddDevice = 'desktop' | 'browser' | 'phone';
+export type MachineAddDevice = 'desktop' | 'browser' | 'mobileBrowser' | 'phone';
 export type MachineAddPathsInput = Readonly<{
     device: MachineAddDevice;
     thisComputerJoined: boolean;
@@ -30,12 +30,12 @@ export function resolveMachineAddPaths(input: MachineAddPathsInput): readonly Ma
     const paths: MachineAddPath[] = [];
     if (input.policy.allowLocalMachineSetup && input.device === 'desktop' && input.thisComputerJoined && input.thisComputerMachineId) {
         paths.push({ id: 'thisComputer', runs: 'task', connectedMachineId: input.thisComputerMachineId });
-    } else if (input.policy.allowLocalMachineSetup && input.device !== 'phone'
+    } else if (input.policy.allowLocalMachineSetup && (input.device === 'desktop' || input.device === 'browser')
         && (input.device === 'browser' || !input.thisComputerJoined)) {
         paths.push({ id: 'thisComputer', runs: input.device === 'desktop' ? 'task' : 'command' });
     }
     if (input.policy.allowRemoteSshMachineSetup && (input.device !== 'phone' || input.nativeSshAvailable)) {
-        paths.push({ id: 'ssh', runs: input.device === 'browser' ? 'command' : 'task' });
+        paths.push({ id: 'ssh', runs: input.device === 'desktop' || input.device === 'phone' ? 'task' : 'command' });
     }
     if (input.policy.allowLocalMachineSetup) paths.push({ id: 'anotherComputer', runs: 'command' });
     return paths;

@@ -101,8 +101,11 @@ describe('Over SSH', () => {
     await harness.addHome({ name: 'Local Home', serverUrl: 'http://happier-agent-qa-unified-work-dev.localhost:3009',
       serverIdentityId: 'srv_local_home', accountId: 'owner' });
     const { MachineAddForm } = await import('./MachineAddForm');
-    const screen = await renderScreen(<MachineAddForm layout="page" initialPath={initialPath} testID="form"
-      onClose={() => {}} onStartSession={() => {}} />);
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+      <MachineAddForm layout="page" initialPath={initialPath} testID="form"
+        onClose={() => {}} onStartSession={() => {}} />
+    </InjectedAuthProvider>);
     await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`).length).toBeGreaterThan(0));
     expect(byId(screen, `${PANE}.command`)).toHaveLength(0);
     expect(byId(screen, `${PANE}.start`)).toHaveLength(0);
@@ -181,13 +184,13 @@ describe('Add a machine on a phone', () => {
     // The list carries no pane under it: nothing is stacked.
     expect(byId(list, 'managed-picker')).toHaveLength(0);
     expect(byId(list, `${PANE}.ssh-sshHostInput`)).toHaveLength(0);
+    await act(async () => list.pressByTestId('form.way.create'));
+    expect(opened).toEqual(['create']);
+    expect(readMachineAddFlowDraft().creating).toBe(true);
     await act(async () => list.pressByTestId('form.way.ssh'));
-    expect(opened).toEqual(['ssh']);
+    expect(opened).toEqual(['create', 'ssh']);
     expect(readMachineAddFlowDraft().path).toBe('ssh');
     expect(readMachineAddFlowDraft().creating).toBe(false);
-    await act(async () => list.pressByTestId('form.way.create'));
-    expect(opened).toEqual(['ssh', 'create']);
-    expect(readMachineAddFlowDraft().creating).toBe(true);
     await list.unmount();
 
     const pushed = await renderScreen(

@@ -7,6 +7,7 @@ import { useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { isWebMobileHost } from '@/utils/platform/webMobileHeuristics';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import {
@@ -16,9 +17,11 @@ import {
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { isThisComputerMachineOfHome, resolveMachineAddPaths, type MachineAddDevice, type MachineAddPath } from './machineAddPaths';
 
-/** What kind of device this is, for the ways in it can run: the desktop app, a browser, or the phone app. */
+/** Classify the install host once; mobile browsers copy SSH commands rather than running native tasks. */
 export function readMachineAddDevice(): MachineAddDevice {
-    return isDesktopHost() ? 'desktop' : Platform.OS === 'web' ? 'browser' : 'phone';
+    if (isDesktopHost()) return 'desktop';
+    if (Platform.OS !== 'web') return 'phone';
+    return isWebMobileHost() ? 'mobileBrowser' : 'browser';
 }
 
 /**

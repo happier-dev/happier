@@ -1,11 +1,42 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { homeHasMachine, isThisComputerMachineOfHome, resolveMachineAddInitialPath, resolveMachineAddPaths } from './machineAddPaths';
+import { readMachineAddDevice } from './useMachineAddPaths';
+
+vi.mock('react-native', async () => (
+    (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock()
+));
+
+afterEach(() => vi.unstubAllGlobals());
 
 const policy = { allowLocalMachineSetup: true, allowRemoteSshMachineSetup: true };
 const base = { policy, thisComputerJoined: false, nativeSshAvailable: false };
 
 describe('machine add paths', () => {
+    it.each([
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15',
+        'Mozilla/5.0 (Linux; Android 15) Mobile',
+    ])('offers SSH commands and pairing on a mobile browser: %s', (userAgent) => {
+        vi.stubGlobal('navigator', { userAgent, maxTouchPoints: 5 });
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+        const device = readMachineAddDevice();
+        expect(device).toBe('mobileBrowser');
+        const paths = resolveMachineAddPaths({ ...base, device });
+        expect(paths).toEqual([{ id: 'ssh', runs: 'command' }, { id: 'anotherComputer', runs: 'command' }]);
+        expect(resolveMachineAddInitialPath(paths)).toBe('anotherComputer');
+        expect(resolveMachineAddPaths({ ...base, device, policy: {
+            allowLocalMachineSetup: false, allowRemoteSshMachineSetup: true,
+        } })).toEqual([{ id: 'ssh', runs: 'command' }]);
+    });
+
+    it('keeps install commands on a desktop browser with a touchscreen', () => {
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', maxTouchPoints: 5 });
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+        expect(readMachineAddDevice()).toBe('browser');
+        expect(resolveMachineAddPaths({ ...base, device: readMachineAddDevice() })[0]).toEqual({ id: 'thisComputer', runs: 'command' });
+    });
+
     it('offers desktop tasks in order; an already joined computer stays, marked connected with its machine (lab agent-setup S1)', () => {
         expect(resolveMachineAddPaths({ ...base, device: 'desktop' })).toEqual([
             { id: 'thisComputer', runs: 'task' }, { id: 'ssh', runs: 'task' }, { id: 'anotherComputer', runs: 'command' },

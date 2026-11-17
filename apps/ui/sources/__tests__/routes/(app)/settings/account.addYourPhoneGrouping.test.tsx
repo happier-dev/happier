@@ -112,6 +112,9 @@ vi.mock('@/components/settings/account/SettingsHistorySection', () => ({
     SettingsHistorySection: () => null,
 }));
 
+// Load the route once during collection, before individual render lifetimes begin.
+const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+
 describe('Settings → Account (grouping)', () => {
     afterEach(() => {
         runningOnMac = false;
@@ -130,7 +133,6 @@ describe('Settings → Account (grouping)', () => {
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64)',
             mediaDevices: { getUserMedia: async () => ({}) },
         } as any);
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
         expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
         expect(screen.findByTestId('settings-account-link-new-device')).toBeTruthy();
@@ -153,7 +155,6 @@ describe('Settings → Account (grouping)', () => {
         windowDimensions = { width: 360, height: 800 };
         vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
 
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
         expect(screen.findByTestId('settings-account-add-your-phone')).toBeNull();
         expect(screen.findByTestId('settings-account-link-new-device')).toBeNull();
@@ -164,7 +165,6 @@ describe('Settings → Account (grouping)', () => {
         windowDimensions = { width: 1200, height: 800 };
         vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
 
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
         expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
         expect(screen.findByTestId('settings-account-link-new-device')).toBeNull();
@@ -186,7 +186,6 @@ describe('Settings → Account (grouping)', () => {
             mediaDevices: { getUserMedia: async () => ({}) },
         } as any);
 
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
         expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
         expect(screen.findByTestId('settings-account-link-new-device')).toBeNull();
@@ -204,7 +203,6 @@ describe('Settings → Account (grouping)', () => {
         runtime.__HAPPIER_WEB_RUNTIME_CONFIG__ = { organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example Co',
             home: { url: 'https://home.example.test', locked: true } }) };
         try {
-            const { default: AccountScreen } = await import('@/app/(app)/settings/account');
             const screen = await renderScreen(<AccountScreen />);
             expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
             expect(screen.findByTestId('settings-account-add-home')).toBeNull();
@@ -218,7 +216,6 @@ describe('Settings → Account (grouping)', () => {
         vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
         Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false }) });
 
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
         const screen = await renderScreen(<AccountScreen />);
         expect(screen.findByTestId('settings-account-add-your-phone')).toBeTruthy();
     });
