@@ -357,6 +357,15 @@ describe('API token grant admission', () => {
     expect(isModelRefGrantedV1(full, 'automatic')).toBe(true);
   });
 
+  it('never grants a Team source through an identically named native model allowlist', () => {
+    const native = { agentTargetKey: modelA.agentTargetKey, providerConnectionId: null, modelId: modelA.modelId };
+    const team = { source: 'team_resource' as const, agentTargetKey: native.agentTargetKey, modelId: native.modelId,
+      teamId: 'team', resourceId: 'resource', expectedResourceRevision: 1, deliveryMode: 'direct' as const };
+    expect(isModelRefGrantedV1(grant({ models: [native] }), team)).toBe(false);
+    expect(isModelRefGrantedV1(full, team)).toBe(true);
+    expect(isModelRefGrantedV1(grant({ models: [native] }), { source: 'native', agentTargetKey: native.agentTargetKey, modelId: native.modelId })).toBe(true);
+  });
+
   it('fails closed on malformed/duplicate constraints and noncanonical browser origins', () => {
     for (const patch of [{ models: [] }, { models: [modelA, modelA] }, { permissionModes: ['invalid'] }, { origins: ['not an origin'] }, { origins: ['http://example.com'] }, { origins: ['https://example.com/'] }, { targets: { sessions: ['s1', 's1'], machines: [] } }]) {
       expect(ApiTokenGrantV1Schema.safeParse({ ...full, ...patch }).success).toBe(false);

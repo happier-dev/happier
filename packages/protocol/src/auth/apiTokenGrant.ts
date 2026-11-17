@@ -9,6 +9,7 @@ import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { CanonicalHttpOriginSchema } from '../http/canonicalHttpOrigin.js';
 import { ProviderAgentTargetKeySchema } from '../providers/ids.js';
+import type { SessionModelRefV2 } from '../providers/selection/v2.js';
 import { isNativeAutomaticModelSelectionInputV1, type ProviderBoundModelRef } from '../providers/selection/v1.js';
 import type { SocketRpcSessionWriteAuthorityV1 } from '../rpc/index.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
@@ -345,10 +346,15 @@ export function isApiTokenGrantWithinV1(child: ApiTokenGrantV1, parent: ApiToken
   return true;
 }
 
-export function isModelRefGrantedV1(constraints: CallerInputConstraintsV1, ref: ProviderBoundModelRef | 'automatic'): boolean {
-  return constraints.models === null || (ref !== 'automatic'
-    && !isNativeAutomaticModelSelectionInputV1(ref)
-    && constraints.models.some((candidate) => modelKey(candidate) === modelKey(ref)));
+export function isModelRefGrantedV1(constraints: CallerInputConstraintsV1, ref: ProviderBoundModelRef | SessionModelRefV2 | 'automatic'): boolean {
+  if (constraints.models === null) return true;
+  if (ref === 'automatic' || 'source' in ref && ref.source === 'team_resource') return false;
+  const accountOrNative: ProviderBoundModelRef = 'source' in ref
+    ? { agentTargetKey: ref.agentTargetKey, modelId: ref.modelId,
+      providerConnectionId: ref.source === 'account_provider_connection' ? ref.providerConnectionId : null }
+    : ref;
+  return !isNativeAutomaticModelSelectionInputV1(accountOrNative)
+    && constraints.models.some((candidate) => modelKey(candidate) === modelKey(accountOrNative));
 }
 /** Keep a permitted selection, or use the first permitted model in grant order. */
 export function resolveEffectiveApiTokenModelRefV1(
