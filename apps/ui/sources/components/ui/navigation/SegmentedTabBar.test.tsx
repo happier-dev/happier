@@ -211,6 +211,20 @@ describe('SegmentedTabBar', () => {
     await screen.unmount();
   });
 
+  it('marks More in the worst tone behind it: a failure is rose, a wait is amber', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const { TabBadge } = await import('@/components/ui/navigation/tabBadge/TabBadge');
+    const failing = { id: 'services' as 'alpha', label: 'Services', count: '2', countTone: 'danger' as const };
+    const waiting = { id: 'security' as 'alpha', label: 'Security', count: '3', countTone: 'warning' as const };
+    for (const [items, tone] of [[[waiting, failing], 'danger'], [[waiting], 'attention']] as const) {
+      const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}} testIDPrefix="pages"
+        overflow={{ label: 'More', items }} />);
+      const more = screen.root.find((node) => node.props.testID === 'pages:more' && node.props.accessibilityRole === 'button');
+      expect(more.findAllByType(TabBadge).map((badge) => badge.props.tone)).toEqual([tone]);
+      await screen.unmount();
+    }
+  });
+
   it('keeps More quiet when nothing behind it needs the person', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}} testIDPrefix="pages"

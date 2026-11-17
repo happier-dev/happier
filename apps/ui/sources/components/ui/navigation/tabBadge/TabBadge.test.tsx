@@ -50,4 +50,10 @@ describe('TabBadge', () => {
         const screen = await renderScreen(<TabBadge variant="dot" tone="attention" testID="dot" />);
         expect(flatten(screen.findByTestId('dot')!.props.style).backgroundColor).toBe(lightTheme.colors.state.attention.foreground);
     });
+
+    it('draws a failure dot in the failure rose, never the waiting amber', async () => {
+        const { TabBadge } = await import('./TabBadge');
+        const screen = await renderScreen(<TabBadge variant="dot" tone="danger" testID="dot" />);
+        expect(flatten(screen.findByTestId('dot')!.props.style).backgroundColor).toBe(lightTheme.colors.state.danger.foreground);
+    });
 });

@@ -68,6 +68,10 @@ const styles = StyleSheet.create((theme) => ({
     dotAttention: {
         backgroundColor: theme.colors.state.attention.foreground,
     },
+    /** Failed: rose is for failure only (DESIGN.md), so a failing page's dot never reads as a wait. */
+    dotDanger: {
+        backgroundColor: theme.colors.state.danger.foreground,
+    },
     diffChip: {
         position: 'absolute',
         top: -4,
@@ -106,7 +110,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 type TabBadgeProps =
-    | Readonly<{ variant: 'dot'; tone?: 'neutral' | 'attention'; style?: StyleProp<ViewStyle>; testID?: string }>
+    | Readonly<{ variant: 'dot'; tone?: 'neutral' | 'attention' | 'danger'; style?: StyleProp<ViewStyle>; testID?: string }>
     | Readonly<{
         variant: 'count';
         size?: 'default' | 'compact';
@@ -143,7 +147,7 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
                 accessible={false}
                 accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants"
-                style={[styles.dot, props.tone === 'attention' ? styles.dotAttention : null, props.style]}
+                style={[styles.dot, props.tone === 'attention' ? styles.dotAttention : props.tone === 'danger' ? styles.dotDanger : null, props.style]}
             />
         );
     }

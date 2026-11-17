@@ -86,6 +86,11 @@ export function TabBarSpecimen() {
     () => MACHINE_PAGES.map(({ icon: _icon, ...page }) => page),
     [],
   );
+  // The same Machine pages while Services fails (machinePageTabCounts: a failing service count is rose).
+  const failingMachineTabs = React.useMemo(
+    () => machineTabs.map((tab) => (tab.id === 'services' ? { ...tab, count: '2', countTone: 'danger' as const } : tab)),
+    [machineTabs],
+  );
   const storeTabs = React.useMemo(
     () => STORE_FILTERS.map((label) => ({ id: label.toLowerCase(), label })),
     [],
@@ -149,6 +154,42 @@ export function TabBarSpecimen() {
           overflow={more}
           accessibilityLabel="Machine pages"
           testIDPrefix={`specimen-machine-${width ?? 'full'}`}
+        />
+      ))}
+      {section('Segmented, content, a failing page behind More', (width) => (
+        <SegmentedTabBar
+          tabs={failingMachineTabs}
+          activeTabId={machine}
+          onSelectTab={setMachine}
+          segmentSizing="content"
+          overflow={more}
+          accessibilityLabel="Machine pages"
+          testIDPrefix={`specimen-machine-failing-${width ?? 'full'}`}
+        />
+      ))}
+      {section('Segmented, equal, long counts (Inbox on a phone)', () => (
+        <SegmentedTabBar
+          tabs={[
+            { id: 'needs', label: 'Needs you', count: '15,290' },
+            { id: 'updates', label: 'Updates', count: '2,483' },
+            { id: 'mentions', label: 'Mentions' },
+          ]}
+          activeTabId="needs"
+          onSelectTab={() => {}}
+          accessibilityLabel="Inbox view"
+          testIDPrefix="specimen-inbox-long"
+        />
+      ))}
+      {section('Plain, glyphs only, a visible page needs you', (width) => (
+        <SegmentedTabBar
+          presentation="plain"
+          labels="none"
+          tabs={projectTabs}
+          activeTabId="overview"
+          onSelectTab={() => {}}
+          segmentSizing="content"
+          accessibilityLabel="Project pages"
+          testIDPrefix={`specimen-glyphs-${width ?? 'full'}`}
         />
       ))}
       {section(

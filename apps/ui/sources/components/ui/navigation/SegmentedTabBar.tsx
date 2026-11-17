@@ -1186,8 +1186,8 @@ function PlainTabCaption(props: Readonly<{
     /** Measure at the tight padding: a track that spreads its segments never needs the roomy one. */
     tight?: boolean;
     more?: boolean;
-    /** More holds a tab that needs the person (a toned count). */
-    moreNeedsYou?: boolean;
+    /** The worst needs-you tone among the tabs More holds (a failure outranks a wait). */
+    moreTone?: SegmentedTab['countTone'];
 }>) {
     const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const surfaceState = props.surfaceState ?? 'default';
@@ -1198,11 +1198,11 @@ function PlainTabCaption(props: Readonly<{
             {props.icon && props.tab.icon ? <View
                 {...{ dataSet: themeSurfaceDataSet('tab-bar', 'icon', surfaceState) }}
                 style={[styles.tabIcon, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{props.tab.icon}</View> : null}
-            {/* More's glyph carries the tab dot (`TabBadge`, the one attention amber) while a tab behind it needs the person. */}
+            {/* More's glyph carries the tab dot (`TabBadge`) in the worst tone behind it: rose for a failure, else amber. */}
             {props.more ? (
                 <View>
                     <Icon name="dots-three" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                    {props.moreNeedsYou ? <TabBadge variant="dot" tone="attention" /> : null}
+                    {props.moreTone ? <TabBadge variant="dot" tone={props.moreTone === 'danger' ? 'danger' : 'attention'} /> : null}
                 </View>
             ) : null}
             {/* The overflow trigger is the glyph alone everywhere; its word is the accessible name. */}
@@ -1252,6 +1252,7 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
     const [focusVisible, setFocusVisible] = React.useState(false);
     // A tab that needs the person keeps speaking from More: its dot on the trigger, its name and count in More's name.
     const needsYou = props.tabs.filter((tab) => tab.countTone !== undefined);
+    const tone = needsYou.some((tab) => tab.countTone === 'danger') ? 'danger' : needsYou.length > 0 ? 'warning' : undefined;
     const accessibilityLabel = [props.label, ...needsYou.map((tab) => [tab.label, tab.count].filter(Boolean).join(' '))].join(', ');
     const items = React.useMemo((): DropdownMenuItem[] => [
         ...props.tabs.map((tab) => ({
@@ -1307,7 +1308,7 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
                         {...(Platform.OS === 'web' ? ({ 'aria-haspopup': 'menu', 'aria-expanded': open } as Record<string, unknown>) : {})}
                     >
                         <View style={[styles.tabSurface, styles.plainSurface, happierFocusRingStyle({ visible: focusVisible, color: theme.colors.border.focus })]}>
-                            <PlainTabCaption tab={{ id: OVERFLOW_KEY, label: props.label }} icon={false} active={false} more moreNeedsYou={needsYou.length > 0} />
+                            <PlainTabCaption tab={{ id: OVERFLOW_KEY, label: props.label }} icon={false} active={false} more moreTone={tone} />
                         </View>
                     </Pressable>
                 )}
