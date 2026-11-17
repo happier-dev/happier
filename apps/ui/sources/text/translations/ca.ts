@@ -731,6 +731,7 @@ export const ca: TranslationStructure = {
         details: 'Detalls',
         fieldStatus: 'Estat',
         fieldAction: 'Acció',
+        fieldFailureReason: 'Per què ha fallat',
         approve: 'Aprova',
         reject: 'Rebutja',
         loadError: 'No s\'ha pogut carregar l\'aprovació.',

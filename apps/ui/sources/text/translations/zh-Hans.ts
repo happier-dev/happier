@@ -781,6 +781,7 @@ export const zhHans: TranslationStructure = {
     details: "详情",
     fieldStatus: "状态",
     fieldAction: "动作",
+    fieldFailureReason: "失败原因",
     approve: "批准",
     reject: "拒绝",
     loadError: "加载审批失败。",

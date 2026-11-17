@@ -235,6 +235,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
   }
 
   const statusLabel = formatApprovalStatusLabel(parsed.status);
+  const failureReason = parsed.execution?.ok === false ? (parsed.execution.error ?? '').trim() : '';
 
   return (
     <View style={styles.container}>
@@ -257,6 +258,12 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
             <Text style={styles.statusValue}>{actionTitle ?? String(parsed.actionId)}</Text>
             {actionTitle && actionTitle !== parsed.actionId ? (
               <Text style={styles.statusMeta}>{String(parsed.actionId)}</Text>
+            ) : null}
+            {failureReason ? (
+              <>
+                <Text style={styles.statusLabel}>{t('approvals.fieldFailureReason')}</Text>
+                <Text style={styles.statusValue}>{failureReason}</Text>
+              </>
             ) : null}
           </View>
 

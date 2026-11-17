@@ -794,6 +794,7 @@ export const pl: TranslationStructure = {
     details: "Szczegóły",
     fieldStatus: "Stan",
     fieldAction: "Akcja",
+    fieldFailureReason: "Przyczyna niepowodzenia",
     approve: "Zatwierdź",
     reject: "Odrzuć",
     loadError: "Nie udało się wczytać zatwierdzenia.",

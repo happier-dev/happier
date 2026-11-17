@@ -798,6 +798,7 @@ export const ru: TranslationStructure = {
     details: "Детали",
     fieldStatus: "Статус",
     fieldAction: "Действие",
+    fieldFailureReason: "Причина ошибки",
     approve: "Подтвердить",
     reject: "Отклонить",
     loadError: "Не удалось загрузить подтверждение.",

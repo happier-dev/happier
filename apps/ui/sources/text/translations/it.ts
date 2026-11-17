@@ -781,6 +781,7 @@ export const it: TranslationStructure = {
     details: "Dettagli",
     fieldStatus: "Stato",
     fieldAction: "Azione",
+    fieldFailureReason: "Motivo dell’errore",
     approve: "Approva",
     reject: "Rifiuta",
     loadError: "Impossibile caricare l'approvazione.",

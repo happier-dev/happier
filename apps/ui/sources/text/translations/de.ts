@@ -557,6 +557,7 @@ export const de: TranslationStructure = {
         details: 'Details',
         fieldStatus: 'Status',
         fieldAction: 'Aktion',
+        fieldFailureReason: 'Fehlergrund',
         approve: 'Freigeben',
         reject: 'Ablehnen',
         loadError: 'Freigabe konnte nicht geladen werden.',

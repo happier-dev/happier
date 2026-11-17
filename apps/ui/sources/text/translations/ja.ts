@@ -766,6 +766,7 @@ export const ja: TranslationStructure = {
     details: "詳細",
     fieldStatus: "ステータス",
     fieldAction: "アクション",
+    fieldFailureReason: "失敗した理由",
     approve: "承認",
     reject: "拒否",
     loadError: "承認を読み込めませんでした。",

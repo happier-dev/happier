@@ -555,6 +555,7 @@ export const en = {
         details: 'Details',
         fieldStatus: 'Status',
         fieldAction: 'Action',
+        fieldFailureReason: 'Why it failed',
         approve: 'Approve',
         reject: 'Reject',
         loadError: 'Failed to load approval.',

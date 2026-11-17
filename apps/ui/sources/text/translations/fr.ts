@@ -557,6 +557,7 @@ export const fr: TranslationStructure = {
         details: 'Détails',
         fieldStatus: 'Statut',
         fieldAction: 'Action',
+        fieldFailureReason: 'Raison de l’échec',
         approve: 'Approuver',
         reject: 'Refuser',
         loadError: 'Échec du chargement de l’approbation.',
