@@ -21,6 +21,7 @@ import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNew
 import { useNewSessionDraftPresentation } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
 import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
 import { NewSessionDraftIntro } from '@/components/sessions/new/components/NewSessionDraftIntro';
+import { withDraftIntroPresentation } from '@/components/sessions/new/newSessionDraftIntroPresentation';
 import type { ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import {
@@ -107,11 +108,11 @@ function NewSessionScreenInner(props: Readonly<{
                 presentation={props.presentation}
             >
                 {props.presentation === 'embedded'
-                    // On web, /new is the dock: a seeded draft's first screen stands above its card there too.
-                    ? <>{props.intro ?? null}<NewSessionEmbeddedComposerCard
-                        panelProps={embeddedPanelProps ?? model.simpleProps}
+                    // On web, /new is the dock: a seeded draft's first screen stands inside the card's frosted top content.
+                    ? <NewSessionEmbeddedComposerCard
+                        panelProps={withDraftIntroPresentation(embeddedPanelProps ?? model.simpleProps, props.intro)}
                         creationProfile={creationProfile}
-                        controlPreset={props.composerControlPreset} /></>
+                        controlPreset={props.composerControlPreset} />
                     : <NewSessionSimplePanel {...withBotDraftPresentation(model.simpleProps, model.botCreation)} intro={props.intro} />}
             </NewSessionLaunchSurface>
         );
