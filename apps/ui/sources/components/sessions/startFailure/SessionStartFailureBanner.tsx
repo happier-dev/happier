@@ -7,8 +7,8 @@ import { t } from '@/text';
 import type { SessionStartFailureNotice } from './sessionStartFailureNotice';
 
 /**
- * Says why an inactive Session never started. With a retry it is an actionable warning; without one
- * (machine offline, access removed) it is quiet context beside the banner that carries the next step.
+ * Says why an inactive Session never started, in one tone: a start failure always needs the person,
+ * whether its next step is Retry, an action here, or the step its cause names.
  */
 export const SessionStartFailureBanner = React.memo(function SessionStartFailureBanner(props: Readonly<{
     notice: SessionStartFailureNotice;
@@ -22,7 +22,7 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
         <ComposerAuxiliaryFrame>
             <WarningActionBanner
                 testID="session-start-failure"
-                tone={retry ? 'warning' : 'neutral'}
+                tone="warning"
                 title={t('session.startFailure.title')}
                 body={notice.message}
                 // The transcript row for this failure defers to the notice, so its raw cause moves here.

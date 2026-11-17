@@ -8,7 +8,7 @@ import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/p
 import type { SessionManagedSessionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { resolveFollowDeliveryV1, type InboxItemAttentionTypeV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { WorkflowInvocationLifecycleV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { classifyWorkerUpdateEventV1, composeSessionWorkerUpdateHeadlineV1, type WorkerUpdateHeadlineFactsV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { classifyWorkerUpdateEventV1, composeExecutionRunWorkerUpdateHeadlineV1, composeSessionWorkerUpdateHeadlineV1, type WorkerUpdateHeadlineFactsV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { ActionOperationSnapshotV1, ActionOperationStateV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { PluginWorkItemCategoryV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 
@@ -73,6 +73,14 @@ export function describeWorkerUpdateState(update: Pick<WorkerUpdateV1, 'workerKi
 }
 
 /** Cards and rows state the same outcome once, retaining an authored summary when it adds a fact. */
+/** The producer's own content-free headline: it says only the outcome, which the state word already says. */
+export function isContentFreeWorkerUpdateHeadline(update: WorkerUpdateHeadlineFactsV1): boolean {
+    const headline = update.headline.trim();
+    if (update.workerKind === 'session') return headline === composeSessionWorkerUpdateHeadlineV1(update);
+    if (update.workerKind === 'execution_run') return headline === composeExecutionRunWorkerUpdateHeadlineV1(update.ownerState);
+    return false;
+}
+
 export function describeWorkerUpdateHeadline(
     update: WorkerUpdateHeadlineFactsV1,
     options: Readonly<{ title?: string; stateWord?: string }> = {},
@@ -81,9 +89,8 @@ export function describeWorkerUpdateHeadline(
     const headline = update.headline.trim();
     // Native pre-fix reports embedded identity and an enum. Match the known identity,
     // not arbitrary plugin-authored text that happens to end with a status word.
-    const nativeDefault = update.workerKind === 'session' && (
-        headline === composeSessionWorkerUpdateHeadlineV1(update)
-        || headline === `${options.title ?? update.workerId} · ${update.ownerState}`
+    const nativeDefault = isContentFreeWorkerUpdateHeadline(update) || update.workerKind === 'session' && (
+        headline === `${options.title ?? update.workerId} · ${update.ownerState}`
         || headline === `${update.workerId} · ${update.ownerState}`
     );
     return joinHappierFacts(state, nativeDefault || headline === options.title ? null : headline);

@@ -587,6 +587,11 @@ export function isUntitledSessionName(name: string): boolean {
     return name === t('session.untitled');
 }
 
+/** True when `getSessionName` named an untitled Voice conversation only by its kind ("Voice"). */
+export function isVoiceConversationFallbackName(name: string): boolean {
+    return name === t('voicePresence.title');
+}
+
 /**
  * Extracts a display name from a session's metadata path.
  * Returns the last segment of the path, or "Untitled session" when nothing names it.

@@ -188,3 +188,18 @@ describe('resolveTranscriptMessageDisplayText', () => {
         });
     });
 });
+
+describe('unexplained runtime failure rows', () => {
+    it('reads as the plain cause, not the Agent line with its raw diagnostic', () => {
+        const raw = 'Claude Agent SDK process exited before emitting a result (exitCode=1): Error: Invalid MCP configuration: MCP config file not found: /tmp/happier-1000/happier-claude-mcp-config-28V9LT/payload.json';
+        const normalized = normalizeRawMessage('rejected', 'rejected', 100, {
+            role: 'agent', content: { type: 'acp', agentId: 'claude', data: { type: 'message', message: `Claude input rejected: ${raw}` } },
+            meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code: 'agent_session_error',
+                source: 'agent_session_error', occurredAt: 100, agentId: 'claude', sanitizedPreview: raw } },
+        });
+        const message = agent({ meta: normalized?.meta, text: `Claude input rejected: ${raw}` });
+        const text = resolveTranscriptMessageDisplayText(message).text;
+        expect(text).toBe(presentSessionRuntimeIssue(readRuntimeIssueMessageMeta(message.meta)).summary);
+        expect(text).not.toContain('/tmp/');
+    });
+});

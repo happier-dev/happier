@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkerDeliverableReferenceV1, WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
-import { composeSessionWorkerUpdateHeadlineV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
 import type { WorkerUpdateFollowMatchV1 } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
@@ -23,7 +22,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { describeWorkKind, WORKER_KIND_GLYPHS } from './workerKindGlyphs';
 import { Text } from '@/components/ui/text/Text';
-import { describeWorkerUpdateHeadline, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { describeWorkerUpdateHeadline, isContentFreeWorkerUpdateHeadline, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { Typography } from '@/constants/Typography';
@@ -52,8 +51,7 @@ import { createSessionPeekDetailsTab } from './createSessionPeekDetailsTab';
 const MARK_SIZE = HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX;
 
 function workerUpdateFallbackTitle(update: WorkerUpdateV1): string {
-    return update.workerKind === 'session' && update.headline === composeSessionWorkerUpdateHeadlineV1(update)
-        ? describeWorkKind(update.workerKind) : update.headline;
+    return isContentFreeWorkerUpdateHeadline(update) ? describeWorkKind(update.workerKind) : update.headline;
 }
 
 function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<{ title?: string; at?: number; canInspect?: boolean; stateWord?: string }> = {}) {
@@ -71,7 +69,8 @@ function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<
     return {
         title,
         state: describeWorkerUpdateHeadline(update, { title, stateWord: options.stateWord }),
-        kind: joinHappierFacts(kind, age),
+        // A Run named by its kind does not say the kind again beside the state word.
+        kind: joinHappierFacts(title === kind ? null : kind, age),
         result: resultIsFailure ? undefined : update.result,
         issue: !resultIsFailure && issue.summary === update.result ? null : issue.summary,
         details: issue.details,

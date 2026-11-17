@@ -218,8 +218,8 @@ export function useVoiceConversationHistoryRows(
   const loadMoreBusy = loadingMore || (state.busy && !state.pending);
 
   return React.useMemo((): readonly VoiceHistoryPageRow[] => {
+    // The page header already says what History is for; the section is named, not described again.
     const title = t('settingsVoice.history.conversationsTitle');
-    const description = t('settingsVoice.history.conversationsDescription');
     const sectionState = (
       key: string,
       content: React.ReactElement,
@@ -227,7 +227,7 @@ export function useVoiceConversationHistoryRows(
       key: `conversations:${key}`,
       type: 'conversations-state',
       render: () => (
-        <ItemGroup title={title} description={description}>
+        <ItemGroup title={title}>
           {content}
         </ItemGroup>
       ),
@@ -328,7 +328,6 @@ export function useVoiceConversationHistoryRows(
         render: () => (
           <ItemGroup
             title={first ? title : undefined}
-            description={first ? description : undefined}
             virtualizedSegment={{ first, last }}
           >
             {/* Known rows stay at full strength; one quiet line says they may be out of date. */}

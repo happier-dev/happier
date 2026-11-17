@@ -16,6 +16,7 @@ vi.mock('@hugeicons/react-native', () => ({
 }));
 
 import { SessionStartFailureBanner } from './SessionStartFailureBanner';
+import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
 import { resolveSessionStartFailureNotice } from './sessionStartFailureNotice';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
@@ -92,5 +93,17 @@ describe('SessionStartFailureBanner', () => {
         expect(refused).not.toBeNull();
         const screen = await renderScreen(<SessionStartFailureBanner notice={refused!} retry={{ run: vi.fn(), busy: false }} />);
         expect(screen.findByTestId('session-start-failure-retry')).toBeNull();
+    });
+    it('says a start failure in one tone, whether or not it can be retried', async () => {
+        const blocked = resolveSessionStartFailureNotice({ sessionActive: false, issue: SessionRuntimeIssueV1Schema.parse({ v: 1,
+            scope: 'primary_session', status: 'failed', occurredAt: 1, code: 'codex_refresh_free_auth_unsupported', source: 'agent_session_error' }) });
+        expect(blocked?.retryable).toBe(false);
+        const tones: unknown[] = [];
+        for (const props of [{ notice, retry: { run: vi.fn(), busy: false } }, { notice: blocked!, retry: null }]) {
+            const screen = await renderScreen(<SessionStartFailureBanner {...props} />);
+            tones.push(screen.findAllByType(WarningActionBanner)[0]?.props.tone);
+            await screen.unmount();
+        }
+        expect(tones).toEqual(['warning', 'warning']);
     });
 });

@@ -124,6 +124,13 @@ export const WorkerUpdateV1Schema = lazyZodSchema(() => z.discriminatedUnion('wo
 })));
 export type WorkerUpdateV1 = z.infer<typeof WorkerUpdateV1Schema>;
 
+/** A Run report's content-free headline; clients compare against it to say the outcome in their own words. */
+export function composeExecutionRunWorkerUpdateHeadlineV1(
+  status: Extract<WorkerUpdateV1, { workerKind: 'execution_run' }>['ownerState'],
+): string {
+  return `Background run ${status}`;
+}
+
 /** One terminal Run projection for retained parent reports and content-free Follow outcomes. */
 export function composeExecutionRunWorkerUpdateV1(input: Readonly<{
   runId: string;
@@ -135,7 +142,7 @@ export function composeExecutionRunWorkerUpdateV1(input: Readonly<{
   const { runId, sessionId, status, ...content } = input;
   return WorkerUpdateV1Schema.parse({ v: 1, workerKind: 'execution_run', workerId: runId,
     ownerState: status, wake: resolveWorkerUpdateWakeV1(classifyWorkerUpdateEventV1({ workerKind: 'execution_run', ownerState: status })!),
-    headline: `Background run ${status}`,
+    headline: composeExecutionRunWorkerUpdateHeadlineV1(status),
     transcriptPointer: { kind: 'execution_run', sessionId, runId }, ...content,
   });
 }

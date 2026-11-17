@@ -430,3 +430,13 @@ describe('a Session whose Agent account refused queued input: one message and on
         expect(shouldShowAbortButtonForSessionState('thinking')).toBe(true);
     });
 });
+
+describe('unexplained runtime failure summary', () => {
+    it('says a failure with no known cause plainly and keeps the raw Agent text in Details only', () => {
+        const raw = 'Claude Agent SDK process exited before emitting a result (exitCode=1): Error: Invalid MCP configuration: MCP config file not found: /tmp/happier-1000/happier-claude-mcp-config-28V9LT/payload.json';
+        const presented = presentSessionRuntimeIssue(issue({ code: 'agent_session_error', source: 'agent_session_error', sanitizedPreview: raw }));
+        expect(presented.summary).toBe(t('errors.agentStoppedWithError'));
+        expect(presented.summary).not.toContain('/tmp/');
+        expect(presented.details).toContain(raw);
+    });
+});

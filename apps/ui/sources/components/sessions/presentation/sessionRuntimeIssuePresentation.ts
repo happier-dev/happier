@@ -258,24 +258,19 @@ export function presentSessionActivationFailure(
     };
 }
 
-/**
- * The first readable sentence of carried failure text: a raw payload (a JSON or schema dump) is detail,
- * never the line a person reads.
- */
-function readRuntimeIssueTextLine(text: string | null | undefined): string | null {
-    const first = text?.split('\n').map(line => line.trim()).find(line => line.length > 0);
-    const line = first?.split(/:\s*[[{]/)[0]?.replace(/:\s*$/, '').trim();
-    return line && /\p{L}/u.test(line) ? line : null;
-}
-
 /** Present the typed cause, reported reset and recovery supported by the carried Connected Account context. */
 export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null | undefined, context?: Readonly<{
     /** The surface's own failure text that wraps this issue (a worker's result), when it has one. */
     failureText?: string | null;
 }>): Readonly<{
     message: string | null;
-    /** One concise line: the localized cause, otherwise the carried text's first readable sentence. */
+    /**
+     * One plain line: the localized cause, otherwise that the Agent stopped with an error. The Agent's own
+     * text (SDK output, local paths, payload dumps) is never this line; it stays in `details`.
+     */
     summary: string | null;
+    /** True when no known cause explains the failure, so `summary` is only the plain fallback line. */
+    unexplained: boolean;
     cause: string | null;
     details: string | null;
     reset: string | null;
@@ -296,10 +291,11 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     // A usage limit is said as the limit itself; the provider's advice stays in Details.
     const usageLimited = issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
     const summary = issue ? transitionTitle ?? localized ?? (usageLimited ? t('session.usageLimitRecovery.banner.title') : null)
-        ?? readRuntimeIssueTextLine(issue.sanitizedPreview) ?? readRuntimeIssueTextLine(context?.failureText) : null;
+        ?? t('errors.agentStoppedWithError') : null;
     const raw = context?.failureText ?? issue?.sanitizedPreview ?? null;
     return {
         summary,
+        unexplained: summary === t('errors.agentStoppedWithError'),
         cause: message,
         details: issue ? [raw !== summary ? raw : null, issue.code, issue.failureCause?.code, issue.failureCause?.providerErrorCode,
             carrierFailure ? `${carrierFailure.closingSide}: ${carrierFailure.closingStage}` : null,

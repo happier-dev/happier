@@ -4,6 +4,8 @@ import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/
 import { readVoiceConversationHistory } from './voiceConversationHistory';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { createSessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
+import { t } from '@/text';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 describe('Voice conversation History projection', () => {
     it('omits recording-private conversations from compact and opened history sources', () => {
@@ -44,6 +46,25 @@ describe('Voice conversation History projection', () => {
             { sessions: { [session.id]: session }, sessionListRowsByServerId: {} },
             { sessions: {}, sessionListRowsByServerId: { [session.serverId!]: { [row.id]: row } } },
         ]) expect(readVoiceConversationHistory(state).conversations).toEqual([]);
+    });
+    it('dates an untitled conversation instead of naming every row after Voice, and keeps a real title', () => {
+        const serverId = 'voice-history-home';
+        const at = Date.UTC(2026, 10, 15, 16, 12);
+        const conversation = (id: string, name: string | undefined) => {
+            const { name: _fixtureName, ...base } = createSessionFixture().metadata!;
+            return createSessionFixture({ id, serverId, createdAt: at, meaningfulActivityAt: at,
+                metadata: { ...base, ...(name ? { name } : {}),
+                    ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } });
+        };
+        const history = readVoiceConversationHistory({ sessions: {
+            untitled: conversation('untitled', undefined),
+            named: conversation('named', 'Plan the release'),
+        }, sessionListRowsByServerId: {} });
+        const titles = Object.fromEntries(history.conversations.map(row => [row.address.sessionId, row.title]));
+
+        expect(titles.named).toBe('Plan the release');
+        expect(titles.untitled).not.toBe(t('voicePresence.title'));
+        expect(titles.untitled).toBe(t('settingsVoice.history.conversationOn', { date: formatMoment(at, Date.now()) }));
     });
     it('uses ordinary Session meaningful activity rather than a later metadata write to order conversations', () => {
         const serverId = 'voice-history-home';

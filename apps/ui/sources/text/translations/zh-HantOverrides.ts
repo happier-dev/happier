@@ -6471,6 +6471,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             `${field} 必須在 ${min} 和 ${max} 之間`,
         retryIn: ({ seconds }: { seconds: number }) =>
             `${seconds} 秒後重試`,
+        agentStoppedWithError: "代理因發生錯誤而停止。",
         errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
             `${message} (錯誤 ${code})`,
         disconnectServiceFailed: ({ service }: { service: string }) =>
@@ -7015,7 +7016,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               database_transaction_timeout: "伺服器在建立此工作階段時逾時。請嘗試重新啟動工作階段。",
               SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在這台機器上重新載入 Happier，才能開始此步驟",
               AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少繼續所需的代理程式原生狀態。",
-              codex_refresh_free_auth_unsupported: "代理程式啟動所需的驗證無法使用。",
+              codex_refresh_free_auth_unsupported: "Codex 無法使用你已連結的帳號登入。請在 Codex 設定中檢查，然後重新啟動工作階段。",
               codex_refresh_bridge_unavailable: "此機器上的代理程式登入無法使用。請重新連線或更新機器上的 Happier。",
               codex_experimental_api_unavailable: "此版本的代理程式不支援所需的登入 API。請更新機器上的代理程式。",
               plugin_services_managed_provider_authority_unavailable: "無法存取共用提供者。請檢查 Gateway 及其與機器的連線，然後重試工作階段。",
@@ -8218,8 +8219,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         deleteSessionSubtitle: '永久刪除此工作階段',
         deleteSessionConfirm: '永久刪除工作階段？',
         stopAndDeleteSession: '停止並刪除',
-        stopAndDeleteSessionWarning: '這將停止工作階段，並永久刪除其所有訊息和資料。此操作無法復原。',
-        deleteSessionWarning: '此操作無法復原。與此工作階段相關的所有訊息和資料將被永久刪除。',
+        stopAndDeleteSessionWarning: "工作階段將停止，其訊息將被永久刪除。",
+        deleteSessionWarning: "其訊息將被永久刪除。",
         deleteDetachedHistoryWarning: "這會移除 Happier 中此對話的副本。機器上代理自己的對話紀錄保持不變。此操作無法復原。",
         failedToDeleteSession: '刪除工作階段失敗',
         sessionDeleted: '工作階段刪除成功',
@@ -11508,7 +11509,6 @@ settingsSession: {
             recoveryTitle: '查看暫存的訊息',
             recoveryOpenFailed: '無法開啟語音對話。請重試。',
             conversationsTitle: "對話",
-            conversationsDescription: "最新的在前。打開即可閱讀，或從上次中斷的地方繼續。",
             conversationsLoading: "正在載入你的對話…",
             conversationsErrorTitle: "無法載入你的對話",
             conversationsOfflineTitle: "暫時無法連線到你的 Home",
@@ -11522,6 +11522,7 @@ settingsSession: {
             conversationContinueLabel: ({ title }: { title: string }) => `繼續 ${title}`,
             conversationContinueFailed: "無法繼續此對話。請重試。",
             conversationReadOnly: "無法繼續",
+            conversationOn: ({ date }: { date: string }) => `語音對話 · ${date}`,
             conversationOpenHint: "以工作階段開啟",
             transcriptsTitle: "即時轉錄",
             transcriptsDescription: "你在工作階段之外進行的即時語音對話。",

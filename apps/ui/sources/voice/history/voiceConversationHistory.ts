@@ -1,7 +1,9 @@
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { StorageState } from '@/sync/store/types';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { getSessionName, isVoiceConversationFallbackName } from '@/utils/sessions/sessionUtils';
+import { t } from '@/text';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 import { isVoiceConversationHistorySessionMetadata, isVoiceConversationSystemSessionMetadata,
     shouldRetireLegacyVoiceConversationSession } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { readVoiceHistoryPendingRecovery } from './useVoiceHistoryPendingRecovery';
@@ -74,7 +76,12 @@ export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions
             hasBlockedInputs: conversations.get(sessionAddressKey(address))?.hasBlockedInputs === true
                 || pendingInputs.length > 0 || readVoiceHistoryPendingRecovery(address, session) !== null, pendingInputs });
     }
+    // Every row here is a Voice conversation, so "Voice" names none of them: an untitled one says when it happened.
+    const now = Date.now();
     return { coverage: 'loaded' as const, coverageComplete: options?.coverageComplete === true && readableDisplays,
         conversations: [...conversations.values()]
+        .map(conversation => isVoiceConversationFallbackName(conversation.title)
+            ? { ...conversation, title: t('settingsVoice.history.conversationOn', { date: formatMoment(conversation.lastActivityAt, now) }) }
+            : conversation)
         .sort((a, b) => b.lastActivityAt - a.lastActivityAt || sessionAddressKey(a.address).localeCompare(sessionAddressKey(b.address))) };
 }

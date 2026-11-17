@@ -15,7 +15,7 @@ import { parseHappierMetaEnvelope, readTranscriptAttachmentsMeta } from './struc
 export { readTranscriptAttachmentsMeta } from './structured/happierMetaEnvelope';
 import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import { scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
-import { readAgentStartupFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionModelTransitionFailureStatus } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { resolveInlineMessageReference, resolveMessageStructuredReferences, type MessageStructuredReferences } from './references/messageStructuredReferences';
@@ -60,6 +60,11 @@ export function resolveTranscriptMessageDisplayText(
     return { text, unsupportedContentText, isVoiceAgentTurn };
 }
 
+function unexplainedRuntimeIssueSummary(issue: SessionRuntimeIssueV1): string | null {
+    const presented = presentSessionRuntimeIssue(issue);
+    return presented.unexplained ? presented.summary : null;
+}
+
 /** Body preprocessing is shared with copy selection, which has its own eligibility contract. */
 export function prepareTranscriptMessageBody(
     message: UserTextMessage | AgentTextMessage,
@@ -96,7 +101,10 @@ export function prepareTranscriptMessageBody(
             ? presentSessionRuntimeIssue(runtimeIssue).message
         // Other closed startup causes (preparation) read exactly as the Session's start-failure banner.
         : runtimeIssue && Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, runtimeIssue.code)
-            ? resolveSessionStartFailureNotice({ issue: runtimeIssue, sessionActive: false })?.message ?? null : null;
+            ? resolveSessionStartFailureNotice({ issue: runtimeIssue, sessionActive: false })?.message ?? null
+        // A failure no known cause explains reads as the plain line; the Agent's own text (SDK output, paths)
+        // waits in Details. Rows with a known cause keep the words written for them.
+        : runtimeIssue ? unexplainedRuntimeIssueSummary(runtimeIssue) : null;
     let text: string | null;
     if (teamDenial) text = [teamDenial.title, teamDenial.body].filter(Boolean).join(' · ');
     else if (agentAuth) text = agentAuth.message;

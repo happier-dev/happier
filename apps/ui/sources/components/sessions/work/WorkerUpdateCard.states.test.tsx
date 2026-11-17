@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { composeExecutionRunWorkerUpdateHeadlineV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -85,8 +85,9 @@ describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
             runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code: 'agent_session_error', source: 'agent_session_error',
                 occurredAt: 1000, sanitizedPreview: raw } };
         const card = await renderCard(update, getActiveServerSnapshot().serverId);
-        // One concise line; the schema JSON is not in the card until the person opens Details.
-        expect(card.getTextContent()).toContain('Native Agent session turn failed');
+        // One plain line; the Agent's own text and the schema JSON wait behind Details.
+        expect(card.getTextContent()).toContain(t('errors.agentStoppedWithError'));
+        expect(card.getTextContent()).not.toContain('Native Agent session turn failed');
         expect(card.getTextContent()).not.toContain('unrecognized_keys');
         expect(card.findAllHostsByTestId('worker-update-result')).toHaveLength(0);
         await card.pressByTestIdAsync('worker-update-details-toggle');
@@ -286,5 +287,13 @@ describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
         expect(card.findAllHostsByTestId('worker-update-action:review')).toHaveLength(0);
         await card.pressByTestIdAsync('worker-update-inspect');
         expect(navigate).toHaveBeenCalledTimes(1);
+    });
+    it('names a content-free failed run by its kind with one state word, and does not repeat the kind beside it', async () => {
+        const card = await renderCard({ v: 1, workerKind: 'execution_run', workerId: 'run_plain', ownerState: 'failed',
+            wake: 'needs_you', headline: composeExecutionRunWorkerUpdateHeadlineV1('failed'), canInspect: false },
+        getActiveServerSnapshot().serverId);
+        expect(card.findHostByTestId('worker-update-title')?.props.children).toBe(t('sessionWork.kinds.backgroundRun'));
+        expect(card.findHostByTestId('worker-update-state')?.props.children).toBe(t('sessionWork.workerUpdate.state.failed'));
+        expect(String(card.findHostByTestId('worker-update-kind')?.props.children ?? '')).not.toContain(t('sessionWork.kinds.backgroundRun'));
     });
 });
