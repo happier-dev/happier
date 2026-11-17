@@ -74,7 +74,11 @@ export function ThemeTryBar(props: ThemeTryPresentationProps) {
               numberOfLines={phone ? 2 : 1}
               style={styles.meta}
             >
-              {t('themeStore.tryingHere', { here: props.here })}
+              {/* Keeping a theme of the other mode switches the app to it (MODE-ON-THEMES): the bar says so before Keep. */}
+              {props.switchToMode
+                ? t('themeStore.keepSwitchesMode', { face: props.faceName,
+                    mode: t(props.switchToMode === 'dark' ? 'themeCard.dark' : 'themeCard.light') })
+                : t('themeStore.tryingHere', { here: props.here })}
             </Text>
           </View>
           <View style={styles.actions}>

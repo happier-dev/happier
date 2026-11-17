@@ -62,6 +62,10 @@ export const themeSurfaces = {
     useOtherDevices: "Auf anderen Geräten verwenden…",
     options: "Theme-Varianten",
   },
+  themeLibrary: {
+    lightThemes: "Helle Themes",
+    darkThemes: "Dunkle Themes",
+  },
   themeDevices: {
     title: ({ name }: { name: string }) => `${name} verwenden auf…`,
     lightMode: "Heller Modus",

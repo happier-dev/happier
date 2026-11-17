@@ -62,6 +62,10 @@ export const themeSurfaces = {
     useOtherDevices: "在其他设备上使用…",
     options: "主题方案",
   },
+  themeLibrary: {
+    lightThemes: "浅色主题",
+    darkThemes: "深色主题",
+  },
   themeDevices: {
     title: ({ name }: { name: string }) => `在以下设备上使用${name}…`,
     lightMode: "浅色模式",

@@ -13,7 +13,6 @@ import { PLUGINS_SURFACE_ICON } from '@/components/settings/plugins/model/plugin
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import {
   DropdownMenu,
   type DropdownMenuItem,
@@ -25,11 +24,13 @@ import {
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
+import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { THEMES_SETTINGS } from './themesSettings';
 import type {
@@ -54,16 +55,15 @@ const GRID = {
 const PHONE_SLOT_PREVIEW_ASPECT = 1.25;
 
 /**
- * Appearance → Themes (lab A1): the two mode slots (which theme light and dark mode use, the one this
- * device shows marked) over one grid of the chosen mode's themes, each drawn as its own miniature. A
- * press applies here at once; the ring alone marks the theme in use. A theme's quiet operations sit
+ * Appearance → Themes (lab A1 with MODE-ON-THEMES): the appearance mode, the mode slots (which theme each
+ * mode uses), then each mode's themes in its own section, each drawn as its own miniature. A
+ * press tries a theme on (Keep or Revert in the try bar); the ring alone marks the theme in use. Its quiet operations sit
  * behind its "…"; adding sits behind the header's one Add theme menu.
  */
 export const ThemeLibraryView = React.memo(function ThemeLibraryView(
   props: ThemeLibraryViewProps,
 ) {
   const phone = useDeviceType() === 'phone';
-  const grid = phone ? GRID.phone : GRID.wide;
   const { mode, onChooseMode, onChooseTheme } = props;
   const modeTitle = (slotMode: ThemeProfileMode) =>
     t(
@@ -72,9 +72,12 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
         : 'settingsAppearance.themeProfiles.lightModeSection',
     );
 
+  // Adaptive shows a slot for each mode; an explicit Light or Dark shows only the one the app wears (MODE-ON-THEMES).
+  const appearanceMode = props.appearanceMode;
+  const slotModes = appearanceMode === 'light' || appearanceMode === 'dark' ? [appearanceMode] : THEME_MODES;
   const slotOptions = React.useMemo(
     (): Array<SelectionTile<ThemeProfileMode>> =>
-      THEME_MODES.map((slotMode) => {
+      slotModes.map((slotMode) => {
         const slot = props.slots[slotMode];
         return {
           id: slotMode,
@@ -90,24 +93,7 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
           ),
         };
       }),
-    [phone, props.slots],
-  );
-
-  // The library is a visual picker (finding 4): each theme its own miniature, the ring alone marks the one in use,
-  // the name and source centred under it. It scrolls with the page and draws only the lines near the window.
-  const tileOptions = React.useMemo(
-    (): Array<SelectionTile<string>> =>
-      props.tiles.map((tile) => ({
-        id: tile.key,
-        title: tile.name,
-        subtitle: tile.sourceLabel,
-        preview: <LibraryPreview preview={tile.preview} form={grid.form} />,
-      })),
-    [grid.form, props.tiles],
-  );
-  const tilesByKey = React.useMemo(
-    () => new Map(props.tiles.map((tile) => [tile.key, tile] as const)),
-    [props.tiles],
+    [phone, props.slots, appearanceMode],
   );
 
   const addMenu = <ThemeAddMenu items={props.addMenu} compact={phone} />;
@@ -119,6 +105,23 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
         navigationTrailing={phone ? addMenu : undefined}
       />
 
+      {appearanceMode && props.onChangeAppearanceMode ? (
+        // The one appearance-mode choice, the same setting the Appearance page shows (MODE-ON-THEMES).
+        <ItemGroup>
+          <SegmentedChoiceItem<ThemePreference>
+            testIDPrefix="settings-theme-appearance-mode"
+            title={t('settingsAppearance.theme')}
+            options={APPEARANCE_MODES.map((option) => ({
+              id: option,
+              label: t(`settingsAppearance.themeOptions.${option}`),
+              description: t(`settingsAppearance.themeDescriptions.${option}`),
+            }))}
+            value={appearanceMode}
+            onChange={props.onChangeAppearanceMode}
+          />
+        </ItemGroup>
+      ) : null}
+
       <ItemGroup surface="none">
         <SettingAnchor setting={THEMES_SETTINGS.settings.lightTheme}>
           <SettingAnchor setting={THEMES_SETTINGS.settings.darkTheme}>
@@ -128,8 +131,8 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
               density={phone ? 'regular' : 'compact'}
               descriptionPlacement={phone ? 'below' : 'beside'}
               previewAspectRatio={PHONE_SLOT_PREVIEW_ASPECT}
-              minimumColumns={2}
-              maximumColumns={2}
+              minimumColumns={slotOptions.length}
+              maximumColumns={slotOptions.length}
               accessibilityLabel={t(
                 'settingsAppearance.themeProfiles.modesLabel',
               )}
@@ -151,43 +154,23 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
         {props.notice ? <LibraryNoticeLine notice={props.notice} /> : null}
       </ItemGroup>
 
-      <ItemGroup surface="none">
-        <SettingAnchor setting={THEMES_SETTINGS.settings.yourThemes}>
-          <View style={stylesheet.grid}>
-            {props.hasOwnThemes ? null : (
-              <EmptyState
-                layout="line"
-                testID="settings-theme-profile-custom-empty"
-                title={t('settingsAppearance.themeProfiles.emptyTitle')}
-                subtitle={t(
-                  'settingsAppearance.themeProfiles.emptyDescription',
-                )}
-              />
-            )}
-            <SelectionTiles
-              variant="visual"
-              tileSizing="fill"
-              scroll="page"
-              maximumColumns={grid.columns}
-              previewAspectRatio={grid.aspect}
-              labelLines={1}
-              accessibilityLabel={modeTitle(mode)}
-              testIdPrefix={`settings-theme-${mode}`}
-              value={props.selectedKey}
-              onChange={(next) => {
-                if (next) onChooseTheme(next);
-              }}
-              options={tileOptions}
-              renderOptionAccessory={({ option, revealed }) => {
-                const tile = tilesByKey.get(option.id);
-                return tile && revealed && (tile.menu.length > 0 || tile.onShare || tile.onDelete) ? (
-                  <TileMenu tile={tile} />
-                ) : null;
-              }}
-            />
-          </View>
-        </SettingAnchor>
-      </ItemGroup>
+      <SettingAnchor setting={THEMES_SETTINGS.settings.yourThemes}>
+        {props.sections ? (
+          // One section per mode, every theme once (a two-mode theme sits in each of its modes' sections).
+          props.sections.map((section, index) => (
+            <ThemeSection key={section.mode} mode={section.mode} selectedKey={section.selectedKey} tiles={section.tiles}
+              title={t(section.mode === 'dark' ? 'themeLibrary.darkThemes' : 'themeLibrary.lightThemes')}
+              description={index === 0 && !props.hasOwnThemes ? t('settingsAppearance.themeProfiles.emptyDescription') : undefined}
+              testID={index === 0 && !props.hasOwnThemes ? 'settings-theme-profile-custom-empty' : undefined}
+              phone={phone} onChooseTheme={onChooseTheme} />
+          ))
+        ) : (
+          <ThemeSection mode={mode} selectedKey={props.selectedKey} tiles={props.tiles} title={undefined}
+            description={props.hasOwnThemes ? undefined : t('settingsAppearance.themeProfiles.emptyDescription')}
+            testID={props.hasOwnThemes ? undefined : 'settings-theme-profile-custom-empty'}
+            phone={phone} onChooseTheme={onChooseTheme} />
+        )}
+      </SettingAnchor>
 
       {props.onOpenStore ? (
         // One quiet onward line at the page foot (lab A1): no card under the bare tiles.
@@ -206,6 +189,82 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
     </ItemList>
   );
 });
+
+const APPEARANCE_MODES: readonly ThemePreference[] = ['adaptive', 'light', 'dark'];
+
+/**
+ * One mode's themes (lab A1 with MODE-ON-THEMES): a section title, then the visual picker: each theme its own
+ * miniature (both faces for a two-mode theme), the ring alone on the one in use, the name and source centred
+ * under it. It scrolls with the page and draws only the lines near the window.
+ */
+const ThemeSection = React.memo(function ThemeSection(props: Readonly<{
+  mode: ThemeProfileMode;
+  selectedKey: string;
+  tiles: readonly ThemeLibraryTile[];
+  title: string | undefined;
+  description: string | undefined;
+  /** The section that invites a first theme of your own carries the invitation's id. */
+  testID?: string;
+  phone: boolean;
+  onChooseTheme: (key: string) => void;
+}>) {
+  const grid = props.phone ? GRID.phone : GRID.wide;
+  const { onChooseTheme } = props;
+  const options = React.useMemo(
+    (): Array<SelectionTile<string>> =>
+      props.tiles.map((tile) => ({
+        id: tile.key,
+        title: tile.name,
+        subtitle: tile.sourceLabel,
+        preview: <TilePreview tile={tile} form={grid.form} />,
+      })),
+    [grid.form, props.tiles],
+  );
+  const tilesByKey = React.useMemo(
+    () => new Map(props.tiles.map((tile) => [tile.key, tile] as const)),
+    [props.tiles],
+  );
+  return (
+    <ItemGroup surface="none" title={props.title} description={props.description} testID={props.testID}>
+      <SelectionTiles
+        variant="visual"
+        tileSizing="fill"
+        scroll="page"
+        maximumColumns={grid.columns}
+        previewAspectRatio={grid.aspect}
+        labelLines={1}
+        accessibilityLabel={props.title ?? props.mode}
+        testIdPrefix={`settings-theme-${props.mode}`}
+        value={props.selectedKey}
+        onChange={(next) => {
+          if (next) onChooseTheme(next);
+        }}
+        options={options}
+        renderOptionAccessory={({ option, revealed }) => {
+          const tile = tilesByKey.get(option.id);
+          return tile && revealed && (tile.menu.length > 0 || tile.onShare || tile.onDelete) ? (
+            <TileMenu tile={tile} />
+          ) : null;
+        }}
+      />
+    </ItemGroup>
+  );
+});
+
+/** A theme's miniature: its two faces side by side when it has both modes, else its one face. */
+function TilePreview(props: Readonly<{ tile: ThemeLibraryTile; form: ThemeMiniatureForm }>) {
+  const light = props.tile.previews?.light;
+  const dark = props.tile.previews?.dark;
+  if (props.tile.dual && light && dark) {
+    return (
+      <View style={stylesheet.faces}>
+        <View style={stylesheet.face}><LibraryPreview preview={light} form={props.form} /></View>
+        <View style={stylesheet.face}><LibraryPreview preview={dark} form={props.form} /></View>
+      </View>
+    );
+  }
+  return <LibraryPreview preview={props.tile.preview} form={props.form} />;
+}
 
 /** The one miniature owner, from a library header or a resolved palette. */
 const LibraryPreview = React.memo(function LibraryPreview(
@@ -395,8 +454,13 @@ function ThemeAddMenu(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-  grid: {
-    gap: theme.space.s12,
+  faces: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  face: {
+    flex: 1,
+    overflow: 'hidden',
   },
   slotFooter: {
     flexDirection: 'row',

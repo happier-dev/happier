@@ -62,6 +62,10 @@ export const themeSurfaces = {
     useOtherDevices: "Usar em outros dispositivos…",
     options: "Opções de tema",
   },
+  themeLibrary: {
+    lightThemes: "Temas claros",
+    darkThemes: "Temas escuros",
+  },
   themeDevices: {
     title: ({ name }: { name: string }) => `Usar ${name} em…`,
     lightMode: "Modo claro",

@@ -62,6 +62,10 @@ export const themeSurfaces = {
     useOtherDevices: "Użyj na innych urządzeniach…",
     options: "Warianty motywu",
   },
+  themeLibrary: {
+    lightThemes: "Jasne motywy",
+    darkThemes: "Ciemne motywy",
+  },
   themeDevices: {
     title: ({ name }: { name: string }) => `Użyj ${name} na…`,
     lightMode: "Tryb jasny",
