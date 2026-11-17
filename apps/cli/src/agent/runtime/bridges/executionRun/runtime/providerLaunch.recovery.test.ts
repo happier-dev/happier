@@ -8,7 +8,14 @@ import { mergeProviderCatalogV1 } from '@happier-dev/protocol/providers/catalog/
 import { composeProviderSettingsV1, DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { prepareProviderConnectionImportV1 } from '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1';
 import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { decodeScmDiffSummaryModelOverride, encodeScmDiffSummaryModelOverride, projectScmDiffSummaryModelSelector, readScmDiffSummaryRunnerChoice, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { LlmTaskRunnerConfigV1WriteSchema } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import { projectSessionModelRefToExecutionModelSelection, SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
+import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
+import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import type { PluginDaemonModuleNamespace } from '@/plugins/runtime/types';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { resolveProviderModelCompatibility } from '@/providers/catalog/compatibility';
@@ -222,13 +229,13 @@ describe('real custom Provider Run recovery', () => {
                     sessionDirectory: test.fixture.happyHomeDir, materializedRoot: test.fixture.happyHomeDir } },
         }));
         const release = vi.spyOn(controlClient, 'releaseExecutionRunConnectedServices').mockResolvedValue({ ok: true, released: true });
-        return { bindings, restore() { release.mockRestore(); materialize.mockRestore(); credentialRead.mockRestore(); } };
+        return { bindings, materialize, restore() { release.mockRestore(); materialize.mockRestore(); credentialRead.mockRestore(); } };
     }
     const brokeredTeamModel = (agentTargetKey: string) => ({ kind: 'team_credential_provider_model' as const,
         resourceId: 'resource-muse', teamId: 'team-muse', expectedResourceRevision: 3,
         agentTargetKey, modelId: 'muse-spark-1.3', deliveryMode: 'brokered' as const });
 
-    it('opens a brokered Team Run with connected services through the Team binding, never the own account', async () => {
+    it('starts the stored SCM Team runner through RPC with connected services without replacing its Team provider', async () => {
         const teamOpens: Array<Parameters<ExecutionRunTeamCredentialProviderBindingPreparer>[0]> = [];
         const teamCleanup = vi.fn(async () => undefined);
         const test = await createRecoveryFixture(true, { prepareRunTeamCredentialProviderBinding: async request => {
@@ -243,9 +250,26 @@ describe('real custom Provider Run recovery', () => {
         const boundaries = connectedRunBoundaries(test);
         const teamCredentialModel = brokeredTeamModel(test.input.selection.agentTargetKey);
         try {
-            const started = await test.bridge.start({ sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
-                teamCredentialModel, connectedServices: boundaries.bindings, instructions: 'Use the Team model.',
-                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' });
+            const { kind: _kind, ...teamRef } = teamCredentialModel;
+            const selection = SessionModelSelectionSchema.parse({ v: 2, updatedAt: 1, ref: { source: 'team_resource', ...teamRef } });
+            const authored = LlmTaskRunnerConfigV1WriteSchema.parse({ v: 1, modelSelection: selection.ref, connectedServices: boundaries.bindings });
+            const runner = readScmDiffSummaryRunnerChoice(accountSettingsParse({ [SCM_DIFF_SUMMARY_SETTING_KEYS.runner]: authored }));
+            if (!runner) throw new Error('Expected the stored Team runner');
+            const selector = decodeScmDiffSummaryModelOverride(encodeScmDiffSummaryModelOverride(projectScmDiffSummaryModelSelector(runner)));
+            if (!selector?.modelSelection) throw new Error('Expected the retained Team model reference');
+            expect(selector).toMatchObject({ modelSelection: selection.ref, connectedServices: boundaries.bindings });
+            const executor = createExecutionRunRpcActionExecutor({ manager: test.bridge,
+                context: { sessionId: 'parent', cwd: test.fixture.happyHomeDir },
+                policy: resolveExecutionRunPolicy(), isExecutionRunsEnabled: () => true });
+            const response = await executor.execute('execution.run.start', {
+                sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
+                ...projectSessionModelRefToExecutionModelSelection(selector.modelSelection),
+                connectedServices: selector.connectedServices, instructions: 'Use the Team model.',
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+            }, { surface: 'rpc' });
+            expect(response).toMatchObject({ ok: true });
+            if (!response.ok) throw new Error('Expected RPC to admit the Team runner');
+            const started = ExecutionRunStartResponseSchema.parse(response.result);
             await test.bridge.waitForTerminal(started.runId);
             expect(teamOpens, JSON.stringify(test.bridge.getLatestToolResult(started.runId)))
                 .toEqual([expect.objectContaining({ runId: started.runId, selection: teamCredentialModel })]);
@@ -253,7 +277,9 @@ describe('real custom Provider Run recovery', () => {
             expect(test.requests.filter(request => !request.teamCredentialModel)).toEqual([]);
             expect(test.nativeRequests).toHaveLength(1);
             expect(test.nativeRequests[0]?.providerBinding).toMatchObject({
-                source: { kind: 'team_resource', resourceId: 'resource-muse' }, model: { id: 'muse-spark-1.3' } });
+                source: { kind: 'team_resource', resourceId: 'resource-muse' }, model: { id: 'muse-spark-1.3' },
+                upstream: { normalizedUrl: 'http://127.0.0.1:43123/v1' } });
+            expect(boundaries.materialize.mock.calls[0]?.[0]).toMatchObject({ connectedServices: boundaries.bindings });
             expect(test.bridge.getPublic(started.runId)).toMatchObject({ status: 'succeeded' });
         } finally { await test.cleanup(); boundaries.restore(); }
     });
