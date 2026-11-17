@@ -11,6 +11,32 @@ import { createSessionFollowContextReconciler } from './sessionFollowContextReco
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each(['failed', 'timeout'] as const)('reports a %s Run code without copying its diagnostics into the worker update', status => {
+  const raw = 'Invalid MCP configuration: MCP config file not found: /tmp/claude-fixture/payload.json';
+  const code = 'plugin_mcp_preparation_unavailable';
+  const run = { runId: 'failed-run', callId: 'call', sidechainId: 'sidechain', sessionId: 'source', depth: 0,
+    intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, backendId: 'claude', instructions: '',
+    permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+    status, startedAtMs: 1, finishedAtMs: 2, notifyParentOnCompletion: true,
+    summary: raw, ...(status === 'failed' ? { latestToolResult: { status, summary: raw, error: { code, message: raw } } } : {}),
+    error: { code, message: raw, ...(status === 'timeout' ? {
+      runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code, source: 'dependency_failure',
+        occurredAt: 2, sanitizedPreview: raw, failureCause: { phase: 'turn_start', failureReason: 'unknown',
+          providerErrorMessage: raw } },
+    } : {}) } } satisfies ExecutionRunState;
+  const update = composeExecutionRunWorkerUpdate(run, 'failed-terminal')?.update;
+  expect(JSON.stringify(update)).not.toContain('Invalid MCP configuration');
+  expect(JSON.stringify(update)).not.toContain('payload.json');
+  expect(update).toMatchObject({ ownerState: status, canInspect: true, runtimeIssueV1: { code } });
+  expect(update?.result).toBeUndefined();
+  const errorless = composeExecutionRunWorkerUpdate({ ...run, error: undefined }, 'failed-terminal')?.update;
+  expect(JSON.stringify(errorless)).not.toContain('payload.json');
+  expect(errorless).toMatchObject({ runtimeIssueV1: { code: 'execution_run_failed' } });
+  const report = { summary: 'Partial findings', deliverables: [{ kind: 'workspace_file', sessionId: 'source', path: 'report.md' }] };
+  expect(composeExecutionRunWorkerUpdate({ ...run, latestToolResult: report }, 'failed-terminal')?.update)
+    .toMatchObject({ result: report.summary, deliverables: report.deliverables });
+});
+
 it.each(['host_loss', 'usage_limit'] as const)('delivers a followed Run %s outcome at final input without a native source read or early ACK', async cause => {
   const state = { runId: 'failed-run', callId: 'call', sidechainId: 'sidechain', sessionId: 'source', depth: 0,
     intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: '',
@@ -55,7 +81,7 @@ it.each(['host_loss', 'usage_limit'] as const)('delivers a followed Run %s outco
   expect(text).toContain('owner_state="failed"');
   expect(text).not.toContain('Read the original Run result.');
   if (cause === 'usage_limit') expect(text).toContain('"resetAtMs":1800000');
-  else expect(text).not.toContain('runtime_issue=');
+  else expect(text).toContain('execution_run_host_lost');
   expect(reads).not.toHaveBeenCalled();
   expect(posts).not.toHaveBeenCalled();
   expect(acknowledgements).toEqual([]);

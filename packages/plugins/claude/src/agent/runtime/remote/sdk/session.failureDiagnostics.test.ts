@@ -13,6 +13,33 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 describe('Claude SDK turn failure diagnostics', () => {
+    it.each([true, false])('publishes a safe MCP startup failure when the process exits (prompt acknowledged: %s)', async acknowledgePrompts => {
+        const exec = createSdkExecFixture({ acknowledgePrompts });
+        const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+        const operations = createClaudeAgentSdkTurnOperations({
+            ctx, directory: '/tmp/claude-diagnostics', launchEnv: {}, permissionMode: 'default',
+        });
+        const issues: unknown[] = [];
+        operations.subscribeProviderEvents(event => { if (event.kind === 'turn-failed') issues.push(event.issue); });
+        const path = '/tmp/claude-fixture/payload.json';
+        const code = 'plugin_mcp_preparation_unavailable';
+        try {
+            operations.beginProviderTurn('mcp-startup-turn');
+            const submission = operations.sendProviderTurnPrompt('prompt');
+            await vi.waitFor(() => expect(exec.written).toContainEqual(expect.objectContaining({ type: 'user' })));
+            if (acknowledgePrompts) await expect(submission).resolves.toMatchObject({ kind: 'accepted' });
+            await exec.exitWith({ exitCode: 1, signal: null,
+                stderr: `Error: Invalid MCP configuration:\nMCP config file not found: ${path}` });
+            const outcome = await submission;
+            if (!acknowledgePrompts) expect(outcome).toMatchObject({ kind: 'effect_may_have_occurred', code });
+            await vi.waitFor(() => expect(issues).toHaveLength(1));
+            expect(JSON.stringify({ outcome, issues })).not.toContain(path);
+            expect(issues[0]).toMatchObject({ code, failureCause: { phase: 'client_start' } });
+        } finally {
+            await operations.disposeProviderSession();
+        }
+    });
+
     it.each(['primary-assistant', 'primary-result', 'availability', 'sidechain'] as const)(
         'keeps %s quota evidence eligible only until a primary SDK failure owns recovery', async (kind) => {
             const exec = createSdkExecFixture();

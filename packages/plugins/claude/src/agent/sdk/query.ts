@@ -6,7 +6,7 @@ import { readSessionHookSidechainAgentId } from '../hooks/sidechain.js';
 import { buildClaudeSdkSessionHooks, CLAUDE_SDK_SESSION_HOOK_CALLBACK_ID } from '../hooks/settings.js';
 
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
-import { createClaudeManagedMcpPolicyConflictError } from '../mcp/managedPolicy.js';
+import { createClaudeManagedMcpPolicyConflictError, createClaudeMcpConfigUnavailableError } from '../mcp/managedPolicy.js';
 
 import type {
     CanCallToolCallback,
@@ -292,6 +292,9 @@ export function createClaudeSdkNoResultError(result: ClaudeSdkExecResult | null 
         // Managed policy can retain its own servers and exceptions, so it cannot replace
         // the caller's strict server selection. Keep the restriction and report the conflict.
         return createClaudeManagedMcpPolicyConflictError();
+    }
+    if (result?.stderr.includes('MCP config file not found:')) {
+        return createClaudeMcpConfigUnavailableError();
     }
     const status = result ? ` (${formatExitStatus(result)})` : '';
     const stderr = result ? sanitizeStderrPreview(result.stderr) : '';

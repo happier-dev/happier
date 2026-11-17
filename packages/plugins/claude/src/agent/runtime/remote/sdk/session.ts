@@ -17,12 +17,11 @@ import { HappierStructuredInputV1Schema } from '@happier-dev/plugin-sdk/sessions
 import type { AgentSessionInputFilesService } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createClaudeMcpUsageWitness } from './mcpUsage.js';
 import { createClaudeSkillUsageWitness } from './skillUsage.js';
-import { readClaudeManagedMcpPolicyFailure } from '../../../mcp/managedPolicy.js';
+import { CLAUDE_MCP_CONFIG_UNAVAILABLE_CODE, readClaudeMcpStartupFailure } from '../../../mcp/managedPolicy.js';
 import { parseMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { buildClaudeMcpConfigArgs, materializeClaudeMcpConfigArgsForSpawn } from '../../../mcp/materializeConfigArgs.js';
 import {
     redactBugReportSensitiveText,
-    isPluginError,
     PluginError,
     type JsonValue,
 } from '@happier-dev/plugin-sdk';
@@ -323,10 +322,9 @@ const PROVIDER_ERROR_PREVIEW_MAX_LENGTH = 800;
 function projectPromptTransportOutcome(outcome: ClaudeSdkPromptTransportOutcome): ClaudeRuntimePromptSubmissionOutcome {
     if (outcome.kind === 'accepted') return outcome;
     const reason = sanitizeProviderErrorPreview(outcome.error.message) ?? 'Claude SDK prompt transport failed.';
-    const failureCause = projectSessionRuntimeFailureCause(outcome.error, 'turn_start', 'agent.turn');
-    return outcome.kind === 'rejected_before_effect'
-        ? { kind: outcome.kind, reason, failureCause, ...readClaudeManagedMcpPolicyFailure(outcome.error) }
-        : { kind: outcome.kind, reason, failureCause };
+    const startupFailure = readClaudeMcpStartupFailure(outcome.error);
+    const failureCause = projectSessionRuntimeFailureCause(outcome.error, startupFailure ? 'client_start' : 'turn_start', 'agent.turn');
+    return { kind: outcome.kind, reason, failureCause, ...startupFailure };
 }
 
 function sanitizeProviderErrorPreview(value: unknown): string | null {
@@ -373,6 +371,7 @@ function readFailureDiagnosticCode(code: string): string {
         case 'claude_sdk_no_result':
         case 'claude_sdk_stream_error':
         case 'claude_agent_sdk_resume_identity_mismatch':
+        case CLAUDE_MCP_CONFIG_UNAVAILABLE_CODE:
             return code;
         default:
             return 'Unrecognized failure code (details redacted)';
@@ -1918,18 +1917,19 @@ export function createClaudeAgentSdkTurnOperations(
             source: ClaudeSessionRuntimeIssueSource,
             code: string,
         ): void => {
+            const startupFailure = readClaudeMcpStartupFailure(error);
             publishTerminal(ClaudeProviderEventSchema.parse({
                 sessionId: readRuntimeEventSessionId(),
                 emittedAtMs: Date.now(),
                 kind: 'turn-failed',
                 turnId: turnId ?? 'claude-agent-sdk-turn',
                 issue: buildClaudeSessionRuntimeIssue({
-                    code: isPluginError(error) && error.code === 'claude_managed_mcp_policy_conflict' ? error.code : code,
+                    code: startupFailure?.code ?? code,
                     source,
                     occurredAt: Date.now(),
                     agentId: 'claude',
                     sanitizedPreview: sanitizeProviderErrorPreview(error.message),
-                    failureCause: projectSessionRuntimeFailureCause(error, 'turn', 'agent.turn'),
+                    failureCause: projectSessionRuntimeFailureCause(error, startupFailure ? 'client_start' : 'turn', 'agent.turn'),
                 }),
             }));
         };
@@ -2726,7 +2726,7 @@ export function createClaudeAgentSdkTurnOperations(
                             type: 'input-custody-unknown',
                             ...identity,
                             issue: {
-                                code: 'claude_sdk_prompt_transport_ambiguous',
+                                code: outcome.code ?? 'claude_sdk_prompt_transport_ambiguous',
                                 severity: 'error',
                                 ...(message ? { message } : {}),
                             },
@@ -2811,11 +2811,12 @@ export function createClaudeAgentSdkTurnOperations(
             } catch (error) {
                 turnInFlight = false;
                 if (pendingSubmission === submission) pendingSubmission = null;
+                const startupFailure = readClaudeMcpStartupFailure(error);
                 const outcome: ClaudeRuntimePromptSubmissionOutcome = {
                     kind: 'rejected_before_effect',
                     ...(error instanceof ClaudeBrowserImageUnavailableError ? { code: error.code } : {}),
-                    ...readClaudeManagedMcpPolicyFailure(error),
-                    failureCause: projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn'),
+                    ...startupFailure,
+                    failureCause: projectSessionRuntimeFailureCause(error, startupFailure ? 'client_start' : 'turn_start', 'agent.turn'),
                     reason: sanitizeProviderErrorPreview(
                         error instanceof Error ? error.message : String(error),
                     ) ?? 'Claude SDK prompt setup failed.',
