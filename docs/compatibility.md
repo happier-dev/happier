@@ -11919,6 +11919,12 @@ fields, known failure details, operation identity and lifecycle remain strict.
 Failure authoring stays closed; the released V1 projection continues to omit
 cause diagnostics. An optional diagnostic cannot hide a terminal failure.
 
+Run-start failure details retain content-free input repair facts (`code`, `path`,
+`expected`, `acceptedValues`, and `constraint`) but drop issue prose and rejected
+input. The same Run-start projection owns both reads and forwarding. Ordinary
+Action validation keeps its canonical public messages; this correction adds no
+wire field, lifecycle state, persisted format, or compatibility adapter.
+
 - **`closed`** rejects unknown properties. It is mandatory for identities,
   qualified references, Account or credential selection, permissions, routing,
   mutation inputs/outcomes, authoritative lifecycle facts, executable

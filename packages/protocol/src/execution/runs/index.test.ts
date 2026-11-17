@@ -437,13 +437,17 @@ describe('executionRuns protocol', () => {
   });
 
   it('preserves content-free input repair issues alongside Run start certainty', () => {
-    const details = withExecutionRunStartFailureDetails({ issues: [{ code: 'invalid_value', path: ['retentionPolicy'],
+    const rawDetails = { issues: [{ code: 'invalid_value', path: ['retentionPolicy'],
       acceptedValues: ['ephemeral', 'resumable'], message: 'private rejected value', input: 'private rejected value' }],
-      privateDiagnostic: 'private rejected value' }, 'noRunCreated');
-    expect(ExecutionRunStartFailureDetailsV1Schema.parse(details)).toEqual({
+      privateDiagnostic: 'private rejected value' };
+    const details = withExecutionRunStartFailureDetails(rawDetails, 'noRunCreated');
+    const expected = {
       executionRunStart: { v: 1, runCreation: 'noRunCreated' },
       issues: [{ code: 'invalid_value', path: ['retentionPolicy'], acceptedValues: ['ephemeral', 'resumable'] }],
-    });
+    };
+    expect(details).toEqual(expected);
+    expect(ExecutionRunStartFailureDetailsV1Schema.parse({ executionRunStart: expected.executionRunStart,
+      issues: rawDetails.issues })).toEqual(expected);
     expect(withExecutionRunStartFailureDetails(details, 'outcomeUnknown')).toEqual({ ...details,
       executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } });
     expect(withExecutionRunStartFailureDetails({ issues: [{ message: 'private rejected value' }] }, 'noRunCreated'))

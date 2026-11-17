@@ -89,6 +89,9 @@ const ExecutionRunStartFailureEvidenceV1Schema = lazyZodSchema(() => z.strictObj
   refusal: z.optional(ExecutionRunStartRefusalV1Schema),
 }));
 
+// Run-start failures forward repair facts, never prose from an arbitrary rejected input.
+const ExecutionRunStartInputIssuesSchema = lazyZodSchema(() => z.array(z.omit(ActionInputIssueSchema, { message: true })));
+
 /**
  * Strict, versioned evidence emitted by the execution-run start owner. A caller
  * may consider a fresh attempt only after `noRunCreated` and its own durable
@@ -102,7 +105,7 @@ export const ExecutionRunStartFailureDetailsV1Schema = lazyZodSchema(() => z.str
   childChoice: z.optional(ExecutionRunChildChoiceV1Schema),
   providerError: z.optional(ProviderErrorV1Schema),
   uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
-  issues: z.optional(z.array(ActionInputIssueSchema)),
+  issues: z.optional(ExecutionRunStartInputIssuesSchema),
 }));
 export type ExecutionRunStartFailureDetailsV1 = z.infer<typeof ExecutionRunStartFailureDetailsV1Schema>;
 
@@ -136,7 +139,7 @@ export function withExecutionRunStartFailureDetails(
     && 'childChoice' in details ? details.childChoice : undefined);
   const providerError = ProviderErrorV1Schema.safeParse(details && typeof details === 'object'
     && 'providerError' in details ? details.providerError : undefined);
-  const issues = z.array(ActionInputIssueSchema).safeParse(details && typeof details === 'object'
+  const issues = ExecutionRunStartInputIssuesSchema.safeParse(details && typeof details === 'object'
     && 'issues' in details ? details.issues : undefined);
   const preflight = ExecutionRunPreflightFailureV1Schema.safeParse(details && typeof details === 'object'
     && 'executionRunPreflight' in details ? details.executionRunPreflight : undefined);
