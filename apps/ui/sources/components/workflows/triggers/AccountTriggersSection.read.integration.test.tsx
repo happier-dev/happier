@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import type { View } from 'react-native';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { AutomationDefinitionDetailsRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
@@ -17,7 +18,8 @@ installDisconnectedServerSocketBoundary();
 // Runtime consumers load after the boundary so they bind the disconnected socket.
 const { AccountTriggersSection } = await import('./AccountTriggersSection');
 const { ScheduledWorkflowSection } = await import('./ScheduledWorkflowSection');
-const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+const { SubjectTriggersSection, SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
+const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
 const { useSessionTriggers } = await import('./useSessionTriggers');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -230,6 +232,57 @@ describe('Account trigger HTTP read failure and recovery', () => {
 });
 
 describe('Resource Automations section read states', () => {
+    it.each(['work-add', 'exact-turn', 'hook-work-add'] as const)('opens %s through the shared Session sentence and retains its typed intake in the full editor', async (source) => {
+        await loadSyncSingletonForTests();
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://shared-session-entry-${crypto.randomUUID()}.test`,
+            serverIdentityId: 'srv_shared-session-home', accountId: 'shared-session-entry',
+            request: homeRequest(async () => json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 })),
+        });
+        disposals.push(() => account.dispose());
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const { router } = await import('expo-router');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const subject = { kind: 'session' as const, serverId: 'srv_shared-session-home', sessionId: 'shared-session' };
+        const actionsRef = React.createRef<{ openNewTrigger(anchor: React.RefObject<View | null>): void }>();
+        const anchor = React.createRef<View>();
+        const exactTurnPrefill = source === 'exact-turn' ? { sourceSessionId: subject.sessionId,
+            sourceServerId: subject.serverId, sourceTurnId: 'observed-turn', events: ['parentTurnCompleted'] as const } : undefined;
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        disposals.unshift(async () => restorePopoverGlobals());
+        const sectionProps = { subject, subjectName: 'Shared Session', accountLifetime: lifetime, actionsRef, exactTurnPrefill };
+        function MountedSessionIntake() {
+            const automations = useResourceAutomationsSection(sectionProps);
+            return <SubjectTriggersSectionContent {...sectionProps} automations={automations} />;
+        }
+        const content = () => <PluginSurfaceFocusEligibilityProvider active>
+            <ListPresentationProvider value="page">
+                {source === 'work-add' ? <SubjectTriggersSection {...sectionProps} /> : <MountedSessionIntake />}
+            </ListPresentationProvider>
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(content());
+        disposals.push(() => screen.unmount());
+        if (source !== 'exact-turn') {
+            expect(actionsRef.current).not.toBeNull();
+            await act(async () => actionsRef.current!.openNewTrigger(anchor));
+        }
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-builder'), screen.getTextContent()).not.toBeNull());
+        await screen.pressByTestIdAsync('workflow-builder-open-editor');
+        const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+        if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected shared sentence editor route');
+        const seed = readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId));
+        expect(seed).toMatchObject({ lifetimeSession: { sessionId: subject.sessionId },
+            startContext: { session: { subject } }, triggers: { rows: [expect.objectContaining({ trigger: expect.objectContaining({
+                kind: 'sessionLifecycle', subject,
+                policy: source === 'exact-turn' ? { kind: 'currentTurn', sourceTurnId: 'observed-turn' } : { kind: 'everyMatch' },
+            }) })] } });
+        if (source === 'exact-turn') {
+            await act(async () => screen.update(content()));
+            expect(screen.findByTestId('workflow-builder')).toBeNull();
+        }
+    });
+
     it('keeps its place while the first read is pending and offers Retry in place when it fails', async () => {
         await loadSyncSingletonForTests();
         let fail = true;

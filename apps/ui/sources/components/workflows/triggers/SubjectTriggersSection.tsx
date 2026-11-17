@@ -17,6 +17,9 @@ import { t } from '@/text';
 import type { WorkflowSentenceEditorIntent } from '@/components/workflows/authoring/workflowSentenceAuthoring';
 import { WorkflowSentenceBuilder } from '@/components/workflows/sentence/WorkflowSentenceBuilder';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { areExactTurnAutomationPrefillsEqual, type ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
+import type { SessionWorkflowSentenceOptions } from '@/components/workflows/authoring/workflowSentenceAuthoring';
 
 import type { AccountTriggerRow, TriggerSubject } from './accountTriggerRows';
 import { NewAccountTriggerPopover } from './AccountTriggersSection';
@@ -37,7 +40,7 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { useResourceAutomationsSection } from './useResourceAutomationsSection';
+import { useResourceAutomationsSection, type ResourceAutomationsSectionRead } from './useResourceAutomationsSection';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
@@ -70,32 +73,41 @@ type Opening =
   | Readonly<{ kind: 'sentence'; anchor: React.RefObject<View | null>; intent: WorkflowSentenceEditorIntent;
       lifetime: ServerAccountScopeLifetime; key: number }>;
 
-/**
- * A subject page's Triggers (OPS-AUTOMATIONS-1102 D2/D3): the Account's triggers that run on this
- * subject's Machine, read from the same `account_inline` list the Workflows column shows and edited in
- * the same popover. Creation opens the ordinary sentence editor with the subject's project and
- * any source setup intent. Empty, the section suggests starters.
- * The section waits for the first read instead of drawing a loading line between the page's sections.
- */
-export const SubjectTriggersSection = React.memo(
-  function SubjectTriggersSection(
-    props: Readonly<{
+/** An external Work + intent opens the same sentence as the section's own Add action. */
+export type SubjectTriggersSectionActions = Readonly<{
+  openNewTrigger(anchor: React.RefObject<View | null>): void;
+}>;
+
+export type SubjectTriggersSectionProps = Readonly<{
       /** A legacy page subject (Machine, Environment, service) keeps its starters; a canonical subject is read as itself. */
       subject: TriggerSubject | AutomationSubjectV1;
-      accountLifetime?: ServerAccountScopeLifetime | null;
       contextSubjects?: readonly AutomationSubjectV1[];
       executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
       serverId?: string;
+      /** The host's mounted Account lifetime, when its read borrows one; explicit null makes no read. */
+      accountLifetime?: ServerAccountScopeLifetime | null;
       /** The page's own name for its subject, used in the agent's prompt and the read-back. */
       subjectName: string;
+      actionsRef?: React.Ref<SubjectTriggersSectionActions>;
+      exactTurnPrefill?: ExactTurnAutomationPrefill;
       deploymentEnvironment?: DeploymentEnvironmentRefV1;
       deploymentSourceName?: string;
       sourceAudience?: readonly PrincipalRefV1[];
       controllerMachineId?: string;
       pushSetup?: DeploymentPushSetupConfig;
-    }>,
-  ) {
-    const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, link } = useResourceAutomationsSection(props);
+}>;
+
+/** A selected resource's Automations, borrowing the physical host's Account and presentation demand. */
+export const SubjectTriggersSection = React.memo(function SubjectTriggersSection(props: SubjectTriggersSectionProps) {
+  const automations = useResourceAutomationsSection(props);
+  return <SubjectTriggersSectionContent {...props} automations={automations} />;
+});
+
+/** Hosts with destination children share one intake rather than acquiring a second Session watcher. */
+export const SubjectTriggersSectionContent = React.memo(
+  function SubjectTriggersSectionContent(props: SubjectTriggersSectionProps & Readonly<{ automations: ResourceAutomationsSectionRead }>) {
+    const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, link, session } = props.automations;
+    const presented = useLayoutPresentationActive();
     const linkAnchor = React.useRef<View>(null);
     // Link is offered once this resource's starts can be read; a resource with none never shows a form that cannot succeed.
     const linkOffered = link.whenStatus === 'ready' ? link.whenOptions.length > 0 : link.whenStatus === 'loading';
@@ -119,9 +131,9 @@ export const SubjectTriggersSection = React.memo(
     }, [editor, router, serverId]);
     const close = () => setOpening(null);
     const sentenceKey = React.useRef(0);
-    const openSentence = (starter: SubjectSentenceStarter | null, anchor: React.RefObject<View | null>) => {
+    const openSentence = React.useCallback((starter: SubjectSentenceStarter | null, anchor: React.RefObject<View | null>, options?: SessionWorkflowSentenceOptions) => {
       const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
-      if (!lifetime) return;
+      if (!lifetime?.isCurrent()) return false;
       const eventSeed = starter === null || !legacy ? undefined : subjectStarterEventSeed(starter, {
         subject: legacy, deploymentEnvironment: props.deploymentEnvironment,
         controllerMachineId: props.controllerMachineId,
@@ -129,10 +141,21 @@ export const SubjectTriggersSection = React.memo(
       const trigger = starter === 'nightly' ? buildTriggerDefinition({
         when: subjectStarterWhen('nightly'), enabled: true, sessionId: null,
       }) : null;
+      const intent = session ? session.createSentenceIntent(options) : { name: props.subjectName,
+        ...(project ? { project } : {}), ...(eventSeed ? { eventSeed } : {}), ...(trigger ? { trigger } : {}) };
+      if (!intent) return false;
       sentenceKey.current += 1;
-      setOpening({ kind: 'sentence', anchor, lifetime, key: sentenceKey.current, intent: { name: props.subjectName,
-        ...(project ? { project } : {}), ...(eventSeed ? { eventSeed } : {}), ...(trigger ? { trigger } : {}) } });
-    };
+      setOpening({ kind: 'sentence', anchor, lifetime, key: sentenceKey.current, intent });
+      return true;
+    }, [accountLifetime, legacy, props.deploymentEnvironment, props.controllerMachineId, props.subjectName, project, session]);
+    React.useImperativeHandle(props.actionsRef, () => ({ openNewTrigger: (anchor) => { openSentence(null, anchor); } }), [openSentence]);
+    const consumedExactTurn = React.useRef<ExactTurnAutomationPrefill | null>(null);
+    React.useEffect(() => {
+      const prefill = props.exactTurnPrefill;
+      if (!presented || !prefill || !session
+        || areExactTurnAutomationPrefillsEqual(consumedExactTurn.current, prefill)) return;
+      if (openSentence(null, addAnchor, { exactTurnPrefill: prefill })) consumedExactTurn.current = prefill;
+    }, [presented, props.exactTurnPrefill, session, openSentence]);
     const openStarter = (starter: SubjectTriggerStarter, anchor: React.RefObject<View | null>) => {
       if (starter === 'scheduledJob' || starter === 'deployOnPush') setOpening({ kind: starter, anchor });
       else if (starter === 'addCheck') setOpening({ kind: 'check', anchor });
