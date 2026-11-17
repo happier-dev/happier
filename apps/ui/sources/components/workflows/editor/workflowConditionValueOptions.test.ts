@@ -3,7 +3,7 @@ import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { WorkflowValueReferenceSchema } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { createWorkflowActionTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { listWorkflowConditionValueOptions, resolveWorkflowConditionValueFacts } from './workflowConditionValueOptions';
+import { formatWorkflowValueOptionLabel, listWorkflowConditionValueOptions, resolveWorkflowConditionValueFacts } from './workflowConditionValueOptions';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
@@ -88,5 +88,18 @@ describe('workflow prompt reference scope', () => {
         const ordinary = listWorkflowConditionValueOptions(draft, 'publish');
         expect(ordinary.some(option => option.unavailableReason !== undefined)).toBe(false);
         expect(options.some(option => option.reference.kind === 'result' && option.reference.producer.blockId === 'publish')).toBe(false);
+    });
+
+    // Insert (WF-REDESIGN-1116 g): one list everywhere, grouped Inputs, Step results, Workspace, then what is not available here.
+    it('groups Insert’s one list as inputs, earlier results, workspace, then what is not available here', () => {
+        const draft = { ...createWorkflowEditorDraft({ draftId: 'groups', name: 'Fix', blocks: [step('find'), step('check'), step('tell')] }),
+            inputs: [{ name: 'branch', valueType: 'string' as const, required: true }] };
+        const options = listWorkflowConditionValueOptions(draft, 'check', undefined, { includeUnavailable: true });
+        const groups = options.map(option => option.group).filter((group, index, all) => all.indexOf(group) === index);
+        expect(groups).toEqual(['workflows.inputs.title', 'workflows.input.stepResults', 'workflows.workspace.title', 'workflows.input.notAvailableHere']);
+        expect(options.find(option => option.reference.kind === 'result' && option.reference.producer.blockId === 'find'
+            && option.reference.path.length === 0)).toMatchObject({ group: 'workflows.input.stepResults' });
+        expect(formatWorkflowValueOptionLabel(options.find(option => option.reference.kind === 'input')!)).toBe('Branch');
+        expect(formatWorkflowValueOptionLabel(options.find(option => option.unavailableReason === 'runs_later')!)).toBe('tell');
     });
 });

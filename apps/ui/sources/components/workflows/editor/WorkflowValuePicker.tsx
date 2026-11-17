@@ -15,6 +15,7 @@ import { t } from '@/text';
 import type { WorkflowConditionValueFacts } from '../presentation/workflowConditionRules';
 import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
 import {
+    formatWorkflowValueOptionLabel,
     listWorkflowConditionValueOptions,
     resolveWorkflowConditionValueFacts,
     workflowValueIsDeclaredField,
@@ -115,8 +116,8 @@ export function WorkflowValuePicker(props: Readonly<{
                     items={[
                         ...options.map((option) => ({
                             id: option.id,
-                            title: option.title,
-                            category: option.category,
+                            title: formatWorkflowValueOptionLabel(option),
+                            category: option.group,
                             testID: `${props.testID}-option-${option.id}`,
                             ...(option.typeLabel === null ? {} : { rightElement: <Text style={workflowEditorStyles.metaText}>{option.typeLabel}</Text> }),
                         })),

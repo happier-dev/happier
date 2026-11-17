@@ -1,10 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import {
-  HappierPressable,
-  HAPPIER_PRESS_FEEDBACK_V1,
-} from '@happier-dev/plugin-ui/presentation';
 import { scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import type {
@@ -14,10 +10,8 @@ import type {
 
 import type { ComposerEditorReference } from '@/components/ui/forms/composerEditor/composerEditorTypes';
 import { MultiTextInput } from '@/components/ui/forms/MultiTextInput';
-import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
@@ -29,6 +23,7 @@ import {
 } from './workflowActionTextField';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowValuePicker } from './WorkflowValuePicker';
+import { WorkflowInsertButton } from './workflowInsertChip';
 
 /**
  * A text Action field with workflow values inside it (owner 2026-11-15, WF-SUBST's seam): the field
@@ -46,6 +41,8 @@ export function WorkflowActionTextFieldEditor(
     binding: WorkflowActionFieldBindingV1 | undefined;
     onChange: (next: WorkflowActionFieldBindingV1) => void;
     label: string;
+    /** Marks the label line while the field still needs a value. */
+    required?: boolean;
     placeholder: string;
     testID: string;
   }>,
@@ -90,7 +87,43 @@ export function WorkflowActionTextFieldEditor(
   const { onChange } = props;
   const colors = resolveFieldBoxColors(theme, focused ? 'focused' : 'idle');
   return (
-    <View style={workflowEditorStyles.textFieldLine}>
+    <View style={workflowEditorStyles.textFieldStack}>
+      {/* The label line (round 1116b g): the field's name, then Insert at its end. */}
+      <View style={workflowEditorStyles.textFieldLabelLine}>
+        <Text style={workflowEditorStyles.actionFieldLabel}>{props.label}</Text>
+        {props.required === true && field.document.text.trim().length === 0 ? (
+          <Text testID={`${props.testID}-required`} style={workflowEditorStyles.actionFieldMarker}>
+            {t('workflows.page.blocks.required')}
+          </Text>
+        ) : null}
+        <View style={workflowEditorStyles.textFieldLabelEnd}>
+          <WorkflowValuePicker
+            draft={draft}
+            consumerBlockId={props.consumerBlockId}
+            reference={null}
+            label={t('workflows.editor.insertValue')}
+            onChange={(reference) =>
+              onChange(
+                insertWorkflowActionFieldValue(field, {
+                  reference: reference as WorkflowActionValueReferenceV1,
+                  label: labelFor(reference as WorkflowActionValueReferenceV1),
+                  ...(selectionRef.current === null
+                    ? {}
+                    : { selection: selectionRef.current }),
+                }),
+              )
+            }
+            renderTrigger={({ toggle }) => (
+              <WorkflowInsertButton
+                testID={`${props.testID}-insert`}
+                target={props.label}
+                onPress={toggle}
+              />
+            )}
+            testID={`${props.testID}-insert-list`}
+          />
+        </View>
+      </View>
       <View
         style={[
           workflowEditorStyles.textFieldBox,
@@ -124,52 +157,6 @@ export function WorkflowActionTextFieldEditor(
           }
         />
       </View>
-      <WorkflowValuePicker
-        draft={draft}
-        consumerBlockId={props.consumerBlockId}
-        reference={null}
-        label={t('workflows.editor.insertValue')}
-        onChange={(reference) =>
-          onChange(
-            insertWorkflowActionFieldValue(field, {
-              reference: reference as WorkflowActionValueReferenceV1,
-              label: labelFor(reference as WorkflowActionValueReferenceV1),
-              ...(selectionRef.current === null
-                ? {}
-                : { selection: selectionRef.current }),
-            }),
-          )
-        }
-        renderTrigger={({ toggle }) => (
-          <HappierPressable
-            testID={`${props.testID}-insert`}
-            accessibilityRole="button"
-            accessibilityLabel={`${t('workflows.editor.insertValue')}: ${props.label}`}
-            hasPopup="menu"
-            onPress={toggle}
-            style={(state) => [
-              workflowEditorStyles.textFieldInsert,
-              state.pressed
-                ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle }
-                : null,
-              focusRingStyle({
-                focused: state.focused,
-                color: theme.colors.border.focus,
-              }),
-            ]}
-          >
-            <Icon
-              name="at"
-              size={ICON_SIZE.xs}
-              color={theme.colors.text.secondary}
-            />
-            <Text style={workflowEditorStyles.metaText}>
-              {t('workflows.editor.insert')}
-            </Text>
-          </HappierPressable>
-        )}
-        testID={`${props.testID}-insert-list`}
-      />
     </View>
   );
 }

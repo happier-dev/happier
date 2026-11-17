@@ -24,7 +24,7 @@ import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/w
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { WorkflowKindCard } from './WorkflowKindCard';
-import { formatWorkflowBlockOptionsSummary, WorkflowStepOptionsFootChip } from './WorkflowStepOptionsChip';
+import { WorkflowStepOptionsMore } from './WorkflowStepOptionsChip';
 import {
     listBuiltinWorkflowReferenceOptions,
     useWorkflowReferenceTitles,
@@ -158,13 +158,7 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                 header={!headingCarriesCard}
                 note={t('workflows.page.blocks.workflowSub')}
                 footAccessory={props.onOpenOptions === undefined || !editable ? undefined : (
-                    <WorkflowStepOptionsFootChip
-                        label={formatWorkflowBlockOptionsSummary(block).label}
-                        changed={formatWorkflowBlockOptionsSummary(block).changed}
-                        onOpen={props.onOpenOptions}
-                        testID={`${rowPrefix}-options`}
-                        labelTestID={`${rowPrefix}-options-label`}
-                    />
+                    <WorkflowStepOptionsMore onOpen={props.onOpenOptions} blockLabel={childName} testID={`${rowPrefix}-options`} />
                 )}
             >
                 {child.status === 'loading' && inputNames.length === 0

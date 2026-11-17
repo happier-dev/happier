@@ -572,6 +572,27 @@ describe('SessionAuthoringControls', () => {
     await fields.screen.unmount();
   });
 
+  // Round 1116b step options: a changed chip's own picker is the way back to the inherited value.
+  it('leads a changed chip’s picker with the way back to the inherited value, and only a changed one', async () => {
+    const onResetField = vi.fn();
+    const chips = await renderControls({
+      fields: ['permissionMode', 'transcriptStorage'],
+      facts: { agentTargets: [directCapableClaude()] },
+      overriddenFields: new Set(['permissionMode']),
+      resetOverride: { label: 'Use workflow’s', onResetField },
+    });
+    const openPicker = () => chips.screen.findAllByType(AgentInputChipPickerPopover).find((node) => node.props.open);
+    await act(async () => { chips.screen.pressByTestId('session-authoring-control-transcriptStorage'); });
+    expect(openPicker()?.props.options.some((option: { label: string }) => option.label === 'Use workflow’s')).toBe(false);
+    await act(async () => { openPicker()?.props.onRequestClose(); });
+    await act(async () => { chips.screen.pressByTestId('session-authoring-control-permissionMode'); });
+    expect(openPicker()?.props.options[0]?.label).toBe('Use workflow’s');
+    await act(async () => { selectOption(chips.screen, openPicker()!.props.options[0].id); });
+    expect(onResetField).toHaveBeenCalledWith('permissionMode');
+    expect(chips.onChangeField).not.toHaveBeenCalled();
+    await chips.screen.unmount();
+  });
+
   it('draws the selects presentation as unlabelled field selects that open the chip picker and write the same value', async () => {
     const { HappierFieldBoxTrigger } = await import('@happier-dev/plugin-ui/presentation');
     const selects = await renderControls({

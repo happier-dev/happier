@@ -19,7 +19,7 @@ import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
-import { formatWorkflowBlockOptionsSummary, useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
+import { WorkflowStepOptionsMore } from './WorkflowStepOptionsChip';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
@@ -93,20 +93,9 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
     const handleRequestEdit = React.useCallback(() => latestRef.current.onRequestEdit?.(), []);
     const displayName = workflowBlockReferenceLabel(block);
     const rowPrefix = `${testIDPrefix}-wait-${block.id}`;
-    // Step options is a chip in the composer's own chip row, as on every step (07 S7).
-    const optionsSummary = formatWorkflowBlockOptionsSummary(block);
-    const stepOptionsChip = useWorkflowStepOptionsChip({
-        label: optionsSummary.label,
-        changed: optionsSummary.changed,
-        onOpen: (anchorRef) => latestRef.current.onOpenOptions?.(anchorRef),
-        testID: `${rowPrefix}-options`,
-        labelTestID: `${rowPrefix}-options-label`,
-    });
+    // Its options open from "…" at the end of its caption line, as every step's do (round 1116b).
     const hasOptions = editable && props.onOpenOptions !== undefined;
-    const composerChips = React.useMemo(
-        () => (hasOptions ? [stepOptionsChip] : undefined),
-        [hasOptions, stepOptionsChip],
-    );
+    const openOptions = React.useCallback((anchorRef: React.RefObject<View | null>) => latestRef.current.onOpenOptions?.(anchorRef), []);
 
     return (
         <View testID={rowPrefix} style={workflowEditorStyles.blockBody}>
@@ -143,7 +132,6 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
                     // planet, as every step composer (07 S-o).
                     voiceAffordance="dictation"
                     onFocus={handleFocus}
-                    {...(composerChips === undefined ? {} : { extraActionChips: composerChips })}
                     editing={props.editing !== false}
                     {...(props.onRequestEdit === undefined ? {} : { onRequestEdit: handleRequestEdit })}
                 />
@@ -153,6 +141,7 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
                 {props.slots?.settled === true ? null
                     : <Text style={workflowEditorStyles.metaText}>{t(props.inLane === true ? 'workflows.page.blocks.waitSub' : 'workflows.page.blocks.waitSubRoot')}</Text>}
                 {props.slots?.footer ?? null}
+                {hasOptions ? <WorkflowStepOptionsMore onOpen={openOptions} blockLabel={displayName} testID={`${rowPrefix}-options`} /> : null}
             </View>
             {props.issue === undefined || props.issue === null ? null
                 : <Text testID={`${rowPrefix}-issue`} style={workflowEditorStyles.issueText}>{props.issue}</Text>}

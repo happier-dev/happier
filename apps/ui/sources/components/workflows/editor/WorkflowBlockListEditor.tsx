@@ -59,6 +59,7 @@ import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowGroupEditor } from './WorkflowGroupEditor';
 import { WorkflowLoopEditor } from './WorkflowLoopEditor';
 import { WorkflowStepEditor } from './WorkflowStepEditor';
+import { withoutWorkflowStepEngine } from './WorkflowStepInspector';
 import {
   resolveWorkflowUnnamedHeading,
   workflowBlockReferenceLabel,
@@ -1037,6 +1038,15 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
                             engine,
                           ),
                         }
+                      : current,
+                  ),
+                )
+              }
+              onResetEngine={() =>
+                onChange(
+                  updateWorkflowBlock(readDraft(), block.id, (current) =>
+                    current.kind === 'step'
+                      ? { ...current, execution: withoutWorkflowStepEngine(current.execution) }
                       : current,
                   ),
                 )

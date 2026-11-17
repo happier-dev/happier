@@ -28,7 +28,7 @@ import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sy
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
-import { formatWorkflowBlockOptionsSummary, WorkflowStepOptionsFootChip } from './WorkflowStepOptionsChip';
+import { WorkflowStepOptionsMore } from './WorkflowStepOptionsChip';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowKindCard } from './WorkflowKindCard';
@@ -138,7 +138,6 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     // Unnamed, the heading carries the card's identity and the card shows only its rows.
     const headingCarriesCard = resolveWorkflowUnnamedHeading(block) === 'card';
     const actionSource = spec?.plugin?.title ?? (spec === null ? t('workflows.page.blocks.actionNotInCatalog') : 'Happier');
-    const optionsSummary = formatWorkflowBlockOptionsSummary(block);
 
     // At rest, fields the workflow fills from its inputs read as one line; selecting the step opens them.
     const askedRows = props.selected === true ? NO_ROWS : rows.filter((row) =>
@@ -196,13 +195,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                     ? t('workflows.page.blocks.actionUnavailable', { action: displayName })
                     : t('workflows.page.blocks.actionSub')}
                 footAccessory={props.onOpenOptions === undefined || !editable ? undefined : (
-                    <WorkflowStepOptionsFootChip
-                        label={optionsSummary.label}
-                        changed={optionsSummary.changed}
-                        onOpen={props.onOpenOptions}
-                        testID={`${rowPrefix}-options`}
-                        labelTestID={`${rowPrefix}-options-label`}
-                    />
+                    <WorkflowStepOptionsMore onOpen={props.onOpenOptions} blockLabel={displayName} testID={`${rowPrefix}-options`} />
                 )}
             >
             {spec?.projectionError ? <Text testID={`${rowPrefix}-projection-error`} accessibilityRole="alert"
@@ -221,6 +214,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 const binding = block.input[row.key];
                 const fieldId = `${rowPrefix}-field-${row.key}`;
                 const literalOnly = isWorkflowActionLiteralFieldV1(block.actionId, row.key);
+                const typed = binding !== undefined && textCapable(row.hint, literalOnly) && binding.kind !== 'list' && binding.kind !== 'object';
                 return (
                     <WorkflowBindingRow
                         key={row.key}
@@ -245,7 +239,8 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                             return formatActionInputFieldChoice(row.hint, value, resolveFieldOptions);
                         }}
                         onSet={() => { setBinding(row.key, initialActionFieldLiteral(row.hint)); props.onSelect(); }}
-                        renderEditor={() => binding === undefined ? null : textCapable(row.hint, literalOnly) && binding.kind !== 'list' && binding.kind !== 'object' ? (
+                        editorOwnsLabel={typed}
+                        renderEditor={() => binding === undefined ? null : typed ? (
                             // Words with values inside (owner 2026-11-15): typed directly, Insert puts a value at the caret.
                             <WorkflowActionTextFieldEditor
                                 draft={props.draft}
@@ -253,6 +248,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                 binding={binding}
                                 onChange={(next) => setBinding(row.key, next)}
                                 label={row.label}
+                                required={row.required}
                                 placeholder={row.hint?.placeholder ?? t('workflows.condition.literalPlaceholder')}
                                 testID={fieldId}
                             />

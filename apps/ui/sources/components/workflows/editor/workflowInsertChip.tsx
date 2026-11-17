@@ -1,95 +1,57 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import {
-  AGENT_INPUT_CHIP_ICON_SIZE_PX,
-  AGENT_INPUT_MENU_ICON_SIZE_PX,
-} from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
-import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
-import { Icon } from '@/components/ui/icons/Icon';
+  HappierPressable,
+  HAPPIER_PRESS_FEEDBACK_V1,
+} from '@happier-dev/plugin-ui/presentation';
+
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { getWorkflowInsertChipPlacement } from '../workflowComposerControlPlacements';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
- * Insert (owner 2026-11-15): the visible entry to a prompt's '@' value list — the run's inputs, the
- * trigger and earlier steps' results, the same list typing '@' opens. It asks the composer to open
- * that list at the caret; picking a value inserts its token, as typing does.
+ * Insert (round 1116b g): the quiet "@ Insert" at the top right of a step composer and at the end of a
+ * value-accepting field's label line. Both open the same one list of values (Inputs, Step results,
+ * Workspace, …) and put the chosen value at the caret.
  */
-export function useWorkflowInsertChip(
-  props: Readonly<{ onInsert: () => void; testID: string }>,
-): AgentInputExtraActionChip {
-  const latestRef = React.useRef(props.onInsert);
-  latestRef.current = props.onInsert;
-  const { testID } = props;
-  return React.useMemo<AgentInputExtraActionChip>(
-    () => ({
-      key: 'workflow-insert',
-      controlId: 'shortcuts',
-      placement: getWorkflowInsertChipPlacement(),
-      stabilityKey: 'workflow-insert',
-      collapsedAction: ({ tint, dismiss }) => ({
-        id: 'workflow-insert',
-        label: t('workflows.editor.insertValue'),
-        icon: (
-          <Icon name="at" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />
-        ),
-        onPress: () => {
-          dismiss();
-          latestRef.current();
-        },
-      }),
-      render: (ctx) => (
-        <InsertComposerChip
-          testID={testID}
-          onPress={() => latestRef.current()}
-          chipStyle={ctx.chipStyle}
-          textStyle={ctx.textStyle}
-          iconColor={ctx.iconColor}
-          showLabel={ctx.showLabel}
-        />
-      ),
-    }),
-    [testID],
-  );
-}
-
-function InsertComposerChip(
+export function WorkflowInsertButton(
   props: Readonly<{
-    testID: string;
     onPress: () => void;
-    chipStyle: (pressed: boolean) => unknown;
-    textStyle: unknown;
-    iconColor: string;
-    showLabel: boolean;
+    /** What it inserts into ("Message"), so a list of fields reads apart. */
+    target?: string;
+    expanded?: boolean;
+    testID: string;
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
   return (
-    <AgentInputRailChip
+    <HappierPressable
       testID={props.testID}
       accessibilityRole="button"
-      accessibilityLabel={t('workflows.editor.insertValue')}
+      accessibilityLabel={props.target === undefined
+        ? t('workflows.editor.insertValue')
+        : `${t('workflows.editor.insertValue')}: ${props.target}`}
       hasPopup="listbox"
+      {...(props.expanded === undefined ? {} : { expanded: props.expanded })}
       onPress={props.onPress}
-      style={(pressed, focused) => [
-        props.chipStyle(pressed) as never,
-        focusRingStyle({ focused, color: theme.colors.border.focus }),
+      style={(state) => [
+        workflowEditorStyles.textFieldInsert,
+        state.pressed
+          ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle }
+          : null,
+        focusRingStyle({
+          focused: state.focused,
+          color: theme.colors.border.focus,
+        }),
       ]}
     >
-      <Icon
-        name="at"
-        size={AGENT_INPUT_CHIP_ICON_SIZE_PX}
-        color={props.iconColor}
-      />
-      {props.showLabel ? (
-        <Text numberOfLines={1} style={props.textStyle as never}>
-          {t('workflows.editor.insert')}
-        </Text>
-      ) : null}
-    </AgentInputRailChip>
+      <Icon name="at" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+      <Text style={workflowEditorStyles.metaText}>
+        {t('workflows.editor.insert')}
+      </Text>
+    </HappierPressable>
   );
 }

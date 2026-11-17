@@ -534,7 +534,6 @@ it('says a block condition once: the Notify me card carries no options of its ow
     expect(screen.getTextContent().split('workflows.page.inspector.onlyWhenSentence').length - 1).toBe(1);
     // Step-level settings live in Step options (owner, 2026-10-11): the card has no inline offer.
     expect(screen.findByTestId('workflow-editor-action-notify-only-reported')).toBeNull();
-    expect(screen.findByTestId('workflow-editor-action-notify-options-label')?.props.children).toBe('workflows.condition.onlyWhen');
 });
 
 it('reads an existing "agent reported" condition as the quiet Notify me offer, and turning it off removes that condition', async () => {
@@ -626,9 +625,10 @@ it('names a continued Session by its title, keeping its id only for a Session th
     getStorage().setState({ sessions: { 'session-named': createSessionFixture({ id: 'session-named', serverId: MACHINE_COMPOSER_SCOPE.serverId,
         metadata: { path: '/repo', host: 'host', machineId: 'machine-1', summary: { text: 'Nightly quiet check', updatedAt: 1 } } as never }) } });
     const screen = await renderList(harness, { draft: buildDraft(harness, [step('named', 'session-named'), step('gone', 'session-gone')]) });
-    expect(screen.findByTestId('workflow-editor-step-named-inheritance')?.props.children).toContain('Nightly quiet check');
-    expect(screen.findByTestId('workflow-editor-step-named-inheritance')?.props.children).not.toContain('session-named');
-    expect(screen.findByTestId('workflow-editor-step-gone-inheritance')?.props.children).toContain('session-gone');
+    const conversation = (stepId: string) => screen.findHostByTestId(`workflow-editor-step-${stepId}-changed-conversation`)?.props.accessibilityLabel;
+    expect(conversation('named')).toContain('Nightly quiet check');
+    expect(conversation('named')).not.toContain('session-named');
+    expect(conversation('gone')).toContain('session-gone');
 });
 
 it('keeps repair hints and source facts available while editing a heading', async () => {
@@ -693,14 +693,13 @@ it('reads a step role by its display name and keeps a read-only step input on it
             { kind: 'step', id: 'gather', document: { text: 'Gather', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
             { kind: 'step', id: 'check', document: { text: 'Check', references: [], attachments: [] },
                 input: [{ kind: 'result', producer: { blockId: 'gather', scope: { kind: 'current' } }, path: [] }],
-                execution: { engine: { role: 'second_opinion' } }, result: { kind: 'text' } },
+                execution: { roleId: 'second_opinion' }, result: { kind: 'text' } },
         ]),
         presentation: { editable: false },
     });
-    const composer = findComposer(screen, harness, 'check');
-    // The built-in role's own name, never its id.
-    expect(composer?.props.agentLabel).toBe(t('roles.settings.secondOpinionTitle'));
-    expect(composer?.props.engineLabel).toBe(t('roles.settings.secondOpinionTitle'));
+    // The built-in role's own name, never its id, on the card's engine chip (round 1116b).
+    expect(screen.findHostByTestId('workflow-editor-step-check-engine-agentTarget')?.props.accessibilityLabel)
+        .toContain(t('roles.settings.secondOpinionTitle'));
     // The input token sits on the step's one footer line, not a band of its own.
     const footer = screen.findHostByTestId('workflow-editor-step-check-footer');
     expect(footer?.findAll((node) => node.props?.testID === 'workflow-editor-step-check-input-0').length).toBeGreaterThan(0);
@@ -713,8 +712,8 @@ it('reads admitted engines from their frozen source in Run Steps, including coll
     const { WorkflowRunSteps } = await import('../run/WorkflowRunSteps');
     const role = (name: string, modelId: string) => ({ roleId: 'reviewer', name, instructions: 'Review the changes',
         runsAs: { kind: 'session' as const }, engine: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId } });
-    const child = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'reviewer' } }, roles: [role('Frozen reviewer', 'accepted-child-model')] });
-    const definition = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'reviewer' } }, roles: [role('Root reviewer', 'accepted-root-model')],
+    const child = createWorkflowDefinitionFixture({ defaults: { roleId: 'reviewer' }, roles: [role('Frozen reviewer', 'accepted-child-model')] });
+    const definition = createWorkflowDefinitionFixture({ defaults: { roleId: 'reviewer' }, roles: [role('Root reviewer', 'accepted-root-model')],
         blocks: [...createWorkflowDefinitionFixture().blocks, { kind: 'workflow', id: 'call', workflowRef: 'builtin:child', input: {} }] });
     const admitted = await materializeWorkflowAcceptedSnapshotV1({ definition, admission: { kind: 'user' },
         effects: { resolveTargetAvailability: async () => true, readWorkflowDefinition: async () => ({ definition: child, sourceKey: 'builtin:child' }) },
@@ -734,12 +733,13 @@ it('reads admitted engines from their frozen source in Run Steps, including coll
     expect(rootComposer().props.engineLabel).toContain('accepted-root-model');
     expect(childComposer().props.agentLabel).toBe('Frozen reviewer');
     expect(childComposer().props.engineLabel).toContain('accepted-child-model');
-    expect(childComposer().props.agentPickerOptions).toEqual([]);
+    expect(childComposer().props.agentPickerOptions ?? []).toEqual([]);
+    expect(childComposer().props.onAgentPickerSelect).toBeUndefined();
     expect(screen.getTextContent()).toContain('accepted-root-model');
     expect(screen.getTextContent()).toContain('accepted-child-model');
     // A same-id root leaf is not authority for the child when its exact sidecar is absent.
     await screen.update(<WorkflowRunSteps {...props} materializedLeaves={snapshot.materializedLeaves.filter(leaf => leaf.sourceKey === '$root')} />);
-    expect(childComposer().props.engineLabel).not.toContain('accepted-root-model');
+    expect(childComposer().props.engineLabel).toBeUndefined();
 });
 
 it('reads admitted engines for participant steps from the exact executed Session rather than an authoring choice', async () => {
@@ -777,7 +777,8 @@ it('reads admitted engines for participant steps from the exact executed Session
     const composer = screen.findByTestId('participant-steps-step-answer-prompt')!.findByType(harness.AgentInput);
     expect(composer.props.agentLabel).toBe('Second reviewer');
     expect(composer.props.engineLabel).toBe('Second reviewer');
-    expect(composer.props.agentPickerOptions).toEqual([]);
+    expect(composer.props.agentPickerOptions ?? []).toEqual([]);
+    expect(composer.props.onAgentPickerSelect).toBeUndefined();
     expect(composer.props.engineLabel).not.toContain('First reviewer');
     expect(screen.getTextContent()).toContain('Second reviewer');
     const continuedLeaf = admitted.snapshot.materializedLeaves.find(leaf => leaf.blockId === 'continued');
@@ -874,16 +875,17 @@ it('duplicates a nested block with fresh identities and keeps its internal refer
     expect(selected).toHaveBeenCalledWith(copy.id);
 });
 
-it('puts Step options in the step composer as one chip that names only what differs (07 S7; DESIGN-1 B1)', async () => {
+// Round 1116b step options A: the engine is the card header's Session chip, quiet while inherited and bordered once
+// the step sets it; the foot holds only what the step changes, as bordered chips, then "…" for the rest.
+it('reads a step’s engine and changes as its own chips, and opens the rest from "…"', async () => {
     const harness = await loadHarness();
     const base = buildDraft(harness, [
         { kind: 'step', id: 'engine', document: { text: 'Engine', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
         { kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] }, input: [], result: { kind: 'text' }, pauseForReview: true },
     ]);
-    // An engine change is the engine chip's to show, never Step options' words.
     const draft = harness.setWorkflowStepExecutionField(base, 'engine', 'agentTarget', AGENT_TARGET);
     const opened = vi.fn();
-    const element = React.createElement(harness.WorkflowBlockListEditor, {
+    const screen = await renderScreen(React.createElement(harness.WorkflowBlockListEditor, {
         draft,
         list: { kind: 'root' },
         blocks: draft.blocks,
@@ -895,19 +897,20 @@ it('puts Step options in the step composer as one chip that names only what diff
         onChange: () => {},
         onSelect: () => {},
         onCustomize: opened,
-    });
-    const screen = await renderScreen(element);
+    }));
 
+    const engineChip = (stepId: string) => screen.findHostByTestId(`workflow-editor-step-${stepId}-engine-agentTarget`);
+    // Set for this step: the bordered chip says so; inherited: the quiet chip says nothing more.
+    expect(engineChip('engine')?.props.accessibilityHint).toBe('workflows.page.changedForStep');
+    expect(engineChip('review')?.props.accessibilityHint).toBeUndefined();
+    // The composer no longer carries its own engine chip or Step options.
     const composer = findComposer(screen, harness, 'engine');
-    const chip = composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-customize')[0];
-    expect(chip, 'the Step options chip sits in the composer chip row').toBeDefined();
-    // The native AgentInput engine chip owns that picker; there is no parallel extra chip.
-    expect(composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-engine')).toHaveLength(0);
-    expect(screen.findByTestId('workflow-editor-step-engine-inheritance')?.props.children).toBe('workflows.page.blocks.workflowDefaults');
-    expect(screen.findByTestId('workflow-editor-step-review-inheritance')?.props.children).toBe('workflows.page.inspector.reviewsBeforeContinuing');
-    expect(screen.getTextContent()).not.toContain('workflows.a11y.overridden');
+    expect(composer?.findAll((node) => node.props?.testID === 'workflow-editor-step-engine-customize')).toHaveLength(0);
+    // Only the review step changes an option: one bordered chip at its foot; nothing reads "Workflow defaults".
+    expect(screen.findHostByTestId('workflow-editor-step-review-changed-review')).not.toBeNull();
+    expect(screen.findHostByTestId('workflow-editor-step-engine-changed-review')).toBeNull();
+    expect(screen.getTextContent()).not.toContain('workflows.page.blocks.workflowDefaults');
     await screen.pressByTestIdAsync('workflow-editor-step-engine-customize');
-    // The chip returns focus; the step's card region is what the options sit beside.
     expect(opened).toHaveBeenCalledWith('engine', expect.anything(), expect.anything());
     // At rest a text step's footer says nothing ("Returns text" is authoring machinery, DESIGN-5 M1).
     expect(screen.findHostByTestId('workflow-editor-step-engine-returns')).toBeNull();
@@ -1997,8 +2000,9 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(card).not.toBeNull();
         expect(screen.findByTestId('workflow-editor-step-second-card-title')).not.toBeNull();
         expect(card?.findAll((node) => node.props?.testID === 'workflow-editor-step-second-summary-text').length).toBeGreaterThan(0);
+        // A step that inherits everything says what kind it is and nothing more (no "Workflow defaults").
         expect(card?.findAll((node) => node.props?.children === 'workflows.editor.addStep').length).toBeGreaterThan(0);
-        expect(card?.findAll((node) => node.props?.testID === 'workflow-editor-step-second-summary-meta').length).toBeGreaterThan(0);
+        expect(card?.findAll((node) => node.props?.testID === 'workflow-editor-step-second-summary-meta')).toHaveLength(0);
         // The prompt reads two lines at rest; the rest is one press away.
         expect(screen.findHostByTestId('workflow-editor-step-second-summary-text')?.props.numberOfLines).toBe(2);
         await screen.unmount();

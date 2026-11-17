@@ -529,15 +529,18 @@ describe('workflow and step settings (round 1116b)', () => {
             ?? screen.findByTestId('scope-more-settings-session-unlistedTools-unavailable')).not.toBeNull();
     });
 
-    it('shows a step its Agent and every field in one page, each saying where its value comes from', async () => {
+    it('resets a changed step field through its own chip picker', async () => {
         const changed = vi.fn();
         const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'block', blockId: 'analyze' }} presentation="popover"
             draft={draftWith({ permissionMode: 'plan' })} testIDPrefix="step" onChange={changed} authoringFacts={facts()} />);
-        // No second level: the Agent and its fields sit in the step's settings page.
+        // The engine lives in the card header; the popover holds the remaining Session chips.
         expect(screen.findByTestId('step-agent-row')).toBeNull();
-        expect(screen.findByTestId('step-allowedTools-state')?.props.children).toBe('workflows.page.fromTheWorkflow');
-        expect(screen.findByTestId('step-permissionMode-state')?.props.children).toBe('workflows.page.changedForStep');
-        await screen.pressByTestIdAsync('step-permissionMode-reset');
+        expect(screen.findHostByTestId('step-control-permissionMode')?.props.accessibilityHint).toBe('workflows.page.changedForStep');
+        await screen.pressByTestIdAsync('step-control-permissionMode');
+        const { AgentInputChipPickerPopover } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover');
+        const picker = screen.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open);
+        expect(picker).toBeDefined();
+        await act(async () => { picker!.props.onSelect(picker!.props.options[0].id); });
         const next = changed.mock.calls.at(-1)?.[0];
         const step = next.blocks.find((block: { id: string }) => block.id === 'analyze');
         expect(Object.hasOwn(step.execution ?? {}, 'permissionMode')).toBe(false);

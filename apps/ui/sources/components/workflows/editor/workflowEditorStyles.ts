@@ -593,7 +593,8 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s8,
         minHeight: theme.space.s24 + theme.space.s16,
-        paddingHorizontal: theme.space.s12,
+        // The card inset is the text edge (round 1116 alignment system): a sheet row's inset.
+        paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
     },
@@ -664,9 +665,33 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         color: theme.colors.text.tertiary,
         flexShrink: 1,
     },
+    /** A header whose identity is a control (an Agent step's engine chip): it takes the line, the actions follow. */
+    kindCardTitleControl: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    /** An Agent step's foot (round 1116b, step options A): its changed chips, then "…" at the trailing edge. */
+    stepOptionChips: {
+        flex: 1,
+        flexDirection: 'row',
+        // When the chips wrap, "…" stays on their first line.
+        alignItems: 'flex-start',
+        gap: theme.space.s8,
+        minWidth: 0,
+    },
+    stepOptionChipList: {
+        flex: 1,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        minWidth: 0,
+    },
     /** Its label/value rows (lab `.uwe-kb`). */
     kindCardBody: {
-        paddingHorizontal: theme.space.s12,
+        paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx,
         paddingVertical: theme.space.s4,
         // Pairs breathe apart while a label and its value stay together (DESIGN-6 N5).
         gap: theme.space.s8,
@@ -678,7 +703,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         gap: theme.space.s8,
         justifyContent: 'space-between',
-        paddingLeft: theme.space.s12,
+        paddingLeft: HAPPIER_PAGE_METRICS.cardPaddingPx,
         paddingRight: theme.space.s8,
         // The foot's words sit as far from the bottom border as from the side (lab S6, DESIGN-7 N30).
         paddingBottom: theme.space.s12,
@@ -835,24 +860,34 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         minWidth: 0,
         maxWidth: '100%',
     },
-    /** A text Action field with values inside it: the field, then Insert on its line (owner 2026-11-15). */
-    textFieldLine: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        flexWrap: 'wrap',
-        gap: theme.space.s8,
-        minWidth: 0,
-        flexGrow: 1,
-    },
+    /** A text Action field's box: its words with values inside them (owner 2026-11-15). */
     textFieldBox: {
         borderRadius: theme.borderRadius.md,
         borderWidth: StyleSheet.hairlineWidth,
         paddingHorizontal: theme.space.s8,
         paddingVertical: theme.space.s4,
-        minWidth: 72,
-        flexGrow: 1,
-        flexBasis: 160,
-        maxWidth: '100%',
+        alignSelf: 'stretch',
+        minWidth: 0,
+    },
+    /** A text field while editing (round 1116b g): its label line above the box, the box the row's width. */
+    textFieldStack: {
+        gap: theme.space.s4,
+        minWidth: 0,
+        alignSelf: 'stretch',
+    },
+    textFieldLabelLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        minWidth: 0,
+    },
+    textFieldLabelEnd: {
+        marginLeft: 'auto',
+    },
+    actionFieldStacked: {
+        alignSelf: 'stretch',
+        gap: theme.space.s4,
+        paddingVertical: theme.space.s4,
     },
     textFieldInsert: {
         flexDirection: 'row',

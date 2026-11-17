@@ -88,7 +88,9 @@ describe('building a condition as one sentence', () => {
         expect(menu('cond-kind')).toBeUndefined();
         expect(menu('cond-value-input-0-kind')).toBeUndefined();
         const items = menu('cond-value')!.props.items as ReadonlyArray<Readonly<{ title: string; category?: string; subtitle?: string }>>;
-        expect(items.filter((item) => item.category === 'Check the build').map((item) => item.title).slice(0, 4)).toEqual(['Passed', 'Failures', 'Tests', 'Verdict']);
+        // Each result names its step, under one Step results group (round 1116b g: one value list).
+        expect(items.filter((item) => item.category === 'workflows.input.stepResults').map((item) => item.title).slice(0, 4))
+            .toEqual(['Check the build · Passed', 'Check the build · Failures', 'Check the build · Tests', 'Check the build · Verdict']);
         expect(items.some((item) => item.title === 'Branch')).toBe(true);
     });
 
@@ -101,7 +103,7 @@ describe('building a condition as one sentence', () => {
     it('choosing a Yes/No value writes a comparison whose right side is Yes', async () => {
         const { changed, menu } = await render({ kind: 'exists', value: { kind: 'literal', value: true } });
         const items = menu('cond-value')!.props.items as ReadonlyArray<Readonly<{ id: string; title: string }>>;
-        await act(async () => menu('cond-value')!.props.onSelect(items.find((item) => item.title === 'Passed')!.id));
+        await act(async () => menu('cond-value')!.props.onSelect(items.find((item) => item.title === 'Check the build · Passed')!.id));
         expect(changed.mock.lastCall?.[0]).toEqual({ kind: 'compare', operator: 'eq', left: passed, right: { kind: 'literal', value: true } });
     });
 

@@ -11,7 +11,7 @@ import { parseComposerSuggestionQuery } from '@/components/autocomplete/composer
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
-import { listWorkflowConditionValueOptions, type WorkflowValueContext } from './workflowConditionValueOptions';
+import { formatWorkflowValueOptionLabel, listWorkflowConditionValueOptions, type WorkflowValueContext } from './workflowConditionValueOptions';
 
 /** The validator owns scope and existence; both the live field and its picture consume its result. */
 export function resolveWorkflowPromptReferenceStates(
@@ -57,13 +57,11 @@ export function createWorkflowPromptSuggestions<Reference extends WorkflowAction
     return listWorkflowConditionValueOptions(params.draft, params.step.id, undefined, { ...params.valueContext, includeUnavailable: true })
         .filter(option => !option.opensPath)
         .flatMap((option): AutocompleteSuggestion[] => {
-            const label = option.reference.kind === 'result'
-                ? option.reference.path.length === 0 ? option.category : `${option.category} · ${option.title}`
-                : option.title;
+            const label = formatWorkflowValueOptionLabel(option);
             if (!`${label} ${option.category}`.toLocaleLowerCase().includes(search)) return [];
             if (option.unavailableReason !== undefined) return [{
                 kind: 'composerReference', key: `workflow:${option.id}`, text: '', label,
-                group: t('workflows.input.notAvailableHere'), disabled: true,
+                group: option.group, disabled: true,
                 description: option.unavailableReason === 'runs_later'
                     ? t('workflows.input.scopeRunsLater') : option.unavailableReason === 'another_lane'
                         ? t('workflows.input.scopeAnotherLane') : t('workflows.input.scopeUnavailable'),
@@ -74,8 +72,7 @@ export function createWorkflowPromptSuggestions<Reference extends WorkflowAction
             return [{
                 kind: 'composerReference', key: `workflow:${option.id}`, label,
                 text: formatInlineReferenceTokenV1({ label, ref }),
-                group: option.reference.kind === 'result' ? t('workflows.input.stepResults')
-                    : option.reference.kind === 'input' ? t('workflows.inputs.title') : option.category,
+                group: option.group,
                 ...(option.typeLabel === null ? {} : { description: option.typeLabel }),
                 structuredInput: { kind: MENTION_KIND_V1.workflowInput, ref, label },
                 selectionEffect: async () => {

@@ -44,4 +44,17 @@ describe('workflow prompt picker', () => {
         await existing[0]?.selectionEffect?.();
         expect(change).not.toHaveBeenCalled();
     });
+    // Insert on a prompt (WF-P2-STEP-1116): a bare '@' leads with the workflow's own values, inputs first.
+    it('lists the workflow inputs, then earlier results, for Insert’s empty query', () => {
+        const find: WorkflowStep = { kind: 'step', id: 'find', name: 'Find the cause',
+            document: { text: 'Find', references: [], attachments: [] }, input: [], result: { kind: 'text' } };
+        const check: WorkflowStep = { ...find, id: 'check', name: 'Check the fix' };
+        const draft = { ...createWorkflowEditorDraft({ draftId: 'insert', blocks: [find, check] }),
+            inputs: [{ name: 'branch', valueType: 'string' as const, required: true }] };
+        const rows = createWorkflowPromptSuggestions({ draft, step: check, query: '@', onChangeInput: () => {} });
+        expect(rows.slice(0, 2).map(row => [row.group, row.kind === 'composerReference' ? row.label : null])).toEqual([
+            ['workflows.inputs.title', 'Branch'],
+            ['workflows.input.stepResults', 'Find the cause'],
+        ]);
+    });
 });

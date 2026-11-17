@@ -78,9 +78,9 @@ function fieldSelect(root: ReactTestInstance, testID: string): FieldSelect {
     return match as unknown as FieldSelect;
 }
 
-function chooseValue(root: ReactTestInstance, testID: string, title: string): void {
+function chooseValue(root: ReactTestInstance, testID: string, title: string | ((title: string) => boolean)): void {
     const select = fieldSelect(root, testID);
-    const item = select.props.items.find((candidate) => candidate.title === title);
+    const item = select.props.items.find((candidate) => typeof title === 'string' ? candidate.title === title : title(candidate.title));
     if (item === undefined) throw new Error(`No value "${title}" in ${select.props.items.map((candidate) => candidate.title).join(', ')}`);
     select.props.onSelect(item.id);
 }
@@ -275,8 +275,10 @@ describe('WorkflowStepDataEditor field selects', () => {
         const screen = await renderEditor(draft, step);
         const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-value');
         const items = select.props.items as ReadonlyArray<Readonly<{ id: string; title: string; category?: string }>>;
-        expect(items.filter((item) => item.category === 'workflows.condition.fromRun').map((item) => item.title)).toEqual(['Topic', 'Tone']);
-        expect(items.filter((item) => item.category === 'workflows.condition.whereItWorks').length).toBeGreaterThan(0);
+        // One list, grouped as Insert groups it (round 1116b g): inputs lead, the workspace follows the results.
+        expect(items.filter((item) => item.category === 'workflows.inputs.title').map((item) => item.title)).toEqual(['Topic', 'Tone']);
+        expect(items.filter((item) => item.category === 'workflows.workspace.title').length).toBeGreaterThan(0);
+        expect([...new Set(items.map((item) => item.category))].slice(0, 2)).toEqual(['workflows.inputs.title', 'workflows.input.stepResults']);
         expect(select.props.selectedId).toBe(items.find((item) => item.title === 'Tone')!.id);
     });
 
@@ -304,10 +306,13 @@ describe('WorkflowStepDataEditor field selects', () => {
         }
         const screen = await renderScreen(<Editor />);
         expect(screen.findByTestId('row-input-0-path')).toBeNull();
-        await act(async () => { chooseValue(screen.root, 'row-input-0-value', 'workflows.condition.wholeResult'); });
+        // The whole result reads as its step's name; a path into it as "<step> · Another path…".
+        const stepLabel = fieldSelect(screen.root, 'row-input-0-value').props.items
+            .find((item: { title: string }) => item.title.endsWith('workflows.page.inspector.resultFields.otherPath'))!.title.split(' · ')[0];
+        await act(async () => { chooseValue(screen.root, 'row-input-0-value', stepLabel); });
         expect(current).toEqual({ kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: [] });
         expect(screen.findByTestId('row-input-0-path')).toBeNull();
-        await act(async () => { chooseValue(screen.root, 'row-input-0-value', 'workflows.page.inspector.resultFields.otherPath'); });
+        await act(async () => { chooseValue(screen.root, 'row-input-0-value', (title) => title.endsWith('workflows.page.inspector.resultFields.otherPath')); });
         await act(async () => { screen.changeTextByTestId('row-input-0-path', 'nested.value'); });
         expect(current).toMatchObject({ kind: 'result', path: ['nested', 'value'] });
     });
@@ -319,11 +324,11 @@ describe('WorkflowStepDataEditor field selects', () => {
         const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [first, second, step] });
         const screen = await renderEditor(draft, step);
         const items = fieldSelect(screen.root, 'editor-step-step-a-input-0-value').props.items as ReadonlyArray<Readonly<{ title: string; category?: string }>>;
-        const results = items.filter((item) => item.title === 'workflows.condition.wholeResult').map((item) => item.category);
+        const results = items.filter((item) => item.category === 'workflows.input.stepResults').map((item) => item.title);
         expect(new Set(results).size).toBe(2);
         expect(results[0]).toContain('1');
         expect(results[1]).toContain('2');
-        const folders = items.filter((item) => item.category === 'workflows.condition.whereItWorks').map((item) => item.title);
+        const folders = items.filter((item) => item.category === 'workflows.workspace.title').map((item) => item.title);
         expect(new Set(folders).size).toBe(folders.length);
     });
 });

@@ -1,6 +1,6 @@
 import * as React from 'react';
+import { readWorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { Pressable, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowWaitLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
@@ -10,7 +10,6 @@ import type { SessionAuthoringControlFacts } from '@/components/sessions/authori
 import { resolveEffectiveWorkflowStepExecution } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import {
@@ -191,10 +190,9 @@ function WorkflowStepSummaryCard(props: Readonly<{
   testID: string;
 }>): React.ReactElement {
   const { step, draft } = props;
-  const { theme } = useUnistyles();
   const engine = useSessionAuthoringEngineSummary({
     values: resolveEffectiveWorkflowStepExecution(draft, step),
-    engine: step.execution?.participant ?? step.execution?.engine ?? draft.defaults.engine,
+    engine: step.execution?.participant ?? readWorkflowEngineChoiceV1(draft.defaults, step.execution),
     workflowRoles: draft.roles,
     ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
   });
@@ -203,13 +201,12 @@ function WorkflowStepSummaryCard(props: Readonly<{
     <WorkflowKindCard
       testID={`${props.testID}-card`}
       title={engine}
-      note={t('workflows.editor.addStep')}
-      footAccessory={(
-        <View testID={`${props.testID}-summary-meta`} style={workflowEditorStyles.metaRow}>
-          <Icon name="sliders-horizontal" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-          <Text numberOfLines={1} style={workflowEditorStyles.metaText}>{options.label}</Text>
-        </View>
-      )}
+      // What the step changes from the workflow, in words; a step that inherits everything says what kind it is.
+      {...(options.changed ? {
+        footAccessory: (
+          <Text testID={`${props.testID}-summary-meta`} numberOfLines={1} style={workflowEditorStyles.metaText}>{options.label}</Text>
+        ),
+      } : { note: t('workflows.editor.addStep') })}
     >
       <Text
         testID={`${props.testID}-summary-text`}

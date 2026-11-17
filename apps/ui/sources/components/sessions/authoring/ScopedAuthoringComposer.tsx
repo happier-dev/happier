@@ -18,7 +18,7 @@ import {
     type ComposerSuggestionKindId,
 } from '@/components/autocomplete/composerSuggestionKinds';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
-import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
+import type { AutocompleteSuggestion, AutocompleteSuggestionUpdate } from '@/components/autocomplete/autocompleteTypes';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AgentInput } from '@/components/sessions/agentInput';
 import {
@@ -157,6 +157,8 @@ export type ScopedAuthoringComposerProps = Readonly<{
             agentPickerSelectedOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerSelectedOptionId'];
             onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
             onAgentClick?: () => void;
+            /** The Agent picker opened or closed (the host mounts its open-only work, e.g. readiness reads). */
+            onAgentPickerVisibilityChange?: (visible: boolean) => void;
         }>;
         /**
          * The host's editing demand, for a host that places many documents at once. `false`
@@ -481,17 +483,24 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
     const suggestionKinds = sessionId === null
         ? NEW_SESSION_COMPOSER_SUGGESTION_KINDS
         : SESSION_AUTHORING_SUGGESTION_KINDS;
-    const resolveSuggestions = React.useCallback(async (query: string, signal: AbortSignal) => {
+    // The host's own values (a workflow's inputs and earlier results) are known at once: they lead the
+    // list and show before the Machine and Session catalogs answer, which stream in below them.
+    const resolveSuggestions = React.useCallback(async (query: string, signal: AbortSignal, publish?: AutocompleteSuggestionUpdate) => {
         const local = props.additionalSuggestions?.(query) ?? [];
+        if (local.length > 0) publish?.([...local], { complete: false });
+        const onUpdate: AutocompleteSuggestionUpdate | undefined = publish === undefined ? undefined
+            : (rows, status) => publish([...local, ...rows], status);
         if (sessionId !== null) {
             const suggestions = await resolveSessionComposerSuggestions(sessionId, query, {
                 kinds: SESSION_AUTHORING_SUGGESTION_KINDS,
                 signal,
                 composerReferenceHost: referenceHost,
+                ...(onUpdate === undefined ? {} : { onUpdate }),
             });
             return [...local, ...suggestions];
         }
         const suggestions = await getSuggestions(null, query, {
+            ...(onUpdate === undefined ? {} : { onUpdate }),
             kinds: NEW_SESSION_COMPOSER_SUGGESTION_KINDS,
             serverId,
             workspace: resolveNewSessionFileSuggestionScope({
@@ -621,6 +630,8 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
                     : { inputAccessibilityLabel: props.inputAccessibilityLabel })}
                 autocompleteKinds={suggestionKinds}
                 autocompleteSuggestions={resolveSuggestions}
+                // A host with its own values leads a bare '@' with them, not with the Account's recents.
+                {...(props.additionalSuggestions === undefined ? {} : { referenceRecents: 'none' as const })}
                 // Absent means authoring only: AgentInput offers no submit path at all.
                 {...(!editable || props.onSubmit === undefined ? {} : { onSend: props.onSubmit })}
                 submitAccessibilityLabel={props.submitAccessibilityLabel}
@@ -644,6 +655,7 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
                 agentPickerSelectedOptionId={context?.agentPickerSelectedOptionId}
                 onAgentPickerSelect={editable ? context?.onAgentPickerSelect : undefined}
                 onAgentClick={context?.onAgentClick}
+                onAgentPickerVisibilityChange={context?.onAgentPickerVisibilityChange}
                 contentPaddingHorizontal={0}
                 panelPresentation={props.panelPresentation ?? 'document'}
                 voiceAffordance={props.voiceAffordance}

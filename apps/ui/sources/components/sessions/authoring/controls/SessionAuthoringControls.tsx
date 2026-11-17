@@ -149,6 +149,15 @@ export function useSessionAuthoringChipRenderContext(
 }
 
 /** One selectable value: a chip that names the current choice and its picker. */
+/** A field the Agent or the target can never offer here, or that another owner supplies: a set leaves it out. */
+function isNeverOfferedHere(control: SessionAuthoringFieldControlModel): boolean {
+    return control.kind === 'unavailable' && (control.reason === 'not_supported_on_target'
+        || control.reason === 'agent_has_no_options' || control.reason === 'owned_by_host');
+}
+
+/** The picker row that returns a changed value to the one it inherits; never a field's own option id. */
+const RESET_OPTION_ID = '$inherit';
+
 function SessionAuthoringOptionChip(props: Readonly<{
     controlId: string;
     title: string;
@@ -163,6 +172,8 @@ function SessionAuthoringOptionChip(props: Readonly<{
     /** Set for this subject rather than inherited: the chip is bordered and says so. */
     changed?: boolean;
     changedAccessibilityHint?: string;
+    /** A changed value's way back: the picker leads with it ("Use workflow's"), choosing it clears the value. */
+    reset?: Readonly<{ label: string; onReset: () => void }>;
     onSelect: (optionId: string) => void;
     /** The value's identity mark (the Agent's), leading a bordered chip. */
     leading?: React.ReactNode;
@@ -176,7 +187,15 @@ function SessionAuthoringOptionChip(props: Readonly<{
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const currentLabel = props.valueLabel ?? resolveSessionAuthoringOptionLabel(props.options, props.selectedOptionId, props.unselectedLabel);
-    const pickerOptions = props.pickerOptions ?? props.options;
+    const offered = props.pickerOptions ?? props.options;
+    const reset = props.changed === true ? props.reset : undefined;
+    const pickerOptions = React.useMemo(() => reset === undefined ? offered
+        : [{ id: RESET_OPTION_ID, label: reset.label }, ...offered], [offered, reset]);
+    const onSelect = props.onSelect;
+    const select = React.useCallback((optionId: string) => {
+        if (optionId === RESET_OPTION_ID) reset?.onReset();
+        else onSelect(optionId);
+    }, [onSelect, reset]);
 
     const picker = (
         <AgentInputChipPickerPopover
@@ -185,7 +204,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
             title={props.title}
             options={pickerOptions}
             selectedOptionId={props.selectedOptionId}
-            onSelect={props.onSelect}
+            onSelect={select}
             onRequestClose={() => setOpen(false)}
             maxHeightCap={460}
         />
@@ -225,6 +244,8 @@ function SessionAuthoringOptionChip(props: Readonly<{
                             testID: props.testID,
                             label: props.title,
                             valueLabel: currentLabel,
+                            // A changed value names its field ("Permissions: Read-only"), so it reads without its row.
+                            showLabel: true,
                             ...(props.leading === undefined ? {} : { icon: props.leading }),
                             ...(props.changedAccessibilityHint === undefined ? {} : { accessibilityHint: props.changedAccessibilityHint }),
                             disabled: props.disabled === true,
@@ -312,6 +333,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
     presentation: SessionAuthoringControlsPresentation;
     changed: boolean;
     changedAccessibilityHint?: string;
+    reset?: Readonly<{ label: string; onReset: () => void }>;
     testIDPrefix: string;
 }>): React.ReactElement {
     const { control, facts, onChangeField, values } = props;
@@ -319,6 +341,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
         presentation: props.presentation,
         changed: props.changed,
         ...(props.changedAccessibilityHint === undefined ? {} : { changedAccessibilityHint: props.changedAccessibilityHint }),
+        ...(props.reset === undefined ? {} : { reset: props.reset }),
     };
     const testID = `${props.testIDPrefix}-${control.field}`;
 
@@ -471,6 +494,14 @@ export type SessionAuthoringControlsProps = Readonly<{
     overriddenFields?: ReadonlySet<SessionAuthoringFieldId> | 'all';
     /** Announced on a changed chip ("Changed for this step"). */
     overriddenAccessibilityHint?: string;
+    /**
+     * A subject that inherits its values (a workflow step): a changed chip's picker leads with
+     * `label` ("Use workflow's"), which returns the field to the inherited value. The engine resets as
+     * one field, `agentTarget`.
+     */
+    resetOverride?: Readonly<{ label: string; onResetField: (field: SessionAuthoringFieldId) => void }>;
+    /** The host draws the engine chip beside these chips (a step card's header), so it alone says "Choose an agent". */
+    engineChipBeside?: boolean;
     /** Which fields to render, in the caller's order. */
     fields: readonly SessionAuthoringFieldId[];
     values: WorkflowStepExecutionSelection;
@@ -752,6 +783,9 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                             machineId={facts.agentPickerContext?.machineId ?? null} serverId={facts.agentPickerContext?.serverId ?? null} size={14} /> } : {})}
                         disabled={props.disabled} presentation={presentation} fieldSpan="row"
                         changed={isChanged('agentTarget') || isChanged('modelSelection')}
+                        {...(props.overriddenAccessibilityHint === undefined ? {} : { changedAccessibilityHint: props.overriddenAccessibilityHint })}
+                        {...(props.resetOverride === undefined ? {} : { reset: { label: props.resetOverride.label,
+                            onReset: () => props.resetOverride?.onResetField('agentTarget') } })}
                         onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}
                         openDemand={enginePicker.readinessDemand}
                     />;
@@ -775,13 +809,19 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                         {...(props.overriddenAccessibilityHint === undefined
                             ? {}
                             : { changedAccessibilityHint: props.overriddenAccessibilityHint })}
+                        {...(props.resetOverride === undefined ? {} : { reset: { label: props.resetOverride.label,
+                            onReset: () => props.resetOverride?.onResetField(field) } })}
                         testIDPrefix={testIDPrefix}
                     />
                 );
-                // A chip row with an engine chip says "Choose an agent" once, there; the fields that wait on it add
-                // nothing. Without one (a lone field), the field still says why it is unavailable.
-                if (presentation === 'chips') return engineField !== undefined && control.kind === 'unavailable'
-                    && control.reason === 'requires_agent_target' ? null : rendered;
+                // A chip row beside its engine chip (in this row, or the host's: a step card's header) says "Choose an
+                // agent" once, there; the fields that wait on it add nothing. A lone field still says why.
+                if (presentation === 'chips') {
+                    if ((engineField !== undefined || props.engineChipBeside === true)
+                        && control.kind === 'unavailable' && control.reason === 'requires_agent_target') return null;
+                    // A host listing a subject's whole set (a step's options) leaves out what it can never offer, as a form does.
+                    return props.engineChipBeside === true && isNeverOfferedHere(control) ? null : rendered;
+                }
                 // A row of field selects, like a form, holds only the decisions this subject has (see below).
                 if (presentation === 'selects') return control.kind === 'unavailable' && (control.reason === 'not_supported_on_target'
                     || control.reason === 'agent_has_no_options' || control.reason === 'owned_by_host'
@@ -798,9 +838,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                     return <Item key={field} testID={`${testIDPrefix}-requires-agent`} title={t('newSession.chooseAgentFirst')}
                         titleStyle={styles.unavailableText} mode="info" showChevron={false} />;
                 }
-                if (control.kind === 'unavailable'
-                    && (control.reason === 'not_supported_on_target' || control.reason === 'agent_has_no_options'
-                        || control.reason === 'requires_agent_target' || control.reason === 'owned_by_host')) return null;
+                if (control.kind === 'unavailable' && (control.reason === 'requires_agent_target' || isNeverOfferedHere(control))) return null;
                 return (
                     <Item
                         key={field}

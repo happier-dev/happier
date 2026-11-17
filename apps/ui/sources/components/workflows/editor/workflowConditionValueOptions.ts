@@ -21,7 +21,10 @@ import { formatWorkflowFieldLabel, formatWorkflowReferenceScopeLabel, formatWork
 export type WorkflowConditionValueOption = Readonly<{
   id: string;
   title: string;
+  /** Where the value comes from: the producing step's label for a result, otherwise its group. */
   category: string;
+  /** Its heading in the one value list (Insert, '@', conditions): Inputs, Step results, Workspace, … */
+  group: string;
   /** The value's type in words, on the option's right. */
   typeLabel: string | null;
   reference: WorkflowValueReference;
@@ -186,23 +189,34 @@ export function listWorkflowConditionValueOptions(
   consumer?: WorkflowReferenceConsumer,
   presentation?: Readonly<{ includeUnavailable?: boolean }> & WorkflowValueContext,
 ): readonly WorkflowConditionValueOption[] {
-  const options: WorkflowConditionValueOption[] = [];
+  // One list, one order (WF-REDESIGN-1116 g): inputs, earlier results, this item and round,
+  // workspace, then what this block cannot read yet.
+  const inputs: WorkflowConditionValueOption[] = [];
+  const events: WorkflowConditionValueOption[] = [];
+  const results: WorkflowConditionValueOption[] = [];
+  const loop: WorkflowConditionValueOption[] = [];
+  const workspace: WorkflowConditionValueOption[] = [];
+  const unavailable: WorkflowConditionValueOption[] = [];
   const push = (
+    into: WorkflowConditionValueOption[],
+    group: string,
     category: string,
     title: string,
     reference: WorkflowValueReference,
     typeLabelOverride?: string,
   ): void => {
     const facts = resolveWorkflowConditionValueFacts(draft, reference, presentation);
-    options.push({
+    into.push({
       id: JSON.stringify(reference),
       title,
       category,
+      group,
       reference,
       facts,
       typeLabel: typeLabelOverride ?? typeLabelFor(facts),
     });
   };
+  const stepResults = t('workflows.input.stepResults');
   const eventIds = new Set<string>();
   for (const declaration of presentation?.triggerEvents ?? []) {
     for (const field of eventFields(declaration)) {
@@ -211,8 +225,8 @@ export function listWorkflowConditionValueOptions(
       if (eventIds.has(id)) continue;
       eventIds.add(id);
       const facts = eventFieldFacts(field.schema);
-      options.push({ id, title: field.schema.title ?? field.path.map(part => formatWorkflowFieldLabel(part)).join(' · '),
-        category: formatWorkflowTriggerEventIdentityV1(declaration.event),
+      events.push({ id, title: field.schema.title ?? field.path.map(part => formatWorkflowFieldLabel(part)).join(' · '),
+        category: formatWorkflowTriggerEventIdentityV1(declaration.event), group: t('workflows.form.trigger.event'),
         reference, facts, typeLabel: typeLabelFor(facts) });
     }
   }
@@ -244,8 +258,8 @@ export function listWorkflowConditionValueOptions(
     const source = { blockId: producer.blockId, scope: producer.scope };
     if (producer.unavailableReason !== undefined) {
       const reference: WorkflowValueReference = { kind: 'result', producer: source, path: [] };
-      options.push({
-        id: JSON.stringify(reference), title: label, category, reference,
+      unavailable.push({
+        id: JSON.stringify(reference), title: label, category, group: t('workflows.input.notAvailableHere'), reference,
         facts: UNKNOWN, typeLabel: null, unavailableReason: producer.unavailableReason,
       });
       continue;
@@ -259,6 +273,8 @@ export function listWorkflowConditionValueOptions(
     if (declaresFields) {
       for (const field of projection.fields) {
         push(
+          results,
+          stepResults,
           category,
           field.title ?? formatWorkflowFieldLabel(field.name),
           { kind: 'result', producer: source, path: [field.name] },
@@ -267,15 +283,17 @@ export function listWorkflowConditionValueOptions(
       }
     }
     const whole: WorkflowValueReference = { kind: 'result', producer: source, path: [] };
-    push(category, t('workflows.condition.wholeResult'), whole);
+    push(results, stepResults, category, t('workflows.condition.wholeResult'), whole);
     // A step's text has no inside; anything structured or untyped can be read into.
     if (contract === null || contract?.kind === 'json') {
       const facts = resolveWorkflowConditionValueFacts(draft, whole);
-      options.push({ id: `${JSON.stringify(whole)}#path`, title: workflowResultFieldText('otherPath'), category, reference: whole, facts, typeLabel: null, opensPath: true });
+      results.push({ id: `${JSON.stringify(whole)}#path`, title: workflowResultFieldText('otherPath'), category, group: stepResults, reference: whole, facts, typeLabel: null, opensPath: true });
     }
   }
   for (const input of draft.inputs) {
     push(
+      inputs,
+      t('workflows.inputs.title'),
       t('workflows.condition.fromRun'),
       formatWorkflowFieldLabel(input.name),
       { kind: 'input', name: input.name },
@@ -289,6 +307,8 @@ export function listWorkflowConditionValueOptions(
   if (scope.insideItemsLoop) {
     for (const field of ITEM_FIELDS)
       push(
+        loop,
+        t('workflows.condition.thisItem'),
         t('workflows.condition.thisItem'),
         t(`workflows.input.itemField.${field}`),
         { kind: 'item', field },
@@ -297,6 +317,8 @@ export function listWorkflowConditionValueOptions(
   if (scope.insideLoop) {
     for (const field of ITERATION_FIELDS)
       push(
+        loop,
+        t('workflows.condition.thisRound'),
         t('workflows.condition.thisRound'),
         t(`workflows.input.iterationField.${field}`),
         { kind: 'iteration', field },
@@ -307,17 +329,28 @@ export function listWorkflowConditionValueOptions(
       continue;
     const source = { blockId: producer.blockId, scope: producer.scope };
     push(
+      workspace,
+      t('workflows.workspace.title'),
       t('workflows.condition.whereItWorks'),
       t('workflows.condition.folderOf', { step: distinctLabel(producer) }),
       { kind: 'workspace', producer: source, field: 'directory' },
     );
     push(
+      workspace,
+      t('workflows.workspace.title'),
       t('workflows.condition.whereItWorks'),
       t('workflows.condition.projectFolderOf', { step: distinctLabel(producer) }),
       { kind: 'workspace', producer: source, field: 'checkoutRootPath' },
     );
   }
-  return options;
+  return [...inputs, ...events, ...results, ...loop, ...workspace, ...unavailable];
+}
+
+/** An option's name in the one list: a result names its step ("Check the fix · Reply"); anything else its own title. */
+export function formatWorkflowValueOptionLabel(option: WorkflowConditionValueOption): string {
+  if (option.reference.kind !== 'result') return option.title;
+  return option.opensPath !== true && (option.unavailableReason !== undefined || option.reference.path.length === 0)
+    ? option.category : `${option.category} · ${option.title}`;
 }
 
 /** Whether this reference is a field its producer declares, so no path entry is needed to reach it. */

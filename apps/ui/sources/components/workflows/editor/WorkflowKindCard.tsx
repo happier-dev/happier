@@ -27,6 +27,11 @@ function HeaderLine(props: Readonly<{ stacked: boolean; children: React.ReactNod
 export function WorkflowKindCard(props: Readonly<{
     mark?: React.ReactNode;
     title: string;
+    /**
+     * The header's identity as a control rather than words: an Agent step's engine chip (round 1116b,
+     * quiet while inherited, bordered once the step sets it). `title` stays its accessible name.
+     */
+    titleControl?: React.ReactNode;
     /** Where it comes from ("Built-in", "Happier", "Discord plugin"). */
     source?: string;
     /** One line under the title saying what the card holds now (a first card's sentence). */
@@ -91,7 +96,9 @@ export function WorkflowKindCard(props: Readonly<{
     // A card that only names what runs it (a resting step) is one line of text: no wrappers to lay out
     // per row in a long workflow (PERF-WF3B).
     const title = <Text testID={`${props.testID}-title`} numberOfLines={1} style={workflowEditorStyles.headingName}>{props.title}</Text>;
-    const titleBlock = props.source === undefined && props.summary === undefined ? title : (
+    const titleBlock = props.titleControl !== undefined
+        ? <View style={workflowEditorStyles.kindCardTitleControl}>{props.titleControl}</View>
+        : props.source === undefined && props.summary === undefined ? title : (
         <View style={workflowEditorStyles.kindCardTitleBlock}>
             <View style={workflowEditorStyles.kindCardTitleLine}>
                 {title}
@@ -141,7 +148,7 @@ export function WorkflowKindCard(props: Readonly<{
             {hasBody ? <View testID={`${props.testID}-body`} style={workflowEditorStyles.kindCardBody}>{props.children}</View> : null}
             {hasFoot ? (
                 <View style={workflowEditorStyles.kindCardFoot}>
-                    <Text style={workflowEditorStyles.kindCardNote}>{props.note ?? ''}</Text>
+                    {props.note === undefined ? null : <Text style={workflowEditorStyles.kindCardNote}>{props.note}</Text>}
                     {props.footAccessory ?? null}
                 </View>
             ) : null}

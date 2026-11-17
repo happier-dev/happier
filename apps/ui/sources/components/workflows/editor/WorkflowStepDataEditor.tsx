@@ -166,6 +166,11 @@ export function WorkflowBindingRow(props: Readonly<{
     onSet?: () => void;
     /** Draws the bound value's editor (editing only). */
     renderEditor?: () => React.ReactNode;
+    /**
+     * The editor draws the field's label line itself, with Insert at its end (round 1116b g: a text
+     * field's label sits above its box). Only while editing; at rest the row keeps the card's label track.
+     */
+    editorOwnsLabel?: boolean;
     /** This field's revealed issue, in the editor's words; marks the row (DESIGN-6 P3). */
     issue?: string | null;
     /** A bound literal in the field's own option words ("Acme reviewer"), when it has options. */
@@ -231,6 +236,17 @@ export function WorkflowBindingRow(props: Readonly<{
                                 : <WorkflowValueReferenceToken draft={props.draft} reference={reference} label={props.referenceLabels?.[index]} />}
                     </React.Fragment>
                 ))}
+            </View>
+        );
+    }
+    if (editing && binding !== undefined && props.renderEditor !== undefined && props.editorOwnsLabel === true) {
+        return (
+            <View testID={props.testID} ref={valueRef} style={workflowEditorStyles.actionFieldStacked}>
+                {value}
+                {props.note === undefined ? null
+                    : <Text testID={`${props.testID}-note`} style={workflowEditorStyles.kindCardNote}>{props.note}</Text>}
+                {props.issue === undefined || props.issue === null ? null
+                    : <Text testID={`${props.testID}-issue`} style={workflowEditorStyles.issueText}>{props.issue}</Text>}
             </View>
         );
     }

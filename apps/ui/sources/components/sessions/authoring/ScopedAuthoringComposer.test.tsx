@@ -13,6 +13,8 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 const machineCalls: Array<Readonly<{ method: string; input: unknown; targetId: string }>> = [];
+// A Machine whose file list has not answered yet (a slow or busy daemon).
+let pendingFileList: Promise<void> | null = null;
 installAgentInputCommonModuleMocks();
 // File reads use the authenticated Action HTTP boundary; the composer, policy,
 // requester custody and materialization below it remain real.
@@ -20,7 +22,8 @@ const workspaceFiles = await createExternalActionAccountHttpBoundary({
     serverUrl: 'https://session-pane.test', serverIdentityId: 'srv_session_pane',
     accountId: 'account-a', machineId: 'machine-9', tokenEpoch: 0,
     actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles,
-    execute: (input, context) => {
+    execute: async (input, context) => {
+        await pendingFileList;
         machineCalls.push({ method: getActionSpec(FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles).bindings!.rpcMethod!,
             input, targetId: context.target.machineId });
         return DaemonWorkspaceFileListResponseSchema.parse({ ok: true, paths: ['src/index.ts'], truncated: false });
@@ -63,6 +66,41 @@ describe('ScopedAuthoringComposer', () => {
         const { resolveActiveSuggestionsHandler } = await import('@/components/autocomplete/useActiveSuggestions');
         await expect(resolveActiveSuggestionsHandler(source, '@')('@', new AbortController().signal, () => {})).resolves.toContainEqual(result);
     });
+    // Insert in a workflow prompt (WF-P2-STEP-1116): the host's own values (inputs, earlier steps'
+    // results) lead the list at once; they never wait for the Machine's files, and no Account-wide
+    // Recent group sits above them.
+    it('publishes host values first while the Machine catalog is still answering', async () => {
+        const custody = (await import('@/components/sessions/authoring/authoringComposerCustody'))
+            .createWorkflowAuthoringComposerCustody('workflow-host-first').entryFor('check');
+        const input = { kind: 'composerReference' as const, key: 'workflow:input', text: '@[Branch](workflowInput:0)', label: 'Branch',
+            group: 'Inputs', structuredInput: { kind: 'happier.workflowInput', ref: 'workflowInput:0', label: 'Branch' } };
+        let releaseFiles = () => {};
+        pendingFileList = new Promise<void>((resolve) => { releaseFiles = resolve; });
+        try {
+            const screen = await renderScreen(<ScopedAuthoringComposer custody={custody}
+                scope={{ kind: 'machine', machineId: 'machine-9', serverId: runtime.serverId, directory: '~/code/app', machineHomeDir: '/Users/dev' }}
+                document={{ text: 'Check', references: [], attachments: [] }} attachmentsEnabled
+                placeholder="Describe the step" additionalSuggestions={() => [input]} />);
+            const composer = screen.findByType<typeof AgentInput>(AgentInput).props;
+            expect(composer.referenceRecents).toBe('none');
+            const { resolveActiveSuggestionsHandler } = await import('@/components/autocomplete/useActiveSuggestions');
+            const published: Array<readonly unknown[]> = [];
+            let settled = false;
+            const pending = resolveActiveSuggestionsHandler(composer.autocompleteSuggestions, '@')('@', new AbortController().signal,
+                (rows) => { published.push(rows); }).then((rows) => { settled = true; return rows; });
+            await act(async () => { await Promise.resolve(); });
+            expect(settled).toBe(false);
+            expect(published[0]?.[0]).toEqual(input);
+            releaseFiles();
+            let rows: readonly unknown[] = [];
+            await act(async () => { rows = await pending; });
+            expect(rows[0]).toEqual(input);
+        } finally {
+            releaseFiles();
+            pendingFileList = null;
+        }
+    });
+
     it('keeps duplicate-token ranges and staged content when its portable projection echoes back', async () => {
         const custody = (await import(
             '@/components/sessions/authoring/authoringComposerCustody'

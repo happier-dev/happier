@@ -4,10 +4,6 @@ import { ScrollView, StyleSheet as RNStyleSheet, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
-import {
-    readSessionAuthoringAgentTargetValue,
-    retireUnavailableSessionAuthoringRuntimeDescriptor,
-} from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -55,13 +51,11 @@ import { formatWorkflowLoopSentence, WorkflowLoopOptions } from './WorkflowLoopE
 import { formatWorkflowResultSummary } from './WorkflowStepDataEditor';
 import { WorkflowResultFieldsEditor } from './WorkflowResultFieldsEditor';
 import {
-    WORKFLOW_ENGINE_FIELD_IDS,
     WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE,
     WorkflowFieldInheritance,
-    WorkflowStepInspector,
     WorkflowStepTimeoutField,
 } from './WorkflowStepInspector';
-import { useWorkflowStepFieldControlRenderer } from './workflowStepFieldControls';
+import { listWorkflowStepSessionChanges } from './WorkflowStepCardChips';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
 import { renderWorkflowCardFieldRow } from './workflowCardFieldRow';
@@ -73,7 +67,6 @@ import {
     setWorkflowNotifyReportOffer,
     WORKFLOW_NOTIFY_ME_ACTION_ID,
 } from './workflowNotifyReportCondition';
-import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 import { readWorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 
 /**
@@ -567,13 +560,28 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const detachedUnavailable = props.runAsTargets?.find((target) => target.kind === 'detached_run' && !target.available);
     const insideEvaluator = isLoopEvaluator(draft.blocks, step.id);
 
-    // One page in the lab's order (owner 2026-11-15, one settings popover): what runs it and where, the
-    // conversation and workspace, the model and its permissions, then this step's own choices. Every shared
-    // row says whether it comes from the workflow or was changed here, with the way back beside it.
+    // Round 1116b step options A ("…" open): the step's Session as chips (grey from the workflow, bordered
+    // when changed here, each chip's picker leading with "Use workflow's"), where it runs and works, then
+    // this step's own choices. Its engine is the card header's chip, so it is not repeated here.
+    const changedSessionFields = new Set(listWorkflowStepSessionChanges(step));
     return (
         <>
-            <ItemGroup title={t('workflows.page.sections.agentAndWhereTitle')}>
-                <StepSessionFields {...props} step={step} fields={WORKFLOW_ENGINE_FIELD_IDS} testID={`${testIDPrefix}-agent-fields`} />
+            <ItemGroup title={t('workflows.page.sections.sessionTitle')}>
+                <SectionContentRow testID={`${testIDPrefix}-session-chips`}>
+                    <SessionAuthoringControls
+                        presentation="chips"
+                        fields={WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE}
+                        values={effectiveExecution}
+                        overriddenFields={changedSessionFields}
+                        engineChipBeside
+                        overriddenAccessibilityHint={t('workflows.page.changedForStep')}
+                        resetOverride={{ label: t('workflows.page.useWorkflowsValue'),
+                            onResetField: (field) => onChange(setWorkflowStepExecutionField(draft, step.id, field, undefined)) }}
+                        onChangeField={(field, value) => onChange(setWorkflowStepExecutionField(draft, step.id, field, value))}
+                        {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
+                        testIDPrefix={`${testIDPrefix}-control`}
+                    />
+                </SectionContentRow>
                 <SegmentedChoiceItem<WorkflowLeafExecutionTargetV1['kind']>
                     testIDPrefix={`${testIDPrefix}-runs-in`}
                     title={t('workflows.page.inspector.runsIn')}
@@ -638,17 +646,10 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                 </View>
             </ItemGroup>
 
-            <ItemGroup title={t('workflows.page.sections.modelAndPermissionsTitle')}>
-                <StepSessionFields {...props} step={step} fields={WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE} testID={`${testIDPrefix}-session-fields`} />
-            </ItemGroup>
+            <WhenItRunsGroup draft={draft} block={step} onChange={onChange}
+                onOpenCondition={() => props.onOpenPage('condition')} testIDPrefix={testIDPrefix} />
 
             <ItemGroup title={t('workflows.page.sections.thisStepTitle')}>
-                <Item
-                    testID={`${testIDPrefix}-result`}
-                    title={t('workflows.page.inspector.resultTitle')}
-                    subtitle={formatWorkflowResultSummary(step.result)}
-                    onPress={() => props.onOpenPage('result')}
-                />
                 <Item
                     testID={`${testIDPrefix}-review`}
                     title={t('workflows.page.inspector.reviewTitle')}
@@ -667,6 +668,19 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         />
                     )}
                 />
+                <SectionContentRow testID={`${testIDPrefix}-timeout-row`}>
+                    <WorkflowStepTimeoutField
+                        timeoutMs={step.timeoutMs}
+                        onChange={(timeoutMs) => onChange(setWorkflowStepTimeout(draft, step.id, timeoutMs))}
+                        testIDPrefix={testIDPrefix}
+                    />
+                </SectionContentRow>
+                <Item
+                    testID={`${testIDPrefix}-result`}
+                    title={t('workflows.page.inspector.resultTitle')}
+                    subtitle={formatWorkflowResultSummary(step.result)}
+                    onPress={() => props.onOpenPage('result')}
+                />
                 {/* Adding an input lives with Result (named results), not on the step's footer, so
                     selecting a step never reveals a row (DESIGN-7 N27). The new input is edited in
                     the document, where bound inputs read. */}
@@ -679,64 +693,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                     )))}
                 />
             </ItemGroup>
-            <WhenItRunsGroup draft={draft} block={step} onChange={onChange}
-                onOpenCondition={() => props.onOpenPage('condition')} testIDPrefix={testIDPrefix} />
-
-            <AdvancedGroup {...props} block={step} />
         </>
-    );
-}
-
-/** A step's Session fields through the shared controls, each row with its inheritance state and way back. */
-function StepSessionFields(props: WorkflowInspectorProps & Readonly<{
-    step: WorkflowStep;
-    fields: readonly (typeof WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS)[number][];
-    testID: string;
-}>): React.ReactElement {
-    const { draft, onChange, step, testIDPrefix } = props;
-    const renderStepFieldControl = useWorkflowStepFieldControlRenderer({
-        ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
-        // The engine is a titled row like its siblings, so it carries its own "From the workflow" state.
-        engineFieldTitle: t('workflows.page.sections.agentRow'),
-        testIDPrefix: `${testIDPrefix}-control`,
-    });
-    const effectiveExecution = resolveEffectiveWorkflowStepExecution(draft, step);
-    return (
-        // The fields are page rows with their own inset, aligned with Runs in; a content row would indent a second grid.
-        <View testID={props.testID}>
-            <WorkflowStepInspector
-                draft={draft}
-                step={step}
-                fields={props.fields}
-                renderFieldControl={renderStepFieldControl}
-                onChangeFields={(fields) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
-                    ? { ...current, execution: withWorkflowAuthoringEngineFields(current.execution ?? {}, fields) } : current))}
-                onChangeEngine={(engine) => onChange(updateWorkflowBlock(draft, step.id, current => current.kind === 'step'
-                    ? { ...current, execution: withWorkflowAuthoringEngine(current.execution ?? {}, engine) } : current))}
-                onResetEngine={() => onChange(updateWorkflowBlock(draft, step.id, current => {
-                    if (current.kind !== 'step') return current;
-                    const { engine, roleId, agentTarget, modelSelection, acpSessionModeId, sessionConfigOptionOverrides, ...execution } = current.execution ?? {};
-                    return { ...current, execution };
-                }))}
-                onResetField={(field) => onChange(setWorkflowStepExecutionField(draft, step.id, field, undefined))}
-                onChangeField={(field, value) => {
-                    let next = setWorkflowStepExecutionField(draft, step.id, field, value);
-                    if (field === 'agentTarget') {
-                        const retired = retireUnavailableSessionAuthoringRuntimeDescriptor({
-                            runtimeDescriptorV1: effectiveExecution.runtimeDescriptorV1,
-                            agentTarget: readSessionAuthoringAgentTargetValue(value),
-                            facts: props.authoringFacts,
-                        });
-                        if (retired !== effectiveExecution.runtimeDescriptorV1) {
-                            next = setWorkflowStepExecutionField(next, step.id, 'runtimeDescriptorV1', retired);
-                        }
-                    }
-                    onChange(next);
-                }}
-                {...(props.authoringFacts === undefined ? {} : { authoringFacts: props.authoringFacts })}
-                testIDPrefix={testIDPrefix}
-            />
-        </View>
     );
 }
 

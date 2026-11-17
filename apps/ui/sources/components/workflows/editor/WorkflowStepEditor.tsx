@@ -15,22 +15,18 @@ import type {
     AuthoringComposerCustodyEntry,
     WorkflowAuthoringComposerCustody,
 } from '@/components/sessions/authoring/authoringComposerCustody';
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { t } from '@/text';
 
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
-import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { readWorkflowEngineChoiceV1, type WorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
-import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { resolveWorkflowUnnamedHeading, workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import {
-    listWorkflowStepOverriddenFields,
     resolveEffectiveWorkflowStepExecution,
     type WorkflowDraftValidation,
     workflowIssuesForBlock,
@@ -39,11 +35,11 @@ import {
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { WorkflowKindCard } from './WorkflowKindCard';
-import { useWorkflowInsertChip } from './workflowInsertChip';
+import { WorkflowInsertButton } from './workflowInsertChip';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
 import { formatWorkflowIssueText } from './workflowIssueText';
-import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
+import { listWorkflowStepSessionChanges, WorkflowStepEngineChip, WorkflowStepOptionChips } from './WorkflowStepCardChips';
 import { useWorkflowStepOptionsSummary } from './useWorkflowStepOptionsSummary';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
@@ -51,16 +47,11 @@ import { createWorkflowPromptSuggestions, resolveWorkflowPromptReferenceStates }
 import { WorkflowEventValueContext } from './WorkflowEventValueContext';
 
 /**
- * One repeatable authored step (07 S7, 04 §4.3): a stable ordinal, a prompt-derived label,
- * the prompt in the real composer with the step's **Step options** chip in its chip row,
- * and the values it gets without naming them, trailing the prompt.
- *
- * The prompt is the visual centre. Inherited configuration reads as one quiet chip
- * ("Workflow defaults") rather than repeating chrome on every step; a step that changes
- * something names it on that bordered chip, which opens the same controlled values.
+ * One repeatable authored step (07 S7, 04 §4.3; round 1116b step options A): a stable ordinal, a
+ * prompt-derived label, and the editor's one card. Its header is the engine chip (quiet while the
+ * step inherits it) with Insert at the top right; its body is the prompt in the real composer; its
+ * foot holds only what the step changes, as bordered chips, and "…" for the rest.
  */
-
-/** The step's engine group as its composer chip shows it: who runs it, on which model. */
 
 type WorkflowStepPromptFieldProps = Readonly<{
     custody: AuthoringComposerCustodyEntry;
@@ -75,8 +66,6 @@ type WorkflowStepPromptFieldProps = Readonly<{
     onChangeDocument: (document: ScopedAuthoringDocument) => void;
     onCommitDocument?: () => void;
     onFocusPrompt: () => void;
-    /** The step's own chips in the composer's chip row (Step options). */
-    extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     agentInputContext?: React.ComponentProps<typeof ScopedAuthoringComposer>['agentInputContext'];
     /** `false` shows the prompt's static picture until the author activates it (the host's editing demand). */
     editing: boolean;
@@ -144,7 +133,6 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
                 voiceAffordance="dictation"
                 onFocus={props.onFocusPrompt}
                 agentInputContext={props.agentInputContext}
-                {...(props.extraActionChips === undefined ? {} : { extraActionChips: props.extraActionChips })}
                 editing={props.editing}
                 {...(props.onRequestEdit === undefined ? {} : { onRequestEdit: props.onRequestEdit })}
             />
@@ -192,6 +180,8 @@ export function WorkflowStepEditor(props: Readonly<{
     ) => void;
     onChangeExecutionFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
     onChangeEngine?: (engine: WorkflowEngineChoiceV1) => void;
+    /** Returns the step to the workflow's engine (role, Agent, model, mode and effort together). */
+    onResetEngine?: () => void;
     /** The host's Agent and model catalogs for the in-composer engine chip. */
     authoringFacts?: SessionAuthoringControlFacts;
     /** Registers the prompt input so Add can focus it once layout is ready. */
@@ -257,67 +247,27 @@ export function WorkflowStepEditor(props: Readonly<{
 
     const latestCustomizeRef = React.useRef(onCustomize);
     latestCustomizeRef.current = onCustomize;
+    const openOptions = React.useCallback((anchorRef: React.RefObject<View | null>) => latestCustomizeRef.current(anchorRef), []);
     const optionsSummary = useWorkflowStepOptionsSummary(props.draft, step);
-    const stepOptionsChip = useWorkflowStepOptionsChip({
-        label: optionsSummary.label,
-        changed: optionsSummary.changed,
-        onOpen: (anchorRef) => latestCustomizeRef.current(anchorRef),
-        testID: `${testIDPrefix}-step-${step.id}-customize`,
-        labelTestID: `${testIDPrefix}-step-${step.id}-inheritance`,
-    });
-    // The engine chip (agent or role · model) leads the composer's chip row, quiet while the step
-    // inherits and bordered once the step sets its own (04 §4.3). It is keyed on the step's own
-    // engine facts, not the whole draft, so typing elsewhere never re-renders this composer.
     const effective = resolveEffectiveWorkflowStepExecution(props.draft, step);
     const agentId = resolveSessionAuthoringAgentId({ agentTarget: effective.agentTarget, facts: props.authoringFacts });
-    // A participant a Run supplies for this step owns its Session and launch: the chip names it and offers no Agent choice.
+    // A participant a Run supplies for this step owns its Session and launch: the header names it and offers no Agent choice.
     const participant = step.execution?.participant;
     const engineChoice = React.useMemo(() => readWorkflowEngineChoiceV1(props.draft.defaults, step.execution),
         [props.draft.defaults, step.execution]);
-    const roleId = engineChoice && 'roleId' in engineChoice ? engineChoice.roleId : null;
-    const engine = participant ?? engineChoice;
-    const engineChangeRef = React.useRef({ fields: props.onChangeExecutionFields, engine: props.onChangeEngine });
-    engineChangeRef.current = { fields: props.onChangeExecutionFields, engine: props.onChangeEngine };
-    const changeEngineFields = React.useCallback((fields: Partial<WorkflowStepExecutionSelection>) => engineChangeRef.current.fields?.(fields), []);
-    const roleSelection = React.useMemo(() => ({
-        value: roleId,
-        workflowRoles: props.draft.roles,
-        onChange: (nextRoleId: string) => { if (editable) engineChangeRef.current.engine?.({ roleId: nextRoleId }); },
-    }), [editable, roleId, props.draft.roles]);
-    const enginePicker = useSessionAuthoringEnginePicker({ values: effective, facts: props.authoringFacts,
-        disabled: !editable, onChangeFields: changeEngineFields, roleSelection });
-    // The composer's Agent picker reads this Machine's readiness while it is open, through the shared owner.
-    const [enginePickerOpen, setEnginePickerOpen] = React.useState(false);
-    const engineSummary = useSessionAuthoringEngineSummary({ values: effective, engine,
+    const engineSummary = useSessionAuthoringEngineSummary({ values: effective, engine: participant ?? engineChoice,
         workflowRoles: props.draft.roles, facts: props.authoringFacts });
     const permissionMode = isPermissionMode(effective.permissionMode) ? effective.permissionMode : undefined;
-    // A role reads by its name (a built-in's or this workflow's own), through the one role resolver.
-    const roleName = React.useMemo(() => (roleId ? resolveRoleDisplayName(roleId, props.draft.roles) : null),
-        [roleId, props.draft.roles]);
+    // The composer is the prompt alone: who runs the step is the card header's engine chip (round 1116b).
     const agentInputContext = React.useMemo(() => ({
-        agentType: enginePicker.agentId ?? agentId ?? undefined,
-        agentLabel: roleName ?? enginePicker.label,
-        engineLabel: engineSummary,
+        agentType: agentId ?? undefined,
         modelMode: effective.modelSelection?.ref.modelId,
         permissionMode,
         showStatusPermissionMode: false,
-        agentPickerOptions: editable && participant === undefined ? enginePicker.options : [],
-        agentPickerSelectedOptionId: enginePicker.selectedOptionId,
-        onAgentPickerSelect: enginePicker.onSelect,
-        // The native AgentInput owns opening its options. This presence also keeps
-        // the effective engine chip visible in a read-only document.
-        onAgentClick: enginePicker.onAgentClick,
-        onAgentPickerVisibilityChange: setEnginePickerOpen,
+        // A reader's frozen engine facts (the Run's admitted Agent and model), never the authoring choice.
         ...(!editable ? props.slots?.enginePresentation : undefined),
-    }), [agentId, effective.modelSelection, permissionMode, enginePicker.agentId,
-        editable, participant, roleName, engineSummary, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId, props.slots?.enginePresentation]);
-    // Insert leads the row (owner 2026-11-15): the visible way into the '@' value list.
-    const insertChip = useWorkflowInsertChip({
-        onInsert: () => inputRef.current?.control('insertMention'),
-        testID: `${testIDPrefix}-step-${step.id}-insert`,
-    });
-    const composerChips = React.useMemo(() => (editable ? [insertChip, stepOptionsChip] : [stepOptionsChip]),
-        [editable, insertChip, stepOptionsChip]);
+    }), [agentId, effective.modelSelection, permissionMode, editable, props.slots?.enginePresentation]);
+    const readerEngine = !editable ? props.slots?.enginePresentation?.engineLabel : undefined;
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
     const referenceStates = resolveWorkflowPromptReferenceStates(step, issues);
@@ -360,9 +310,51 @@ export function WorkflowStepEditor(props: Readonly<{
                 {...(props.sessionDrop === undefined ? {} : { sessionDrop: props.sessionDrop })}
                 testID={`${testIDPrefix}-step-${step.id}-session-drop`}
             >
-                {/* The editor's one card (owner 2026-11-15): the prompt inside it, its chip row (Agent, Step
-                    options) at the card's foot; at rest the same card names what runs it (WorkflowBlockSummary). */}
-                <WorkflowKindCard testID={`${testIDPrefix}-step-${step.id}-card`} title={displayName} header={false}>
+                {/* The editor's one card (round 1116b): the engine chip and Insert in its header, the prompt in its
+                    body, what the step changes and "…" at its foot; at rest the same card reads (WorkflowBlockSummary). */}
+                <WorkflowKindCard
+                    testID={`${testIDPrefix}-step-${step.id}-card`}
+                    title={readerEngine ?? engineSummary}
+                    {...(readerEngine !== undefined || participant !== undefined ? {} : {
+                        titleControl: (
+                            <WorkflowStepEngineChip
+                                draft={props.draft}
+                                step={step}
+                                effective={effective}
+                                engine={engineChoice}
+                                editable={editable}
+                                onChangeExecutionFields={props.onChangeExecutionFields}
+                                onChangeEngine={props.onChangeEngine}
+                                onResetEngine={props.onResetEngine}
+                                authoringFacts={props.authoringFacts}
+                                testIDPrefix={`${testIDPrefix}-step-${step.id}-engine`}
+                            />
+                        ),
+                    })}
+                    {...(editable ? {
+                        headerAction: (
+                            <WorkflowInsertButton
+                                testID={`${testIDPrefix}-step-${step.id}-insert`}
+                                onPress={() => inputRef.current?.control('insertMention')}
+                            />
+                        ),
+                    } : {})}
+                    {...(optionsSummary.changed || listWorkflowStepSessionChanges(step).length > 0 ? {} : { note: t('workflows.editor.addStep') })}
+                    // A reader keeps "…" too: the step's options stay readable (04 §4.11).
+                    footAccessory={(
+                            <WorkflowStepOptionChips
+                                editable={editable}
+                                step={step}
+                                effective={effective}
+                                changes={optionsSummary.changes}
+                                onChangeExecutionField={props.onChangeExecutionField}
+                                onOpenOptions={openOptions}
+                                authoringFacts={props.authoringFacts}
+                                blockLabel={displayName}
+                                testIDPrefix={`${testIDPrefix}-step-${step.id}`}
+                            />
+                    )}
+                >
                 <View ref={promptFrameRef} collapsable={false} style={workflowEditorStyles.promptFrame}>
                     <WorkflowStepPromptField
                         ref={inputRef}
@@ -378,7 +370,6 @@ export function WorkflowStepEditor(props: Readonly<{
                         onCommitDocument={props.onCommitDocument}
                         onFocusPrompt={handleFocusPrompt}
                         agentInputContext={agentInputContext}
-                        {...(composerChips === undefined ? {} : { extraActionChips: composerChips })}
                         editing={props.editing !== false}
                         {...(props.onRequestEdit === undefined ? {} : { onRequestEdit: handleRequestEdit })}
                     />
@@ -386,7 +377,6 @@ export function WorkflowStepEditor(props: Readonly<{
                 </WorkflowKindCard>
             </WorkflowStepSessionDropZone>
             </View>
-            {enginePickerOpen ? enginePicker.readinessDemand : null}
 
             {props.slots?.reviewedCard ?? null}
 
