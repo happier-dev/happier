@@ -3,6 +3,8 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import { useOpenSubAgentRun } from '@/components/tools/renderers/workflow/useOpenSubAgentRun';
 import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { View, TouchableOpacity, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
@@ -440,8 +442,8 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
             routeMessageId={messageId ?? null}
             seq={transcriptSeq}
             radius={TOOL_VIEW_HIGHLIGHT_RADIUS}
-            viewProps={{ testID: 'tool-view-container', ...headerActionHost.hoverProps }}
-            style={[styles.container, props.embedded ? styles.containerEmbedded : null]}
+            viewProps={{ testID: 'tool-view-container', ...headerActionHost.hoverProps, ...{ dataSet: themeSurfaceDataSet('tool-row', 'root', 'default') } }}
+            style={[styles.container, props.embedded ? styles.containerEmbedded : null, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'root', state: 'default' })]}
         >
             <View style={[styles.header, timelineDensity === 'compact' ? styles.headerCompact : null]}>
                 <TouchableOpacity
@@ -450,21 +452,21 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                     onPress={primaryOnPress}
                     activeOpacity={0.8}
                 >
-                    <View style={[styles.iconContainer, timelineDensity === 'compact' ? styles.iconContainerCompact : null]}>
+                    <View {...{ dataSet: themeSurfaceDataSet('tool-row', 'icon', 'default') }} style={[styles.iconContainer, timelineDensity === 'compact' ? styles.iconContainerCompact : null, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'icon', state: 'default' })]}>
                         {icon}
                     </View>
                     <View style={styles.titleContainer}>
-                        <Text style={styles.toolName} numberOfLines={find?.reveal?.blockId && ['tool-title', 'tool-subtitle', 'tool-status'].includes(find.reveal.blockId) ? undefined : 1}>
+                        <Text {...{ dataSet: themeSurfaceDataSet('tool-row', 'title', 'default') }} style={[styles.toolName, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'title', state: 'default' })]} numberOfLines={find?.reveal?.blockId && ['tool-title', 'tool-subtitle', 'tool-status'].includes(find.reveal.blockId) ? undefined : 1}>
                             {findRanges('tool-title')?.length ? <FindHighlightedText text={toolTitle} ranges={findRanges('tool-title')} /> : toolTitle}
-                            {headerStatusText ? <Text style={styles.status}> {findRanges('tool-status')?.length ? <FindHighlightedText text={headerStatusText} ranges={findRanges('tool-status')} /> : headerStatusText}</Text> : null}
+                            {headerStatusText ? <Text {...{ dataSet: themeSurfaceDataSet('tool-row', 'detail', 'default') }} style={[styles.status, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'detail', state: 'default' })]}> {findRanges('tool-status')?.length ? <FindHighlightedText text={headerStatusText} ranges={findRanges('tool-status')} /> : headerStatusText}</Text> : null}
                             {showSubtitleInline && headerDescription ? (
-                                <Text style={styles.compactSubtitle} numberOfLines={find?.reveal?.blockId === 'tool-subtitle' ? undefined : 1}>
+                                <Text {...{ dataSet: themeSurfaceDataSet('tool-row', 'detail', 'default') }} style={[styles.compactSubtitle, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'detail', state: 'default' })]} numberOfLines={find?.reveal?.blockId === 'tool-subtitle' ? undefined : 1}>
                                     {' · '}{findRanges('tool-subtitle')?.length ? <FindHighlightedText text={headerDescription} ranges={findRanges('tool-subtitle')} /> : headerDescription}
                                 </Text>
                             ) : null}
                         </Text>
                         {!showSubtitleInline && headerDescription ? (
-                            <Text testID="tool-card-subtitle" style={styles.toolDescription} numberOfLines={find?.reveal?.blockId === 'tool-subtitle' ? undefined : 1}>
+                            <Text testID="tool-card-subtitle" {...{ dataSet: themeSurfaceDataSet('tool-row', 'detail', 'default') }} style={[styles.toolDescription, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'detail', state: 'default' })]} numberOfLines={find?.reveal?.blockId === 'tool-subtitle' ? undefined : 1}>
                                 {findRanges('tool-subtitle')?.length ? <FindHighlightedText text={headerDescription} ranges={findRanges('tool-subtitle')} /> : headerDescription}
                             </Text>
                         ) : null}

@@ -415,7 +415,7 @@ export function SessionAskRecord(props: SessionAskRecordProps) {
                 ])}
                 markdown={record.text}
                 selectable
-                profile="transcript"
+                profile="user"
                 textStyle={transcriptMarkdownTextStyle}
               />
             </UserMessageBubble>

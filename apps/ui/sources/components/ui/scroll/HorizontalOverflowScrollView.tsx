@@ -6,6 +6,7 @@ import { HappierTextSelectabilityScope } from '@happier-dev/plugin-ui/presentati
 type HorizontalOverflowScrollViewProps = Readonly<{
     children: React.ReactNode;
     testID?: string;
+    dataSet?: Readonly<Record<string, string>>;
     style?: StyleProp<ViewStyle>;
     contentContainerStyle?: StyleProp<ViewStyle>;
     showsHorizontalScrollIndicator?: boolean;
@@ -17,6 +18,7 @@ type HorizontalOverflowScrollViewProps = Readonly<{
 export const HorizontalOverflowScrollView = React.memo<HorizontalOverflowScrollViewProps>((props) => {
     const sharedProps: ScrollViewProps = {
         testID: props.testID,
+        ...{ dataSet: props.dataSet },
         horizontal: true,
         nestedScrollEnabled: true,
         showsHorizontalScrollIndicator: props.showsHorizontalScrollIndicator,

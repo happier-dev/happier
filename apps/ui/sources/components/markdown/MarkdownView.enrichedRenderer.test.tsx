@@ -46,6 +46,31 @@ function findFirstNode(root: ASTNode, type: ASTNode['type']): ASTNode | null {
 }
 
 describe('MarkdownView (enriched renderer)', () => {
+    it('emits user text on the actual selectable Find fallback leaves', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const screen = await renderScreen(<MarkdownView markdown={'# Heading\n\nA searchable prompt\n\n- one\n\n1. two'} profile="user" findActive />);
+        const text = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'user-bubble');
+        expect(text).toHaveLength(4);
+        for (const node of text) {
+            expect(node.props.dataSet).toEqual({ surface: 'user-bubble', part: 'text', state: 'default' });
+            expect(node.props.selectable).toBe(true);
+        }
+    });
+
+    it('emits isolated assistant and user surfaces from explicit transcript roles', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+        const user = await renderScreen(<MarkdownView markdown="A person’s prompt" profile="user" />);
+        expect(user.findByType('EnrichedMarkdownText').props).toMatchObject({
+            'data-surface': 'user-bubble', 'data-part': 'text', 'data-state': 'default',
+        });
+        expect(user.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'assistant-text')).toHaveLength(0);
+        const assistant = await renderScreen(<MarkdownView markdown="An assistant reply" profile="assistant" />);
+        const root = assistant.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'assistant-text');
+        expect(root.map(node => node.props.dataSet)).toEqual([{ surface: 'assistant-text', part: 'root', state: 'default' }]);
+        const document = await renderScreen(<MarkdownView markdown="A settings document" profile="document" />);
+        expect(document.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'assistant-text')).toHaveLength(0);
+    });
+
     it('resolves themed web stylesheet text metrics and ink before flattening style arrays', async () => {
         const { MarkdownView } = await import('./MarkdownView');
         const { useUnistyles } = await import('react-native-unistyles');

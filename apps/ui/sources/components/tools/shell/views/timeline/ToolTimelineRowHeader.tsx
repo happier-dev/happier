@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -107,7 +109,8 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
         <>
         <View
             testID={TOOL_TIMELINE_ROW_HOVER_HOST_TEST_ID}
-            style={styles.container}
+            {...{ dataSet: themeSurfaceDataSet('tool-row', 'root', 'default') }}
+            style={[styles.container, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'root', state: 'default' })]}
             onPointerEnter={trackHoverState ? hoverProps.onPointerEnter : undefined}
             onPointerMove={trackHoverState ? hoverProps.onPointerMove : undefined}
             onPointerLeave={trackHoverState ? hoverProps.onPointerLeave : undefined}
@@ -122,7 +125,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                     pressed && styles.rowPressed,
                 ]}
             >
-                <View style={styles.icon}>
+                <View {...{ dataSet: themeSurfaceDataSet('tool-row', 'icon', 'default') }} style={[styles.icon, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'icon', state: 'default' })]}>
                     {disclosure?.behavior === 'persistent' && disclosureChevronName ? (
                         <Icon name={disclosureChevronName} size={chevronSize} color={theme.colors.text.secondary} />
                     ) : hoverEnabled && disclosureChevronName ? (
@@ -155,18 +158,19 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                 </View>
                 <View style={[styles.text, props.subtitleWraps ? styles.textWrapping : null]}>
                     <Text
-                        style={[styles.title, props.density === 'compact' ? styles.titleCompact : null]}
+                        {...{ dataSet: themeSurfaceDataSet('tool-row', 'title', 'default') }}
+                        style={[styles.title, props.density === 'compact' ? styles.titleCompact : null, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'title', state: 'default' })]}
                         numberOfLines={props.findRevealBlockId === 'tool-title' ? undefined : 1}
                     >
                         {findRanges('tool-title')?.length ? <FindHighlightedText text={props.title} ranges={findRanges('tool-title')} /> : props.title}
                     </Text>
                     {showSubtitleInline ? (
-                        <Text style={styles.subtitleInline} numberOfLines={props.findRevealBlockId === 'tool-subtitle' ? undefined : props.subtitleWraps ? 3 : 1}>
+                        <Text {...{ dataSet: themeSurfaceDataSet('tool-row', 'detail', 'default') }} style={[styles.subtitleInline, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'detail', state: 'default' })]} numberOfLines={props.findRevealBlockId === 'tool-subtitle' ? undefined : props.subtitleWraps ? 3 : 1}>
                             {findRanges('tool-subtitle')?.length ? <FindHighlightedText text={props.subtitle!} ranges={findRanges('tool-subtitle')} /> : props.subtitle}
                         </Text>
                     ) : null}
                     {showStatusInline ? (
-                        <Text style={styles.statusInline} numberOfLines={props.findRevealBlockId === 'tool-status' ? undefined : 1}>
+                        <Text {...{ dataSet: themeSurfaceDataSet('tool-row', 'detail', 'default') }} style={[styles.statusInline, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'detail', state: 'default' })]} numberOfLines={props.findRevealBlockId === 'tool-status' ? undefined : 1}>
                             {' · '}{findRanges('tool-status')?.length ? <FindHighlightedText text={props.statusText!} ranges={findRanges('tool-status')} /> : props.statusText}
                         </Text>
                     ) : null}

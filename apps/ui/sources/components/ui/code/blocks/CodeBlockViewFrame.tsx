@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
@@ -74,7 +76,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     ) : null;
 
     const header = shouldRenderHeaderRow ? (
-        <View style={styles.headerRow}>
+        <View {...{ dataSet: themeSurfaceDataSet('code-block', 'header', 'default') }} style={[styles.headerRow, themeSurfaceStyles.surface({ surface: 'code-block', part: 'header', state: 'default' })]}>
             <View style={styles.headerLeft}>
                 {headerLeft ? (
                     headerLeft
@@ -96,27 +98,29 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     return (
         <View
             // Selection sources (Ask about a transcript code block) find the block they sit in.
-            {...(Platform.OS === 'web' ? { dataSet: { happierCodeBlock: 'true' } } : {})}
+            {...{ dataSet: { ...themeSurfaceDataSet('code-block', 'root', 'default'), ...(Platform.OS === 'web' ? { happierCodeBlock: 'true' } : {}) } }}
             style={[
                 styles.container,
                 showCopyButton && shouldOverlayCopyButton ? styles.containerWithOverlaidCopy : null,
                 // Working content: solid it is its own fill; over glass content the material's inner translucent fill, never the cleared page plane.
                 { backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors), borderColor: theme.colors.border.default },
                 containerStyle,
+                themeSurfaceStyles.surface({ surface: 'code-block', part: 'root', state: 'default' }),
             ]}
         >
             {header}
             {shouldOverlayCopyButton ? copyButton : null}
             {wrap ? (
-                <View style={[contentPaddingStyle, besideOverlaidCopy]}>
+                <View {...{ dataSet: themeSurfaceDataSet('code-block', 'body', 'default') }} style={[contentPaddingStyle, besideOverlaidCopy, themeSurfaceStyles.surface({ surface: 'code-block', part: 'body', state: 'default' })]}>
                     {children}
                 </View>
             ) : (
                 <HorizontalOverflowScrollView
+                    dataSet={themeSurfaceDataSet('code-block', 'body', 'default')}
                     keepNativeTextSelection={!showCopyButton}
                     testID={scrollTestID}
                     showsHorizontalScrollIndicator={false}
-                    style={[styles.scroll, besideOverlaidCopy]}
+                    style={[styles.scroll, besideOverlaidCopy, themeSurfaceStyles.surface({ surface: 'code-block', part: 'body', state: 'default' })]}
                     contentContainerStyle={contentPaddingStyle}
                 >
                     {children}

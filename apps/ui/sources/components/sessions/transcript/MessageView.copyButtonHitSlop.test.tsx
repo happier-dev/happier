@@ -231,7 +231,7 @@ describe('MessageView (native inline action targets)', () => {
 
             const markdownView = screen.findByType('MarkdownView' as any);
             expect(markdownView.props.selectable).toBe(expectedSelectable);
-            expect(markdownView.props.profile).toBe('transcript');
+            expect(markdownView.props.profile).toBe('user');
             expect(markdownView.props.textStyle).toMatchObject({
                 fontSize: 16,
                 lineHeight: 24,

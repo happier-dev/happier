@@ -12,7 +12,10 @@ const text = { kind: 'text' } as const;
 export const THEME_SURFACE_REGISTRY = {
   sidebar: { parts: { root: view, header: view, row: view, footer: view }, states: ['default'] },
   'session-row': { parts: { root: view, title: text, meta: text, status: text }, states: ['default', 'selected'] },
-  'user-bubble': { parts: { root: view }, states: ['default'] },
+  'user-bubble': { parts: { root: view, text }, states: ['default'] },
+  'assistant-text': { parts: { root: view }, states: ['default'] },
+  'code-block': { parts: { root: view, header: view, body: view }, states: ['default'] },
+  'tool-row': { parts: { root: view, icon: view, title: text, detail: text }, states: ['default'] },
   composer: { parts: { root: view, input: view, toolbar: view, send: view }, states: ['default', 'disabled'] },
   'chat-header': { parts: { root: view, title: text, facts: view }, states: ['default'] },
   'tab-bar': { parts: { root: view, tab: view, label: text, icon: view }, states: ['default', 'disabled', 'selected'] },

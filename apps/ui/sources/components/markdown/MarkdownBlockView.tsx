@@ -1,5 +1,7 @@
 import type { MarkdownBlock, MarkdownSpan, MarkdownTableAlignment } from './parseMarkdown';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import type { StyleProp, TextStyle } from 'react-native';
 import { Pressable, View, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -88,15 +90,15 @@ function areMarkdownBlockViewPropsEqual(prev: MarkdownBlockViewProps, next: Mark
 export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
     const block = props.block;
     if (block.type === 'text') {
-        return <RenderTextBlock spans={block.content} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
+        return <RenderTextBlock profile={props.profile} spans={block.content} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
     } else if (block.type === 'header') {
-        return <RenderHeaderBlock level={block.level} spans={block.content} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
+        return <RenderHeaderBlock profile={props.profile} level={block.level} spans={block.content} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
     } else if (block.type === 'horizontal-rule') {
         return <View style={style.horizontalRule} />;
     } else if (block.type === 'list') {
-        return <RenderListBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
+        return <RenderListBlock profile={props.profile} items={block.items} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
     } else if (block.type === 'numbered-list') {
-        return <RenderNumberedListBlock items={block.items} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
+        return <RenderNumberedListBlock profile={props.profile} items={block.items} first={props.first} last={props.last} selectable={props.selectable} onLinkPress={props.onLinkPress} textStyle={props.textStyle} variant={props.variant} streamingReveal={props.streamingReveal} streamingRevealPreset={props.streamingRevealPreset} />;
     } else if (block.type === 'code-block') {
         const content = projectInlineReferenceLabelsV1(block.content);
         const findRanges = content !== block.content && props.findRanges
@@ -119,10 +121,12 @@ export const MarkdownBlockView = React.memo((props: MarkdownBlockViewProps) => {
     return null;
 }, areMarkdownBlockViewPropsEqual);
 
-function RenderTextBlock(props: { spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
-    const baseStyle = [style.text, props.textStyle];
+function RenderTextBlock(props: { spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', profile: MarkdownRenderingProfile, streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
+    const userText = props.profile === 'user' ? themeSurfaceDataSet('user-bubble', 'text', 'default') : undefined;
+    const userTextStyle = userText ? themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' }) : undefined;
+    const baseStyle = [style.text, props.textStyle, userTextStyle];
     return (
-        <Text selectable={props.selectable} style={[...baseStyle, props.first && style.first, props.last && style.last]}>
+        <Text {...{ dataSet: userText }} selectable={props.selectable} style={[...baseStyle, props.first && style.first, props.last && style.last]}>
             <MarkdownSpansView
                 spans={props.spans}
                 baseStyle={baseStyle}
@@ -137,11 +141,13 @@ function RenderTextBlock(props: { spans: MarkdownSpan[], first: boolean, last: b
     );
 }
 
-function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
+function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', profile: MarkdownRenderingProfile, streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
+    const userText = props.profile === 'user' ? themeSurfaceDataSet('user-bubble', 'text', 'default') : undefined;
+    const userTextStyle = userText ? themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' }) : undefined;
     const s = resolveMarkdownHeaderStyle(props.level);
-    const headerStyle = [style.header, s, props.textStyle, props.first && style.first, props.last && style.last];
+    const headerStyle = [style.header, s, props.textStyle, props.first && style.first, props.last && style.last, userTextStyle];
     return (
-        <Text selectable={props.selectable} style={headerStyle}>
+        <Text {...{ dataSet: userText }} selectable={props.selectable} style={headerStyle}>
             <MarkdownSpansView
                 spans={props.spans}
                 baseStyle={headerStyle}
@@ -156,15 +162,17 @@ function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: Markdow
     );
 }
 
-function RenderListBlock(props: { items: { depth: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
-    const listStyle = [style.text, style.listText, props.textStyle];
+function RenderListBlock(props: { items: { depth: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', profile: MarkdownRenderingProfile, streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
+    const userText = props.profile === 'user' ? themeSurfaceDataSet('user-bubble', 'text', 'default') : undefined;
+    const userTextStyle = userText ? themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' }) : undefined;
+    const listStyle = [style.text, style.listText, props.textStyle, userTextStyle];
     return (
         <View style={[style.listContainer, props.first && style.first, props.last && style.last]}>
             {props.items.map((item, index) => (
                 <View testID="markdown-list-item-row" style={[style.listRow, { paddingLeft: item.depth * 20 }]} key={index}>
                     <Text selectable={props.selectable} testID="markdown-list-item-marker" style={style.listMarker}>•</Text>
                     <View style={style.listContent}>
-                        <Text selectable={props.selectable} style={listStyle}>
+                        <Text {...{ dataSet: userText }} selectable={props.selectable} style={listStyle}>
                             <MarkdownSpansView
                                 spans={item.spans}
                                 baseStyle={listStyle}
@@ -183,15 +191,17 @@ function RenderListBlock(props: { items: { depth: number, spans: MarkdownSpan[] 
     );
 }
 
-function RenderNumberedListBlock(props: { items: { depth: number, number: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
-    const listStyle = [style.text, style.listText, props.textStyle];
+function RenderNumberedListBlock(props: { items: { depth: number, number: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, onLinkPress?: (url: string) => boolean | void, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking', profile: MarkdownRenderingProfile, streamingReveal: boolean, streamingRevealPreset?: StreamingTextRevealPreset }) {
+    const userText = props.profile === 'user' ? themeSurfaceDataSet('user-bubble', 'text', 'default') : undefined;
+    const userTextStyle = userText ? themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' }) : undefined;
+    const listStyle = [style.text, style.listText, props.textStyle, userTextStyle];
     return (
         <View style={[style.listContainer, props.first && style.first, props.last && style.last]}>
             {props.items.map((item, index) => (
                 <View testID="markdown-list-item-row" style={[style.listRow, { paddingLeft: item.depth * 20 }]} key={index}>
                     <Text selectable={props.selectable} testID="markdown-list-item-marker" style={style.numberedListMarker}>{item.number.toString()}.</Text>
                     <View style={style.listContent}>
-                        <Text selectable={props.selectable} style={listStyle}>
+                        <Text {...{ dataSet: userText }} selectable={props.selectable} style={listStyle}>
                             <MarkdownSpansView
                                 spans={item.spans}
                                 baseStyle={listStyle}

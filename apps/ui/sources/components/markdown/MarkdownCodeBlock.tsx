@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -93,8 +95,8 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
     if (!canRenderDiff || props.findRanges?.length || files.length === 0) return codeView;
 
     return (
-        <View>
-            <View style={styles.toggleRow}>
+        <View {...(effectiveMode === 'diff' ? { dataSet: themeSurfaceDataSet('code-block', 'root', 'default') } : {})} style={effectiveMode === 'diff' ? themeSurfaceStyles.surface({ surface: 'code-block', part: 'root', state: 'default' }) : undefined}>
+            <View {...{ dataSet: themeSurfaceDataSet('code-block', 'header', 'default') }} style={[styles.toggleRow, themeSurfaceStyles.surface({ surface: 'code-block', part: 'header', state: 'default' })]}>
                 <Pressable
                     testID="markdown-code-block-toggle:diff"
                     accessibilityRole="button"
@@ -118,6 +120,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
             </View>
 
             {effectiveMode === 'diff' ? (
+                <View {...{ dataSet: themeSurfaceDataSet('code-block', 'body', 'default') }} style={themeSurfaceStyles.surface({ surface: 'code-block', part: 'body', state: 'default' })}>
                 <DiffFilesListView
                     files={files}
                     expandedKeys={expandedKeys}
@@ -129,6 +132,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
                     virtualizeFileList={virtualizeFileList}
                     virtualizedListLayout="intrinsic"
                 />
+                </View>
             ) : codeView}
         </View>
     );

@@ -104,6 +104,14 @@ describe('ToolTimelineRowHeader', () => {
         ioniconPropsState.length = 0;
     });
 
+    it('emits the tool surface on the real header, icon, title and visible detail leaves', async () => {
+        const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
+        const screen = await renderScreen(<ToolTimelineRowHeader density="comfortable" icon="tool" title="Read" subtitle="src/file.ts" />);
+        const parts = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'tool-row');
+        expect(parts.map(node => node.props.dataSet.part).sort()).toEqual(['detail', 'icon', 'root', 'title']);
+        for (const node of parts) expect(node.props.dataSet.state).toBe('default');
+    });
+
     it('shows an open action button with open-outline icon when canOpen is true', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
         const callOrder: string[] = [];

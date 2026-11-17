@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import { isAssistantMarkdownProfile } from './MarkdownRenderingProfile';
 import type { StyleProp, TextStyle } from 'react-native';
 import { Platform, View } from 'react-native';
 
@@ -158,7 +161,7 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
     return (
         <MarkdownSourceMarkKindContext.Provider value={props.sourceMarkKind}>
         <MarkdownWorkspaceFileLinksContext.Provider value={imagesEnabled}>
-        <View testID={props.testID} style={styles.root}>
+        <View testID={props.testID} {...(isAssistantMarkdownProfile(props.profile) ? { dataSet: themeSurfaceDataSet('assistant-text', 'root', 'default') } : {})} style={[styles.root, isAssistantMarkdownProfile(props.profile) ? themeSurfaceStyles.surface({ surface: 'assistant-text', part: 'root', state: 'default' }) : undefined]}>
             <View
                 ref={contentRef}
                 testID="markdown-static-render-content"

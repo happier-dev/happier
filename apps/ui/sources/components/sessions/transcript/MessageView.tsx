@@ -1211,7 +1211,7 @@ function UserTextBlock(props: {
                 codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={renderedMarkdownText}
                 findActive={findActive} findSourceRanges={findSourceRanges} renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
                 onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress}
-                selectable profile="transcript" textStyle={styles.transcriptMarkdownText} inlineReferences={inlineReferences} />
+                selectable profile="user" textStyle={styles.transcriptMarkdownText} inlineReferences={inlineReferences} />
             {inlineComposition ? null : bubblePictures}
             {nonImageAttachments.length > 0 ? (
               <AttachmentsMessageRow
@@ -1756,7 +1756,7 @@ function AgentTextBlock(props: {
                     onOptionLongPress={handleOptionLongPress}
                     onLinkPress={handleMarkdownLinkPress}
                     selectable={true}
-                    profile="transcript"
+                    profile="assistant"
                     textStyle={styles.transcriptMarkdownText}
                   />
                 </PeerMessageRow>
@@ -1771,7 +1771,7 @@ function AgentTextBlock(props: {
                       onOptionLongPress={handleOptionLongPress}
                       onLinkPress={handleMarkdownLinkPress}
                       selectable={true}
-                      profile="transcript"
+                      profile="assistant"
                       textStyle={styles.transcriptMarkdownText}
                       streamingMode="streaming"
                       streamingAnimated={streamingRevealAnimationEnabled}
@@ -1796,7 +1796,7 @@ function AgentTextBlock(props: {
                       onOptionLongPress={handleOptionLongPress}
                       onLinkPress={handleMarkdownLinkPress}
                       selectable={true}
-                      profile={props.message.isThinking ? 'thinking' : 'transcript'}
+                      profile={props.message.isThinking ? 'thinking' : 'assistant'}
                       textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
                       staticRenderPlaceholderEnabled={staticRenderPlaceholderEnabled}
                   />

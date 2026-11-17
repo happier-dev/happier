@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { INLINE_REFERENCE_HREF_PREFIX_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -183,7 +185,9 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
     const runtimeStatus = useEnrichedMarkdownRuntimeStatus();
     const styleBundle = useEnrichedMarkdownStyle({
         profile: props.profile,
-        textStyle: props.textStyle,
+        textStyle: props.profile === 'user'
+            ? [props.textStyle, themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' })]
+            : props.textStyle,
     });
 
     const inlineReferences = props.inlineReferences;
@@ -258,10 +262,12 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
     useWebRevealStyleInsertion({ enabled: props.profile === 'widget', injectStyle: injectEnrichedWidgetStyle });
 
     const platformProps = React.useMemo<Record<string, unknown>>(() => {
+        const userTextDataSet = props.profile === 'user' ? themeSurfaceDataSet('user-bubble', 'text', 'default') : null;
         if (Platform.OS === 'web') {
             const webProps: Record<string, unknown> = {
                 'data-testid': props.testID,
                 'data-happier-enriched-markdown-profile': props.profile,
+                ...(userTextDataSet ? { 'data-surface': userTextDataSet.surface, 'data-part': userTextDataSet.part, 'data-state': userTextDataSet.state } : {}),
             };
             if (sanitized.references.size > 0) webProps['data-happier-md-refs'] = referenceScope;
             if (props.streamingAnimated) {
@@ -282,6 +288,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
 
         return {
             testID: props.testID,
+            ...(props.profile === 'user' ? { dataSet: themeSurfaceDataSet('user-bubble', 'text', 'default') } : {}),
             enableLinkPreview: false,
             allowFontScaling: true,
             streamingAnimation: props.streamingAnimated && flavor === 'commonmark',
@@ -293,7 +300,9 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             ? { ...styleBundle.containerStyle, width: undefined }
             : styleBundle.containerStyle;
         if (Platform.OS !== 'web') {
-            return baseContainerStyle;
+            return props.profile === 'user'
+                ? [baseContainerStyle, themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' })]
+                : baseContainerStyle;
         }
 
         return ({

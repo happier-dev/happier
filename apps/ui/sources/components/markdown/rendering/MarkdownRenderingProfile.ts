@@ -2,7 +2,11 @@
  * `document`: Markdown placed in interface chrome (a plugin's detail step or body), read at the interface
  * reading size with headings that never outrank the step that holds them.
  */
-export type MarkdownRenderingProfile = 'default' | 'transcript' | 'thinking' | 'widget' | 'document';
+export type MarkdownRenderingProfile = 'default' | 'transcript' | 'assistant' | 'user' | 'thinking' | 'widget' | 'document';
+
+export function isAssistantMarkdownProfile(profile: MarkdownRenderingProfile): boolean {
+    return profile === 'assistant' || profile === 'thinking';
+}
 
 export function normalizeMarkdownRenderingProfile(params: Readonly<{
     profile?: MarkdownRenderingProfile;

@@ -62,9 +62,40 @@ function copyPlacementStyle(tree: renderer.ReactTestRenderer): Record<string, un
 describe('CodeBlockViewFrame', () => {
     beforeEach(() => {
         vi.resetModules();
+        vi.doMock('react-native-unistyles', async () => {
+            const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+            return createUnistylesMock();
+        });
         installBrowserClipboardBoundary(async text => {
             if (!await setStringAsyncSpy(text)) throw new DOMException('', 'NotAllowedError');
         });
+    });
+
+    it.each([true, false])('emits code surface parts and applies prepared native styles with wrap=%s', async (wrap) => {
+        mockPlatform('ios');
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        const { prepareThemeCss } = await import('@/theme/css/prepareThemeCss');
+        const surfaces = prepareThemeCss([
+                '[data-surface="code-block"] { border-radius: 31px; }',
+                '[data-surface="code-block"][data-part="header"] { padding-top: 17px; }',
+                '[data-surface="code-block"][data-part="body"] { padding-bottom: 23px; }',
+            ].join('\n')).light;
+        vi.doMock('react-native-unistyles', () => createUnistylesMock({ theme: { surfaces } }));
+        const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
+        const screen = await renderScreen(<CodeBlockViewFrame code="const ready = true;" language="ts" wrap={wrap}>
+            <React.Fragment>code</React.Fragment>
+        </CodeBlockViewFrame>);
+        const parts = findAllHostTestInstances(screen.tree.root, node => node.props.dataSet?.surface === 'code-block');
+        expect(parts.map(node => node.props.dataSet.part).sort()).toEqual(['body', 'header', 'root']);
+        for (const node of parts) expect(node.props.dataSet.state).toBe('default');
+        const partStyle = (part: string) => flattenViewStyle(parts.find(node => node.props.dataSet.part === part)?.props.style);
+        expect(partStyle('root')).toMatchObject({
+            borderTopLeftRadius: 31, borderTopRightRadius: 31,
+            borderBottomLeftRadius: 31, borderBottomRightRadius: 31,
+        });
+        expect(partStyle('header').paddingTop).toBe(17);
+        expect(partStyle('body').paddingBottom).toBe(23);
+        await screen.unmount();
     });
 
     it('uses the platform ScrollView on Android so horizontal code drags share native nested scrolling with the transcript list', async () => {

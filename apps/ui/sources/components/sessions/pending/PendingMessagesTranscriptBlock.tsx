@@ -1,5 +1,7 @@
 import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
@@ -870,11 +872,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <TranscriptEventRow event={{ type: 'message', message: text }}
                                         messageId={message.id} sessionId={props.sessionId} serverId={props.serverId} createdAt={message.createdAt} />
                                 ) : isExpanded ? (
-                                    <MarkdownView markdown={text} textStyle={styles.transcriptMarkdownText} />
+                                    <MarkdownView markdown={text} profile="user" textStyle={styles.transcriptMarkdownText} />
                                 ) : (
                                     <Text
                                         numberOfLines={collapsedLines}
-                                        style={[styles.collapsedPlainText, { color: theme.colors.text.primary }]}
+                                        {...{ dataSet: themeSurfaceDataSet('user-bubble', 'text', 'default') }}
+                                        style={[styles.collapsedPlainText, { color: theme.colors.text.primary }, themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'text', state: 'default' })]}
                                     >
                                         {text}
                                     </Text>
