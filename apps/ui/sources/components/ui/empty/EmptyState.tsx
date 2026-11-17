@@ -27,6 +27,7 @@ import { useIsInsideItemSection } from '@/components/ui/lists/sectionLeadingColu
 import { SceneArt } from '@/components/ui/surfaces/SceneArt';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 
 /** The one thing to do about an empty page: create the first item, connect, sign in. */
@@ -161,6 +162,8 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
     // unless a section (`ItemGroup`) around it already sits in that column.
     const inSection = useIsInsideItemSection();
     const inPageColumn = useListPresentation() === 'page' && !inSection;
+    // A phone page stretches its ways forward to the column, as every phone state does (the phone size step).
+    const phone = useDeviceType() === 'phone';
 
     if (props.layout === 'line') {
         // In a list line the ways forward are quiet inline links, never buttons: the rows around it
@@ -292,7 +295,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
             testID={frame || page ? undefined : props.testID}
             actionTestID={props.actionTestID}
             action={promptContent ?? actionContent}
-            size={page ? undefined : props.size}
+            size={page ? phone ? 'phone' : undefined : props.size}
         >
             <CenteredInfoTile
                 size={page ? undefined : props.size}

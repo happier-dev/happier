@@ -276,11 +276,12 @@ function webMaterialFadeLayers(frame: HTMLElement): Element[] {
 }
 
 /**
- * The elevation a leaving material frame drops: a card's shadow is drawn on an ancestor of its paint (the
- * paint clips, so the shadow cannot move onto it). It fades by the shadow itself, never by opacity, so no
- * shadow is left standing where the card was while the blur keeps its backdrop.
+ * The elevation and edge a leaving material frame drops: a card's shadow and its clipping border are drawn on
+ * ancestors of its paint (the paint clips, so neither can move onto it). They fade by the shadow and the
+ * border colour themselves, never by opacity, so no shadow or empty rim is left standing where the card was
+ * while the blur keeps its backdrop (MACH-SANDBOX-DESIGN-ACCEPT r2 `add-close-ghost-rim`).
  */
-function webMaterialShadowLayers(frame: HTMLElement): Element[] {
+function webMaterialEdgeLayers(frame: HTMLElement): [Element, MaterialFadeProperty[]][] {
     const ancestors = new Set<Element>();
     for (const paint of Array.from(frame.querySelectorAll(GLASS_BACKDROP_SELECTOR))) {
         for (let node = paint.parentElement; node; node = node.parentElement) {
@@ -288,10 +289,19 @@ function webMaterialShadowLayers(frame: HTMLElement): Element[] {
             if (node === frame) break;
         }
     }
-    return Array.from(ancestors).filter(element => { const shadow = getComputedStyle(element).boxShadow; return shadow !== '' && shadow !== 'none'; });
+    return Array.from(ancestors).flatMap((element): [Element, MaterialFadeProperty[]][] => {
+        const style = getComputedStyle(element);
+        const properties: MaterialFadeProperty[] = [];
+        if (style.boxShadow !== '' && style.boxShadow !== 'none') properties.push('boxShadow');
+        if ([style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
+            .some(width => parseFloat(width) > 0)) properties.push('borderColor');
+        return properties.length ? [[element, properties]] : [];
+    });
 }
 
-type MaterialFade = Readonly<{ animation: Animation; property: 'opacity' | 'boxShadow' }>;
+type MaterialFadeProperty = 'opacity' | 'boxShadow' | 'borderColor';
+type MaterialFade = Readonly<{ animation: Animation; properties: readonly MaterialFadeProperty[] }>;
+const MATERIAL_FADE_GONE: Readonly<Record<MaterialFadeProperty, string | number>> = { opacity: 0, boxShadow: 'none', borderColor: 'transparent' };
 
 type WebContentMotionTarget = {
     animation: Animation | null;
@@ -375,26 +385,27 @@ function useWebOverlayContentMotion(params: Readonly<{
  * holds until the overlay unmounts. Opening again mid-way fades back from where each layer is.
  */
 function fadeMaterialLayers(frame: HTMLElement, fades: Map<Element, MaterialFade>, visible: boolean, duration: number): void {
-    const layers: [Element, MaterialFade['property']][] = visible
-        ? Array.from(fades, ([layer, fade]) => [layer, fade.property])
+    const layers: [Element, readonly MaterialFadeProperty[]][] = visible
+        ? Array.from(fades, ([layer, fade]) => [layer, fade.properties])
         : [
-            ...webMaterialFadeLayers(frame).map(layer => [layer, 'opacity'] as [Element, MaterialFade['property']]),
-            ...webMaterialShadowLayers(frame).map(layer => [layer, 'boxShadow'] as [Element, MaterialFade['property']]),
+            ...webMaterialFadeLayers(frame).map(layer => [layer, ['opacity']] as [Element, MaterialFadeProperty[]]),
+            ...webMaterialEdgeLayers(frame),
         ];
-    for (const [layer, property] of layers) {
+    for (const [layer, properties] of layers) {
         const previous = fades.get(layer);
-        const current = previous?.animation.playState === 'running' ? getComputedStyle(layer)[property] : null;
+        const computed = previous?.animation.playState === 'running' ? getComputedStyle(layer) : null;
+        const current = computed ? Object.fromEntries(properties.map(property => [property, computed[property]])) : null;
         previous?.animation.cancel();
         fades.delete(layer);
         if (duration <= 0 || typeof layer.animate !== 'function') continue;
         if (visible) {
             // A finished fade only needs cancelling; a running one turns around from where it is.
-            if (current !== null) fades.set(layer, { property, animation: layer.animate([{ [property]: current, offset: 0 }], { duration, easing: motionTokens.easingCss.standard }) });
+            if (current !== null) fades.set(layer, { properties, animation: layer.animate([{ ...current, offset: 0 }], { duration, easing: motionTokens.easingCss.standard }) });
             continue;
         }
-        const gone = property === 'opacity' ? 0 : 'none';
-        const leave: Keyframe[] = current === null ? [{ [property]: gone, offset: 1 }] : [{ [property]: current }, { [property]: gone }];
-        fades.set(layer, { property, animation: layer.animate(leave, { duration, easing: motionTokens.easingCss.exit, fill: 'forwards' }) });
+        const gone = Object.fromEntries(properties.map(property => [property, MATERIAL_FADE_GONE[property]]));
+        const leave: Keyframe[] = current === null ? [{ ...gone, offset: 1 }] : [current, gone];
+        fades.set(layer, { properties, animation: layer.animate(leave, { duration, easing: motionTokens.easingCss.exit, fill: 'forwards' }) });
     }
 }
 

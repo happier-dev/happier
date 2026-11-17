@@ -38,6 +38,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             deleteBilled: ({ duration }: { duration: string }) => `Dopo ${duration} senza nulla in esecuzione, la macchina e il suo disco vengono eliminati. La fatturazione si ferma.`,
             deleteAt: ({ time }: { time: string }) => `Alle ${time}, la macchina e il suo disco vengono eliminati.`,
             deleteAtBilled: ({ time }: { time: string }) => `Alle ${time}, la macchina e il suo disco vengono eliminati. La fatturazione si ferma.`,
+            deleteOnEnd: "Allora la macchina e il suo disco vengono eliminati.",
+            deleteOnEndBilled: "Allora la macchina e il suo disco vengono eliminati e la fatturazione si ferma.",
         },
         whenUnused: "Quando inutilizzata",
         waitsForProvider: ({ provider }: { provider: string }) => `Modificabile quando ${provider} risponde`,

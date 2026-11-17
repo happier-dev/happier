@@ -7,6 +7,8 @@ import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { describeManagedPresetOffer, presentManagedPresetCost, type ManagedConfigurationReceiptInput } from './managedConfigurationPresentation';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { describeArchiveChoiceConsequence } from './managedRetentionPresentation';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
@@ -364,6 +366,30 @@ export function ManagedPresetCost(props: Readonly<{
             {cost.detail ? <Text variant="meta" numberOfLines={1} style={presetCostStyles.detail}>{cost.detail}</Text> : null}
         </View>
     );
+}
+
+/**
+ * What the chosen end of a new machine (Keep, Stop or Delete) means for its bill, under that choice (T3 R3). The
+ * provider is named through the mark's own identity read; the billing facts are the reviewed receipt's, else the
+ * provisioner's declaration. Without either, it says nothing rather than a guess.
+ */
+export function ManagedArchiveChoiceConsequence(props: Readonly<{
+    serverId: string;
+    preset: ManagedPresetMarkSource;
+    billing?: ManagedConfigurationFactsV1['billing'];
+    choice: 'keep' | 'stop' | 'delete';
+    style?: React.ComponentProps<typeof Text>['style'];
+    testID?: string;
+}>) {
+    const { theme } = useUnistyles();
+    const { presentation } = useManagedPresetMarkPresentation(props, 'offer');
+    const billing = props.billing ?? presentation.billing;
+    if (!billing || !presentation.title) return null;
+    return <Text variant="meta" style={[{ color: theme.colors.text.secondary }, props.style]} testID={props.testID}>
+        {describeArchiveChoiceConsequence(props.choice, { location: billing.location, stoppedBilling: billing.stoppedBilling,
+            provider: presentation.title, ...(billing.storageCharges ? { storageCharges: billing.storageCharges } : {}),
+            ...(presentation.kindTitle ? { kind: presentation.kindTitle } : {}) })}
+    </Text>;
 }
 
 /**

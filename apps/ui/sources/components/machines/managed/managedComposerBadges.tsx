@@ -77,6 +77,8 @@ export type ManagedProgressModel = Readonly<{
     onChange: (next: ManagedArchiveChoice) => void;
     supportedEffects?: readonly ManagedArchiveChoice[];
     availability?: ManagedMachineArchiveChoiceAvailability;
+    /** What the chosen end means for the bill (T3 R3), drawn by the provisioner presentation owner. */
+    consequence?: React.ReactNode;
   }>;
   onCancel?: () => void;
   onRetryInstall?: () => void;
@@ -226,6 +228,7 @@ export const ManagedProgressPopoverContent = React.memo(
               ]}
             />
             </View>
+            {model.archiveChoice.consequence}
           </View>
         ) : null}
         {/* The ways forward close the popover at its trailing edge, quiet first and the one bordered next step

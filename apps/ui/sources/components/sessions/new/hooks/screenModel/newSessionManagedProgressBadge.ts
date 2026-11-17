@@ -10,7 +10,7 @@ import { describeManagedActionFailureDiagnostic } from '@/components/settings/ma
 import { describeManagedInstallationFailure, isManagedCreationInterrupted, managedCreationStages } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { readMachineAddDevice } from '@/components/machines/add/useMachineAddPaths';
-import { ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
+import { ManagedArchiveChoiceConsequence, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { t } from '@/text';
 import type { NewSessionManagedMachineDraftModel } from '../newSessionScreenModelTypes';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
@@ -104,6 +104,10 @@ export function buildNewSessionManagedProgressBadge(
             value: selection.archiveEffect, onChange: draft.updateArchiveEffect,
             availability: draft.archiveChoiceAvailability ?? undefined,
             supportedEffects: draft.archiveChoiceAvailability?.supportedEffects ?? ['keep'],
+            // Each end's cost, said under the choice through the one consequence owner.
+            consequence: React.createElement(ManagedArchiveChoiceConsequence, { serverId: selection.selection.homeId,
+                preset: { controller: receipt?.controller, launch: receipt?.launch }, choice: selection.archiveEffect,
+                ...(receipt?.billing ? { billing: receipt.billing } : {}), testID: 'managed-machine-progress-archive-consequence' }),
         } : undefined,
         onCancel: draft.cancel,
         onRetryInstall: progress.kind === 'failed' && progress.retryInstallationAvailable === true

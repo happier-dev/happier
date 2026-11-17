@@ -8,6 +8,7 @@ import {
   describeRetentionConsequence,
   describeRetentionPolicy,
   describeDefaultPolicy,
+  describeArchiveChoiceConsequence,
   keepOffersWake,
 } from './managedRetentionPresentation';
 import { formatPriceUnit, formatProviderAmount } from './managedMachineDisplay';
@@ -130,5 +131,24 @@ describe('the stopped cost, said once (R6)', () => {
     expect(describeRetentionConsequence(stop, { ...facts, storageCharges: several }))
       .toBe(t('managedRetention.consequence.stopNotBilledStorage', { provider: 'Vercel', rate: from }));
     expect(describeRetentionConsequence(stop, facts)).toBe(t('managedRetention.consequence.stopNotBilled', { provider: 'Vercel' }));
+  });
+});
+
+describe('describeArchiveChoiceConsequence (T3 R3: the creation end choice says its cost)', () => {
+  const cloud = { location: 'cloud', stoppedBilling: 'not-billed', provider: 'Hetzner' } as const;
+  it('says what Keep, Stop and Delete each mean for the bill, through the one consequence owner', () => {
+    expect(describeArchiveChoiceConsequence('keep', cloud)).toBe(t('managedRetention.consequence.untilDeleteBilled'));
+    expect(describeArchiveChoiceConsequence('stop', cloud)).toBe(t('managedRetention.consequence.stopNotBilled', { provider: 'Hetzner' }));
+    expect(describeArchiveChoiceConsequence('stop', { ...cloud, stoppedBilling: 'billed' }))
+      .toBe(t('managedRetention.consequence.stopBilled', { provider: 'Hetzner' }));
+    expect(describeArchiveChoiceConsequence('delete', cloud)).toBe(t('managedRetention.consequence.deleteOnEndBilled'));
+  });
+  it('bills nobody for a local machine, and says no amount it was not told', () => {
+    const local = { location: 'local', stoppedBilling: 'not-billed', provider: 'Lima' } as const;
+    expect(describeArchiveChoiceConsequence('keep', local)).toBe(t('managedRetention.consequence.untilDelete'));
+    expect(describeArchiveChoiceConsequence('stop', local)).toBe(t('managedRetention.categoryHelp.local'));
+    expect(describeArchiveChoiceConsequence('delete', local)).toBe(t('managedRetention.consequence.deleteOnEnd'));
+    expect(describeArchiveChoiceConsequence('stop', { ...cloud, stoppedBilling: 'unknown' }))
+      .toBe(t('managedRetention.consequence.stopUnknown', { provider: 'Hetzner' }));
   });
 });

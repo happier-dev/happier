@@ -38,6 +38,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             deleteBilled: ({ duration }: { duration: string }) => `空闲 ${duration} 后，机器及其磁盘会被删除。计费随之停止。`,
             deleteAt: ({ time }: { time: string }) => `${time} 时，机器及其磁盘会被删除。`,
             deleteAtBilled: ({ time }: { time: string }) => `${time} 时，机器及其磁盘会被删除。计费随之停止。`,
+            deleteOnEnd: "届时机器及其磁盘会被删除。",
+            deleteOnEndBilled: "届时机器及其磁盘会被删除，计费随之停止。",
         },
         whenUnused: "闲置时",
         waitsForProvider: ({ provider }: { provider: string }) => `${provider} 响应后才能更改`,

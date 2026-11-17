@@ -44,6 +44,8 @@ export const managedMachinesEn = {
             deleteBilled: ({ duration }: { duration: string }) => `After ${duration} with nothing running, it and its disk are deleted. The bill stops.`,
             deleteAt: ({ time }: { time: string }) => `At ${time}, it and its disk are deleted.`,
             deleteAtBilled: ({ time }: { time: string }) => `At ${time}, it and its disk are deleted. The bill stops.`,
+            deleteOnEnd: "Then it and its disk are deleted.",
+            deleteOnEndBilled: "Then it and its disk are deleted, and the bill stops.",
         },
         whenUnused: "When unused",
         waitsForProvider: ({ provider }: { provider: string }) => `Can’t change until ${provider} answers`,

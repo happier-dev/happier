@@ -38,6 +38,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             deleteBilled: ({ duration }: { duration: string }) => `${duration} 何も実行されないと、マシンとディスクが削除されます。料金も止まります。`,
             deleteAt: ({ time }: { time: string }) => `${time} にマシンとディスクが削除されます。`,
             deleteAtBilled: ({ time }: { time: string }) => `${time} にマシンとディスクが削除されます。料金も止まります。`,
+            deleteOnEnd: "そのときマシンとディスクが削除されます。",
+            deleteOnEndBilled: "そのときマシンとディスクが削除され、料金も止まります。",
         },
         whenUnused: "未使用時",
         waitsForProvider: ({ provider }: { provider: string }) => `${provider} の応答後に変更できます`,

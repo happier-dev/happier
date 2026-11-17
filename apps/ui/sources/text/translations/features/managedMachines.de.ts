@@ -38,6 +38,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             deleteBilled: ({ duration }: { duration: string }) => `Nach ${duration}, in denen nichts läuft, werden sie und ihre Festplatte gelöscht. Die Abrechnung endet.`,
             deleteAt: ({ time }: { time: string }) => `Um ${time} werden sie und ihre Festplatte gelöscht.`,
             deleteAtBilled: ({ time }: { time: string }) => `Um ${time} werden sie und ihre Festplatte gelöscht. Die Abrechnung endet.`,
+            deleteOnEnd: "Dann werden sie und ihre Festplatte gelöscht.",
+            deleteOnEndBilled: "Dann werden sie und ihre Festplatte gelöscht, und die Abrechnung endet.",
         },
         whenUnused: "Wenn ungenutzt",
         waitsForProvider: ({ provider }: { provider: string }) => `Erst änderbar, wenn ${provider} antwortet`,

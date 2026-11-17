@@ -45,11 +45,14 @@ describe('web overlay material composition', () => {
                 <OverlayMotionFrame visible={visible} disabled={disabled} kind="popover" direction="bottom">
                     {/* A card's elevation drawn on an ancestor of its paint (ModalCardFrame, floating chrome). */}
                     <div data-testid="elevation" style={{ boxShadow: '0px 8px 24px rgba(0, 0, 0, 0.2)' }}>
+                        {/* The card's clipping edge, also an ancestor of its paint (ModalCardFrame's clip surface). */}
+                        <div data-testid="edge" style={{ border: '1px solid rgba(0, 0, 0, 0.1)' }}>
                         <GlassSurface testID="material" finishRole={null} style={{ padding: 12, gap: 8, alignItems: 'stretch' }}>
                             <input data-testid="draft" defaultValue="keep this draft" />
                             <button>Continue</button>
                             <GlassSurface finishRole={null}><button>Nested action</button></GlassSurface>
                         </GlassSurface>
+                        </div>
                     </div>
                 </OverlayMotionFrame>
             </GlassMaterialSettingsProvider>;
@@ -60,7 +63,7 @@ describe('web overlay material composition', () => {
             // There is no presented frame to animate out or material to sample yet.
             await act(async () => root.render(<Scene visible={false} disabled preset="auto" />));
             const hiddenMaterial = container.querySelector<HTMLElement>('[data-testid="material"]')!;
-            const hiddenFrame = hiddenMaterial.parentElement!.parentElement!;
+            const hiddenFrame = hiddenMaterial.parentElement!.parentElement!.parentElement!;
             expect(styleReads.mock.calls.filter(([element]) => hiddenFrame.contains(element))).toHaveLength(0);
             expect(runs).toHaveLength(0);
             await act(async () => root.render(<Scene visible preset="auto" />));
@@ -91,7 +94,13 @@ describe('web overlay material composition', () => {
             expect(shadowFades[0]!.frames.at(-1)).toMatchObject({ boxShadow: 'none' });
             expect(shadowFades[0]!.options).toMatchObject({ duration: motionTokens.overlay.popover.exitMs, fill: 'forwards' });
             expect(elevation.style.opacity).toBe('');
-            const fades = leaving.filter(run => !shadowFades.includes(run));
+            // Its clipping edge drops its colour with it: no empty rim stands where the card was (ghost rim).
+            const edge = container.querySelector<HTMLElement>('[data-testid="edge"]')!;
+            const edgeFades = leaving.filter(run => 'borderColor' in run.frames.at(-1)!);
+            expect(edgeFades.map(run => run.target)).toEqual([edge]);
+            expect(edgeFades[0]!.frames.at(-1)).toMatchObject({ borderColor: 'transparent' });
+            expect(edge.style.opacity).toBe('');
+            const fades = leaving.filter(run => !shadowFades.includes(run) && !edgeFades.includes(run));
             expect(exit!.target).toBe(frame);
             expect(exit!.frames[1]).toHaveProperty('transform', 'translate(0px, -8px) scale(0.98)');
             expect(exit!.frames[1]).not.toHaveProperty('opacity');

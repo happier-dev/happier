@@ -143,6 +143,18 @@ export function describeRetentionConsequence(
 }
 
 /**
+ * What a creation's end choice (Keep, Stop or Delete when its Session is archived or its task finishes) means for
+ * the bill, beside the choice (T3 R3). Keep and Stop are the same consequences the retention rule says; Delete
+ * happens at that end, so it says "then" rather than a duration. Amounts appear only when the provider declares them.
+ */
+export function describeArchiveChoiceConsequence(choice: 'keep' | 'stop' | 'delete', facts: RetentionConsequenceFacts): string {
+  if (choice === 'delete')
+    return facts.location === 'local' ? t('managedRetention.consequence.deleteOnEnd') : t('managedRetention.consequence.deleteOnEndBilled');
+  return describeRetentionConsequence(choice === 'keep' ? { kind: 'until-delete' }
+    : { kind: 'unused', afterMs: DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1, effect: 'stop' }, facts);
+}
+
+/**
  * Whether Keep it offers "Start it for new messages and runs" beside this rule (58d §D4): only beside a rule
  * that stops the machine. Always on never stops, and a deleted machine has nothing to start; the stored
  * wake choice is kept either way, so changing the rule back shows it as it was.

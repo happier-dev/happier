@@ -38,6 +38,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             deleteBilled: ({ duration }: { duration: string }) => `閒置 ${duration} 後，機器及其磁碟會被刪除。計費隨之停止。`,
             deleteAt: ({ time }: { time: string }) => `${time} 時，機器及其磁碟會被刪除。`,
             deleteAtBilled: ({ time }: { time: string }) => `${time} 時，機器及其磁碟會被刪除。計費隨之停止。`,
+            deleteOnEnd: "屆時機器及其磁碟會被刪除。",
+            deleteOnEndBilled: "屆時機器及其磁碟會被刪除，計費隨之停止。",
         },
         whenUnused: "閒置時",
         waitsForProvider: ({ provider }: { provider: string }) => `${provider} 回應後才能變更`,
