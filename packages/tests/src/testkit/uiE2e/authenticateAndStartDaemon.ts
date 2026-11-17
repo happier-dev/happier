@@ -10,6 +10,7 @@ import { ensurePendingTerminalConnectReadyForApproval } from './terminalConnectA
 import { waitForInitialAppUi } from './waitForInitialAppUi';
 import { createAccountAndReachConnectMachineState } from './createAccountAndReachConnectMachineState';
 import type { CliTestLaunchSpec } from '../process/cliLaunchSpec';
+import type { EnvOverrides } from '../env';
 
 export async function authenticateAndStartDaemon(params: Readonly<{
   page: Page;
@@ -25,7 +26,7 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   initialUiReadyTimeoutMs?: number;
   terminalConnectUrlTimeoutMs?: number;
   daemonStartupTimeoutMs?: number;
-  extraEnv?: NodeJS.ProcessEnv;
+  extraEnv?: EnvOverrides;
   cliLaunchSpec?: CliTestLaunchSpec;
   variant?: 'dev' | 'stable';
 }>): Promise<StartedDaemon> {

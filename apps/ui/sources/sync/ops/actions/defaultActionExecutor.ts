@@ -2421,7 +2421,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         // The Protocol executor admitted this exact action's input before entering the host port.
         return await executeVoiceHistoryAction({ actionId, input } as Parameters<typeof executeVoiceHistoryAction>[0], opts?.voiceHistory ?? {
           consumer: getDefaultVoiceHistoryConsumer(), saveExportArtifact: saveVoiceHistoryExportArtifact,
-        }, isCurrent, async sessionId => {
+        }, isCurrent, async (sessionId: string) => {
           const child = context.hostReviewedChild;
           if (!child) throw new HappyError('credential_scope_denied', false, { code: 'credential_scope_denied' });
           const result = await child.invoke({ action: 'session.delete', role: 'delete', input: { sessionId } });

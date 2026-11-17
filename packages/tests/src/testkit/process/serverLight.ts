@@ -12,6 +12,7 @@ import {
 
 import { areRequestedPrismaOutputsCurrent, type BuildDbProvider } from '../../../../../apps/server/scripts/generateClients';
 import { repoRootDir } from '../paths';
+import type { EnvOverrides } from '../env';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from './spawnProcess';
 import { terminateProcessTreeByPid } from './processTree';
 import { waitForOkHealth } from '../http';
@@ -708,7 +709,7 @@ export async function startServerLight(params: {
   testDir: string;
   /** Source-loaded process fixtures can share their caller's startup budget. */
   startupTimeoutMs?: number;
-  extraEnv?: NodeJS.ProcessEnv;
+  extraEnv?: EnvOverrides;
   dbProvider?: TestDbProvider;
   dataDirMode?: 'fresh' | 'reuse-existing';
   preserveExistingDataDir?: boolean;
