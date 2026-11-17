@@ -628,20 +628,12 @@ describe('direct transfer import session manager', () => {
         throw new Error(finalized.error);
       }
 
-      const resolvedFinalPath = resolve(
-        workingDirectory,
-        '.happier',
-        'uploads',
-        'messages',
-        'message-1',
-      );
       const finalizedPath = finalized.finalized.path;
       expect(finalizedPath).toMatch(/^\.happier\/uploads\/messages\/message-1\/[0-9a-f]{8}-hello\.txt$/);
       await expect(readFile(resolve(workingDirectory, finalizedPath), 'utf8')).resolves.toBe('hello world');
       await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toContain('/.happier/uploads/');
       expect(pathAllowanceRegistry.getAdditionalAllowedReadDirs()).toEqual([]);
       expect(pathAllowanceRegistry.getAdditionalAllowedWriteDirs()).toEqual([]);
-      expect(resolvedFinalPath).toBe(join(workingDirectory, '.happier', 'uploads', 'messages', 'message-1'));
     } finally {
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
