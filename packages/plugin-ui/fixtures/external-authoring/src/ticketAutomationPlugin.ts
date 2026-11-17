@@ -1,11 +1,12 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { PluginSubjectKindListInputV1Schema } from '@happier-dev/plugin-sdk/automations';
+import { PluginSubjectKindListInputV1Schema, type PluginSubjectKindListInputV1 } from '@happier-dev/plugin-sdk/automations';
 import { admitCheckpointedPluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
   defineProtocolObject,
   defineProtocolString,
+  defineProtocolUnion,
   type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 
@@ -31,7 +32,7 @@ const listResultSchema = defineProtocolObject({
     identity: externalTicketIdentitySchema,
     label: defineProtocolString(),
   }, { policy: 'closed' })),
-  nextCursor: defineProtocolLiteral(null),
+  nextCursor: defineProtocolUnion([defineProtocolString(), defineProtocolLiteral(null)]),
 }, { policy: 'closed' });
 
 /**
@@ -69,13 +70,15 @@ export function createExternalTicketContributions(pluginId: string) {
         readOnly: true,
         inputSchema: PluginSubjectKindListInputV1Schema,
         resultSchema: listResultSchema,
-        run: () => ({
-          items: [
+        run: (input: PluginSubjectKindListInputV1) => {
+          const matching = [
             { identity: { ticketId: EXTERNAL_TICKET_ID }, label: 'Fix the checkout' },
             { identity: { ticketId: 'ticket-2' }, label: 'Review the deployment' },
-          ],
-          nextCursor: null,
-        }),
+          ].filter(item => input.query === undefined || item.label.toLowerCase().includes(input.query.toLowerCase()));
+          const start = input.cursor === undefined ? 0 : matching.findIndex(item => item.identity.ticketId === input.cursor) + 1;
+          const items = input.limit === undefined ? matching.slice(start) : matching.slice(start, start + input.limit);
+          return { items, nextCursor: start + items.length < matching.length ? items.at(-1)!.identity.ticketId : null };
+        },
       },
       'close-ticket': {
         title: 'Close ticket',

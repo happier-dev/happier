@@ -13350,7 +13350,7 @@ Root `AGENTS.md` "Runtime core, plugin platform, and SDK seam" points here.
 The existing contribution catalog owns `subjectKinds`. Each descriptor names a
 plugin-local kind, presentation metadata, a recursively closed portable identity
 schema and an ordinary same-plugin read-only `listAction`. The list contract is
-one requested `{ query?, limit, cursor? }` page returning
+one requested `{ query?, limit?, cursor? }` page returning
 `{ items: [{ identity, label }], nextCursor }`. These are domain identities;
 packaged and dynamic Resource bytes remain in the `resources` family.
 

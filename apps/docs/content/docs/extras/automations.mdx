@@ -324,6 +324,13 @@ A timer is only one of three automatic sources that can start a Workflow.
 triggers can still run when you choose **Run now**, invoke it from the CLI, or
 admit an authorized bound conversation.
 
+In 0.3 development source, plugins can also declare their own subjects, such as
+a ticket, for Event and Action triggers. A selected plugin subject applies only
+to your own occurrences, even when its Workflow is shared. Equal resource ids
+from different plugins or Homes remain separate. Plugin authors can use the
+[subject-kind contribution](/plugins/api/actions-tools-commands#plugin-subject-identities-03-development-source)
+to supply these identities and their resource list.
+
 ### Schedule
 
 A schedule can run once at a date and time, repeat at an interval — every *n*

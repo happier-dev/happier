@@ -45,8 +45,9 @@ Each keyed descriptor supplies `label`, optional `icon`, a recursively closed
 `identitySchema`, and `listAction`, the local id of an ordinary same-plugin
 read-only Action. Use `PluginSubjectKindListInputV1Schema` and
 `PluginSubjectKindListResultV1Schema` from `@happier-dev/plugin-sdk/automations`:
-the requested page is `{ query?, limit, cursor? }` and the result is
+the requested page is `{ query?, limit?, cursor? }` and the result is
 `{ items: [{ identity, label }], nextCursor: string | null }`.
+The read Action owns pagination; Happier forwards a limit only when the caller supplies one.
 
 An effectful Action identifies its operand through its existing `approvalScope`:
 `{ kind: 'plugin', subjectKindId: 'ticket', identityField: 'ticket' }` reads the

@@ -36,7 +36,7 @@ export const PluginSubjectKindContributionV1Schema: z.ZodMiniType<PluginSubjectK
 /** The surface requests a page; the declared read Action owns its source's cursor. */
 export const PluginSubjectKindListInputV1Schema = lazyZodSchema(() => z.strictObject({
   query: z.optional(z.string()),
-  limit: z.number().check(z.int(), z.minimum(1)),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1))),
   cursor: z.optional(z.string()),
 }));
 export const PluginSubjectKindListResultV1Schema = lazyZodSchema(() => z.strictObject({
