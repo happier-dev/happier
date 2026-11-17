@@ -17,8 +17,9 @@ const observations = vi.hoisted(() => ({ directories: [] as string[], attachment
     heldRead: undefined as Readonly<{ path: string; entered(): void; resume: Promise<void> }> | undefined }));
 vi.mock('node:fs/promises', async importOriginal => {
     const actual = await importOriginal<typeof import('node:fs/promises')>();
-    return { ...actual, readFile: async (...args: Parameters<typeof actual.readFile>) => {
-        const result = await actual.readFile(...args);
+    // WorkspaceSource reads regular files through an opened handle.
+    return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
+        const result = await actual.open(...args);
         const held = observations.heldRead;
         if (held && String(args[0]) === held.path) {
             observations.heldRead = undefined;
