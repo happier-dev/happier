@@ -33,6 +33,9 @@ import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readRpcFailureCode } from './rpcFailureCode';
 import { createThemeActionExecute } from './themeActionDeps';
+import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
+import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
+import { projectThemeSurfacePaintMap } from '@/theme/css/themeSurfacePaintMap';
 import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { replayLiveCliApproval } from './liveCliApprovalReplay';
@@ -2022,6 +2025,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     })() : {}),
     ...(accountContext ? {
       themeAction: createThemeActionExecute({
+        runtime: {
+          preview: getThemeTryOnOwner(),
+          coverage: document => prepareThemeProfileCss(document.profile).coverage,
+          detailedCoverage: document => prepareThemeProfileCss(document.profile).detailedCoverage,
+          surfaceMap: (document, mode) => projectThemeSurfacePaintMap(document, mode, {
+            composerSurfaceStyle: storage.getState().settings.composerSurfaceStyle,
+          }),
+        },
         withLibrary: (operation, signal) => sync.withThemeProfileLibrary(operation,
           { expectedScope: accountContext.accountLifetime.scope, signal }),
         clientId: () => apiSocket.getSocketId(),
