@@ -9,6 +9,7 @@ import { flattenTestStyle, reportPopoverContentLayout, withPopoverWebGlobals } f
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createDeferred } from '@/dev/testkit';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
 import { PopoverPortalTargetContextProvider } from '@/components/ui/popover/PopoverPortalTarget';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
@@ -157,6 +158,30 @@ it('gives an API-key account no Sign-in section and ends its page with Remove ke
     expect(menu).toBeTruthy();
     await act(async () => { await menu!.props.onSelect('test-connection'); });
     expect(run).toHaveBeenCalledOnce();
+});
+
+it.each(['subscription', 'apiKey'] as const)('keeps a restored pending sign-in actionable once for a %s account', async (kind) => {
+    const continueSignIn = vi.fn();
+    const cancelSignIn = vi.fn();
+    const screen = await renderDetail({
+        status: 'connected',
+        ...(kind === 'apiKey' ? { accessMode: { kind: 'apiKey', keySuffix: null } as const } : {}),
+        signInFlow: <SurfaceFreshnessLine
+            testID="qualified-account-detail:sign-in-pending"
+            reason="Sign-in in progress"
+            glyph="sign-in"
+            actions={[
+                { testID: 'qualified-account-detail:sign-in-pending:continue', label: 'Continue', onPress: continueSignIn },
+                { testID: 'qualified-account-detail:sign-in-pending:cancel', label: 'Cancel', onPress: cancelSignIn },
+            ]}
+        />,
+    });
+    expect(screen.root.findAllByType(SurfaceFreshnessLine)).toHaveLength(1);
+    await screen.pressByTestIdAsync('qualified-account-detail:sign-in-pending:continue');
+    await screen.pressByTestIdAsync('qualified-account-detail:sign-in-pending:cancel');
+    expect(continueSignIn).toHaveBeenCalledOnce();
+    expect(cancelSignIn).toHaveBeenCalledOnce();
+    if (kind === 'apiKey') expect(hasTitle(screen.root, 'Sign-in')).toBe(false);
 });
 
 it('leaves usage refresh to its Usage section on a wide page (lab s2svc:account)', async () => {

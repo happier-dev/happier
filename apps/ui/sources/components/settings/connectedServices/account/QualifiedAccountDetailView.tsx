@@ -283,6 +283,9 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
     // A key has no sign-in (lab `muse-accounts` A1): Replace lives with the key and the page ends with "Remove key".
     const isKey = props.accessMode?.kind === 'apiKey';
     const hasSignInRow = Boolean(onReconnect || props.authenticationModeTitle || props.signInFlow);
+    const signInFlow = props.signInFlow ? <SectionContentRow>
+        <SurfaceFreshnessOnSheetProvider>{props.signInFlow}</SurfaceFreshnessOnSheetProvider>
+    </SectionContentRow> : null;
     const defaultControl = props.agentDefaults ? (
         <AgentDefaultMenuButton
             testID={`${testID}:default-for`}
@@ -436,7 +439,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
             {/* Lab `s2svc:account`: identity, Usage, Used by and pools, then Sign-in with where it works and the
                 machine its operations run on, configuration, sharing, and removal last. */}
             {isKey ? (
-                props.machineScopeLine ? <ItemGroup>{props.machineScopeLine}</ItemGroup> : null
+                signInFlow || props.machineScopeLine ? <ItemGroup>{signInFlow}{props.machineScopeLine}</ItemGroup> : null
             ) : <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
                     {hasSignInRow ? <Item
                         testID={`${testID}:sign-in`}
@@ -464,9 +467,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     /> : null}
                     {/* A running or waiting sign-in continues the row above it, drawn on this sheet rather than as a
                         second box inside it. */}
-                    {props.signInFlow ? <SectionContentRow>
-                        <SurfaceFreshnessOnSheetProvider>{props.signInFlow}</SurfaceFreshnessOnSheetProvider>
-                    </SectionContentRow> : null}
+                    {signInFlow}
                     {/* One row, one decision: the row names what it checks and its last result; the button is the verb. */}
                     <Item
                         testID={`${testID}:test-connection`}
