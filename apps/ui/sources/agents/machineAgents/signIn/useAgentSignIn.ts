@@ -231,6 +231,15 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
   }, [boundTarget, entry]);
   const read = React.useCallback(() => entry && boundTarget?.lifetime.isCurrent() ? entry.state : IDLE, [boundTarget, entry]);
   const state: MachineAgentSignInSession = React.useSyncExternalStore(subscribe, read, read);
+  const subscribeScope = React.useCallback((listener: () => void) => {
+    if (!entry || !boundTarget) return () => {};
+    entry.authenticationListeners.add(listener);
+    const retirement = boundTarget.lifetime.onRetire(listener);
+    return () => { retirement.dispose(); entry.authenticationListeners.delete(listener); };
+  }, [boundTarget, entry]);
+  const readScope = React.useCallback(() => entry && boundTarget?.lifetime.isCurrent()
+    ? entry.authentication?.signInScope ?? null : null, [boundTarget, entry]);
+  const signInScope = React.useSyncExternalStore(subscribeScope, readScope, readScope);
   const [now, setNow] = React.useState(Date.now);
   React.useEffect(() => {
     if (state.phase !== 'waiting' && state.phase !== 'opening') return;
@@ -279,7 +288,7 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
   }), [boundTarget, entry, executeIntent]);
   return { ...state, state, terminalId: state.terminalKey ? entry?.terminalId ?? null : null,
     available: Boolean(boundTarget?.lifetime.isCurrent()), elapsedMs: state.startedAtMs === null ? 0 : Math.max(0, now - state.startedAtMs),
-    accountLabel: entry?.accountLabel ?? null, ...actions };
+    accountLabel: entry?.accountLabel ?? null, signInScope, ...actions };
 }
 
 export type MachineCliSignInAuthentication = Omit<AgentSignInStatusResponse, 'checkedAt'>;

@@ -121,6 +121,35 @@ describe('shared Agent sign-in', () => {
       expect(boundary.rpc.mock.calls).toHaveLength(beforeHide);
     } finally { await mounted.unmount(); clearDaemonMergedProjectionCacheForTests(); }
   });
+  it('publishes daemon sign-in scope independently of login progress and retires it with the Account', async () => {
+    let scope: 'machineOwner' | 'member' | undefined = 'machineOwner';
+    boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'daemon.agents.signIn.status') return { status: 'signedOut', accountLabel: null,
+        checkedAt: Date.now(), nativeLogin: 'login_terminal', connectedServices: [],
+        ...(scope ? { signInScope: scope } : {}) };
+      throw new Error(method);
+    });
+    const { checkAgentSignInRpc } = await import('./api');
+    expect(await checkAgentSignInRpc({ serverId, machineId: 'scope-only' }, 'codex')).toMatchObject({ signInScope: 'machineOwner' });
+    const presenter = await renderHook(() => useAgentSignIn({ serverId, machineId: 'scope-only', agentId: 'codex' }));
+    try {
+      const idle = presenter.getCurrent().state;
+      expect(presenter.getCurrent()).toMatchObject({ signInScope: null });
+      await act(async () => { await presenter.getCurrent().checkAgain(); });
+      expect(presenter.getCurrent()).toMatchObject({ signInScope: 'machineOwner' });
+      scope = 'member';
+      await act(async () => { await presenter.getCurrent().checkAgain(); });
+      expect(presenter.getCurrent()).toMatchObject({ signInScope: 'member' });
+      expect(presenter.getCurrent().state).toBe(idle);
+      scope = undefined;
+      await act(async () => { await presenter.getCurrent().checkAgain(); });
+      expect(presenter.getCurrent()).toMatchObject({ signInScope: null });
+      scope = 'machineOwner';
+      await act(async () => { await presenter.getCurrent().checkAgain(); });
+      await act(async () => { await home.switchAccount(serverId, 'scope-other-requester'); });
+      expect(presenter.getCurrent()).toMatchObject({ signInScope: null });
+    } finally { await presenter.unmount(); }
+  });
   it('publishes no notifications for thirty equal waiting polls and publishes a real sign-in change', async () => {
     vi.useFakeTimers();
     let signedIn = false;
