@@ -19,10 +19,38 @@ function fixture() {
       return { ok: true, revision: row.revision };
     },
   };
-  return { records: createReviewRecordPortV1(transport), writes: () => writes };
+  return { records: createReviewRecordPortV1(transport), transport, writes: () => writes };
 }
 
 describe('durable Review rounds', () => {
+  it.each(['start', 'settle'] as const)('surfaces the Artifact CAS conflict during %s without silently retrying', async operation => {
+    const f = fixture();
+    const input = { reviewId: 'review-cas', title: 'Review', subjectKind: 'comparison' as const,
+      sourceKind: 'direct' as const, reviewerIds: ['one'], startedAt: 1 };
+    const binding = await f.records.start(input);
+    const update = f.transport.update;
+    let attempts = 0;
+    // The Artifact transport is the persistence boundary. A second attempt could succeed,
+    // but a new round must remain a visible conflict rather than choosing another ordinal.
+    f.transport.update = async request => ++attempts === 1 ? { ok: false, errorCode: 'version_mismatch' } : update(request);
+    await expect(operation === 'start' ? f.records.start({ ...input, newRound: true })
+      : f.records.settle({ ...binding, outcome: 'completed', finishedAt: 2, runs: [] }))
+      .rejects.toMatchObject({ code: 'version_mismatch' });
+    expect(attempts).toBe(1);
+    expect((await f.records.read(binding.reviewId))?.rounds).toHaveLength(1);
+    expect((await f.records.read(binding.reviewId))?.rounds[0]?.state).toBe('running');
+  });
+
+  it('uses Artifact failures for an absent resource or an invalid round', async () => {
+    const f = fixture();
+    const settlement = { reviewId: 'missing', roundOrdinal: 1, outcome: 'completed' as const, finishedAt: 2, runs: [] };
+    await expect(f.records.settle(settlement)).rejects.toMatchObject({ code: 'artifact_not_found' });
+    await f.records.start({ reviewId: 'present', title: 'Review', subjectKind: 'comparison', sourceKind: 'direct',
+      reviewerIds: [], startedAt: 1 });
+    await expect(f.records.settle({ ...settlement, reviewId: 'present', roundOrdinal: 2 }))
+      .rejects.toMatchObject({ code: 'invalid-params' });
+  });
+
   it('retains an addressable completed Review with zero findings and does not republish a terminal retry', async () => {
     const f = fixture();
     const binding = await f.records.start({ reviewId: 'review-1', title: 'Review', subjectKind: 'comparison',

@@ -58,7 +58,7 @@ export type ReviewRecordPortV1 = ReturnType<typeof createReviewRecordPortV1>;
 
 function open(row: Opened): ReviewArtifactV1 {
   const header = ReviewArtifactHeaderV1Schema.parse(row.header);
-  if (header.reviewId !== row.artifactId || typeof row.body !== 'string') throw new Error('review_content_unavailable');
+  if (header.reviewId !== row.artifactId || typeof row.body !== 'string') refused('artifact_content_unavailable');
   return { ...header, ...ReviewArtifactBodyV1Schema.parse(JSON.parse(row.body)) };
 }
 function content(record: ReviewArtifactV1) {
@@ -77,45 +77,40 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       return row ? open(row) : null;
     },
     async start(input: ReviewRoundStartV1): Promise<ReviewRoundBindingV1> {
-      for (;;) {
-        input.signal?.throwIfAborted();
-        const row = await transport.read(input.reviewId, { signal: input.signal });
-        const previous = row ? open(row) : null;
-        const lastOrdinal = previous?.rounds.at(-1)?.ordinal ?? 0;
-        if (previous && !input.newRound) return { reviewId: input.reviewId, roundOrdinal: lastOrdinal };
-        const ordinal = lastOrdinal + 1;
-        const reviewMetadata: ReviewMetadataWriteV1 = { projectSourceId: input.projectSourceId ?? null,
-          workflowId: input.workflowId ?? null, subjectKind: input.subjectKind, sourceKind: input.sourceKind,
-          state: 'running', currentRoundOrdinal: ordinal, startedAt: input.startedAt, finishedAt: null };
-        const next: ReviewArtifactV1 = { kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: input.reviewId,
-          title: previous?.title ?? input.title, rounds: [...previous?.rounds ?? [], { ordinal,
-            ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}), state: 'running', startedAt: input.startedAt,
-            finishedAt: null, reviewerIds: [...input.reviewerIds], runs: [] }] };
-        if (!row) await transport.create({ artifactId: input.reviewId, ...content(next), reviewMetadata, signal: input.signal });
-        else {
-          const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
-          if (!result.ok) { if (result.errorCode === 'version_mismatch') continue; refused(result.errorCode); }
-        }
-        return { reviewId: input.reviewId, roundOrdinal: ordinal };
+      input.signal?.throwIfAborted();
+      const row = await transport.read(input.reviewId, { signal: input.signal });
+      const previous = row ? open(row) : null;
+      const lastOrdinal = previous?.rounds.at(-1)?.ordinal ?? 0;
+      if (previous && !input.newRound) return { reviewId: input.reviewId, roundOrdinal: lastOrdinal };
+      const ordinal = lastOrdinal + 1;
+      const reviewMetadata: ReviewMetadataWriteV1 = { projectSourceId: input.projectSourceId ?? null,
+        workflowId: input.workflowId ?? null, subjectKind: input.subjectKind, sourceKind: input.sourceKind,
+        state: 'running', currentRoundOrdinal: ordinal, startedAt: input.startedAt, finishedAt: null };
+      const next: ReviewArtifactV1 = { kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: input.reviewId,
+        title: previous?.title ?? input.title, rounds: [...previous?.rounds ?? [], { ordinal,
+          ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}), state: 'running', startedAt: input.startedAt,
+          finishedAt: null, reviewerIds: [...input.reviewerIds], runs: [] }] };
+      if (!row) await transport.create({ artifactId: input.reviewId, ...content(next), reviewMetadata, signal: input.signal });
+      else {
+        const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
+        if (!result.ok) refused(result.errorCode);
       }
+      return { reviewId: input.reviewId, roundOrdinal: ordinal };
     },
     async settle(input: ReviewRoundSettlementV1): Promise<void> {
-      for (;;) {
-        input.signal?.throwIfAborted();
-        const row = await transport.read(input.reviewId, { signal: input.signal });
-        if (!row) refused('review_not_found');
-        const current = open(row);
-        const round = current.rounds.find(item => item.ordinal === input.roundOrdinal);
-        if (!round) refused('review_round_not_admitted');
-        if (round.state !== 'running') return;
-        const nextRound = { ...round, state: input.outcome, finishedAt: input.finishedAt, runs: [...input.runs],
-          ...(input.summary === undefined ? {} : { summary: input.summary }) };
-        const next = { ...current, rounds: current.rounds.map(item => item === round ? nextRound : item) };
-        const reviewMetadata: ReviewMetadataWriteV1 = { currentRoundOrdinal: input.roundOrdinal, state: input.outcome, finishedAt: input.finishedAt };
-        const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
-        if (result.ok) return;
-        if (result.errorCode !== 'version_mismatch') refused(result.errorCode);
-      }
+      input.signal?.throwIfAborted();
+      const row = await transport.read(input.reviewId, { signal: input.signal });
+      if (!row) refused('artifact_not_found');
+      const current = open(row);
+      const round = current.rounds.find(item => item.ordinal === input.roundOrdinal);
+      if (!round) refused('invalid-params');
+      if (round.state !== 'running') return;
+      const nextRound = { ...round, state: input.outcome, finishedAt: input.finishedAt, runs: [...input.runs],
+        ...(input.summary === undefined ? {} : { summary: input.summary }) };
+      const next = { ...current, rounds: current.rounds.map(item => item === round ? nextRound : item) };
+      const reviewMetadata: ReviewMetadataWriteV1 = { currentRoundOrdinal: input.roundOrdinal, state: input.outcome, finishedAt: input.finishedAt };
+      const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
+      if (!result.ok) refused(result.errorCode);
     },
   };
 }
