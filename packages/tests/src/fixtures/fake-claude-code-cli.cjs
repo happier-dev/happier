@@ -542,7 +542,13 @@ async function runSdkStreamUntilEof() {
     });
     if (!promptText) continue;
 
-    // Real CLI order: UserPromptSubmit hook callbacks (awaited) → system:init → the transcript user row.
+    // Custody is acknowledged before UserPromptSubmit can await the host's
+    // accepted Turn publication. Generation and the user replay stay after the hook.
+    const submittedUuid = msg && msg.type === 'user' && typeof msg.uuid === 'string' && msg.uuid ? msg.uuid : null;
+    turnUserMessageUuids = submittedUuid ? [submittedUuid] : [];
+    if (replayUserMessages && submittedUuid) {
+      emitSdk({ type: 'command_lifecycle', command_uuid: submittedUuid, state: 'started', uuid: randomUUID(), session_id: sessionId });
+    }
     const submittedPrompt = readSubmittedPromptText(msg) ?? promptText;
     let promptBlocked = false;
     for (const callbackId of userPromptSubmitCallbackIds) {
@@ -575,10 +581,7 @@ async function runSdkStreamUntilEof() {
       emitSdk(createSystemInitMessage());
     }
 
-    const submittedUuid = msg && msg.type === 'user' && typeof msg.uuid === 'string' && msg.uuid ? msg.uuid : null;
-    turnUserMessageUuids = submittedUuid ? [submittedUuid] : [];
     if (replayUserMessages && submittedUuid) {
-      emitSdk({ type: 'command_lifecycle', command_uuid: submittedUuid, state: 'started', uuid: randomUUID(), session_id: sessionId });
       emitSdk({ type: 'user', message: msg.message, parent_tool_use_id: null, session_id: sessionId, uuid: submittedUuid,
         timestamp: new Date().toISOString(), isReplay: true });
     } else {

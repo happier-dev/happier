@@ -495,7 +495,7 @@ describe('fake Claude CLI fixture', () => {
     }
   });
 
-  it('sends the registered UserPromptSubmit hook callback and waits for its reply before generating', async () => {
+  it('acknowledges prompt custody before awaiting UserPromptSubmit and generates only after its reply', async () => {
     // Real Claude Code 2.1.319 (.project/tmp/P03-CLAUDE-RESUME/run1.json): after initialize registers a
     // UserPromptSubmit callback, each prompt produces control_request hook_callback (exact prompt, session id,
     // transcript path) before system:init, and the transcript gains exactly one user row with that text.
@@ -504,7 +504,9 @@ describe('fake Claude CLI fixture', () => {
     const configDir = join(dir, 'claude-config');
     const fixturePath = resolve(process.cwd(), 'src/fixtures/fake-claude-code-cli.cjs');
     const prompt = 'remember HOOK_CALLBACK_PROMPT';
-    const child = spawn(process.execPath, [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+    const uuid = '11111111-2222-4333-8444-555555555555';
+    const child = spawn(process.execPath, [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json',
+      '--replay-user-messages'], {
       cwd: dir,
       env: {
         ...process.env,
@@ -536,10 +538,13 @@ describe('fake Claude CLI fixture', () => {
     try {
       child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'init-1', request: {
         subtype: 'initialize', hooks: { UserPromptSubmit: [{ hookCallbackIds: ['happier-session-hook'] }] } } })}\n`);
-      child.stdin.write(`${JSON.stringify({ type: 'user', session_id: '', parent_tool_use_id: null,
+      child.stdin.write(`${JSON.stringify({ type: 'user', uuid, session_id: '', parent_tool_use_id: null,
         message: { role: 'user', content: [{ type: 'text', text: prompt }] } })}\n`);
 
       const hookRequest = await waitForRow((row) => row?.type === 'control_request' && row.request?.subtype === 'hook_callback');
+      // The host can publish the accepted Turn while this callback is held.
+      // Waiting for the callback before acknowledging custody deadlocks that publication.
+      expect(rows).toContainEqual(expect.objectContaining({ type: 'command_lifecycle', state: 'started', command_uuid: uuid }));
       expect(hookRequest.request).toEqual(expect.objectContaining({
         callback_id: 'happier-session-hook',
         input: expect.objectContaining({
@@ -558,6 +563,7 @@ describe('fake Claude CLI fixture', () => {
       await waitForRow((row) => row?.type === 'result');
       child.stdin.end();
       expect(await exited).toBe(0);
+      expect(rows.filter((row) => row?.type === 'command_lifecycle' && row.command_uuid === uuid)).toHaveLength(1);
 
       const transcript = parseJsonLines(await readFile(hookRequest.request.input.transcript_path, 'utf8'));
       const userRows = transcript.filter((row) => row?.type === 'user'
