@@ -35,7 +35,7 @@ function progress(input: Readonly<{
     });
 }
 
-function shared(input: Readonly<{ status: 'completed' | 'running'; phase: ExternalSessionOperationProgressV1['phase'] }>) {
+function shared(input: Readonly<{ status: 'completed' | 'cancelled' | 'failed' | 'discarded' | 'running'; phase: ExternalSessionOperationProgressV1['phase'] }>) {
     return ExternalSessionOperationSharedPresentationV1Schema.parse({
         v: 1, operationId: 'specimen-import', revision: 3, kind: 'materialize', status: input.status, phase: input.phase,
     });
@@ -43,13 +43,16 @@ function shared(input: Readonly<{ status: 'completed' | 'running'; phase: Extern
 
 /**
  * `?frame=awaiting|running|partial`: the progress card's live states (W6.05).
- * `?frame=complete|read-failed`: the shared card a session shows once only the pushed status is known.
+ * `?frame=complete|cancelled|failed|discarded|read-failed`: the shared card a session shows once only the pushed status is known.
  */
 const FRAMES: Record<string, () => React.ReactElement> = {
     awaiting: () => <ProgressFrame progress={progress({ status: 'awaiting_user_resume', phase: 'staging', retryTargetPhase: 'staging' })} />,
     running: () => <ProgressFrame progress={progress({ status: 'running', phase: 'staging' })} />,
     partial: () => <ProgressFrame progress={progress({ status: 'awaiting_user_resume', phase: 'importing', retryTargetPhase: 'importing', imported: 96, estimate: 130 })} />,
     complete: () => <ExternalSessionOperationSharedCard presentation={shared({ status: 'completed', phase: 'publishing' })} onDismiss={noopSync} />,
+    cancelled: () => <ExternalSessionOperationSharedCard presentation={shared({ status: 'cancelled', phase: 'importing' })} onDismiss={noopSync} />,
+    failed: () => <ExternalSessionOperationSharedCard presentation={shared({ status: 'failed', phase: 'publishing' })} />,
+    discarded: () => <ExternalSessionOperationSharedCard presentation={shared({ status: 'discarded', phase: 'importing' })} onDismiss={noopSync} />,
     'read-failed': () => <ExternalSessionOperationSharedCard presentation={shared({ status: 'running', phase: 'importing' })} onCheckAgain={noopSync} />,
 };
 

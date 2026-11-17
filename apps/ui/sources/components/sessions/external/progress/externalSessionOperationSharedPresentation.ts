@@ -35,12 +35,26 @@ const STATUS_KEYS: Readonly<
     discarded: 'externalSessions.operationStatusDiscarded',
 };
 
+/**
+ * A settled outcome is said alone, like "Complete": its last phase is history, and "Cancelled · Importing
+ * messages" would read as still running. The shared presentation carries no cause, so Failed has no subtitle here.
+ */
+const SAYS_OUTCOME_ALONE: Readonly<Record<ExternalSessionOperationStatusV1, boolean>> = {
+    running: false,
+    awaiting_user_resume: false,
+    cancel_requested: false,
+    reconciliation_required: false,
+    completed: true,
+    cancelled: true,
+    failed: true,
+    discarded: true,
+};
+
 export function presentExternalSessionOperationShared(
     presentation: ExternalSessionOperationSharedPresentationV1,
 ) {
     return {
-        // A completed operation's last phase is history, not something still happening, so it names none.
-        phaseKey: presentation.status === 'completed' ? null : PHASE_KEYS[presentation.phase],
+        phaseKey: SAYS_OUTCOME_ALONE[presentation.status] ? null : PHASE_KEYS[presentation.phase],
         statusKey: STATUS_KEYS[presentation.status],
         titleKey: presentation.kind === 'materialize'
             ? 'externalSessions.operationTitleMaterialize'
