@@ -42,7 +42,7 @@ import {
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { buildToolCallMessageRouteId } from "@happier-dev/session-core/messages";
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { PermissionFooter } from '../permissions/PermissionFooter';
+import { renderToolPermissionFooter } from '../permissions/renderToolPermissionFooter';
 import { usePendingPromptLanding } from '../permissions/usePendingPromptPrimaryFocus';
 import { resolvePermissionRequestId } from '@/components/tools/renderers/core/resolvePermissionRequestId';
 import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
@@ -406,26 +406,13 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         ? 'transcript'
         : resolvePermissionPromptSurface(permissionPromptSurface);
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
-    const permissionFooter =
-        showPermissionPromptsInTranscript &&
-        toolForRendering.permission &&
-        props.sessionId &&
-        isWaitingForPermission &&
-        shouldShowGenericPermissionPromptForRequest({
-            toolName: toolForRendering.name,
-            requestKind: toolForRendering.permission.kind,
-        }) ? (
-            <PermissionFooter
-                permission={toolForRendering.permission}
-                messageId={props.messageId}
-                sessionId={props.sessionId}
-                toolName={normalizedToolName}
-                toolInput={toolForRendering.input}
-                metadata={props.metadata}
-                canApprovePermissions={interaction.canApprovePermissions && sourceInteraction.canApprovePermissions && transcriptSource.actions !== null}
-                disabledReason={interaction.permissionDisabledReason}
-            />
-        ) : null;
+    const permissionFooter = renderToolPermissionFooter({
+        tool: toolForRendering, toolName: normalizedToolName, sessionId: props.sessionId,
+        serverId: props.serverId, messageId: props.messageId, metadata: props.metadata,
+        canApprovePermissions: interaction.canApprovePermissions && sourceInteraction.canApprovePermissions && transcriptSource.actions !== null,
+        disabledReason: interaction.permissionDisabledReason,
+        showPrompt: showPermissionPromptsInTranscript && isWaitingForPermission,
+    });
 
     const approvalCards = React.useMemo(() => {
         if (matchingApprovalRequests.length === 0) return null;

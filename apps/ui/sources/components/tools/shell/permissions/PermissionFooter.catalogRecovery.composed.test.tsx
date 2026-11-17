@@ -4,13 +4,14 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ResolvedMcpToolIdentityV1Schema } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { McpServerCatalogRowMutationV1Schema, McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { NativePermissionChoicesV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
-import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createTestSessionTranscriptSource, makeToolCall, renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installPermissionShellCommonModuleMocks } from './permissionShellTestHelpers';
 
 installPermissionShellCommonModuleMocks({
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
     storage: importOriginal => importOriginal(),
     text: async () => {
         const text = await vi.importActual<typeof import('@/text')>('@/text');
@@ -28,7 +29,9 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', a
 });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const { PermissionFooter } = await import('./PermissionFooter');
+const { ToolView } = await import('../views/ToolView');
+const { ToolTimelineRow } = await import('../views/ToolTimelineRow');
+const { ToolFullView } = await import('../views/ToolFullView');
 const { createAppSessionTranscriptActions } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
 const { storage } = await import('@/sync/domains/state/storage');
 // Load the executable graph before entering the journey's behavior assertions.
@@ -36,11 +39,17 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 
 afterEach(standardCleanup);
 
-it('keeps a failed Always allow save visible after remount and retries storage without answering the native request again', async () => {
+it.each([
+    { surface: 'card', fails: false },
+    { surface: 'card', fails: true },
+    { surface: 'timeline', fails: true },
+    { surface: 'details', fails: true },
+] as const)('settles Always allow on the $surface after the native answer (fails=$fails)', async ({ surface, fails }) => {
     await homes.reset();
     nativeTransport.mockReset();
-    const serverId = await homes.addHome({ name: 'MCP recovery', serverUrl: 'https://mcp-recovery.test',
-        serverIdentityId: 'mcp-recovery', accountId: 'alice', currentAccount: true });
+    const fixtureId = `mcp-recovery-${surface}-${fails}`;
+    const serverId = await homes.addHome({ name: fixtureId, serverUrl: `https://${fixtureId}.test`,
+        serverIdentityId: fixtureId, accountId: 'alice', currentAccount: true });
     const identity = ResolvedMcpToolIdentityV1Schema.parse({ server: 'docs', tool: 'mutate', item: { serverId: 'docs' },
         serverTitle: 'Docs', toolTitle: 'Update docs',
         decision: { exposed: true, approval: 'ask', effectClass: 'unknown', source: 'server_default' } });
@@ -49,8 +58,8 @@ it('keeps a failed Always allow save visible after remount and retries storage w
         { id: 'remember', label: 'Always allow', decision: 'approved', scope: 'localPersistent', response: { approved: true },
             followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs', tools: { mutate: 'allow' } } } },
     ] });
-    const request = { tool: 'McpTool', arguments: {}, createdAt: 1, turnId: 'mcp-turn', mcpTool: identity, nativeChoices };
-    let session = createSessionFixture({ id: 'mcp-recovery-session', serverId, active: true,
+    const request = { tool: 'mcp__docs__mutate', arguments: {}, createdAt: 1, turnId: 'mcp-turn', mcpTool: identity, nativeChoices };
+    let session = createSessionFixture({ id: fixtureId, serverId, active: true,
         agentState: { requests: { 'mcp-request': request } } });
     homes.answer(serverId, `GET /v2/sessions/${session.id}`, { select: () => ({ body: createPlainSessionByIdResponseFixture(session) }) });
     storage.getState().applySessions([session]);
@@ -72,12 +81,17 @@ it('keeps a failed Always allow save visible after remount and retries storage w
     homes.answer(serverId, 'GET /v1/account/entity-rows/mcp', { select: () => ({ body: {
         status: 'present', revision, content: { t: 'plain', v: catalog },
     } }) });
-    // The first storage CAS fails after the native answer has been accepted; no internal owner is stubbed.
-    homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { select: input => {
+    const finishSave = createDeferred<void>();
+    // Hold the actual catalog HTTP boundary open while the Session acknowledges the native answer.
+    // Staging injects a 503 only for the first POST, after the tool has already completed.
+    homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { select: async input => {
         const mutation = McpServerCatalogRowMutationV1Schema.parse(input);
         expect(mutation.expectedRevision).toBe(revision);
         saveAttempts++;
-        if (saveAttempts === 1) return { body: { status: 'conflict', revision } };
+        if (saveAttempts === 1) {
+            await finishSave.promise;
+            if (fails) return { status: 503, body: { error: 'service_unavailable' } };
+        }
         if (mutation.content?.t !== 'plain') throw new Error('Expected a plain catalog storage write');
         catalog = McpServerCatalogV1Schema.parse(mutation.content.v);
         revision++;
@@ -86,29 +100,51 @@ it('keeps a failed Always allow save visible after remount and retries storage w
     const source = createTestSessionTranscriptSource({ sessionId: session.id, serverId,
         interaction: { canApprovePermissions: true, canSendMessages: true },
         actions: createAppSessionTranscriptActions(session.id, serverId) });
-    const footer = (status: 'pending' | 'approved') => <PermissionFooter sessionId={session.id} serverId={serverId}
-        toolName="McpTool" canApprovePermissions permission={{ id: 'mcp-request', turnId: 'mcp-turn', status,
-            nativeChoices, mcpTool: identity }} />;
-    const first = await renderWithSessionTranscriptSource(footer('pending'), source);
-    await first.pressByTestIdAsync('permission-footer.choice.remember');
-    await waitForHomeGovernance(() => {
-        expect(first.findHostByTestId('permission-footer.always-allow-retry')).not.toBeNull();
-        expect(first.getTextContent()).toContain('Couldn’t save');
-    });
+    const nativeChoice = { requirementId: 'mcp-occurrence', choiceId: 'remember' };
+    const view = (settled: boolean) => {
+        const tool = makeToolCall({
+            name: request.tool, createdAt: 1,
+            state: settled ? 'completed' : 'running',
+            completedAt: settled ? 2 : null,
+            result: settled ? { content: [{ type: 'text', text: 'QA_MCP_HYPHEN_OK' }] } : null,
+            permission: { id: 'mcp-request', turnId: 'mcp-turn', status: settled ? 'approved' : 'pending',
+                nativeChoices, mcpTool: identity, ...(settled ? { nativeChoice } : {}) },
+        });
+        const props = { tool, sessionId: session.id, serverId, metadata: null };
+        if (surface === 'details') return <ToolFullView {...props} owningMessageId="tool-message" forcePermissionFooterInTranscript />;
+        if (surface === 'timeline') return <ToolTimelineRow {...props} messageId="tool-message" forcePermissionPromptsInTranscript />;
+        return <ToolView {...props} messageId="tool-message" forcePermissionPromptsInTranscript />;
+    };
+    const screen = await renderWithSessionTranscriptSource(view(false), source);
+    await screen.pressByTestIdAsync('permission-footer.choice.remember');
+    await waitForHomeGovernance(() => expect(saveAttempts).toBe(1));
+    await screen.update(view(true));
+    const showedSaving = screen.findHostByTestId('permission-footer.always-allow-settled') !== null
+        && screen.getTextContent().includes('Saving');
+    expect(screen.findHostByTestId('permission-footer.choice.remember')).toBeNull();
     expect(nativeTransport).toHaveBeenCalledTimes(1);
-    expect(saveAttempts).toBe(1);
-    await first.unmount();
+    finishSave.resolve();
 
-    // A genuine new mounted footer restores the request-owned receipt, rather than receiving a controller snapshot.
-    const remounted = await renderWithSessionTranscriptSource(footer('approved'), source);
-    expect(remounted.findHostByTestId('permission-footer.always-allow-retry')).not.toBeNull();
-    expect(remounted.getTextContent()).toContain('Couldn’t save');
-    await remounted.pressByTestIdAsync('permission-footer.always-allow-retry');
-    await waitForHomeGovernance(() => {
-        expect(remounted.findHostByTestId('permission-footer.always-allow-retry')).toBeNull();
-        expect(remounted.getTextContent()).toContain('saved in Docs');
-    });
+    if (fails) {
+        await waitForHomeGovernance(() => {
+            expect(screen.findHostByTestId('permission-footer.always-allow-retry')).not.toBeNull();
+            expect(screen.getTextContent()).toContain('Couldn’t save');
+        });
+        expect(showedSaving).toBe(true);
+        await screen.unmount();
+        // Reopening the real tool view restores the request-owned receipt.
+        const reopened = await renderWithSessionTranscriptSource(view(true), source);
+        expect(reopened.findHostByTestId('permission-footer.always-allow-retry')).not.toBeNull();
+        await reopened.pressByTestIdAsync('permission-footer.always-allow-retry');
+        await waitForHomeGovernance(() => {
+            expect(reopened.findHostByTestId('permission-footer.always-allow-retry')).toBeNull();
+            expect(reopened.getTextContent()).toContain('saved in Docs');
+        });
+    } else {
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('saved in Docs'));
+        expect(screen.findHostByTestId('permission-footer.always-allow-retry')).toBeNull();
+    }
     expect(catalog.servers[0]).toMatchObject({ tools: { overrides: { mutate: 'allow' } } });
-    expect(saveAttempts).toBe(2);
+    expect(saveAttempts).toBe(fails ? 2 : 1);
     expect(nativeTransport).toHaveBeenCalledTimes(1);
 });

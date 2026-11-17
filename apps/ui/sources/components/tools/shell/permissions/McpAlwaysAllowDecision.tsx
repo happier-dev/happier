@@ -48,9 +48,12 @@ export function McpAlwaysAllowDecisionView(props: Readonly<{
   const { theme } = useUnistyles();
   const always = props.controller;
   const tool = props.identity.toolTitle ?? props.identity.tool;
+  // Native submit awaits both the answer and its follow-up. After the tool confirms
+  // approval, an in-flight submit is waiting for the catalog save.
+  const saving = always.status === 'saving' || (!props.pending && always.status === 'answering');
   if (
     always.status === 'saved' ||
-    always.status === 'saving' ||
+    saving ||
     always.status === 'save_failed'
   ) {
     const failed = always.status === 'save_failed';
@@ -72,7 +75,7 @@ export function McpAlwaysAllowDecisionView(props: Readonly<{
           {` · ${
             failed
               ? t('capabilities.session.toolAsk.couldntSave')
-              : always.status === 'saving'
+              : saving
                 ? t('capabilities.session.ask.saving')
                 : t('capabilities.session.toolAsk.savedIn', {
                     server: props.identity.serverTitle,
@@ -85,6 +88,7 @@ export function McpAlwaysAllowDecisionView(props: Readonly<{
             size="meta"
             tone="strong"
             label={t('capabilities.session.ask.tryAgain')}
+            disabled={!always.available}
             onPress={() => {
               void always.retrySave();
             }}

@@ -380,11 +380,12 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         permissionBehavior,
         suggestions: permission?.suggestions,
     });
+    const showingNativeDecisions = requestPending || nativeChoices === undefined;
     const choices = resolveSessionPermissionChoices({ toolName, toolInput, source: requestSource,
-        nativeChoices, nativeChoiceAvailability,
+        nativeChoices, nativeChoiceAvailability: showingNativeDecisions ? nativeChoiceAvailability : undefined,
         suggestions: permission.suggestions, permissionBehavior,
         mcpTool: executionRun === undefined ? permission.mcpTool : undefined,
-        canWriteCatalog: canApprovePermissions && catalogScope !== null });
+        canWriteCatalog: showingNativeDecisions ? canApprovePermissions && catalogScope !== null : undefined });
     const hasChoice = (id: typeof choices[number]['id']) => choices.some(choice => choice.id === id);
     const isCodexDecision = answerPolicy.protocol === 'codexDecision';
     const submitPermissionChoice = async (choiceId: typeof choices[number]['id'], feedback?: string) => {
@@ -852,17 +853,20 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         };
         const catalogChoice = offeredChoices.find((choice): choice is typeof choice & Required<Pick<typeof choice, 'catalog' | 'followUp'>> =>
             choice.catalog !== undefined && choice.followUp !== undefined);
+        const catalogConsent = catalogChoice ? <PermissionFooterCatalogChoice
+            choice={catalogChoice} requestId={permission.id} turnId={projectedTurnId}
+            scope={catalogScope} canWriteCatalog={canApprovePermissions} pending={isPending}
+            choicesProps={choicesProps}
+            answer={(feedback) => runPermissionAction(getSessionPermissionChoiceKind(catalogChoice),
+                (loading) => setLoadingChoiceId(loading ? catalogChoice.id : null),
+                () => submitPermissionChoice(catalogChoice.id, feedback), true)}
+        /> : null;
+        if (!isPending) return isApproved ? catalogConsent : null;
+
         return (
             <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
                 <View style={answerUnconfirmed ? styles.buttonContainerWithheld : null}>
-                    {catalogChoice ? <PermissionFooterCatalogChoice
-                        choice={catalogChoice} requestId={permission.id} turnId={projectedTurnId}
-                        scope={catalogScope} canWriteCatalog={canApprovePermissions} pending={isPending}
-                        choicesProps={choicesProps}
-                        answer={(feedback) => runPermissionAction(getSessionPermissionChoiceKind(catalogChoice),
-                            (loading) => setLoadingChoiceId(loading ? catalogChoice.id : null),
-                            () => submitPermissionChoice(catalogChoice.id, feedback), true)}
-                    /> : <PermissionFooterOfferedChoices {...choicesProps} />}
+                    {catalogConsent ?? <PermissionFooterOfferedChoices {...choicesProps} />}
                 </View>
                 {actionFailureNode}
             </View>

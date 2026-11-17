@@ -17,11 +17,11 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { normalizeToolCallForRendering } from "@happier-dev/session-core/tools";
-import { PermissionFooter } from '../permissions/PermissionFooter';
+import { renderToolPermissionFooter } from '../permissions/renderToolPermissionFooter';
 import { useSetting } from '@/sync/domains/state/storage';
 import { TextSelectabilityScope } from '@/components/ui/text/Text';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
-import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { resolvePermissionPromptSurface } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import {
     isSidechainHydrationPendingStatus,
     useEnsureSidechainsLoaded,
@@ -193,22 +193,12 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
 
     const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
 
-    const permissionFooter =
-        isWaitingForPermission &&
-        toolForRendering.permission &&
-        normalizedSessionId &&
-        showPermissionPromptsInTranscript &&
-        shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) ? (
-            <PermissionFooter
-                permission={toolForRendering.permission}
-                sessionId={normalizedSessionId}
-                toolName={normalizedToolName}
-                toolInput={toolForRendering.input}
-                metadata={metadata || null}
-                canApprovePermissions={interaction.canApprovePermissions}
-                disabledReason={interaction?.permissionDisabledReason}
-            />
-        ) : null;
+    const permissionFooter = renderToolPermissionFooter({
+        tool: toolForRendering, toolName: normalizedToolName, sessionId: normalizedSessionId,
+        serverId: serverId ?? undefined, metadata: metadata || null,
+        canApprovePermissions: interaction.canApprovePermissions, disabledReason: interaction.permissionDisabledReason,
+        showPrompt: showPermissionPromptsInTranscript && isWaitingForPermission,
+    });
 
     // The raw record (with its transport envelope) stays one deliberate press away, as its own quiet section.
     const debugSection = (

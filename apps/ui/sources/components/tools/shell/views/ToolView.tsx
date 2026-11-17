@@ -14,7 +14,7 @@ import { Message, ToolCall } from "@happier-dev/session-core/messages";
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { Metadata } from '@happier-dev/session-core/state';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
-import { PermissionFooter } from '../permissions/PermissionFooter';
+import { renderToolPermissionFooter } from '../permissions/renderToolPermissionFooter';
 import { usePendingPromptLanding } from '../permissions/usePendingPromptPrimaryFocus';
 import { resolvePermissionRequestId } from '@/components/tools/renderers/core/resolvePermissionRequestId';
 import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
@@ -38,7 +38,7 @@ import {
     type ToolViewExpandedDetailLevelSetting,
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { deriveToolTimelineDensity } from '@/components/tools/normalization/policy/deriveToolTimelineDensity';
-import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { resolvePermissionPromptSurface } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 import {
@@ -561,21 +561,11 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                 </View>
             </TranscriptCollapsible>
 
-            {/* Permission footer - rendered for most tools */}
-            {/* AskUserQuestion and ExitPlanMode have custom action UIs */}
-            {showPermissionPromptsInTranscript && isWaitingForPermission && toolForRendering.permission && sessionId && shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) && (
-                <PermissionFooter
-                    permission={toolForRendering.permission}
-                    messageId={messageId}
-                    sessionId={sessionId}
-                    serverId={props.serverId}
-                    toolName={normalizedToolName}
-                    toolInput={toolForRendering.input}
-                    metadata={props.metadata}
-                    canApprovePermissions={viewerCanAnswer}
-                    disabledReason={interaction.permissionDisabledReason}
-                />
-            )}
+            {renderToolPermissionFooter({
+                tool: toolForRendering, toolName: normalizedToolName, sessionId, serverId: props.serverId, messageId,
+                metadata: props.metadata, canApprovePermissions: viewerCanAnswer, disabledReason: interaction.permissionDisabledReason,
+                showPrompt: showPermissionPromptsInTranscript && isWaitingForPermission,
+            })}
             {matchingApprovalRequests.map((request) => (
                 <ApprovalPromptCard
                     key={request.artifact.id}

@@ -27,14 +27,14 @@ export function PermissionFooterCatalogChoice(props: Readonly<{
         answerForSession: () => props.answer(feedback.current),
     });
     return <>
-        <PermissionFooterOfferedChoices {...props.choicesProps}
+        {props.pending && !always.answered ? <PermissionFooterOfferedChoices {...props.choicesProps}
             busyChoiceId={always.status === 'answering' ? props.choice.id : props.choicesProps.busyChoiceId}
-            disabled={props.choicesProps.disabled || always.status === 'answering' || always.answered}
+            disabled={props.choicesProps.disabled || always.status === 'answering'}
             onChoose={(choiceId, note) => {
                 if (choiceId !== props.choice.id) { props.choicesProps.onChoose(choiceId, note); return; }
                 feedback.current = note;
                 void always.allow();
-            }} />
+            }} /> : null}
         <McpAlwaysAllowDecisionView identity={props.choice.catalog.identity} pending={props.pending}
             controller={always} renderDecision={() => null} />
     </>;
