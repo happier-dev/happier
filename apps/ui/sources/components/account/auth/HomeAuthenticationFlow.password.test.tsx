@@ -1,3 +1,4 @@
+import { emailPasswordHomeLoginEntryFixture } from '@/dev/testkit/fixtures/authEntryFixtures';
 import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
 import { NativeEmailPasswordPreloginResponseV1Schema, NativeEmailPasswordLoginResponseV1Schema } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -46,11 +47,7 @@ afterEach(async () => { await screen?.unmount(); screen = undefined; await disco
 
 it('opens the shared password form from the native auth-entry action without starting OAuth or prelogin', async () => {
     const fixture = createDirectoryHttpFixture();
-    const capabilities = projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
-        v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
-        actions: [{ kind: 'authenticate', methodId: 'email_password', action: 'login', mode: 'either',
-            origin: 'home', presentation: { displayName: 'Email and password' } }],
-    }));
+    const capabilities = projectAuthEntryMethodCapabilities(emailPasswordHomeLoginEntryFixture());
     screen = await renderScreen(<AuthProvider initialCredentials={null}>
         <HomeAuthenticationFlow
             target={{ kind: 'descriptor', descriptor: fixture.home.connectionDescriptor, authority: 'current_connection' }}
@@ -64,11 +61,7 @@ it('opens the shared password form from the native auth-entry action without sta
 
 it('keeps Back operable while a password submission is still in flight', async () => {
     const fixture = createDirectoryHttpFixture();
-    const capabilities = projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
-        v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
-        actions: [{ kind: 'authenticate', methodId: 'email_password', action: 'login', mode: 'either',
-            origin: 'home', presentation: { displayName: 'Email and password' } }],
-    }));
+    const capabilities = projectAuthEntryMethodCapabilities(emailPasswordHomeLoginEntryFixture());
     // A real unlock spends seconds in the KDF and the login round trip. The
     // person must be able to leave that wait, so the login never settles here.
     boundary.request.mockImplementation(async (url: string) => {
@@ -103,11 +96,7 @@ it('keeps Back operable while a password submission is still in flight', async (
 it('stores keyless credentials at the captured Home before completing the password journey', async () => {
     const fixture = createDirectoryHttpFixture();
     const credentials = { token: fixture.token };
-    const capabilities = projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
-        v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
-        actions: [{ kind: 'authenticate', methodId: 'email_password', action: 'login', mode: 'either',
-            origin: 'home', presentation: { displayName: 'Email and password' } }],
-    }));
+    const capabilities = projectAuthEntryMethodCapabilities(emailPasswordHomeLoginEntryFixture());
     const password = '  exact e\u0301 password \ud83d\udd11  ';
     boundary.request.mockImplementation(async (url: string, init: RequestInit) => {
         expect(url.startsWith(fixture.home.canonicalServerUrl)).toBe(true);

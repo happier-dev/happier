@@ -1,3 +1,4 @@
+import { teamInvitationPreviewFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { MMKV } from 'react-native-mmkv';
@@ -36,12 +37,7 @@ const browserStorage = await vi.hoisted(async () => {
 function answerSavedAccountInvitation(serverId: string, identity: string, accountId: string) {
     home.answer(serverId, '/v1/account/profile', { body: AccountProfileSchema.parse({ id: accountId }) });
     home.answer(serverId, '/v1/team-invitations/preview', { body: TeamInvitationPreviewResultV1Schema.parse({
-        outcome: 'ok', preview: {
-            home: { serverId: identity, displayName: 'Acme', storageMode: null },
-            team: { teamId: 'team-1', name: 'Acme Team', logo: null, accentSeed: 'team-1' },
-            role: 'member', historyAccess: 'from_membership', state: 'active',
-            expiresAt: Date.UTC(2030, 0, 1), recipientEmailMask: null,
-        },
+        outcome: 'ok', preview: teamInvitationPreviewFixture({ home: { serverId: identity } }),
     }) });
     home.answer(serverId, '/v1/auth/entry', { body: AuthEntryProjectionV1Schema.parse({
         v: 1, state: 'admission_required', scope: { kind: 'invitation' },
@@ -268,12 +264,7 @@ it.each([
     home.answer(serverId, '/v1/features', { body: features });
     const token = 'a'.repeat(43);
     home.answer(serverId, '/v1/team-invitations/preview', { body: TeamInvitationPreviewResultV1Schema.parse({
-        outcome: 'ok', preview: {
-            home: { serverId: identity, displayName: 'Acme', storageMode: null },
-            team: { teamId: 'team-1', name: 'Acme Team', logo: null, accentSeed: 'team-1' },
-            role: 'member', historyAccess: 'from_membership', state: 'active',
-            expiresAt: Date.UTC(2030, 0, 1), recipientEmailMask: null,
-        },
+        outcome: 'ok', preview: teamInvitationPreviewFixture({ home: { serverId: identity } }),
     }) });
     home.answer(serverId, '/v1/auth/entry', { body: AuthEntryProjectionV1Schema.parse({
         v: 1, state: 'admission_required', scope: { kind: 'invitation' },
