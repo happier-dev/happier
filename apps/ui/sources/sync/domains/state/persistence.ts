@@ -3,7 +3,6 @@ import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actio
 import type { SessionAuthoringExecutionTargetV2, TemporaryComputerActivationRefV1 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import { z } from 'zod/mini';
 import { SessionAuthoringValueV1Schema, type SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
-import { SessionAuthoringValueV1Schema, type SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { array, nullable, optional } from 'zod/mini';
 import type { Settings } from '../settings/settings';
