@@ -1,6 +1,8 @@
 import type { DeploymentDomainContentV1, HealthCheckResultV1, HealthCheckSubjectV1 } from '@happier-dev/deployment-protocol/v1';
 import type { HttpService, HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { isNativeTlsErrorCode } from '@/plugins/runtime/fetch/tlsError';
 import { finiteHealthCheckResult } from './finiteHealthCheckResult';
 import { readHealthCheckHttpTargetV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
@@ -107,6 +109,8 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
                     : failure === 'dns' ? 'Check the endpoint DNS records from the selected observer.'
                     : 'Check endpoint DNS, service availability and network or firewall access from the selected observer.' });
         }
+        logger.warnLocalFile('[Deployment health] HTTP observation incomplete',
+            projectActionFailureCauseV1(error, `deployment.health.${kind}`, { allowUnknownErrorCode: false }));
         return result(check, kind, context, startedAt, 'unknown', { reason: 'transport_incomplete' });
     }
     context.signal.throwIfAborted();

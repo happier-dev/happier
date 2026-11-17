@@ -1,5 +1,7 @@
 import { Resolver } from 'node:dns/promises';
 import { createConnection } from 'node:net';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import type { HealthCheckResultV1, HealthCheckTcpConfigV1, HealthCheckDnsConfigV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { finiteHealthCheckResult, type HealthCheckObservationBasisV1 } from './finiteHealthCheckResult';
 
@@ -28,6 +30,8 @@ export async function readTcpHealthCheckV1(check: HealthCheckObservationBasisV1 
         const code = nativeCode(error);
         status = code !== undefined && ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH'].includes(code) ? 'down' : 'unknown';
         reason = status === 'down' ? 'connection_failed' : 'connection_unavailable';
+        if (status === 'unknown') logger.warnLocalFile('[Deployment health] TCP observation unavailable',
+            projectActionFailureCauseV1(error, 'deployment.health.tcp', { allowUnknownErrorCode: false }));
     }
     context.signal.throwIfAborted();
     return finiteHealthCheckResult(check, 'tcp', context.now(), startedAt, status, { reason });
@@ -66,6 +70,8 @@ export async function readDnsHealthCheckV1(check: HealthCheckObservationBasisV1 
         const code = nativeCode(error);
         status = code === 'ENODATA' || code === 'ENOTFOUND' ? 'down' : 'unknown';
         reason = status === 'down' ? 'dns_missing' : 'resolver_unavailable';
+        if (status === 'unknown') logger.warnLocalFile('[Deployment health] DNS observation unavailable',
+            projectActionFailureCauseV1(error, 'deployment.health.dns', { allowUnknownErrorCode: false }));
     } finally {
         context.signal.removeEventListener('abort', cancel);
     }

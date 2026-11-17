@@ -8,6 +8,7 @@ import { HealthCheckResultV1Schema, HealthCheckResultV1ProtocolSchema } from '@h
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginHttpService } from '@/plugins/runtime/fetch/service';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
+import { logger } from '@/ui/logger';
 import { readHttpHealthCheckV1, readCertificateHealthCheckV1,
     type AdmittedHttpHealthCheckV1, type HealthCheckFiniteLeafContextV1 } from './finiteHttpHealthCheck';
 import { createEphemeralTlsServerFixture } from '../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
@@ -269,6 +270,7 @@ describe('finite saved HTTP and certificate health', () => {
     });
 
     it('keeps a temporary resolver failure unavailable rather than claiming outside DNS failure', async () => {
+        const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         const url = 'https://service.example/health';
         stubFetch(async () => { throw new TypeError('private-transport-message', {
             cause: Object.assign(new Error('private-resolver'), { code: 'EAI_AGAIN' }),
@@ -277,6 +279,10 @@ describe('finite saved HTTP and certificate health', () => {
         expect(observed.status).toBe('unknown');
         expect(observed.cause).toMatchObject({ reason: 'transport_incomplete' });
         expect(JSON.stringify(observed)).not.toContain('private-');
+        expect(warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+            phase: 'deployment.health.http', errorClass: 'TypeError', errorCode: 'EAI_AGAIN',
+        }));
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('private-');
     });
 
     it('keeps the Domain public authority and expected authentication challenge with same-Machine disclosure', async () => {

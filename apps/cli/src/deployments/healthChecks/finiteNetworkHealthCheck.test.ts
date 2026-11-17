@@ -3,12 +3,25 @@ import { createServer } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { readDnsHealthCheckV1, readTcpHealthCheckV1 } from './finiteNetworkHealthCheck';
+import { logger } from '@/ui/logger';
 
 const basis = { observer: { machineId: 'observer', installationId: 'installation' }, vantage: 'sameMachine' as const };
 const context = () => ({ signal: new AbortController().signal, now: () => 1000 });
 
 describe('finite TCP and DNS saved checks', () => {
     afterEach(() => vi.restoreAllMocks());
+
+    it.each([['ECONNRESET', 'ECONNRESET'], ['private-raw-code', null]] as const)(
+        'records a closed cause for an unavailable resolver (%s)', async (code, expectedCode) => {
+            vi.spyOn(Resolver.prototype, 'resolve').mockRejectedValue(Object.assign(new TypeError('private-resolver-message'), { code }));
+            const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+            const result = await readDnsHealthCheckV1({ ...basis, hostname: 'private.example.test', recordType: 'A' }, context());
+            expect(result).toMatchObject({ status: 'unknown', cause: { reason: 'resolver_unavailable' } });
+            expect(warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                phase: 'deployment.health.dns', errorClass: 'TypeError', errorCode: expectedCode,
+            }));
+            expect(JSON.stringify([result, warn.mock.calls])).not.toContain('private-');
+        });
 
     it('connects only the selected TCP endpoint and reports a refused connection without exposing the endpoint', async () => {
         const server = createServer(socket => socket.end());
