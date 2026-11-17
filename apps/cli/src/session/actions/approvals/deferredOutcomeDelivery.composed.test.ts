@@ -36,8 +36,8 @@ it.each([
     projectSourceId: 'source', templateRef: { sourceId: 'data-services', itemId: 'redis', version: '0.0.0' } }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.domains.add', actionArgs: { environmentId: 'environment', domainId: 'app.invalid',
     expectedRevision: 2, requestKey: 'domain', content: { hostname: 'app.invalid', target: { service: 'web', containerPort: 80 } } }, failed: true, restrictedCredential: false },
-  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, terminalCredential: true },
-  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, standaloneCredential: 'terminal' },
+  { actionId: 'projects.sources.update', actionArgs: { sourceId: 'source', expectedRevision: 1, patch: { name: 'Edited' } }, failed: false, restrictedCredential: false, standaloneCredential: 'account' },
   { actionId: 'deployments.teardown', actionArgs: { environmentId: 'environment', requestKey: 'teardown', removeEnvironment: true }, failed: false, restrictedCredential: false },
   { actionId: 'deployments.environments.create', actionArgs: { requestKey: 'restricted-create', contentArtifactId: 'definition',
     contentHeaderVersion: 1, contentBodyVersion: 1 }, failed: false, restrictedCredential: true },
@@ -48,7 +48,7 @@ it.each([
     HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACTIONS_SETTINGS_V1: undefined,
   } }, async () => {
   const { actionId, actionArgs, failed } = scenario;
-  const authenticationKind = 'terminalCredential' in scenario ? 'terminal' as const : 'account' as const;
+  const authenticationKind = 'standaloneCredential' in scenario ? scenario.standaloneCredential : 'account' as const;
   const canRelay = !scenario.restrictedCredential;
   const accountId = 'owner', serverId = configuration.activeServerId, machineId = 'machine', sessionId = 'cmv3approvaldeliveryaaaa';
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
@@ -164,6 +164,7 @@ it.each([
     },
   }));
   const receivingExecute = vi.spyOn(receiver, 'execute');
+  const outcomeReplayArtifacts: unknown[] = [];
   currentness.server.on('connection', socket => socket.on('rpc-call', async (
     packet: { method: string; params: unknown }, acknowledge: (value: unknown) => void,
   ) => {
@@ -171,11 +172,13 @@ it.each([
     const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
     expect(packet.method).toBe(`${machineId}:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}`);
     expect(decoded.params).toEqual({ artifactId: 'approval' });
+    outcomeReplayArtifacts.push(decoded.params);
     const outcome = await receiver.replayApprovedApprovalRequest({ artifactId: 'approval',
-      currentAccount: { accountId, serverId, serverIdentityId: serverId }, callerAuthority: 'account_automation' });
+      currentAccount: { accountId, serverId, serverIdentityId: serverId },
+      callerAuthority: authenticationKind === 'terminal' ? 'account_automation' : 'present_user' });
     acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, outcome, decoded.callId) });
   }));
-  const executor = authenticationKind === 'terminal'
+  const executor = 'standaloneCredential' in scenario
     ? createCliActionExecutorFromCredentials({ credentials, serverId, serverIdentityId: serverId,
       serverApiUrl: 'https://approval-home.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: AccountSettingsSchema.parse({}) }) })
@@ -197,6 +200,11 @@ it.each([
       : { ok: false, errorCode: 'session_input_target_unavailable' });
   }
   expect([...delivered]).toEqual(canRelay ? ['approval-result:approval'] : []);
+  if ('standaloneCredential' in scenario) {
+    // Each standalone rejoin reaches the same origin publisher, regardless of
+    // principal, instead of minting another attributed input at the CLI.
+    expect(outcomeReplayArtifacts).toEqual([{ artifactId: 'approval' }, { artifactId: 'approval' }]);
+  }
   if (canRelay) {
     if (!stored.executionOriginV1) throw new Error('Missing stored execution origin');
     // The native origin already published this localId before the deciding CLI

@@ -5,7 +5,7 @@ import { readDeploymentReadReceiverMachineId } from '@/deployments/deploymentRea
 import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
 import { measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { randomUUID } from 'node:crypto';
-import { createTerminalApprovalOutcomePublisher } from './approvals/publishTerminalOutcome';
+import { createOriginDaemonApprovalOutcomePublisher } from './approvals/publishOutcome';
 import { timeApprovalPhase, withApprovalActionTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { createSessionReadStateActionDeps } from '@/api/sessionReadStateActionDeps';
 import {
@@ -1347,8 +1347,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(!machineAdmissionTransport && !params.machineActionDirectTargetTransport
         && params.pluginActionExecutionOwner !== 'current_process'
         && hasStoredSessionCredentialProvenance(credentials)
-        && readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true })?.provenance.kind === 'terminal'
-        ? { approvalRequestOutcomePublication: createTerminalApprovalOutcomePublisher({ credentials, serverUrl: approvalServerApiUrl }) }
+        ? { approvalRequestOutcomePublication: createOriginDaemonApprovalOutcomePublisher({ credentials, serverUrl: approvalServerApiUrl }) }
         : {}),
       approvalRequestApprovedReplay: async args => {
         const { artifactId, request, decision, context, requestId, signal, onReplayDispatched } = args;

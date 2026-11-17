@@ -290,10 +290,11 @@ admitted Run and invocation without admitting the original principal again.
 Ordinary origins still require the root request ID, and protected original
 envelopes retain exact digest, target and runtime-demand binding.
 A forwarded child keeps its receiving Machine's proof.
-A terminal rejoining a deferred Agent approval's recorded outcome uses the original
-daemon's approved-replay RPC to publish through its authenticated Machine input.
-It does not mint a new Session input carrying the originating person's attribution;
-terminal credentials retain their automation authority and fresh consent restrictions.
+A standalone CLI rejoining a deferred Agent approval's recorded outcome uses the
+original daemon's approved-replay RPC to publish through its authenticated Machine
+input, for both present-person and terminal credentials. Both retain the original
+delivery ID instead of minting another attributed Session input. Terminal credentials
+retain their automation authority and fresh consent restrictions.
 
 The unreleased Files & Editor work adds workspace replace preview/apply and SCM
 blame intents through this same catalog. Preview and blame are safe reads;
@@ -10124,8 +10125,9 @@ Durable Session/MCP proposals return deferred approval custody, and their caller
 can read the settled private receipt. In 0.3 development, terminal deferred
 Agent/MCP approvals with a Session caller outside Discussion reply settlement
 deliver an observation-safe result to that original Session through existing host input admission, allowing an
-ended turn to continue. The deciding Account owns this delivery; a daemon's
-scoped execution proof does not authorize the additional input. Result input
+ended turn to continue. The originating Account owns this delivery; standalone
+CLI clients delegate publication to its origin daemon. A scoped execution proof
+does not authorize the additional input. Result input
 carries Account automation's default permission ceiling and no human permission
 intent. Existing input identity joins repeated delivery attempts; an unavailable
 input target returns its typed refusal while the execution receipt stays recorded.
