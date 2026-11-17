@@ -1436,7 +1436,7 @@ test('native launcher hands Mac workspace execution to the configured execution-
   assert.equal(local.stdout, 'unexpected-local\n');
 });
 
-test('payloads retain configured connects without inheriting the SSH liveness expiry', { skip: process.platform === 'win32' }, async t => {
+test('payloads retain configured connects and end on the canonical SSH keepalive budget', { skip: process.platform === 'win32' }, async t => {
   try { await access('/usr/bin/ssh'); } catch { t.skip('OpenSSH configuration parser is unavailable'); return; }
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000 });
   const sshConfig = join(fixture.root, 'managed-ssh.config');
@@ -1455,7 +1455,8 @@ effective=$(/usr/bin/ssh -G "$@" 2>/dev/null) || exit 89
 connect=$(printf '%s\\n' "$effective" | /usr/bin/awk '$1 == "connecttimeout" {print $2}')
 alive=$(printf '%s\\n' "$effective" | /usr/bin/awk '$1 == "serveraliveinterval" {print $2}')
 count=$(printf '%s\\n' "$effective" | /usr/bin/awk '$1 == "serveralivecountmax" {print $2}')
-case "$*" in *HAPPIER_REMOTE_EXEC_LIFELINE=1*) expected_alive=0 ;; *) expected_alive=30 ;; esac
+# Payloads and exact observations both end on the 30 s x 6 keepalive budget.
+expected_alive=30
 if [ -f ${JSON.stringify(exactTargetObservation)} ]; then
   [ "$connect" = 180 ] && [ "$alive" = "$expected_alive" ] && [ "$count" = 6 ] || exit 87
 else
@@ -7980,9 +7981,11 @@ test('native launcher cancels only its remote execution after an authoritative S
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'control_path=',
+    'error_log=',
     'previous=',
     'for argument in "$@"; do',
     '  if [ "$previous" = -S ]; then control_path=$argument; fi',
+    '  if [ "$previous" = -E ]; then error_log=$argument; fi',
     '  previous=$argument',
     '  remote_command=$argument',
     'done',
@@ -7997,6 +8000,8 @@ test('native launcher cancels only its remote execution after an authoritative S
     '    attempt=0',
     '    while [ ! -f "$REMOTE_STARTED_MARKER" ] && [ "$attempt" -lt 250 ]; do sleep 0.02; attempt=$((attempt + 1)); done',
     '    [ -f "$REMOTE_STARTED_MARKER" ] || exit 97',
+    // OpenSSH's own keepalive expiry diagnostic (clientloop.c), sent to -E.
+    '    [ -z "$error_log" ] || printf "Timeout, server linux-host not responding.\\r\\n" >> "$error_log"',
     '    exit 255',
     '    ;;',
     '  *) printf "%s\\n" "$*" > "$REMOTE_CANCEL_ARGS_PATH"; /bin/sh -c "$remote_command" ;;',
@@ -8021,6 +8026,11 @@ test('native launcher cancels only its remote execution after an authoritative S
     encoding: 'utf8',
   });
   assert.equal(result.status, 255, result.stderr);
+  // A dead peer is a named terminal failure, never a hang or a silent 255,
+  // and AUTO placement (including re-dispatched coalesced followers) skips it.
+  assert.match(result.stderr, /\[preferred-execution\] linux target unreachable \(keepalive\)/);
+  const unavailable = await readFile(join(stackDir, 'dev-target-command-load-native', 'linux.cache'), 'utf8');
+  assert.match(unavailable, / dispatch-ssh$/m);
   remoteChildPid = Number((await readFile(childPidPath, 'utf8')).trim());
   assert.ok(Number.isInteger(remoteChildPid) && remoteChildPid > 0);
   for (let attempt = 0; attempt < 100; attempt += 1) {

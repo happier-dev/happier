@@ -2461,13 +2461,13 @@ run_selected_ssh() {
   ssh_tty=-T
   [ "$explicit_tty" = 1 ] && ssh_tty=-tt
   if [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o "ServerAliveCountMax=$payload_ssh_server_alive_count_max" -o BatchMode=yes "$ssh_target" "$remote_command"
   elif [ -n "$authoritative_ssh_error_log" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o "ServerAliveCountMax=$payload_ssh_server_alive_count_max" -o BatchMode=yes "$ssh_target" "$remote_command"
   elif [ -n "$ssh_config" ]; then
-    exec ssh "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o "ServerAliveCountMax=$payload_ssh_server_alive_count_max" -o BatchMode=yes "$ssh_target" "$remote_command"
   else
-    exec ssh "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o "ServerAliveCountMax=$payload_ssh_server_alive_count_max" -o BatchMode=yes "$ssh_target" "$remote_command"
   fi
 }
 
@@ -2605,6 +2605,16 @@ if [ "$status" -eq 255 ]; then
   # them before cleanup so a lost transport does not become a silent exit 255.
   if [ -n "$authoritative_ssh_error_log" ] && [ -s "$authoritative_ssh_error_log" ]; then
     cat "$authoritative_ssh_error_log" >&2
+  fi
+  # OpenSSH names its own keepalive expiry. The worker stopped answering for
+  # the payload keepalive budget (dead, rebooted or partitioned): fail this
+  # execution by name and let AUTO placement, including re-dispatched
+  # coalesced followers, skip the worker for the unavailable TTL.
+  if [ -n "$authoritative_ssh_error_log" ] && grep -q '^Timeout, server .* not responding' "$authoritative_ssh_error_log" 2>/dev/null; then
+    printf '[preferred-execution] %s target unreachable (keepalive): no SSH reply for ~%ss (ServerAliveInterval=%s x ServerAliveCountMax=%s); the command was started and will not be replayed.\n' \
+      "$selected_name" "$((payload_ssh_server_alive_interval * payload_ssh_server_alive_count_max))" \
+      "$payload_ssh_server_alive_interval" "$payload_ssh_server_alive_count_max" >&2
+    record_selected_unavailable dispatch-ssh ssh
   fi
   # SSH cannot distinguish a transport failure after dispatch from a remote
   # command that returned 255. Either way the caller has lost this execution's

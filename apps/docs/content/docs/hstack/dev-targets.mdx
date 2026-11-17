@@ -459,8 +459,16 @@ terminate unrelated admitted commands. Enrollment and controller-key verificatio
 so an existing master cannot hide a missing key or bypass strict host-key checks.
 Dedicated payload transport also applies to managed Lima/WSL targets. Existing
 host-key and connection setup policies remain authoritative. Admitted payloads
-disable the SSH silence timer; a temporary stall does not expire a build. A real
-connection loss still cancels the owned worker and fails preparation before readiness.
+probe the worker every 30 seconds and give up after 6 unanswered probes
+(`ssh_liveness.mjs`, the same budget as managed guests). The probe starts only
+after 30 seconds without output, so a quiet build on a live worker never
+expires, and a stall shorter than about three minutes does not end it. A worker
+that stops answering (powered off, rebooted or cut off) ends the command with
+exit 255 and `target unreachable (keepalive)` within about 3.5 minutes; a worker
+that reboots and comes back ends it at the next probe. The command is not
+replayed: automatic placement skips that worker for the unavailable TTL, so
+a rerun or a waiting coalesced follower goes elsewhere. A real connection loss
+still cancels the owned worker and fails preparation before readiness.
 Synchronization and short probes retain their own keepalive policies. Refresh
 an older enrolled target with its existing `add --host` command, or refresh the
 shared config with the normal synchronization-service setup.

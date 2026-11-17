@@ -7,6 +7,7 @@ import { setupManagedLimaRuntime } from '../managed_lima/manager.mjs';
 import { normalizeManagedLimaArchitecture } from '../managed_lima/profiles.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
 import { inspectProvisionedPosixDevTarget, provisionPosixDevTarget } from './provision.mjs';
+import { LONG_LIVED_SSH_SERVER_ALIVE } from './ssh_liveness.mjs';
 
 function sshConfigQuote(value) {
   return `"${String(value).replace(/([\\"])/g, '\\$1')}"`;
@@ -53,8 +54,8 @@ export function renderGuestSshConfig({
     '  BatchMode yes',
     '  ConnectTimeout 180',
     '  ConnectionAttempts 2',
-    '  ServerAliveInterval 30',
-    '  ServerAliveCountMax 6',
+    `  ServerAliveInterval ${LONG_LIVED_SSH_SERVER_ALIVE.intervalSeconds}`,
+    `  ServerAliveCountMax ${LONG_LIVED_SSH_SERVER_ALIVE.countMax}`,
     '  ControlMaster auto',
     '  ControlPersist 600',
     `  ControlPath ${sshConfigQuote(controlPath)}`,

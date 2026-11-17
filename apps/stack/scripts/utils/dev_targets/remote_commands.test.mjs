@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
+import { LONG_LIVED_SSH_SERVER_ALIVE } from './ssh_liveness.mjs';
 import { createServer } from 'node:http';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installCliNativeCustodySourceFixture, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture, rustToolchainFakeBins } from '../../testkit/core/native_admission_fixture.mjs';
@@ -79,7 +80,8 @@ test('runtime worker SSH sessions cannot attach to a saturated shared master',
       const { stdout } = await promisify(execFile)('ssh', ['-G', ...args]);
       assert.match(stdout, /^hostname 192\.0\.2\.1$/m);
       assert.match(stdout, /^controlmaster false$/m);
-      assert.match(stdout, /^serveraliveinterval 0$/m);
+      assert.match(stdout, new RegExp(`^serveraliveinterval ${LONG_LIVED_SSH_SERVER_ALIVE.intervalSeconds}$`, 'm'));
+      assert.match(stdout, new RegExp(`^serveralivecountmax ${LONG_LIVED_SSH_SERVER_ALIVE.countMax}$`, 'm'));
       assert.doesNotMatch(stdout, /^controlpath (?!none$).+$/m);
       assert.match(stdout, platform === 'windows' ? /^requesttty false$/m : /^requesttty force$/m);
     }
@@ -5055,7 +5057,9 @@ test('SSH tunnel owns the reverse forward independently from the monitored worke
       '-o',
       'BatchMode=yes',
       '-o',
-      'ServerAliveInterval=0',
+      `ServerAliveInterval=${LONG_LIVED_SSH_SERVER_ALIVE.intervalSeconds}`,
+      '-o',
+      `ServerAliveCountMax=${LONG_LIVED_SSH_SERVER_ALIVE.countMax}`,
       'happier-stack-linux',
       'bash -lc true',
     ],

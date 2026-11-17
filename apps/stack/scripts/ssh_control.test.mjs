@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
+import { LONG_LIVED_SSH_SERVER_ALIVE } from './utils/dev_targets/ssh_liveness.mjs';
 
 // Execute the real payload owner; only the external SSH process is replaced.
 // The transport boundary models a dead shared master and a healthy fresh link.
@@ -38,11 +39,13 @@ exec /bin/sh -c "$remote_command"
 });
 
 
-test('admitted native payloads do not expire on the configured SSH liveness timer',
+test('admitted native payloads end on the canonical SSH keepalive budget whatever the target config says',
   { skip: process.platform === 'win32' }, async t => {
     const fixture = await createTempFixture(t, { prefix: 'hstack-payload-liveness-' });
     const config = fixture.path('ssh.config');
-    await writeFile(config, 'Host *\n  ServerAliveInterval 15\n  ServerAliveCountMax 3\n');
+    // A host without a keepalive policy (OpenSSH default 0) must not keep a
+    // payload to a dead or rebooted target open forever (linux1, 2026-11-17).
+    await writeFile(config, 'Host *\n  ServerAliveInterval 0\n  ServerAliveCountMax 1\n');
     const launcherSource = await readFile(process.env.HAPPIER_TEST_NATIVE_ADMISSION_LAUNCHER || new URL('../bin/hstack-exec', import.meta.url), 'utf8');
     const start = launcherSource.indexOf('run_selected_ssh() {');
     const end = launcherSource.indexOf('\ncustody_pipe=', start);
@@ -55,5 +58,7 @@ test('admitted native payloads do not expire on the configured SSH liveness time
       },
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /^serveraliveinterval 0$/m);
+    assert.ok(LONG_LIVED_SSH_SERVER_ALIVE.intervalSeconds > 0 && LONG_LIVED_SSH_SERVER_ALIVE.countMax > 0);
+    assert.match(result.stdout, new RegExp(`^serveraliveinterval ${LONG_LIVED_SSH_SERVER_ALIVE.intervalSeconds}$`, 'm'));
+    assert.match(result.stdout, new RegExp(`^serveralivecountmax ${LONG_LIVED_SSH_SERVER_ALIVE.countMax}$`, 'm'));
   });
