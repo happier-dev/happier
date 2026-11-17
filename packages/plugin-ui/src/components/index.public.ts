@@ -89,7 +89,7 @@ export {
   type HappierMemoryFactRowHost,
   type HappierMemoryFactRowProps,
 } from '../presentation/content/MemoryFactRow.js';
-export { Chart, DataRows, DataTable, Metric, type ChartProps, type DataRowsProps, type MetricProps } from './Data.js';
+export { Chart, DataRows, DataTable, Metric, useSeriesAreaWash, type ChartProps, type DataRowsProps, type MetricProps } from './Data.js';
 export {
   AgentCursor,
   PresenceCapsule,
@@ -750,6 +750,7 @@ export {
   mixHappierColorOverPaper,
   resolveHappierDataShares,
   resolveHappierDataTableColumns,
+  resolveHappierSeriesAreaWash,
   resolveHappierSeriesRampColor,
   type HappierDataBytesKind,
   type HappierDataColumn,

@@ -2,7 +2,8 @@ import type { ReactElement } from 'react';
 
 import { HappierDataChart } from '../presentation/data/Chart.js';
 import { HappierDataRows, HappierDataTable, type HappierDataRowsProps } from '../presentation/data/DataRows.js';
-import type { HappierDataColumn, HappierDataPoint, HappierDataValue } from '../presentation/data/dataModel.js';
+import { resolveHappierSeriesAreaWash, type HappierDataColumn, type HappierDataPoint, type HappierDataValue } from '../presentation/data/dataModel.js';
+import { useHappierUiPlatform } from '../environment/context.js';
 import { HappierDataMetric, type HappierDataMetricComparison } from '../presentation/data/Metric.js';
 import { usePluginTheme } from './PluginUiProvider.js';
 import { useWidgetPresentation } from './WidgetPresentation.js';
@@ -61,4 +62,9 @@ export type ChartProps = Readonly<{
 export function Chart(props: ChartProps): ReactElement {
   const presentation = useWidgetPresentation();
   return <HappierDataChart {...props} theme={usePluginTheme()} viewportHeight={presentation?.geometry?.height} />;
+}
+
+/** The wash under a history line in the host's colour scheme, for `HappierSeries.fillOpacity`. */
+export function useSeriesAreaWash(): number {
+  return resolveHappierSeriesAreaWash(useHappierUiPlatform().colorScheme);
 }

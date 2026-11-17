@@ -838,6 +838,7 @@ export {
 } from './data/OutcomeFunnel.js';
 export {
   describeHappierSeriesBucket,
+  resolveHappierSeriesAreaWash,
   type HappierSeries,
   type HappierSeriesPoint,
   type HappierSeriesBucket,

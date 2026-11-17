@@ -166,6 +166,14 @@ export function describeHappierDataChart(label: string, points: readonly Happier
 }
 
 
+/**
+ * The light wash under a single history line (`HappierSeries.fillOpacity`): a whisper on light, a little more on
+ * dark. One value for every history area, Happier's own vitals and checks and plugin metrics alike.
+ */
+export function resolveHappierSeriesAreaWash(colorScheme: 'light' | 'dark'): number {
+  return colorScheme === 'dark' ? 0.16 : 0.08;
+}
+
 /** `id` is a semantic bucket identity shared across series, not a series-local point index. */
 export type HappierSeriesPoint = Readonly<{ id: string; x: string | number; y: number | null; label?: string; annotation?: string; color?: string; opacity?: number }>;
 /**

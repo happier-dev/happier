@@ -14,6 +14,7 @@ import {
   Stack,
   usePluginTheme,
   usePluginTranslation,
+  useSeriesAreaWash,
   type HappierSeries,
 } from '@happier-dev/plugin-ui';
 
@@ -31,14 +32,13 @@ export function TelemetryWidgetLine(
   }>,
 ): React.ReactElement {
   const theme = usePluginTheme();
-  const color =
-    props.color ??
-    (props.variant === 'area'
-      ? theme.colors.accent
-      : theme.colors.secondaryText);
+  // A history area takes the host's data accent over its shared wash (the Machine metric's look); a glance
+  // sparkline stays quiet ink, since numbers speak only when a check fails.
+  const wash = useSeriesAreaWash();
+  const color = props.color ?? (props.variant === 'area' ? theme.colors.dataAccent ?? theme.colors.accent : theme.colors.secondaryText);
   const series = React.useMemo(
-    () => (props.series ? [{ ...props.series, color }] : null),
-    [color, props.series],
+    () => (props.series ? [{ ...props.series, color, ...(props.variant === 'area' ? { fillOpacity: wash } : {}) }] : null),
+    [color, props.series, props.variant, wash],
   );
   // No interval yet is not a reading of zero: the line keeps its room and draws nothing.
   const drawn =

@@ -121,7 +121,7 @@ export function TelemetryMetricWidget(
           <TelemetryWidgetStale state={state} retry={retry} testID={TEST_ID} />
           <HappierDataMetric
             theme={theme}
-            size="hero"
+            size="stat"
             showLabel
             label={label}
             testID={`${TEST_ID}.value`}

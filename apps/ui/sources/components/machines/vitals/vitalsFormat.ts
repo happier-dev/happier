@@ -1,4 +1,4 @@
-import { formatHappierDataBytesParts } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataBytesParts, resolveHappierSeriesAreaWash } from '@happier-dev/plugin-ui/presentation';
 
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -39,9 +39,9 @@ export function formatVitalsPointTime(at: number): string {
   return formatAsOfTime(at);
 }
 
-/** The light wash under a history line (lab: a whisper on light, a little more on dark). */
+/** The light wash under a history line, owned by the shared chart family. */
 export function vitalsAreaWash(dark: boolean): number {
-  return dark ? 0.16 : 0.08;
+  return resolveHappierSeriesAreaWash(dark ? 'dark' : 'light');
 }
 
 /** Percent charts keep a fixed 0–100 % scale, so a busy minute never reads as a near-empty machine. */
