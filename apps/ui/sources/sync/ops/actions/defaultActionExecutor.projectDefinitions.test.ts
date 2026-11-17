@@ -67,6 +67,35 @@ describe('Project definition Actions through the UI executor', () => {
         expect(rpc.machine).not.toHaveBeenCalled();
     });
 
+    it('opens the Account setup decision through the native UI port and keeps its checkout association', async () => {
+        const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        const home = 'srv_project_home';
+        const address = { ...workspace, serverId: home };
+        const key = { kind: 'project-organization' as const, serverId: home, projectKey: workspace.workspaceId };
+        harness.answer(workspace.serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
+            body: createPlainProjectAccountRowListFixture({
+                workspaceRefs: [{ id: workspace.workspaceId, serverId: home, machineId: workspace.machineId,
+                    rootPath: workspace.rootPath, createdAtMs: 1 }],
+                organizations: [{ key, revision: 0, value: {} }],
+            }),
+        });
+        harness.answer(workspace.serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.setup.set': ['ui'] } },
+        } } } });
+        const execute = createFrontDoorActionExecute(createDefaultActionExecutor());
+        const input = { projectRef: { serverId: home, projectKey: workspace.workspaceId }, workspace: address,
+            expectedRevision: 0, intent: { kind: 'personal', setupOverrides: null } };
+        const context = { surface: 'ui' as const, authority: 'present_user' as const,
+            serverId: workspace.serverId, expectedAccountId: 'alice' };
+        expect(await execute('projects.setup.set', input, context)).toMatchObject({ ok: true,
+            result: { ok: true, revision: 0, row: {} } });
+        expect(await execute('projects.setup.set', { ...input,
+            projectRef: { ...input.projectRef, projectKey: 'another-project' } }, context))
+            .toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_workspace_association_mismatch' } });
+        expect(rpc.machine).not.toHaveBeenCalled();
+    });
+
     it('inspects, imports qualified references and saves exact draft bytes in the addressed Home without a Session', async () => {
         const signal = new AbortController().signal;
         const definition = present(initialBytes, 'a'.repeat(64));

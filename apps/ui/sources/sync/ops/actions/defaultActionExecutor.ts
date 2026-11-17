@@ -446,6 +446,7 @@ import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateEx
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
 import { updateProjectOrganizationV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
+import { setProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import {
   listPromptInvocationsForActions,
   resolvePromptInvocationForActions,
@@ -3592,6 +3593,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // The same visible, ordered checkouts the Projects list shows.
       return { workspaceRefs: projectProjectListV1({ serverId: accountContext.serverId, workspaceRefs: rows.workspaceRefs,
         organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier }).items.map(item => item.ref) };
+    },
+    projectsSetupSet: async ({ input, context, executeCanonicalAction }) => {
+      if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_account_access_denied' };
+      const client = createUiProjectAccountRowsClient(accountContext);
+      const rows = await client.read(context.signal);
+      const { resolveWorkspaceRefV1, projectWorkspaceRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+      const resolved = resolveWorkspaceRefV1(rows.workspaceRefs, { ...input.workspace, id: input.workspace.workspaceId });
+      if (resolved.kind !== 'resolved' || projectWorkspaceRefV1(resolved.ref).projectKey !== input.projectRef.projectKey) {
+        return { ok: false, errorCode: 'project_workspace_association_mismatch' };
+      }
+      return setProjectSetupV1({ execute: executeCanonicalAction, mutateOrganization: client.mutateOrganization }, input, context);
     },
     projectsOrganizationUpdate: async (input, context) => {
       if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_organization_access_denied' };
