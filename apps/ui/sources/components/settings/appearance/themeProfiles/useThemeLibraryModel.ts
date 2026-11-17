@@ -142,7 +142,7 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
         for (const slotMode of ['light', 'dark'] as const) {
             const option = activeOption(slotMode);
             const document = input.selectedDocuments?.[slotMode];
-            const compatibility = option.entry?.compatibility ?? document?.compatibility;
+            const compatibility = document?.compatibility ?? option.entry?.compatibility;
             const prepared = slotMode === 'light' ? preparedLight : preparedDark;
             const webOnlyRules = input.native && document ? prepared?.coverage.webOnly ?? 0 : 0;
             if ((compatibility?.status === 'partial' || webOnlyRules > 0) && !partialIds.has(option.id)) {

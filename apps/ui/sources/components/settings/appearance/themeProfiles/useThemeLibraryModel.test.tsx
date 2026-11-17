@@ -152,6 +152,7 @@ describe('theme library recovery facts', () => {
         const document = mergeThemeProfileDocumentEdit(themeActionDocument('00000000-0000-4000-8000-000000000019'), {
             css: '.dark [data-surface="session-row"][data-part="root"] { display: none; } .future-effect { filter: blur(1px); }',
             requiresAppVersion: '99.0.0',
+            overrides: { light: {}, dark: { 'future.token': '#aabbcc' } },
         });
         await harness.library.save({ document });
         await harness.library.select({ reference: { kind: 'artifact', id: document.profile.id }, mode: 'dark' });
@@ -162,7 +163,9 @@ describe('theme library recovery facts', () => {
             if ('errorCode' in result) throw new Error(result.errorCode);
             return result as ThemeActionOutput<typeof actionId>;
         };
-        const options = buildThemePresetSourceOptions(await harness.library.list());
+        // Earlier builds persisted headers that called unknown overrides supported.
+        const options = buildThemePresetSourceOptions((await harness.library.list()).map(entry => entry.id === document.profile.id
+            ? { ...entry, compatibility: { status: 'supported', unsupportedPaths: [] } } : entry));
         const input: ThemeLibraryModelInput = { options, selection: harness.selection, showing: 'dark', native: true,
             selectedDocuments: { light: null, dark: document },
             labels: { sourceYours: 'Yours', sourceStore: 'Store', sourcePlugin: 'Plugin', editTheme: 'Edit', exportFile: 'Export' },
@@ -171,7 +174,7 @@ describe('theme library recovery facts', () => {
         const hook = await renderHook(value => useThemeLibraryModel(value, execute), { initialProps: input });
         await vi.waitFor(() => expect(hook.getCurrent().facts).toEqual(expect.arrayContaining([
             expect.objectContaining({ kind: 'partial', requiresAppVersion: '99.0.0',
-                unsupportedPaths: expect.arrayContaining(['style.futurePresentation']), webOnlyRules: 1, onUpdate: expect.any(Function) }),
+                unsupportedPaths: expect.arrayContaining(['style.futurePresentation', 'overrides.dark.future.token']), webOnlyRules: 1, onUpdate: expect.any(Function) }),
             expect.objectContaining({ kind: 'hides', areas: ['session list'] }),
         ])));
         const hidden = hook.getCurrent().facts?.find(fact => fact.kind === 'hides');
@@ -183,7 +186,7 @@ describe('theme library recovery facts', () => {
         await act(async () => { hidden.onUseBuiltIn(); });
         expect(harness.selection.dark).toBeNull();
         expect(harness.writes()).toBe(writes);
-        const supported = parseThemeProfileDocument({ ...document.profile, id: '00000000-0000-4000-8000-000000000020' });
+        const supported = parseThemeProfileDocument({ ...document.profile, id: '00000000-0000-4000-8000-000000000020', overrides: { light: {}, dark: {} } });
         if (!supported.ok || supported.document.compatibility.status !== 'supported') throw new Error('Expected a supported theme fixture');
         await harness.library.save({ document: supported.document });
         await harness.library.select({ reference: { kind: 'artifact', id: supported.document.profile.id }, mode: 'dark' });
