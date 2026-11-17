@@ -5,8 +5,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
 import { link, open, readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
 import { pruneLogs } from '@/utils/logs/pruneLogs';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { createProcessOutputRedaction } from '@/plugins/runtime/exec/processOutputRedaction';
 
 import {
     probeProcessGroupLiveness,
@@ -178,79 +179,6 @@ async function atomicWrite(path: string, value: string): Promise<void> {
 
 function resolvePositiveBound(value: number | undefined, fallback: number): number {
     return Number.isSafeInteger(value) && (value ?? 0) > 0 ? value as number : fallback;
-}
-
-function normalizeSecretValues(secretValues: readonly string[]): readonly string[] {
-    return [...new Set(secretValues.filter((secret) => secret.length > 0))]
-        .sort((left, right) => right.length - left.length);
-}
-
-type ManagedServiceLogSource = 'stdout' | 'stderr';
-type ManagedServiceRedactedLogSegment = Readonly<{
-    source: ManagedServiceLogSource;
-    text: string;
-}>;
-
-function appendRedactedLogSegment(
-    segments: ManagedServiceRedactedLogSegment[],
-    source: ManagedServiceLogSource,
-    text: string,
-): void {
-    if (!text) return;
-    const previous = segments.at(-1);
-    if (previous?.source === source) {
-        segments[segments.length - 1] = { source, text: previous.text + text };
-        return;
-    }
-    segments.push({ source, text });
-}
-
-function redactStreamingText(
-    value: string,
-    priorPendingOrigins: readonly ManagedServiceLogSource[],
-    currentSource: ManagedServiceLogSource,
-    secrets: readonly string[],
-    final: boolean,
-): Readonly<{
-    emitted: readonly ManagedServiceRedactedLogSegment[];
-    pending: string;
-    pendingOrigins: readonly ManagedServiceLogSource[];
-}> {
-    const maxSecretLength = secrets[0]?.length ?? 0;
-    const emitted: ManagedServiceRedactedLogSegment[] = [];
-    const sourceAt = (index: number): ManagedServiceLogSource => (
-        index < priorPendingOrigins.length
-            ? priorPendingOrigins[index]!
-            : currentSource
-    );
-    let cursor = 0;
-    while (cursor < value.length) {
-        const matchingSecret = secrets.find((secret) => value.startsWith(secret, cursor));
-        if (matchingSecret) {
-            appendRedactedLogSegment(emitted, sourceAt(cursor), '[REDACTED]');
-            cursor += matchingSecret.length;
-            continue;
-        }
-        const remainingLength = value.length - cursor;
-        if (
-            !final
-            && remainingLength < maxSecretLength
-            && secrets.some((secret) => (
-                remainingLength < secret.length
-                && secret.startsWith(value.slice(cursor))
-            ))
-        ) break;
-        appendRedactedLogSegment(emitted, sourceAt(cursor), value[cursor]!);
-        cursor += 1;
-    }
-    return {
-        emitted,
-        pending: value.slice(cursor),
-        pendingOrigins: Array.from(
-            { length: value.length - cursor },
-            (_, index) => sourceAt(cursor + index),
-        ),
-    };
 }
 
 export function createManagedServiceDurabilityOwner(params: Readonly<{
@@ -617,13 +545,6 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         let queue = atomicWrite(path, header.toString('utf8'));
         openLogPaths.add(path);
         let closed = false;
-        const secrets = normalizeSecretValues(input.secretValues);
-        const streams = {
-            stdout: new StringDecoder('utf8'),
-            stderr: new StringDecoder('utf8'),
-        };
-        let pendingText = '';
-        let pendingOrigins: readonly ManagedServiceLogSource[] = [];
         const append = async (data: Uint8Array) => {
             const handle = await open(path, 'a', 0o600);
             try {
@@ -632,40 +553,29 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                 await handle.close();
             }
         };
-        const appendRedacted = (source: ManagedServiceLogSource, text: string, final: boolean) => {
-            const redacted = redactStreamingText(
-                pendingText + text,
-                pendingOrigins,
-                source,
-                secrets,
-                final,
-            );
-            pendingText = redacted.pending;
-            pendingOrigins = redacted.pendingOrigins;
-            for (const segment of redacted.emitted) {
-                const remaining = Math.max(0, maxLogBytes - writtenBytes);
-                const bytes = Buffer.from(`[${segment.source}] ${segment.text}`, 'utf8');
-                if (bytes.byteLength > remaining) reportTruncation();
-                if (remaining === 0) return;
-                const retained = bytes.subarray(0, remaining);
-                writtenBytes += retained.byteLength;
-                queue = queue.then(async () => await append(retained));
-            }
-        };
+        const redactionLease = createProviderRedactionLease({ values: input.secretValues });
+        const redaction = createProcessOutputRedaction(redactionLease, (source, data) => {
+            const remaining = Math.max(0, maxLogBytes - writtenBytes);
+            const bytes = Buffer.concat([Buffer.from(`[${source}] `), data]);
+            if (bytes.byteLength > remaining) reportTruncation();
+            if (remaining === 0) return;
+            const retained = bytes.subarray(0, remaining);
+            writtenBytes += retained.byteLength;
+            queue = queue.then(async () => await append(retained));
+        });
         return Object.freeze({
             path,
             write(source, chunk) {
                 if (closed) return;
                 const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk);
-                appendRedacted(source, streams[source].write(bytes), false);
+                redaction.push(source, bytes);
             },
             async close() {
                 if (closed) return;
                 closed = true;
-                for (const source of ['stdout', 'stderr'] as const) {
-                    appendRedacted(source, streams[source].end(), false);
-                }
-                appendRedacted('stdout', '', true);
+                redaction.flush('stdout');
+                redaction.flush('stderr');
+                redactionLease.close();
                 try {
                     await queue;
                     await runExclusive(async () => {

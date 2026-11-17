@@ -410,6 +410,35 @@ describe('managed server durability owner', () => {
             .not.toContain('token-secret');
     });
 
+    it('keeps interleaved per-pipe secrets masked while preserving useful binary durable output', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-interleaved-secret-'));
+        const owner = createManagedServiceDurabilityOwner({ rootDir: root });
+        const secret = 'token-猫-secret';
+        const capture = await owner.openLog({ instanceId: 'interleaved', serverId: 'sidecar',
+            keepCount: 2, secretValues: [secret], nowMs: 1_000 });
+        try {
+            const bytes = Buffer.from(secret);
+            capture.write('stdout', Buffer.concat([Buffer.from([255, 0]), Buffer.from('ready '), bytes.subarray(0, 8)]));
+            capture.write('stderr', Buffer.from([254, 0, 78, 10]));
+            capture.write('stdout', Buffer.concat([bytes.subarray(8), Buffer.from(' done\n')]));
+            await capture.close();
+            // Latin1 preserves every persisted byte while separating the durable
+            // writer's tags, so neither a decoder nor the labels hide a leak.
+            const text = (await readFile(capture.path)).toString('latin1');
+            const tags = [...text.matchAll(/\[(stdout|stderr)\] /gu)];
+            const output = { stdout: '', stderr: '' };
+            for (let index = 0; index < tags.length; index++) {
+                const tag = tags[index]!;
+                output[tag[1] as 'stdout' | 'stderr'] += text.slice(tag.index! + tag[0].length, tags[index + 1]?.index);
+            }
+            expect({ exposed: Buffer.from(output.stdout, 'latin1').includes(bytes),
+                stdoutBytes: Buffer.from(output.stdout, 'latin1').equals(Buffer.concat([
+                    Buffer.from([255, 0]), Buffer.from('ready [REDACTED] done\n'),
+                ])), stderrBytes: Buffer.from(output.stderr, 'latin1').equals(Buffer.from([254, 0, 78, 10])),
+            }).toEqual({ exposed: false, stdoutBytes: true, stderrBytes: true });
+        } finally { await capture.close(); await rm(root, { recursive: true, force: true }); }
+    });
+
     it('requires exact session, plugin, instance, and token scope before projection release', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-projection-release-'));
         const projectionFacts = record('scoped-instance');
