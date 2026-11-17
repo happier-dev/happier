@@ -5,6 +5,7 @@ export * from './backup.js';
 export * from './previews.js';
 export * from './target.js';
 export * from './deployment.js';
+export * from './telemetry.js';
 export * from './correlations.js';
 export * from './teardown.js';
 export * from './operations.js';

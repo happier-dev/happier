@@ -2567,6 +2567,27 @@ the Machine-grant decoder consumes that same source schema rather than a copied
 subset. Purpose materialization and fact resolution still require their owning
 runtime producers; schema acceptance alone does not make them executable.
 
+Production telemetry is being implemented for 0.3 development. The standalone
+`happier.database-capture/telemetry` Machine role runs the collector only;
+workspace-local capture belongs to the existing workspaces role. The host Action
+`deployments.environments.telemetry.set` selects the collector and writes its
+Machine ID together with the Environment bindings. Its ingest bearer is an
+ordinary Account-mode Saved Secret delivered to application installations;
+the collector receives only its SHA-256 hash after a successful runtime launch.
+Changing collectors requires confirmation before deleting the old Environment
+partition, including reconciliation when that Machine next comes online.
+
+Native launch preserves a project's authored telemetry values. Empty declared
+slots receive the managed OTLP HTTP/protobuf endpoint, authorization header,
+service name and resource attributes. A same-Machine container reaches the
+loopback receiver through `privateServiceContainerBridge`. Sampling variables
+remain absent unless a person selects a ratio; explicit sampling uses the
+standard `parentbased_traceidratio` sampler and argument through ordinary
+Environment bindings. Public collector exposure for platform deployments still
+requires the deployment ingress owner's in-process target integration.
+OTLP header values follow the [exporter configuration specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/);
+resource attribute separators follow the [Resource SDK encoding specification](https://opentelemetry.io/docs/specs/otel/resource/sdk/).
+
 In 0.3 development, Environment Settings also exposes registry bindings through
 the ordinary `deployments.bindings.set` Action. A manager chooses an existing
 target link, registry origin, pull-only or push-and-pull access, and a Saved

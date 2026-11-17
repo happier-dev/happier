@@ -22,6 +22,7 @@ import { projectDeploymentReceiptHeader } from './deploymentService';
 import { admitDeploymentStoredContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import type { MachineDeploymentReferencesInputV1, MachineDeploymentReferencesPageV1, MachineReferenceV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { MachineDeploymentReferenceRoleV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
@@ -98,7 +99,7 @@ export async function readDeploymentEnvironmentAccessInTx(tx: Tx, actorAccountId
 }
 
 function deploymentMachineReferenceWhere(machineId: string) {
-    return { OR: [{ controllerMachineId: machineId }, { buildMachineId: machineId }, { edgeMachineId: machineId },
+    return { OR: [{ controllerMachineId: machineId }, { buildMachineId: machineId }, { edgeMachineId: machineId }, { telemetryMachineId: machineId },
         { deployments: { some: { state: { in: deploymentInProgressStates() }, OR: [
             { acceptedControllerMachineId: machineId }, { acceptedBuildMachineId: machineId },
         ] } } },
@@ -120,7 +121,7 @@ export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId
     const rows = await tx.deploymentEnvironment.findMany({ where: {
         ...(input.cursor ? { id: { gt: input.cursor } } : {}),
         OR: [deploymentMachineReferenceWhere(input.machineId), { id: { in: capturedDomainEnvironmentIds } }],
-    }, select: { id: true, projectSourceId: true, controllerMachineId: true, buildMachineId: true, edgeMachineId: true,
+    }, select: { id: true, projectSourceId: true, controllerMachineId: true, buildMachineId: true, edgeMachineId: true, telemetryMachineId: true,
         runtimeTargetLinkId: true, deployments: { where: { state: { in: deploymentInProgressStates() }, OR: [
             { acceptedControllerMachineId: input.machineId }, { acceptedBuildMachineId: input.machineId },
         ] }, select: { acceptedControllerMachineId: true, acceptedBuildMachineId: true } }, targetLinks: { where: {
@@ -144,6 +145,7 @@ export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId
         if (row.controllerMachineId === input.machineId) roles.add('controller');
         if (row.buildMachineId === input.machineId) roles.add('build');
         if (row.edgeMachineId === input.machineId) roles.add('edge');
+        if (row.telemetryMachineId === input.machineId) roles.add('telemetry');
         if (capturedDomainEnvironmentIds.includes(row.id) && row.edgeMachineId !== input.machineId && row.targetLinks.length === 0) roles.add('retiring');
         for (const receipt of row.deployments) {
             if (receipt.acceptedControllerMachineId === input.machineId) roles.add('controller');
@@ -151,7 +153,7 @@ export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId
         }
         references.push({ kind: 'deployment_environment', id: row.id, name: '',
             deploymentDomains: row.domains.flatMap(domain => projectDeploymentDomainMachineReferences(domain, input.machineId)),
-            deploymentRoles: (['runtime', 'data', 'retiring', 'detached', 'controller', 'build', 'edge'] as const).filter(role => roles.has(role)) });
+            deploymentRoles: MachineDeploymentReferenceRoleV1Schema.options.filter(role => roles.has(role)) });
     }
     return { homeId: input.homeId, machineId: input.machineId, coverage, references,
         // A cursor must not disclose an unreadable Environment id. If no

@@ -182,7 +182,7 @@ export const DeploymentReferenceSourceV1Schema = lazyZodSchema(() => z.strictObj
     kind: z.literal('reference'), environmentId: id, export: DeploymentTextV1Schema, via: z.enum(['auto', 'privateNetwork', 'public']),
     component: z.optional(z.enum(['host', 'port'])),
 }));
-const deploymentVariableFact = z.enum(['primaryUrl', 'commitSha', 'deploymentId', 'environmentName']);
+const deploymentVariableFact = z.enum(['primaryUrl', 'commitSha', 'deploymentId', 'environmentName', 'telemetryEndpoint']);
 const deploymentVariableDomainFact = z.enum(['domainUrl']);
 /** Authoring choices come from the same fact schemas that admit saved bindings. */
 export const DeploymentVariableFactOptionsV1 = [...deploymentVariableFact.options, ...deploymentVariableDomainFact.options] as const;
@@ -204,8 +204,10 @@ const variableIdentity = () => ({
 /** Opaque per-binding address used outside Account-encrypted Environment content. */
 export const EnvironmentVariableBindingGrantReferenceV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 export type EnvironmentVariableBindingGrantReferenceV1 = z.infer<typeof EnvironmentVariableBindingGrantReferenceV1Schema>;
-const persistedVariableIdentity = () => ({ ...variableIdentity(), grantRef: EnvironmentVariableBindingGrantReferenceV1Schema });
-const authoredVariableIdentity = () => ({ ...variableIdentity(), grantRef: z.optional(EnvironmentVariableBindingGrantReferenceV1Schema) });
+const variableDelivery = () => ({ managedBy: z.optional(z.literal('telemetry')),
+    valueFormat: z.optional(z.literal('otelAuthorizationHeader')) });
+const persistedVariableIdentity = () => ({ ...variableIdentity(), ...variableDelivery(), grantRef: EnvironmentVariableBindingGrantReferenceV1Schema });
+const authoredVariableIdentity = () => ({ ...variableIdentity(), ...variableDelivery(), grantRef: z.optional(EnvironmentVariableBindingGrantReferenceV1Schema) });
 export const EnvironmentVariableBindingV1Schema = lazyZodSchema(() => z.strictObject({
     ...persistedVariableIdentity(), source: DeploymentVariableBindingSourceV1Schema,
 }));

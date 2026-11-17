@@ -15,7 +15,7 @@ import { admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvi
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, lockDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx,
     type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { admitDeploymentStoredContentInTx, deploymentContentReference, updateDeploymentStoredContentInTx } from './deploymentStoredContent';
-import { publishDeploymentChangesInTx } from './deploymentPublication';
+import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
 import { readDeploymentTargetsInTx } from './deploymentTargetLinkService';
 import { readDeploymentDomainInventoryInTx, prepareDeploymentTeardownDomainsInTx } from './deploymentDomainService';
 import { admitDeploymentPendingInTx } from './deploymentPendingService';
@@ -408,6 +408,14 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         ...(resumedTeardown ? { settledAt: null } : {}),
     } });
     if (changed.count !== 1) throw new Error('Locked deployment receipt changed during transition');
+    // Only a successful serving activation publishes the token actually delivered by its admitted executor.
+    if (input.kind === 'settle' && row.operation !== 'teardown'
+        && (input.state === 'succeeded' || input.state === 'running_unverified')
+        && input.telemetryMachineId && input.telemetryMachineId === loaded.row.telemetryMachineId
+        && input.telemetryTokenHash && input.telemetryTokenHash !== loaded.row.telemetryTokenHash) {
+        await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { telemetryTokenHash: input.telemetryTokenHash } });
+        await publishDeploymentTelemetryMachinesInTx(tx, [input.telemetryMachineId]);
+    }
     const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.source]);
     if (input.expectedTargetLinkRevision !== undefined) {
         await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: input.servingDeploymentId ?? row.id, state: 'deployed', revision: { increment: 1 } } });

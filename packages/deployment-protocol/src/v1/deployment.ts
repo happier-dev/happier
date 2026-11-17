@@ -3,6 +3,7 @@ import { ActionActorV1Schema } from '@happier-dev/protocol/actions/actionRequest
 import { DeploymentPreviewCleanupV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentPreviewDomainFactV1Schema } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { DeploymentDataCreationReferenceV1Schema, DeploymentReceiptFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTelemetryTokenHashV1Schema } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentIngressV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema, DeploymentReceiptListResultV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -141,6 +142,7 @@ export const OwnServerDeploymentDetailsV1Schema = z.strictObject({
 export type OwnServerDeploymentDetailsV1 = z.infer<typeof OwnServerDeploymentDetailsV1Schema>;
 export const DeploymentMachineResultV1Schema = z.strictObject({
     machineId: id, installationId: id, steps: z.array(DeploymentStepV1Schema),
+    telemetryMachineId: z.optional(id), telemetryTokenHash: z.optional(DeploymentTelemetryTokenHashV1Schema),
     actionOperationId: z.optional(id), previousDeploymentId: z.optional(id), currentDeploymentId: z.optional(id),
     activation: z.enum(['pending', 'succeeded', 'failed', 'cancelled', 'outcome_unknown']),
     health: z.enum(['unknown', 'healthy', 'unhealthy', 'unverified']),

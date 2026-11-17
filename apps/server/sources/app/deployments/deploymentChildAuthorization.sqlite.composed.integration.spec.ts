@@ -88,6 +88,7 @@ import type { ExternalActionDaemonDispatchRequest, ExternalActionRequestEnvelope
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
+import type { DeploymentEnvironmentTelemetrySetInputV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_QUERY_ACTION_ID_V1,
     DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -149,7 +150,7 @@ import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLau
 import { readAdmittedDeploymentReadScopeInTx, readDeploymentReadAuthorizationInTx, readDeploymentTargetAuthorizationInTx } from './deploymentReadAuthorization';
 import { createDeploymentDomainInTx, removeDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from './deploymentDomainService';
 import { isCurrentDeploymentChildInTx, readDeploymentChildAdmissionInTx, readDeploymentChildMachineReadInTx } from './deploymentChildAuthorization';
-import { isDeploymentPreparationAuthorizedInTx, readDeploymentBackupConfigureHttpPurpose } from './deploymentPreparationAuthorization';
+import { isDeploymentPreparationAuthorizedInTx, readDeploymentEnvironmentSetupHttpPurpose } from './deploymentPreparationAuthorization';
 import { isDeploymentChildHttpPurposeInTx } from '@/app/auth/deploymentChildHttpPurpose';
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
 import { managedQb56Input } from '@/app/api/routes/actions/managedQb56Input.testkit';
@@ -162,6 +163,7 @@ import { claimAutomationRun } from '@/app/automations/automationClaimService';
 import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from '@/app/automations/automationAccountCurrentness';
 import { hasCurrentDeploymentWorkflowOriginInTx } from '@/app/auth/deploymentWorkflowOrigin';
 import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readProjectDeploymentDefaultsInTx } from '@/app/projects/projectDeploymentDefaultsService';
 
 describe('deployment children retain their controller Action authority', () => {
     const serverId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
@@ -4188,7 +4190,7 @@ describe('deployment children retain their controller Action authority', () => {
                 mode: 'apply', projectSourceId: f.environment.projectSourceId, requestKey: crypto.randomUUID(), preview,
                 protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
             }) };
-        const read = (environmentId: string, home = serverId) => readDeploymentBackupConfigureHttpPurpose(db, binding, actionId,
+        const read = (environmentId: string, home = serverId) => readDeploymentEnvironmentSetupHttpPurpose(db, binding, actionId,
             { method: 'GET', path: `/v1/deployments/environments/${environmentId}?serverId=${encodeURIComponent(home)}`,
                 routeInput: { serverId: home, environmentId }, reviewedChild }, f.environment.id);
         expect(await read(f.environment.id)).toBe(true);
@@ -5005,11 +5007,11 @@ describe('deployment children retain their controller Action authority', () => {
                 expectedRevision, contentArtifactId: artifactId,
                 contentHeaderVersion: 1, contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [] });
             const permitted = delta === 0 || delta === 1;
-            expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+            expect(await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction,
                 { method: 'POST', path: `/v1/deployments/environments/${f.environment.id}/bindings`,
                     body: storage, routeInput: storage, reviewedChild })).toBe(permitted);
             const preparation = { kind: 'clientBindings', serverId, environmentId: f.environment.id, expectedRevision };
-            expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+            expect(await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction,
                 { method: 'POST', path: `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`,
                     body: preparation, routeInput: preparation, reviewedChild })).toBe(permitted);
         }
@@ -5033,20 +5035,134 @@ describe('deployment children retain their controller Action authority', () => {
             expectedRevision: f.environmentRevision, contentArtifactId: artifactId,
             contentHeaderVersion: 1, contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [] });
         const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
-        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+        expect(await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction,
             { method: 'POST', path, body: storage, routeInput: storage, reviewedChild })).toBe(true);
         const stale = { ...storage, expectedRevision: storage.expectedRevision + 1 };
-        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+        expect(await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction,
             { method: 'POST', path, body: stale, routeInput: stale, reviewedChild })).toBe(false);
         const configArtifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: f.environment.id });
         const backup = { ...storage, contentArtifactId: configArtifactId };
-        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, actionId, { method: 'POST',
+        expect(await readDeploymentEnvironmentSetupHttpPurpose(db, binding, actionId, { method: 'POST',
             path: `/v1/deployments/environments/${f.environment.id}/backup`, body: backup, routeInput: backup })).toBe(false);
         const preparation = { kind: 'clientBindings', serverId, environmentId: f.environment.id,
             expectedRevision: f.environmentRevision };
-        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction, { method: 'POST',
+        expect(await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction, { method: 'POST',
             path: `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`,
             body: preparation, routeInput: preparation, reviewedChild })).toBe(true);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('admits telemetry setup only on its %s Environment controller and exact reviewed bindings', async mode => {
+        const f = await fixture('team', 'account', { contentMode: mode, readableEnvironment: true });
+        const foreign = await fixture();
+        const actionId = 'deployments.environments.telemetry.set';
+        const original = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+            collector: { machineId: f.controller.id } };
+        const rootGrant = { ...API_TOKEN_FULL_GRANT_V1, actions: { ids: [actionId], families: [] },
+            targets: { machines: [f.controller.id], sessions: [] } };
+        const mint = async (input: DeploymentEnvironmentTelemetrySetInputV1 = original, machine = f.controller, account = f.account,
+            api?: Awaited<ReturnType<typeof auth.createApiToken>>) => {
+            const target = { kind: 'machine' as const, machineId: machine.id };
+            const requestId = crypto.randomUUID();
+            const authentication = { kind: 'account' as const, tokenEpoch: account.tokenEpoch };
+            const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: serverId, accountId: account.id, authentication, actionId, requestId, target }, input,
+                material: { type: 'dataKey', machineKey: machine.contentKey }, randomBytes: nacl.randomBytes })
+                : { v: 1 as const, requestId, target, input };
+            const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: account.id,
+                ...(api ? { principalId: account.id, credentialId: api.tokenId, grant: rootGrant } : { authentication }),
+                actionId, machineId: machine.id, target, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                { input: mode === 'e2ee' ? native : input, deploymentNativeAdmission: native });
+        };
+        const authorization = await mint();
+        expect(authorization.binding.deploymentNativeAdmission).toMatchObject({ kind: 'telemetry', actionId,
+            environmentId: f.environment.id, expectedRevision: f.environmentRevision, collector: original.collector });
+        await expect(mint({ ...original, expectedRevision: original.expectedRevision + 1 }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint(original, f.member)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint(original, foreign.controller, foreign.account)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint({ ...original, collector: { machineId: foreign.controller.id } }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        const bindingAction = 'deployments.bindings.set';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const bindingInput = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+            set: [], remove: [], telemetryMachineId: f.controller.id };
+        const reviewedChild = { actionId: bindingAction, role: 'telemetry.bindings',
+            inputDigest: computeActionInputApprovalDigestV1(bindingAction, bindingInput) };
+        const verify = (method: string, path: string, body?: unknown, routeInput?: unknown,
+            child: ReviewedActionChildHttpProofV1 | null = reviewedChild, effectActionId = bindingAction,
+            active = authorization) => verifyExternalActionDomainExecutionRequest({
+            authorizationToken: active.token, effectActionId, encodedTarget: encodeExternalActionResolvedTargetV1(target),
+            method, path, body, routeInput, ...(child ? { reviewedChild: child } : {}),
+            machineSignature: signExternalActionMachineRequestV1({ authorizationToken: active.token, effectActionId,
+                target, installationId: f.controller.installationId, requestId: active.binding.requestId,
+                method, path, body, ...(child ? { reviewedChild: child } : {}), privateKey: f.controller.keys.secretKey }),
+        });
+        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding,
+            actionId: bindingAction, environmentId: f.environment.id });
+        const storage = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision, contentArtifactId: artifactId, contentHeaderVersion: 1,
+            contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [], telemetryMachineId: f.controller.id });
+        const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+        expect(await verify('POST', path, storage, storage)).not.toBeNull();
+        if (mode === 'plain') {
+            const api = await auth.createApiToken({ accountId: f.account.id, tokenId: crypto.randomUUID(),
+                label: await preparePlainAccountApiTokenLabel(f.account.id, 'Telemetry'), grant: rootGrant });
+            const rootOnly = await mint(original, f.controller, f.account, api);
+            const apiStorage = { ...storage, contentArtifactId: createDeploymentEnvironmentContentArtifactIdV1({
+                ...rootOnly.binding, actionId: bindingAction, environmentId: f.environment.id }) };
+            expect.soft(await verify('POST', path, apiStorage, apiStorage, reviewedChild, bindingAction, rootOnly)).not.toBeNull();
+        }
+        for (const patch of [{ expectedRevision: storage.expectedRevision + 1 }, { contentArtifactId: crypto.randomUUID() },
+            { telemetryMachineId: foreign.controller.id }, { environmentId: foreign.environment.id }]) {
+            const changed = { ...storage, ...patch };
+            expect(await verify('POST', path, changed, changed)).toBeNull();
+        }
+        expect(await verify('POST', path, storage, storage, { ...reviewedChild, role: 'backup.bindings' })).toBeNull();
+        const readPath = `/v1/deployments/environments/${f.environment.id}?serverId=${encodeURIComponent(serverId)}`;
+        expect(await verify('GET', readPath, undefined, { serverId, environmentId: f.environment.id })).not.toBeNull();
+        expect(await verify('GET', `/v1/artifacts/${f.environment.contentArtifactId}`, undefined,
+            { id: f.environment.contentArtifactId })).not.toBeNull();
+        expect(await verify('GET', `/v1/artifacts/${foreign.environment.contentArtifactId}`, undefined,
+            { id: foreign.environment.contentArtifactId })).toBeNull();
+        const sourceId = f.environment.projectSourceId;
+        expect(await verify('GET', `/v1/projects/sources/${sourceId}?serverId=${encodeURIComponent(serverId)}`,
+            undefined, { serverId, id: sourceId }, null, 'projects.sources.read')).not.toBeNull();
+        expect(await verify('GET', `/v1/machines/${f.controller.id}`, undefined,
+            { id: f.controller.id }, null, actionId)).not.toBeNull();
+        expect(await verify('GET', `/v1/machines/${foreign.controller.id}`, undefined,
+            { id: foreign.controller.id }, null, actionId)).toBeNull();
+        const defaultsPath = `/v1/projects/${sourceId}/deployment-defaults?serverId=${encodeURIComponent(serverId)}`;
+        expect(await verify('GET', defaultsPath, undefined, { serverId, id: sourceId }, null, actionId)).not.toBeNull();
+        const { collector: _collector, ...defaultInput } = original;
+        const defaultAuthorization = await mint(defaultInput);
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const read = (machineId: string) => {
+                const path = `/v1/machines/${machineId}`;
+                return app.inject({ method: 'GET', url: path, headers: {
+                    ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: defaultAuthorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: defaultAuthorization.token, effectActionId: actionId, target,
+                        installationId: f.controller.installationId, requestId: defaultAuthorization.binding.requestId,
+                        method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+                } });
+            };
+            // E2EE Project defaults are opened by the host. Their selected
+            // Machine read still uses the requester's ordinary Machine access.
+            const selected = await read(f.outsider.id);
+            expect.soft(selected.statusCode, selected.body).toBe(200);
+            expect.soft(selected.json()).toMatchObject({ machine: { id: f.outsider.id } });
+            expect((await read(foreign.controller.id)).statusCode).not.toBe(200);
+        }, { authentication: 'real' });
+        if (!f.team) throw new Error('Expected Team owner');
+        await db.teamMembership.deleteMany({ where: { teamId: f.team.id, accountId: f.account.id } });
+        expect.soft(await inTx(tx => readProjectDeploymentDefaultsInTx(tx, f.account.id,
+            { serverId, projectSourceId: sourceId }, {}, authorization.binding))).toMatchObject({ ok: true });
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
     it.each(['plain', 'e2ee'] as const)('admits backup configure on the exact %s Environment controller and reviewed revision', async mode => {

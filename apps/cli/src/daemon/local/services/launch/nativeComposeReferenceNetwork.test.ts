@@ -62,3 +62,10 @@ it('selects only services containing the native-resolved Iroh reference when unr
         code: 'private_service_container_bridge_unavailable', details: { reason: 'consumer_network_not_shared' },
     }));
 });
+
+it('uses the native telemetry demand to select its consumer network without a reference address', () => {
+    expect(readNativeComposeReferenceNetwork({ services: ['app', 'worker'], referenceAddresses: [], consumerServices: ['app'],
+        model: { services: { app: { networks: { telemetry: {} } }, worker: { networks: { separate: {} } } },
+            networks: { telemetry: { name: 'telemetry-network' }, separate: { name: 'worker-network' } } },
+    })?.name).toBe('telemetry-network');
+});

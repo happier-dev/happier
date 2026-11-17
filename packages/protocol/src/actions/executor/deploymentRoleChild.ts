@@ -4,10 +4,10 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1,
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-  DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isManagedOpaquePresetReviewedChildRootActionV1 } from '../../machines/managed/actionIdsV1.js';
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
-  isDeploymentBackupConfigureNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
+  isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import type { ActionId } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -250,6 +250,14 @@ export function readHostReviewedChildReceivingAdmissionV1(context: ActionExecuto
   return proof?.receivingAdmission ?? null;
 }
 
+/** Local and signed children expose the same already-admitted private role. */
+export function readHostAdmittedReviewedChildRoleV1(context: ActionExecutorContext | undefined,
+  actionId: string, input: unknown): string | null {
+  const proof = readProof(context, actionId, input);
+  if (!proof || (proof.operation?.[deploymentRoleChild] !== true && proof[deploymentRoleChild] !== true)) return null;
+  return proof.role ?? proof.reviewedChild?.role ?? null;
+}
+
 /** The existing issuer's exact admitted operand for signed child transports. */
 export function readHostAdmittedReviewedChildV1(context: ActionExecutorContext | undefined):
   (ReviewedActionChildHttpProofV1 & Readonly<{ input: JsonValue }>) | null {
@@ -284,12 +292,14 @@ function createReviewedChildProof(actionId: string, role: string, input: JsonVal
     || rootActionId === 'deployments.environments.create' && actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && role === 'preview.backup'
     ? projectDeploymentNativeAdmissionV1(actionId, input)
     : actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && role === 'backup.bindings'
-      && isDeploymentBackupConfigureNativeAdmissionV1(parentAdmission) ? parentAdmission : undefined;
+      && isDeploymentBackupConfigureNativeAdmissionV1(parentAdmission) ? parentAdmission
+    : actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1
+      && isDeploymentTelemetryNativeAdmissionV1(parentAdmission) ? parentAdmission : undefined;
   return Object.freeze({ actionId, role,
     inputDigest: computeActionInputApprovalDigestV1(actionId as ActionId, input),
     ...(actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && role === DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
       && environmentId ? { environmentId } : {}),
-    ...(isDeploymentDomainNativeAdmissionV1(native) || isDeploymentBackupConfigureNativeAdmissionV1(native)
+    ...(isDeploymentDomainNativeAdmissionV1(native) || isDeploymentBackupConfigureNativeAdmissionV1(native) || isDeploymentTelemetryNativeAdmissionV1(native)
       ? { deploymentNativeAdmission: native } : {}) });
 }
 

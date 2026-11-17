@@ -2616,6 +2616,7 @@ model Machine {
     controlledDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentController")
     builtDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentBuilder")
     edgeDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentEdge")
+    telemetryDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentTelemetry")
     deploymentTargetMemberships DeploymentTargetLinkMachine[]
     deploymentTargetLinks DeploymentTargetLink[]
     accountExecutionRunFollowSources AccountSessionFollow[] @relation("AccountFollowExecutionRunMachineSource")
@@ -3718,6 +3719,9 @@ model DeploymentEnvironment {
     buildMachine Machine? @relation("DeploymentBuilder", fields: [buildMachineId], references: [id], onDelete: Restrict)
     edgeMachineId String?
     edgeMachine Machine? @relation("DeploymentEdge", fields: [edgeMachineId], references: [id], onDelete: Restrict)
+    telemetryMachineId String?
+    telemetryMachine Machine? @relation("DeploymentTelemetry", fields: [telemetryMachineId], references: [id], onDelete: Restrict)
+    telemetryTokenHash String?
     runtimeTargetLinkId String? @unique
     runtimeTargetLink DeploymentTargetLink? @relation("SelectedDeploymentRuntime", fields: [runtimeTargetLinkId], references: [id], onDelete: Restrict)
     pendingDeployContent Json?
@@ -3737,6 +3741,7 @@ model DeploymentEnvironment {
     @@index([controllerMachineId, deletedAt, id])
     @@index([buildMachineId, deletedAt, id])
     @@index([edgeMachineId, deletedAt, id])
+    @@index([telemetryMachineId, deletedAt, id])
     @@index([previewPullRequestId, purpose, deletedAt, id], map: "DeploymentEnvironment_preview_scope_idx")
     @@index([contentArtifactId])
 }

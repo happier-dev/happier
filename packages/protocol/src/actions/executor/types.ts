@@ -2186,6 +2186,8 @@ export type ActionExecutorDeps = Readonly<{
     review?: import('../../deployments/deploymentTemplateInstantiationV1.js').DeploymentTemplateInstantiationReviewV1) =>
     Promise<DeploymentTemplateInstantiateResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
   /** The Environment controller composes repository export and the sole definition switch. */
+  deploymentTelemetrySet?: (input: import('../../deployments/deploymentTelemetryV1.js').DeploymentEnvironmentTelemetrySetInputV1,
+    context: ActionExecutorContext) => Promise<import('../../deployments/deploymentTelemetryV1.js').DeploymentEnvironmentTelemetrySetSuccessV1 | ActionExecuteFailure>;
   deploymentMoveToRepository?: (input: import('../../deployments/deploymentMoveToRepositoryV1.js').DeploymentMoveToRepositoryInputV1,
     context: ActionExecutorContext,
     executeCanonicalAction: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) => Promise<import('../../deployments/deploymentMoveToRepositoryV1.js').DeploymentMoveToRepositoryResultV1

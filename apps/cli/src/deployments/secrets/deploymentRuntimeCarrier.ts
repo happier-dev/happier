@@ -51,6 +51,7 @@ export type HostDeploymentRuntimeProjectionV1 = Readonly<{
          * application names/values or a second persisted environment store. */
         emptyValueAlias(occupiedNames: readonly string[]): Promise<string>;
         environmentNames: readonly string[];
+        telemetryEnvironmentNames: readonly string[];
         redaction: ProviderRedactionLease;
         signal?: AbortSignal;
         retainBytes(bytes: Uint8Array): void;
@@ -89,6 +90,8 @@ function encodeNativeInterpolationInputs(environment: Readonly<Record<string, st
 export function createAttachmentRuntimeCarrierForHost(input: Readonly<{
     source: DeploymentSourceMaterializationV1;
     environment: Readonly<Record<string, string>>;
+    telemetryEnvironmentNames?: readonly string[];
+    resolveSelectedEnvironment?(names: readonly string[]): Promise<void>;
     redaction: ProviderRedactionLease;
     assertCurrent(): Promise<void>;
 }>) {
@@ -148,13 +151,15 @@ export function createAttachmentRuntimeCarrierForHost(input: Readonly<{
     const allocateFiles = (selectedNames: readonly string[]): Promise<HostRuntimeCarrierFiles> => {
         if (disposed) return unavailable();
         const names = [...new Set(selectedNames)].sort();
-        if (names.some(name => !Object.hasOwn(input.environment, name))) return unavailable();
+        if (names.some(name => !Object.hasOwn(input.environment, name) && !input.telemetryEnvironmentNames?.includes(name))) return unavailable();
         if (files) {
             if (names.length !== declaredNames?.length || names.some((name, index) => name !== declaredNames![index])) return unavailable();
             return files;
         }
         declaredNames = Object.freeze(names);
         files = (async () => {
+            await input.resolveSelectedEnvironment?.(names);
+            if (names.some(name => !Object.hasOwn(input.environment, name))) return unavailable();
             const owned = await ensureDirectory();
             const interpolationFile = join(owned, 'interpolation.env');
             const emptyEnvironmentFile = await allocateEmptyEnvironmentFile();
@@ -204,7 +209,9 @@ export function createAttachmentRuntimeCarrierForHost(input: Readonly<{
                 if (disposed || signal?.aborted) return unavailable();
                 const projected = await projection.prepare({ host, files: allocateFiles, emptyEnvironmentFile: allocateEmptyEnvironmentFile,
                     emptyValueAlias, admitNormalization,
-                    environmentNames: Object.freeze(Object.keys(input.environment)), redaction: input.redaction,
+                    environmentNames: Object.freeze([...new Set([...Object.keys(input.environment), ...(input.telemetryEnvironmentNames ?? [])])]),
+                    redaction: input.redaction,
+                    telemetryEnvironmentNames: input.telemetryEnvironmentNames ?? [],
                     retainBytes, assertCurrent: input.assertCurrent, ...(signal ? { signal } : {}) });
                 if (projected.stdin) retainBytes(projected.stdin);
                 await input.assertCurrent();

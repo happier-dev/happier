@@ -111,6 +111,31 @@ security validation is pending. Machine forwarding,
 container networking and platform validation are separate from accepting that
 declaration; this guide does not yet certify the Iroh connection journey.
 
+## Production telemetry in development
+
+The unreleased telemetry integration connects an app that already exports
+OpenTelemetry traces and logs to a Machine with the **Telemetry** role. It does
+not instrument the app automatically. The collector stores telemetry on that
+Machine; the Home does not receive the captured SQL, traces, or log content.
+
+The initial deployment path uses the app's own Machine with native Linux Docker.
+The receiver listens on localhost, and the deployment's private container bridge
+connects the app to it. Docker Desktop and non-Linux container bridges are not
+supported. Cross-Machine and platform collector routes are still being integrated;
+do not treat a configured Environment as proof that such a route is reachable.
+
+Each Environment has its own ingest token in a Saved Secret. The collector receives
+only its hash. Setup changes apply on the next deployment. Rotation keeps the
+previous token working until a successful deployment delivers its replacement.
+Moving or turning off the collector requires confirmation and deletes that
+Environment's telemetry from the previous collector, without copying it to the
+new one. Redeploy afterward to start sending to the selected collector.
+
+Happier leaves the app's SDK sampling default unchanged unless you choose a
+sampling ratio. An app's authored collector configuration takes precedence at
+deployment. Telemetry reads and the Environment screens are still under
+development; this section does not certify the complete telemetry journey.
+
 ## 3. Add a Domain
 
 Open the Environment's **Domains** tab and choose **Add domain**. Enter the

@@ -114,19 +114,21 @@ export async function resolveDeploymentEnvironmentAdmissionInTx(tx: Tx, actorAcc
     return { ok: true, admission: projectDeploymentSourceAdmission(read) };
 }
 
+type DeploymentMachineRole = Extract<DeploymentFailure, { error: 'machine_unavailable' }>['role'];
+
 /** Machine permission, revocation and replacement are decided by the current Machine owner. */
 export async function admitDeploymentMachineInTx(tx: Tx, owner: ProjectSourceOwnerV1, machineId: string,
-    role: 'controller' | 'build' | 'target', installationId?: string,
+    role: DeploymentMachineRole, installationId?: string,
 ): Promise<DeploymentFailure | null> {
     return admitDeploymentMachinesInTx(tx, owner, [{ machineId, role, installationId }]);
 }
 
-type DeploymentMachineInput = Readonly<{ machineId: string; installationId?: string; role?: 'controller' | 'build' | 'target' }>;
+type DeploymentMachineInput = Readonly<{ machineId: string; installationId?: string; role?: DeploymentMachineRole }>;
 const sourceMachineAccessMissing = { reason: 'source_machine_access_missing', requiredFact: 'source_machine_use',
     remedy: 'share_machine_with_source_owner' } as const satisfies DeploymentMachinePlacementDiagnosticV1;
 
 /** The first failed placement role owns the recovery diagnostic. */
-export function deploymentMachineUnavailable(machineId: string, role: 'controller' | 'build' | 'target'): Extract<DeploymentFailure, { error: 'machine_unavailable' }> {
+export function deploymentMachineUnavailable(machineId: string, role: DeploymentMachineRole): Extract<DeploymentFailure, { error: 'machine_unavailable' }> {
     return { ok: false, error: 'machine_unavailable', role, machineIds: [machineId],
         nextActions: role === 'target' ? ['start', 'removeFromEnvironment'] : ['start', 'chooseAnother'] };
 }
@@ -181,7 +183,7 @@ export async function readDeploymentDefinitionMachinesInTx(tx: Tx,
 }
 
 export async function admitDeploymentMachinesInTx(tx: Tx, owner: ProjectSourceOwnerV1,
-    inputs: readonly Readonly<{ machineId: string; role: 'controller' | 'build' | 'target'; installationId?: string }>[],
+    inputs: readonly Readonly<{ machineId: string; role: DeploymentMachineRole; installationId?: string }>[],
 ): Promise<DeploymentFailure | null> {
     const machineIds = [...new Set(inputs.map(input => input.machineId))];
     const access = await resolveMachinePrincipalAccessForMachinesInTx(tx, { principal: owner, machineIds });

@@ -8,6 +8,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { vercelEndpoint, vercelRequest } from './operations.js';
+import { encodeTelemetryAuthorizationHeaderV1 } from '@happier-dev/deployment-protocol/v1';
 
 type Read = DeploymentTargetVariablesReadInputV1;
 type Sync = DeploymentTargetVariablesSyncInputV1;
@@ -108,11 +109,12 @@ async function sync(input: Sync, ctx: PluginAccountActionContext): Promise<Deplo
       const environment = scope(input);
       // The invocation-bound service acquires admitted Secrets and registers
       // their raw/JSON forms with the host's result and log redactor (P42-C15).
-      const value = binding.source.kind === 'secret'
+      const rawValue = binding.source.kind === 'secret'
         ? await ctx.services.secrets.readSavedSecret(binding.source.ref, {
           resourceRevision: binding.source.resourceRevision, signal: ctx.signal,
         })
         : binding.source.value;
+      const value = binding.valueFormat === 'otelAuthorizationHeader' ? encodeTelemetryAuthorizationHeaderV1(rawValue) : rawValue;
       const content = { key, value, type: binding.source.kind === 'secret' ? 'sensitive' : 'plain',
         ...(environment.kind === 'custom' ? { customEnvironmentIds: [environment.id] } : { target: [environment.kind],
           ...(environment.kind === 'preview' && environment.gitBranch !== undefined ? { gitBranch: environment.gitBranch } : {}) }) };

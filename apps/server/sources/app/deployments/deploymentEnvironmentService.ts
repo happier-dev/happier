@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { isDeploymentEnvironmentUpdateNativeAdmissionV1,
+import { isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
     type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentPrincipalsV1Schema, DeploymentPreviewDataTargetsV1Schema,
     type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
@@ -25,11 +25,12 @@ import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
+import type { Prisma } from '@prisma/client';
 import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment,
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission, type DeploymentFailure } from './deploymentAdmission';
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
-import { publishDeploymentChangesInTx } from './deploymentPublication';
+import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
 import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
@@ -95,6 +96,7 @@ export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow
         dataEditorMode: row.dataEditorMode, dataAgentAccess: row.dataAgentAccess,
         ...(row.principals ? { dataEditors: readDeploymentEnvironmentPrincipals(row.principals, 'dataEdit') } : {}),
         controllerMachineId: row.controllerMachineId,
+        telemetryMachineId: row.telemetryMachineId,
         ...(row.buildMachineId ? { buildMachineId: row.buildMachineId } : {}),
         // Full mode lives in protected content; null edge custody never implies Tunnel.
         ...(row.edgeMachineId ? { ingress: { kind: 'edgeCaddy', edgeMachineId: row.edgeMachineId } } : {}),
@@ -594,13 +596,14 @@ export async function setDeploymentEnvironmentBackupInTx(tx: Tx, actorAccountId:
 /** Complete captures, prepared Artifact and installation grants commit with one Environment CAS. */
 export async function setDeploymentEnvironmentBindingsInTx(tx: Tx, actorAccountId: string,
     input: DeploymentBindingsSetStorageInputV1, authentication: DeploymentAuthentication = {},
+    executionBinding?: ExternalActionExecutionAuthorizationBindingV1,
 ) {
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
     if (!loaded.ok) return loaded;
     if (loaded.row.deletedAt || !loaded.admission.canManage) return deploymentFailure('deployment_access_denied');
     if (loaded.row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
-    return setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx, actorAccountId, input, loaded, authentication);
+    return setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx, actorAccountId, input, loaded, authentication, undefined, executionBinding);
 }
 
 /** Combined definition/binding edits continue the same locked Environment admission. */
@@ -611,7 +614,20 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         deployerMode?: DeploymentEnvironmentCreateStorageInputV1['deployerMode'];
         deployerPrincipals?: readonly PrincipalRefV1[];
         dataEditorMode?: string; dataAgentAccess?: string; dataEditors?: readonly PrincipalRefV1[] }>,
+    executionBinding?: ExternalActionExecutionAuthorizationBindingV1,
 ) {
+    const telemetryMachineId = input.telemetryMachineId === undefined ? loaded.row.telemetryMachineId : input.telemetryMachineId;
+    const telemetryChanged = telemetryMachineId !== loaded.row.telemetryMachineId;
+    if (input.telemetryMachineId) {
+        const admitted = executionBinding?.deploymentNativeAdmission;
+        const alreadyAdmitted = admitted && isDeploymentTelemetryNativeAdmissionV1(admitted)
+            && admitted.environmentId === input.environmentId && admitted.expectedRevision === input.expectedRevision
+            && admitted.collector?.machineId === input.telemetryMachineId;
+        if (!alreadyAdmitted) {
+            const denied = await admitDeploymentMachineInTx(tx, loaded.admission.owner, input.telemetryMachineId, 'telemetry');
+            if (denied) return denied;
+        }
+    }
     const resourceIds = [...new Set([
         ...input.referencedSavedSecretRevisions,
         ...(readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? []),
@@ -836,7 +852,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'deploy', placement.deployerPrincipals);
     const dataEditorsChanged = placement?.dataEditors !== undefined
         && !sameDeploymentEnvironmentPrincipals(loaded.row.principals, 'dataEdit', placement.dataEditors);
-    if (!linkCandidate && !grantsChanged && !principalsChanged && !dataEditorsChanged
+    if (!linkCandidate && !grantsChanged && !principalsChanged && !dataEditorsChanged && !telemetryChanged
         && (placement?.dataEditorMode ?? loaded.row.dataEditorMode) === loaded.row.dataEditorMode
         && (placement?.dataAgentAccess ?? loaded.row.dataAgentAccess) === loaded.row.dataAgentAccess
         && (placement?.deployerMode ?? loaded.row.deployerMode) === loaded.row.deployerMode
@@ -852,14 +868,14 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             data: { ...deploymentContentReference(linkCandidate), revision: { increment: 1 } } });
         if (updated.count !== 1) throw new Error('Locked deployment TargetLink changed during binding CAS');
     }
-    const changed = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: input.expectedRevision },
-        data: { ...deploymentContentReference(input), ...(placement ? { buildMachineId,
+    const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId, telemetryTokenHash: null } : {}), ...(placement ? { buildMachineId,
             ...(placement.edgeMachineId !== undefined ? { edgeMachineId: placement.edgeMachineId } : {}),
             ...(placement.protection !== undefined ? { protection: placement.protection } : {}),
             ...(placement.deployerMode !== undefined ? { deployerMode: placement.deployerMode } : {}),
             ...(placement.dataEditorMode !== undefined ? { dataEditorMode: placement.dataEditorMode } : {}),
             ...(placement.dataAgentAccess !== undefined ? { dataAgentAccess: placement.dataAgentAccess } : {}) } : {}),
-            referencedSavedSecretRevisions, revision: { increment: 1 } } });
+            referencedSavedSecretRevisions, revision: { increment: 1 } } satisfies Prisma.DeploymentEnvironmentUncheckedUpdateManyInput;
+    const changed = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: input.expectedRevision }, data });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during binding CAS');
     if (principalsChanged && placement?.deployerPrincipals !== undefined) {
         await replaceDeploymentEnvironmentPrincipalsInTx(tx, loaded.row.id, actorAccountId, 'deploy', loaded.row.principals, placement.deployerPrincipals);
@@ -873,6 +889,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             ...referencedSavedSecretRevisions.map(capture => capture.resourceId),
         ]);
     }
+    if (telemetryChanged) await publishDeploymentTelemetryMachinesInTx(tx, [loaded.row.telemetryMachineId, telemetryMachineId]);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1);
     return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision + 1 };
 }

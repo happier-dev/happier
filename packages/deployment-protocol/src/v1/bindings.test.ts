@@ -20,6 +20,16 @@ function contentWith(bindings: readonly unknown[]) {
 }
 
 describe('Environment binding purpose contracts', () => {
+    it('retains telemetry launch formatting and endpoint facts in saved Environment content', () => {
+        const bindings = [
+            { purpose: 'variable', phase: 'runtime', name: 'OTEL_EXPORTER_OTLP_HEADERS', grantRef: crypto.randomUUID(),
+                managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader', source: secret },
+            { purpose: 'variable', phase: 'runtime', name: 'OTEL_EXPORTER_OTLP_ENDPOINT', grantRef: crypto.randomUUID(),
+                managedBy: 'telemetry', source: { kind: 'deploymentFact', fact: 'telemetryEndpoint' } },
+        ];
+        expect(DeploymentEnvironmentContentV1Schema.parse(contentWith(bindings)).bindings).toEqual(bindings);
+    });
+
     it('round-trips the five purposes and both data-role addresses through the existing content owner', () => {
         const variable = EnvironmentVariableBindingV1Schema.parse({ purpose: 'variable', name: 'TOKEN', phase: 'runtime', grantRef: crypto.randomUUID(), source: secret });
         const bindings = [variable, registry, backup, domain, serviceRole, managedRole];

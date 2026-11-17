@@ -7,7 +7,7 @@ import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/source
 import { PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_KIND_V1,
     PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { projectSourceContentTeamCustodyLevels } from './sources/projectSourceContentReferences';
-import { isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readArtifactForCallerInTx, resolveArtifactAudienceInTx } from '@/app/artifacts/artifactAccessService';
@@ -75,7 +75,7 @@ export async function readProjectDeploymentDefaultsInTx(tx: Tx, actorAccountId: 
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return failure('project_defaults_unavailable');
     let sourceRevision: number;
     const native = admittedBinding?.deploymentNativeAdmission;
-    if (admittedBinding && (isDeploymentBackupConfigureNativeAdmissionV1(native)
+    if (admittedBinding && (isDeploymentBackupConfigureNativeAdmissionV1(native) || isDeploymentTelemetryNativeAdmissionV1(native)
         || admittedBinding.actionId === 'deployments.environments.update'
             && isDeploymentEnvironmentUpdateNativeAdmissionV1(native) && native.defaultsFor !== undefined)) {
         // The HTTP purpose owner already bound this exact Source to the admitted Environment.

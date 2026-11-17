@@ -1237,6 +1237,21 @@ it('captures backup credential roles while accepting legacy role-less prepared c
 });
 
 
+it('binds telemetry native admission to the exact collector, revision and destructive confirmation', () => {
+  const actionId = 'deployments.environments.telemetry.set';
+  const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3,
+    collector: { machineId: 'collector' }, rotate: true, confirmDelete: true };
+  const native = projectDeploymentNativeAdmissionV1(actionId, input);
+  expect(native).toMatchObject({ kind: 'telemetry', actionId, environmentId: 'environment', expectedRevision: 3,
+    collector: { machineId: 'collector' }, rotate: true, confirmDelete: true, inputDigest: expect.any(String) });
+  for (const replacement of [{ collector: { machineId: 'other' } }, { expectedRevision: 4 }]) {
+    expect(projectDeploymentNativeAdmissionV1(actionId, { ...input, ...replacement })).not.toEqual(native);
+  }
+  const { confirmDelete: _confirmation, ...withoutConfirmation } = input;
+  expect(projectDeploymentNativeAdmissionV1(actionId, withoutConfirmation)).not.toEqual(native);
+  expect(() => projectDeploymentNativeAdmissionV1(actionId, { ...input, token: 'never-authority' })).toThrow();
+});
+
 it('binds backup re-key admission to the replacement without permitting configuration changes', () => {
   const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, intent: 'rekeyAndSave',
     replacement: { ref: formatSharedSavedSecretRefV1('new-password'), resourceRevision: 1 } };

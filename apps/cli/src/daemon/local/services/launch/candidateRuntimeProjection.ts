@@ -6,6 +6,14 @@ import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/preparePro
 import type { HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareNativeComposeNormalizationProfileForHost } from './nativeComposeEngine';
 import { createProtectedLocalStateFileExclusive } from '@/utils/fs/protectedLocalState';
+import { TELEMETRY_COLLECTOR_ENDPOINT_ENVIRONMENT_KEYS_V1, usesOwnTelemetryCollectorV1 } from '@happier-dev/deployments/telemetry';
+
+export type NativeComposeTelemetryProjectionFact = Readonly<{
+    service: string;
+    usesOwnCollector: boolean;
+    receivesTelemetry: boolean;
+    requiresTelemetryEndpoint: boolean;
+}>;
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const unavailable = (form: string): never => { throw new PluginError({ code: 'service_admission_unavailable',
@@ -23,6 +31,7 @@ export function createNativeRuntimeProjectionForHost(input: Readonly<{
     composeArguments: readonly string[];
     io: ProjectNativeToolchainIo;
     assertCurrent(): Promise<void>;
+    onTelemetryProjection?(facts: readonly NativeComposeTelemetryProjectionFact[]): void;
 }> & (Readonly<{ kind: 'source'; sourceFiles: readonly string[]; services: readonly string[] }>
     | Readonly<{ kind: 'configuration'; model: Readonly<Record<string, unknown>>; services: readonly string[];
         bindRuntimeEnvironment?: boolean }>
@@ -100,7 +109,7 @@ export function createNativeRuntimeProjectionForHost(input: Readonly<{
             }
             if (!record(model.services)) return unavailable('service');
             const serviceEnvironmentNames = new Map<string, ReadonlySet<string>>();
-            if (bindRuntimeEnvironment) {
+            if (bindRuntimeEnvironment || input.kind === 'configuration' || input.kind === 'candidate') {
                 // Discovery has only constant non-secret lookup placeholders;
                 // actual binding values stay in the selected AM-9 file. Native
                 // Compose supplies explicit + env_file keys; discard all values.
@@ -127,13 +136,39 @@ export function createNativeRuntimeProjectionForHost(input: Readonly<{
                 }
             }
             const bareNames: string[] = [];
+            const telemetryFacts: NativeComposeTelemetryProjectionFact[] = [];
+            const selectedTelemetryNames = new Set<string>();
             for (const [name, service] of Object.entries(model.services)) {
                 if (!record(service)) return unavailable('service');
-                if (record(service.environment)) service.environment = Object.entries(service.environment).map(([name, value]) => {
-                    if (value === null) { bareNames.push(name); return name; }
+                // A native null/bare entry declares a slot for the binding. An
+                // authored value (including env_file) owns that telemetry key.
+                const authoredEnvironment = service.environment;
+                const authoredTelemetry = new Set([...new Set([...runtime.telemetryEnvironmentNames,
+                    ...TELEMETRY_COLLECTOR_ENDPOINT_ENVIRONMENT_KEYS_V1])].filter(key => {
+                    if (record(authoredEnvironment) && Object.hasOwn(authoredEnvironment, key)) return authoredEnvironment[key] !== null;
+                    if (Array.isArray(authoredEnvironment) && authoredEnvironment.some(value => value === key)) return false;
+                    return serviceEnvironmentNames.get(name)?.has(key) === true;
+                }));
+                const usesOwnCollector = usesOwnTelemetryCollectorV1(authoredTelemetry);
+                const serviceTelemetryNames = runtime.telemetryEnvironmentNames.filter(key => !usesOwnCollector
+                    && !authoredTelemetry.has(key) && serviceEnvironmentNames.get(name)?.has(key));
+                for (const key of serviceTelemetryNames) selectedTelemetryNames.add(key);
+                telemetryFacts.push({ service: name, usesOwnCollector,
+                    requiresTelemetryEndpoint: serviceTelemetryNames.includes('OTEL_EXPORTER_OTLP_ENDPOINT'),
+                    receivesTelemetry: bindRuntimeEnvironment && !usesOwnCollector
+                        && runtime.telemetryEnvironmentNames.includes('OTEL_EXPORTER_OTLP_HEADERS')
+                        && serviceEnvironmentNames.get(name)?.has('OTEL_EXPORTER_OTLP_HEADERS') === true
+                        && !authoredTelemetry.has('OTEL_EXPORTER_OTLP_HEADERS') });
+                if (record(service.environment)) service.environment = Object.entries(service.environment).flatMap(([name, value]) => {
+                    if (value === null) {
+                        if (usesOwnCollector && runtime.telemetryEnvironmentNames.includes(name)) return [];
+                        bareNames.push(name); return [name];
+                    }
                     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return unavailable('service_environment');
-                    return `${name}=${String(value)}`;
+                    return [`${name}=${String(value)}`];
                 });
+                if (usesOwnCollector && Array.isArray(service.environment)) service.environment = service.environment.filter(value =>
+                    !runtime.telemetryEnvironmentNames.includes(value));
                 if (bindRuntimeEnvironment) {
                     const environment = service.environment ?? [];
                     if (!Array.isArray(environment)) return unavailable('service_environment');
@@ -141,10 +176,12 @@ export function createNativeRuntimeProjectionForHost(input: Readonly<{
                     // Native last-key precedence also supplies env_file lookup;
                     // only expressions/names enter this unresolved model.
                     service.environment = [...environment,
-                        ...runtime.environmentNames.filter(key => serviceEnvironmentNames.get(name)?.has(key))
+                        ...runtime.environmentNames.filter(key => serviceEnvironmentNames.get(name)?.has(key) && !authoredTelemetry.has(key)
+                            && (!runtime.telemetryEnvironmentNames.includes(key) || serviceTelemetryNames.includes(key)))
                             .map(key => `${key}=\${${key}}`)];
                 }
             }
+            input.onTelemetryProjection?.(telemetryFacts);
             const slots: { kind: 'secrets' | 'configs'; key: string; name: string }[] = [];
             for (const kind of ['secrets', 'configs'] as const) {
                 const declared = new Set(Object.values(model.services).flatMap(service => record(service) && Array.isArray(service[kind])
@@ -168,7 +205,8 @@ export function createNativeRuntimeProjectionForHost(input: Readonly<{
                 env: { ...runtime.host.env, COMPOSE_DISABLE_ENV_FILE: '1' } }));
             if (!record(variables)) return unavailable('native_variables');
             const referenced = new Set([...Object.keys(variables), ...bareNames, ...slots.map(slot => slot.name)]);
-            const selectedNames = runtime.environmentNames.filter(name => referenced.has(name));
+            const selectedNames = runtime.environmentNames.filter(name => referenced.has(name)
+                && (!runtime.telemetryEnvironmentNames.includes(name) || selectedTelemetryNames.has(name)));
             const files = await runtime.files(selectedNames);
             // The wrapper contains paths only; the phase file contains unresolved
             // source projection, never a resolved secret-bearing model.

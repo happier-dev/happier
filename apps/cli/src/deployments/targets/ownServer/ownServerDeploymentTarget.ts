@@ -1,5 +1,5 @@
 import type { DeploymentBackupRestoreInputV1, DeploymentBackupRestoreResultV1,
-    DeploymentRestoreActivationReferenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+    DeploymentRestoreActivationReferenceV1, DeploymentTransitionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentRestoreDestinationV1, DeploymentRestoreResultV1 } from '@happier-dev/deployments';
 import type { DeploymentBackupManifestV1 as BackupManifestV1, DeploymentPreMigrationBackupV1,
     DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
@@ -91,7 +91,7 @@ export type OwnServerDeploymentTransition = OwnServerDeploymentReadContext & Rea
     state: DeploymentStateV1;
     content: DeploymentContentV1;
     teardownProof?: DeploymentTeardownProofV1;
-}>;
+}> & Pick<DeploymentTransitionInputV1, 'telemetryMachineId' | 'telemetryTokenHash'>;
 
 /** The installed daemon lends its existing ports; this is not another effect dispatcher. */
 export type OwnServerDomainCaddyRequest = Readonly<{

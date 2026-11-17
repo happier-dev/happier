@@ -159,6 +159,7 @@ export const DeploymentBindingsPatchV1Schema = lazyZodSchema(() => z.strictObjec
 export const DeploymentBindingsPatchInputV1Schema = lazyZodSchema(() => z.strictObject({
     serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
     expectedRevision: DeploymentRevisionV1Schema, ...bindingPatchShape(),
+    telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
     providerVariables: z.optional(z.strictObject({
         useOurs: z.array(DeploymentIdentifierV1Schema), keepTheirs: z.array(DeploymentIdentifierV1Schema),
     })),
@@ -168,6 +169,7 @@ export type DeploymentBindingsPatchInputV1 = z.infer<typeof DeploymentBindingsPa
 /** Prepared callers retain the complete Artifact/capture contract. */
 export const DeploymentBindingsPreparedInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...DeploymentEnvironmentContentCasV1Schema.shape,
+  telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
   referencedSavedSecretRevisions: DeploymentBindingSavedSecretRevisionsV1Schema,
 }));
 export type DeploymentBindingsPreparedInputV1 = z.infer<typeof DeploymentBindingsPreparedInputV1Schema>;

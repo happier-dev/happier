@@ -9,7 +9,7 @@ const unavailable = (reason: string): never => { throw new PluginError({ code: '
         errorClass: 'Error', errorCode: reason, httpStatus: null } }); };
 
 type ReferenceNetworkInput = Readonly<{ model: Readonly<Record<string, unknown>>; services: readonly string[];
-    referenceAddresses: readonly string[] }>;
+    referenceAddresses: readonly string[]; consumerServices?: readonly string[] }>;
 type ReferenceNetwork = Readonly<{ key: string; name: string; definition: Readonly<Record<string, unknown>> }>;
 
 /** Native Compose has already normalized network names and service membership. */
@@ -25,7 +25,7 @@ export function readNativeComposeReferenceNetwork(input: ReferenceNetworkInput):
     for (const name of input.services) {
         const service = input.model.services[name];
         if (!record(service)) return unavailable('consumer_network_unavailable');
-        if (!consumesReference(service)) continue;
+        if (!input.consumerServices?.includes(name) && !consumesReference(service)) continue;
         // A host-network process can use the original host loopback listener.
         if (service.network_mode === 'host') continue;
         if (service.network_mode !== undefined) return unavailable('consumer_network_mode_unsupported');

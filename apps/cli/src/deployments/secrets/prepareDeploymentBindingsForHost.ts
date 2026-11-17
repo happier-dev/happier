@@ -9,8 +9,8 @@ import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentGetInputV1
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedChildRoleV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
 type DeploymentEnvironmentGetResultV1 = ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse>;
@@ -90,6 +90,10 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             });
             const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(credentials);
             const input = DeploymentBindingsSetInputV1Schema.parse(request.input);
+            const child = readHostAdmittedReviewedChildV1(request.context);
+            if (input.telemetryMachineId !== undefined && readHostAdmittedReviewedChildRoleV1(request.context,
+                DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, request.input) !== DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1)
+                return refuse('action_forbidden');
             if ('set' in input && input.set.some(binding => binding.source.kind === 'secret'
                 && binding.source.ref === 'person_selects')) return refuse('client_required');
             const { context } = request;
@@ -151,10 +155,9 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 // after current resource/installation custody has settled.
                 await assertCurrent();
                 const binding = context.externalActionExecutionAuthorization?.binding;
-                const child = readHostAdmittedReviewedChildV1(context);
                 const artifactId = binding && (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
                     || child?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                        && (child.role === 'backup.bindings' || child.role === 'template.bindings'))
+                        && (child.role === 'backup.bindings' || child.role === 'template.bindings' || child.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1))
                     ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
                         environmentId: input.environmentId }) : undefined;
                 const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
@@ -166,6 +169,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 await assertCurrent();
                 return { ...DeploymentBindingsPreparedInputV1Schema.parse({ serverId: input.serverId,
                     environmentId: input.environmentId, expectedRevision: input.expectedRevision,
+                    ...(input.telemetryMachineId === undefined ? {} : { telemetryMachineId: input.telemetryMachineId }),
                     contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                     contentBodyVersion: created.revision.bodyVersion, referencedSavedSecretRevisions: selectedCaptures }), grants };
             };

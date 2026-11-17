@@ -274,7 +274,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             }
                             return resolveEnvironmentDeploymentFactForHost(source.fact, { environmentName, commitSha,
                                 deploymentId: materialization.kind === 'review' ? undefined : materializationId,
-                                domainUrl: undefined, primaryUrl: undefined });
+                                domainUrl: undefined, primaryUrl: undefined, telemetryEndpoint: undefined });
                         }
                         if (source.kind === 'reference') return resolvePrivateServiceReferenceMaterialForHost({
                             source, environment, homeServerIdentityId, readEnvironment: snapshot.readReferenceEnvironment,

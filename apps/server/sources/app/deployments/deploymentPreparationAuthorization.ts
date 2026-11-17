@@ -33,6 +33,7 @@ import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRoo
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1,
     DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentMembershipActionIdV1,
@@ -40,7 +41,7 @@ import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_
     type DeploymentDomainMetadataReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
     createDeploymentDomainContentArtifactIdV1, isDeploymentDomainNativeAdmissionV1,
-    createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
+    createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
     computeDeploymentEnvironmentUpdateInputDigestV1, computeDeploymentEnvironmentUpdateMetadataDigestV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentBindingsSetStorageInputV1Schema,
@@ -584,6 +585,13 @@ export async function isDeploymentPreparationMachineReadHttpPurposeInTx(tx: Tx,
     try { machineId = decodeURIComponent(match[1]); } catch { return false; }
     if (match[1] !== encodeURIComponent(machineId)
         || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, { id: machineId })) return false;
+    const native = binding.deploymentNativeAdmission;
+    if (binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
+        && isDeploymentTelemetryNativeAdmissionV1(native) && native.collector === undefined) {
+        // E2EE Project defaults are opened by the host before this operand is known.
+        // This grants the read purpose; the Machine route retains requester access.
+        return true;
+    }
     // Mint admitted each signed Machine operand and the Environment's placement.
     // This transport consumes that scope; the Machine route retains requester access.
     return await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, { machineId }) === true;
@@ -911,19 +919,22 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
     return publication ?? admittedEnvironmentId === admission.environmentId;
 }
 
-/** Configure publishes only its backup candidate and the subsequent reviewed bindings candidate. */
-export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+/** Environment setup publishes only its reviewed configuration and bindings candidate. */
+export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
     createdEnvironmentId?: string,
 ): Promise<boolean | null> {
-    const reviewed = binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 ? undefined : proof.reviewedChild;
+    const reviewed = binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
+        || binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 ? undefined : proof.reviewedChild;
     const admission = reviewed?.deploymentNativeAdmission ?? binding.deploymentNativeAdmission;
-    if (!isDeploymentBackupConfigureNativeAdmissionV1(admission)) return null;
+    if (!isDeploymentBackupConfigureNativeAdmissionV1(admission) && !isDeploymentTelemetryNativeAdmissionV1(admission)) return null;
+    const telemetry = isDeploymentTelemetryNativeAdmissionV1(admission);
     if (reviewed && (createdEnvironmentId !== admission.environmentId || reviewed.actionId !== effectActionId)) return false;
     const bindings = effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
-    if (bindings && (proof.reviewedChild?.actionId !== effectActionId || proof.reviewedChild.role !== 'backup.bindings')) return false;
-    if (!bindings && effectActionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
+    if (bindings && (proof.reviewedChild?.actionId !== effectActionId
+        || proof.reviewedChild.role !== (telemetry ? DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 : 'backup.bindings'))) return false;
+    if (!bindings && effectActionId !== admission.actionId
         && effectActionId !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && effectActionId !== PROJECT_SOURCE_READ_ACTION_ID_V1) return false;
     const method = proof.method.toUpperCase();
     const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
@@ -936,7 +947,7 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
         if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx,
             { ...binding, deploymentNativeAdmission: admission }, proof, false, undefined, true)) return true;
         if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) return false;
-        if (bindings || effectActionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
+        if (bindings || effectActionId === admission.actionId) {
             if (proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') return matches({});
             if (proof.path === `/v1/artifacts/${encodeURIComponent(environment.contentArtifactId)}`) return matches({ id: environment.contentArtifactId });
         }
@@ -946,17 +957,17 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
             return source !== null && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, source,
                 undefined, undefined, effectActionId) === true;
         }
-        if (effectActionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) return false;
+        if (effectActionId !== admission.actionId) return false;
         if (proof.path === `/v1/projects/${encodeURIComponent(environment.projectSourceId)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`)
             return matches({ serverId: binding.serverIdentityId, id: environment.projectSourceId });
         const defaults = await readProjectDeploymentDefaultsContentInTx(tx, binding.accountId, environment.projectSourceId);
         if (defaults.ok && defaults.content && proof.path === `/v1/artifacts/${encodeURIComponent(defaults.content.contentArtifactId)}`)
             return matches({ id: defaults.content.contentArtifactId });
     }
-    if (admission.intent === 'rekeyAndSave' && !bindings) return false;
+    if (telemetry && !bindings || !telemetry && admission.intent === 'rekeyAndSave' && !bindings) return false;
     const matchesBindingRevision = (revision: number) => revision === admission.expectedRevision
-        || admission.intent !== 'rekeyAndSave' && revision === admission.expectedRevision + 1;
-    if (admission.intent === 'test' || effectActionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && !bindings) return false;
+        || !telemetry && admission.intent !== 'rekeyAndSave' && revision === admission.expectedRevision + 1;
+    if (!telemetry && admission.intent === 'test' || effectActionId !== admission.actionId && !bindings) return false;
     const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: admission.environmentId,
         actionId: bindings ? DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 : DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 });
     const publication = await readDeploymentPrivateCandidatePublicationHttpPurpose(tx, admission.environmentId, proof, id,
@@ -979,8 +990,11 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
         && parsed.data.serverId === binding.serverIdentityId && parsed.data.environmentId === admission.environmentId
         && (bindings ? matchesBindingRevision(parsed.data.expectedRevision) : parsed.data.expectedRevision === admission.expectedRevision)
         && parsed.data.contentArtifactId === id && parsed.data.contentHeaderVersion === 1 && parsed.data.contentBodyVersion === 1
+        && (!telemetry || 'telemetryMachineId' in parsed.data
+            && (admission.collector === undefined || parsed.data.telemetryMachineId === (admission.collector?.machineId ?? null)))
         && matches(parsed.data);
 }
+
 
 /** First setup spends the existing signed update admission and its Environment's Source custody. */
 async function readConfigurationDefaultsEnvironmentInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1) {
@@ -1225,7 +1239,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     const admit = (allowed: boolean): DeploymentCreateHttpPurpose | null => allowed
         ? { rootActionId: deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, effectActionId,
             ...(childEffect && environmentId ? { child: { environmentId } } : {}) } : null;
-    if (configureEffect || backupBindings) return admit(await readDeploymentBackupConfigureHttpPurpose(
+    if (configureEffect || backupBindings) return admit(await readDeploymentEnvironmentSetupHttpPurpose(
         tx, binding, effectActionId, proof, environmentId!) === true);
     const method = proof.method.toUpperCase();
     const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);

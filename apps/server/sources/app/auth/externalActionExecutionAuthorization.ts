@@ -43,7 +43,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
     readDeploymentDomainPreparationHttpPurpose,
-    readDeploymentEnvironmentContentPreparationHttpPurpose, readDeploymentBackupConfigureHttpPurpose,
+    readDeploymentEnvironmentContentPreparationHttpPurpose, readDeploymentEnvironmentSetupHttpPurpose,
     isDeploymentMoveToRepositoryHttpEffect, readDeploymentMoveToRepositoryHttpPurpose,
     readDeclaredDeploymentPreparationHttpRead, readDeploymentPreparationHttpReadPurpose, readDeploymentReferenceHttpPurpose,
     isDeploymentCandidatePublicationHttpPurposeInTx,
@@ -66,6 +66,7 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
@@ -74,7 +75,7 @@ import { ProjectSourcesReadInputV1Schema } from '@happier-dev/protocol/projects/
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ExternalActionActionIdV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, bindExternalActionExecutionAuthorizationHttpPathV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, isExternalActionResolvedTargetAllowedV1, isExternalActionWorkflowActionIdV1, isExternalActionMachineWorkflowActionIdV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionMachineRpcExecutionV1, type ExternalActionTargetV1, type ExternalActionServerPrincipalV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTargetV1, verifyExternalActionMachineRpcRequestV1, verifyExternalActionMachineRequestV1, isExternalActionAuthorizationBoundToEnvelope, type ExternalActionMachineRpcEventV1, type DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { isDeploymentDomainNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isDeploymentDomainNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
@@ -89,7 +90,7 @@ import { SOCKET_RPC_EVENTS, resolveSocketRpcSessionAuthorization, WorkspaceSyncS
     type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSeedRoutingV1 } from "@happier-dev/protocol/socketRpc";
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { projectApiTokenSessionSpawnAdmissionV1, type ApiTokenSessionSpawnAdmissionV1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, isApiTokenGrantTargetMemberV1, isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { projectApiTokenSessionSpawnAdmissionV1, type ApiTokenSessionSpawnAdmissionV1, API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, isApiTokenGrantTargetMemberV1, isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { resolveCredentialActionAdmissionV1, computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineSetupResolveInputV1Schema,
     MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -886,7 +887,8 @@ async function readCurrentExternalActionPrincipal(
         target: binding.target,
         targetMachineId: binding.machineId,
         automationId: binding.automationId,
-        ...(binding.environmentId ? { environmentId: binding.environmentId, environmentAdmission: 'pre_open' as const } : {}),
+        ...(binding.environmentId ? { environmentId: binding.environmentId,
+            ...(API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some(id => id === binding.actionId) ? { environmentAdmission: 'pre_open' as const } : {}) } : {}),
     }).ok) return null;
     if (binding.actionId === 'action.operations.get' && binding.environmentId) {
         const environment = await loadDeploymentEnvironmentInTx(reader, binding.accountId, binding.serverIdentityId,
@@ -1413,7 +1415,11 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
         && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === 'backup.bindings'
         && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission);
-    const crossesEffectFamily = configureBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
+    const telemetryBindings = binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
+        && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+        && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1
+        && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
+    const crossesEffectFamily = configureBindings || telemetryBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
         || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
@@ -3665,9 +3671,10 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (content && artifactContent) deploymentChildArtifactRead = {
             content: artifactContent, requesterAccountId: verified.binding.accountId,
         };
-    } else if (verified.binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
+    } else if (verified.binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
+        || verified.binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) {
         if (!isAdmittedRootRelay && !readsExecutionMachine
-            && await readDeploymentBackupConfigureHttpPurpose(db, verified.binding, verified.effectActionId, proof) !== true)
+            && await readDeploymentEnvironmentSetupHttpPurpose(db, verified.binding, verified.effectActionId, proof) !== true)
             return refuse('deployment_preparation');
     } else if (verified.binding.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(verified.binding.actionId)) {
         if (!isAdmittedRootRelay && !readsExecutionMachine) {

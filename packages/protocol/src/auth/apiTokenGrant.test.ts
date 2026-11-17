@@ -81,6 +81,19 @@ describe('API token grant admission', () => {
       environmentId: 'staging', environmentAdmission: 'pre_open' }).ok).toBe(false);
     expect(evaluate({ grant: full, actionId: 'action.spec.get', environmentId: { id: 'staging' } }).ok).toBe(false);
   });
+  it('keeps telemetry setup on ordinary Machine grants without widening Environment-only CI authority', () => {
+    const actionId = 'deployments.environments.telemetry.set';
+    const root = { actions: { families: [], ids: [actionId] } };
+    const machineGrant = grant({ ...root, targets: { sessions: [], machines: ['m1'] } });
+    expect(evaluate({ grant: machineGrant, actionId, target: machine,
+      environmentId: 'staging' })).toEqual({ ok: true });
+    expect(evaluate({ grant: machineGrant, actionId, target: machine,
+      environmentId: 'staging', environmentAdmission: 'pre_open' }).ok).toBe(false);
+    expect(evaluate({ grant: machineGrant, actionId, target: { kind: 'machine', machineId: 'other' },
+      environmentId: 'staging' }).ok).toBe(false);
+    const ciGrant = grant({ ...root, targets: { sessions: [], machines: [], environments: ['staging'] } });
+    expect(evaluate({ grant: ciGrant, actionId, target: machine, environmentId: 'staging' }).ok).toBe(false);
+  });
   it('preserves Environment authority when narrowing a child grant', () => {
     const parent = ApiTokenGrantV1Schema.parse({ ...full,
       targets: { sessions: [], machines: [], environments: ['staging', 'preview'] },

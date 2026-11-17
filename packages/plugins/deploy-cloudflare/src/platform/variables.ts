@@ -9,6 +9,7 @@ import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions
 import { isObject } from '../connectedAccounts/probe.js';
 import { request } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
+import { encodeTelemetryAuthorizationHeaderV1 } from '@happier-dev/deployment-protocol/v1';
 
 type Product = 'pages' | 'workers';
 type Read = DeploymentTargetVariablesReadInputV1;
@@ -202,6 +203,7 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
         failures.push({ key, code: 'outcome_unknown' }); continue;
       }
     } else value = binding.source.value;
+    if (binding.valueFormat === 'otelAuthorizationHeader') value = encodeTelemetryAuthorizationHeaderV1(value);
     if (!await write(key, value, secret)) continue;
     owned.set(key, { key, providerId: key, desiredRevision: input.desiredRevision });
     observed.variables.set(key, { key, providerId: key, present: true, secret, owned: true, drift: 'unknown' });

@@ -35,7 +35,7 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
     const [defaults, environments, references] = await Promise.all([
         readProjectDeploymentDefaultsContentInTx(tx, actorAccountId, input.source.id, input.owner),
         tx.deploymentEnvironment.findMany({ where: { projectSourceId: input.source.id }, select: {
-            id: true, deletedAt: true, controllerMachineId: true, buildMachineId: true, edgeMachineId: true,
+            id: true, deletedAt: true, controllerMachineId: true, buildMachineId: true, edgeMachineId: true, telemetryMachineId: true,
             runtimeTargetLinkId: true, referencedSavedSecretRevisions: true,
             targetLinks: { include: { machines: true } },
             deployments: { select: { state: true, acceptedControllerMachineId: true, acceptedControllerInstallationId: true,
@@ -72,6 +72,7 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
         machines.push({ machineId: environment.controllerMachineId, role: 'controller' });
         if (environment.buildMachineId) machines.push({ machineId: environment.buildMachineId, role: 'build' });
         if (environment.edgeMachineId) machines.push({ machineId: environment.edgeMachineId, role: 'target' });
+        if (environment.telemetryMachineId) machines.push({ machineId: environment.telemetryMachineId, role: 'telemetry' });
         const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, environment);
         if (required.status !== 'complete') return false;
         if (!required.requiredSecretUses.length) continue;

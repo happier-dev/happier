@@ -45,7 +45,7 @@ import { admitNativeServiceCommandForHost, nativeServiceCommandArgs } from './se
 import { assertServiceOutputRedactionForHost } from './serviceOutputRedaction';
 import type { AdmittedServiceExecContextV1, ServiceCommandV1 } from './serviceCommand';
 import type { HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
-import { createNativeRuntimeProjectionForHost } from './candidateRuntimeProjection';
+import { createNativeRuntimeProjectionForHost, type NativeComposeTelemetryProjectionFact } from './candidateRuntimeProjection';
 import { readDeploymentSourceIdentityForHost } from '@/deployments/targets/ownServer/paths';
 import { admitNativeResticCommand, type NativeResticCommandInput } from './nativeResticCommand';
 import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
@@ -126,6 +126,7 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
         signal?: AbortSignal;
     }>): Promise<void>;
     onReferenceAddresses?(addresses: NonNullable<HostAuthorizedPluginExecLaunch['deploymentReferenceAddresses']>): void;
+    onTelemetryProjection?(facts: readonly NativeComposeTelemetryProjectionFact[]): void;
     source: DeploymentSourceMaterializationV1;
     files: readonly string[];
     sourceKind?: 'repository' | 'stored';
@@ -807,6 +808,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
     const excludedFromHealth = new Set(health?.filter(value => !value.participates).map(value => value.service));
     const images = input.images.map(image => ({ ...image }));
     type RenderCapture = { model: Record<string, unknown>; unresolvedModel: Record<string, unknown>; composeArgs: readonly string[];
+        telemetryProjection: readonly NativeComposeTelemetryProjectionFact[];
         commandService?: string;
         identity: ReturnType<typeof createNativeComposeImageIdentity>;
         localImages: ReadonlyMap<string, Readonly<{ reference: string; config: Record<string, unknown> }>>;
@@ -1029,17 +1031,19 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
     };
     const prepareReferenceNetwork = async (current: NativeComposeProjectRender, capture: RenderCapture,
         context?: MachineNativeEffectContext, signal?: AbortSignal): Promise<() => Promise<void>> => {
-        if (!input.prepareReferenceContainerNetwork || input.phase === 'build'
-            || !current.referenceAddresses?.some(address => address.route?.kind === 'iroh')) return async () => {};
-        const referenceAddresses = current.referenceAddresses.filter(address => address.route?.kind === 'iroh')
+        if (!input.prepareReferenceContainerNetwork || input.phase === 'build') return async () => {};
+        const referenceAddresses = (current.referenceAddresses ?? []).filter(address => address.route?.kind === 'iroh')
             .map(address => address.address);
-        const network = readNativeComposeReferenceNetwork({ model: capture.model, services: current.services, referenceAddresses });
+        const consumerServices = capture.telemetryProjection.filter(fact => fact.requiresTelemetryEndpoint).map(fact => fact.service);
+        if (!referenceAddresses.length && !consumerServices.length) return async () => {};
+        const networkInput = { model: capture.model, services: current.services, referenceAddresses, consumerServices };
+        const network = readNativeComposeReferenceNetwork(networkInput);
         if (!network) return async () => {};
         const docker = await owner.readNativeDocker({ render: current, signal });
         try {
             const networkId = context && current.engine.kind === 'native'
                 ? await machineNativeEffectAdmission.runStage(context, () => prepareNativeComposeReferenceNetwork({
-                    docker, model: capture.model, services: current.services, referenceAddresses, projectName,
+                    docker, ...networkInput, projectName,
                     sourceRoot: input.source.rootPath, directory: root!,
                     imageReference: imageReferences(current.services[0]!).activationRef, signal }))
                 : network.name;
@@ -1104,10 +1108,12 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         const runtimeFile = join(await directory(), 'runtime.compose.json');
         await writeFile(runtimeFile, JSON.stringify(normalized), { mode: 0o600 });
         const composeArgs = [...base, '--file', runtimeFile];
+        let telemetryProjection: readonly NativeComposeTelemetryProjectionFact[] = [];
         const actualLaunch = await authorize([...composeArgs, 'config', '--format', 'json', '--no-consistency', ...selected], signal,
             undefined, false, input.phase === 'build' ? undefined : createNativeRuntimeProjectionForHost({ kind: 'configuration', source: input.source,
                 model: normalized, composeArguments: base, services: selected, io: input.io,
                 bindRuntimeEnvironment: purpose !== 'serviceCommand',
+                onTelemetryProjection: facts => { telemetryProjection = facts; },
                 assertCurrent: () => assertCurrent(signal) }));
         let model: Record<string, unknown>;
         let review: NativeComposeRuntimeReview;
@@ -1202,7 +1208,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 basis: { manifestFingerprint: input.source.manifestFingerprint, configInputDigests, toolVersion, physicalProjectName: projectName,
                     ...(input.expectedEngineId === undefined ? {} : { nativeGeneration: await nativeGeneration(signal) }) } };
             if (options?.purpose === 'serviceCommand') assertCandidateServiceSupported(model, result, options.service);
-            renderedCaptures.set(result, { model, unresolvedModel: structuredClone(normalized), composeArgs, identity, localImages,
+            renderedCaptures.set(result, { model, unresolvedModel: structuredClone(normalized), composeArgs, identity, localImages, telemetryProjection,
                 ...(options?.purpose === 'serviceCommand' ? { commandService: options.service } : {}) });
             return result;
         } finally { await actualLaunch.release(); }
@@ -1548,9 +1554,11 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 ? input.storage?.previewDataVolumes?.filter(volume => current.services.includes(volume.service)) ?? [] : [];
             const preexistingPreviewVolumes = previewTargets.length ? new Set(await readNativeComposeProjectVolumeNames({
                 projects: [projectName], run: args => run(args, request.signal) })) : undefined;
+            let telemetryProjection: readonly NativeComposeTelemetryProjectionFact[] = [];
             const runtimeProjection = (commandArguments: readonly string[]) => createNativeRuntimeProjectionForHost({
                 kind: 'runtime', source: input.source, model: capture.unresolvedModel,
                 composeArguments: base, services: current.services, commandArguments,
+                onTelemetryProjection: facts => { telemetryProjection = facts; },
                 io: input.io, assertCurrent: () => assertCurrent(request.signal) });
             const releaseNetwork = await prepareReferenceNetwork(current, capture, request.context, request.signal);
             let launch: HostAuthorizedPluginExecLaunch;
@@ -1581,6 +1589,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                     try { await runAuthorized(start, request.signal, true, authority); } finally { await start.release(); }
                 }
                 input.onReferenceAddresses?.(launch.deploymentReferenceAddresses ?? []);
+                input.onTelemetryProjection?.(telemetryProjection);
                 if (selectiveHealth && !request.runningServices) {
                     // Compose 2.39.4 start.go:72-107 waits on every service in
                     // the selected project. up.go:60-67 makes --no-deps select

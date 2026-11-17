@@ -4,6 +4,7 @@ import { DeploymentTargetRoleInputSchemasV1, DeploymentTargetVariablesReadResult
 import { DeploymentObservationGetResultV1Schema, type DeploymentBindingsSetInputV1,
     DeploymentObservationGetInputV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { usesOwnTelemetryCollectorV1 } from '@happier-dev/deployments/telemetry';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { createContributedDeploymentTargetForHost } from './contributedDeploymentTargetForHost';
 import type { PreparePlatformBindingsForHost } from '../secrets/prepareDeploymentBindingsForHost';
@@ -34,12 +35,23 @@ export function createPlatformVariablesForHost(host: Host) {
         return host.withTargetRole({ environmentId: environment.environment.id, targetLinkId: request.targetLink.id,
             context: request.context }, environment, 'variables.sync', async scope => {
                 if (!request.context.hostReviewedChild) return refuse('action_forbidden');
-                const set = request.content.bindings.filter(binding => binding.purpose === 'variable');
+                const keepTheirs = new Set('providerVariables' in request.input ? request.input.providerVariables?.keepTheirs ?? [] : []);
+                const ownCollector = usesOwnTelemetryCollectorV1(keepTheirs);
+                const previousManaged = new Set(request.previousContent.bindings.filter(binding => binding.purpose === 'variable'
+                    && binding.managedBy === 'telemetry').map(binding => binding.name));
+                const set = request.content.bindings.filter(binding => {
+                    if (binding.purpose !== 'variable') return false;
+                    if (!ownCollector || binding.managedBy !== 'telemetry') return true;
+                    // An existing caller-authored header remains theirs; only a
+                    // previously managed value may be removed with its provenance.
+                    if (!previousManaged.has(binding.name)) keepTheirs.add(binding.name);
+                    return false;
+                });
                 const input = DeploymentTargetRoleInputSchemasV1['variables.sync'].parse({ ...scope.common,
                     owned: request.linkContent.ownedVariables ?? [], desiredRevision: request.input.expectedRevision + 1, set,
                     remove: (request.linkContent.ownedVariables ?? []).filter(owned => !set.some(binding => binding.name === owned.key)).map(owned => owned.key),
                     useOurs: 'providerVariables' in request.input ? request.input.providerVariables?.useOurs ?? [] : [],
-                    keepTheirs: 'providerVariables' in request.input ? request.input.providerVariables?.keepTheirs ?? [] : [] });
+                    keepTheirs: [...keepTheirs] });
                 await scope.admit(input, 'preparation');
                 const invoked = await request.context.hostReviewedChild.invoke({ action: scope.action, role: 'variables.sync',
                     input: normalizeStrictJsonValue(input) });

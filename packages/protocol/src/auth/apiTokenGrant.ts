@@ -222,14 +222,19 @@ export function evaluateApiTokenGrantV1(input: Readonly<{
   if (!actionGranted(grant, actionId, input.contributedQualifiedId, input.contributedActionAdmission)) return { ok: false, reason: 'action_not_granted' };
   if (actionId === 'deployments.deploy' || 'environmentId' in input || input.environmentAdmission !== undefined) {
     const environment = DeploymentIdentifierV1Schema.safeParse(input.environmentId);
-    if (!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === actionId)
-      || !environment.success || environment.data !== input.environmentId || target?.kind === 'session'
-      || grant.targets !== null && !grant.targets.environments?.includes(environment.data)) {
+    const environmentAction = API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === actionId);
+    if (!environment.success || environment.data !== input.environmentId
+      || !environmentAction && input.environmentAdmission !== undefined
+      || environmentAction && (target?.kind === 'session'
+        || grant.targets !== null && !grant.targets.environments?.includes(environment.data))) {
       return { ok: false, reason: 'environment_not_granted' };
     }
-    // Controller/operation-host placement is routing, never a Machine grant.
-    // The decoded operand and originating-token operation custody are rechecked at dispatch.
-    return { ok: true };
+    if (environmentAction) {
+      // CI controller placement is routing, never a Machine grant.
+      // The decoded operand and originating-token operation custody are rechecked at dispatch.
+      return { ok: true };
+    }
+    // Other Actions carry Environment metadata while retaining ordinary target admission.
   }
   if (DISCOVERY_IDS.has(actionId)) return { ok: true };
   if (actionId === 'workflow.trigger.run_now' && grant.automationIds != null

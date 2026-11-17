@@ -8,10 +8,13 @@ import type { AutomationDefinitionListResponse } from '../automations/automation
 import type { MachinePoolViewV1 } from './pools/v1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from './machineDeploymentDomainReferenceV1.js';
 export { MachineDeploymentDomainReferenceV1Schema, type MachineDeploymentDomainReferenceV1 } from './machineDeploymentDomainReferenceV1.js';
+export const MachineDeploymentReferenceRoleV1Schema = lazyZodSchema(() => z.enum([
+  'runtime', 'data', 'retiring', 'detached', 'controller', 'build', 'edge', 'telemetry',
+]));
 export const MachineReferenceV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
   kind: z.enum(['board', 'profile', 'machine_pool', 'workflow_assignment', 'automation_assignment', 'deployment_environment']),
   id: z.string().check(z.trim(), z.minLength(1)), name: z.string(),
-  deploymentRoles: z.optional(z.readonly(z.array(z.enum(['runtime', 'data', 'retiring', 'detached', 'controller', 'build', 'edge'])))),
+  deploymentRoles: z.optional(z.readonly(z.array(MachineDeploymentReferenceRoleV1Schema))),
   deploymentDomains: z.optional(z.readonly(z.array(MachineDeploymentDomainReferenceV1Schema))),
 })));
 /** Exact relational deployment disclosure; private Environment/link content is never opened. */

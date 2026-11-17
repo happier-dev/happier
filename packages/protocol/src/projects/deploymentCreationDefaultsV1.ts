@@ -18,6 +18,7 @@ export const DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1 = 1;
 
 /** Deliberate creation preferences; partial layers never materialize domain defaults. */
 export const DeploymentCreationDefaultsV1Schema = lazyZodSchema(() => z.strictObject({
+  telemetryMachineId: z.optional(DeploymentIdentifierV1Schema),
   buildMachineId: z.optional(DeploymentIdentifierV1Schema),
   controllerMachineId: z.optional(DeploymentIdentifierV1Schema),
   retainPreviousDeployments: z.optional(DeploymentRetainPreviousDeploymentsV1Schema),
@@ -36,6 +37,7 @@ export type DeploymentCreationDefaultSourceV1 = z.infer<typeof DeploymentCreatio
 export const ResolvedDeploymentCreationDefaultsV1Schema = lazyZodSchema(() => z.strictObject({
   values: z.extend(DeploymentCreationDefaultsV1Schema, { retainPreviousDeployments: DeploymentRetainPreviousDeploymentsV1Schema }),
   sources: z.strictObject({
+    telemetryMachineId: z.optional(DeploymentCreationDefaultSourceV1Schema),
     buildMachineId: z.optional(DeploymentCreationDefaultSourceV1Schema),
     controllerMachineId: z.optional(DeploymentCreationDefaultSourceV1Schema),
     retainPreviousDeployments: z.optional(DeploymentCreationDefaultSourceV1Schema),

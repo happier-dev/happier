@@ -5,9 +5,10 @@ import { readRecord } from '../inputs/inputRecords.js';
 import { DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { hasDeploymentEnvironmentContentPatchV1, omitDeploymentEnvironmentPrivateContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
-import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, isDeploymentPromoteActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentBackupConfigureInputV1Schema, DeploymentBackupConfigureIntentV1Schema } from './deploymentBackupConfigureV1.js';
+import { DeploymentEnvironmentTelemetrySetInputV1Schema } from './deploymentTelemetryV1.js';
 import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
   DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
@@ -68,6 +69,13 @@ export const DeploymentBackupConfigureNativeAdmissionV1Schema = lazyZodSchema(()
   inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
 }));
 export type DeploymentBackupConfigureNativeAdmissionV1 = z.infer<typeof DeploymentBackupConfigureNativeAdmissionV1Schema>;
+/** Telemetry's closed public intent contains only placement and reviewed mutation facts. */
+export const DeploymentTelemetryNativeAdmissionV1Schema = lazyZodSchema(() => z.extend(
+  z.omit(DeploymentEnvironmentTelemetrySetInputV1Schema, { serverId: true }), {
+    kind: z.literal('telemetry'), actionId: z.literal(DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1),
+    inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  }));
+export type DeploymentTelemetryNativeAdmissionV1 = z.infer<typeof DeploymentTelemetryNativeAdmissionV1Schema>;
 export const DeploymentEnvironmentUpdateNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   mode: z.optional(z.literal('preview')),
   defaultsFor: z.optional(DeploymentConfigurationDefaultsForV1Schema),
@@ -80,7 +88,7 @@ export const DeploymentNativeAdmissionV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('promote'), environmentId: id, sourceEnvironmentId: id, sourceDeploymentId: id }),
   DeploymentEnvironmentUpdateNativeAdmissionV1Schema,
   DeploymentDomainNativeAdmissionV1Schema, DeploymentDomainDnsNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
-  DeploymentBackupNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema,
+  DeploymentBackupNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema, DeploymentTelemetryNativeAdmissionV1Schema,
 ]));
 // Signed authority stays closed in stored approvals. A tolerant Environment-only
 // arm would consume typed native facts and change the original envelope digest.
@@ -103,7 +111,17 @@ export function isDeploymentBackupNativeAdmissionV1(value: DeploymentNativeAdmis
 export function isDeploymentBackupConfigureNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentBackupConfigureNativeAdmissionV1 {
   return value !== undefined && 'kind' in value && value.kind === 'backupConfigure';
 }
+export function isDeploymentTelemetryNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentTelemetryNativeAdmissionV1 {
+  return value !== undefined && 'kind' in value && value.kind === 'telemetry';
+}
 export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown): DeploymentNativeAdmissionV1 | undefined {
+  if (actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) {
+    const value = DeploymentEnvironmentTelemetrySetInputV1Schema.parse(input);
+    const { serverId: _serverId, ...admitted } = value;
+    return DeploymentTelemetryNativeAdmissionV1Schema.parse({ ...admitted, kind: 'telemetry', actionId,
+      inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-telemetry-input-v1',
+        [createCanonicalJsonSigningInput(value)]) });
+  }
   if (actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
     const value = DeploymentBackupConfigureInputV1Schema.parse(input);
     return DeploymentBackupConfigureNativeAdmissionV1Schema.parse({ kind: 'backupConfigure', actionId,

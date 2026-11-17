@@ -6,14 +6,14 @@ import { AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS, AuthTokenProvenanceSchema
 import { PasswordCredentialMutationDigestV1Schema } from '@happier-dev/protocol/auth/passwordMutationChallenge';
 import { parseAccountApiTokenBearerV1, AccountApiTokenCreateEncryptionV1Schema, AccountApiTokenEncryptionAccessV1Schema, type AccountApiTokenCreateEncryptionV1, type AccountApiTokenEncryptionAccessV1, type AccountApiTokenEncryptionAccessResponseV1, type ParsedAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { projectPrivateLabelForRecipientV1, serializePrivateLabelStoredV1, type PrivateLabelReadV1, type PrivateLabelStoredV1 } from '@happier-dev/protocol';
-import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRANT_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, type ApiTokenGrantDenialReasonV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRANT_V1, API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, type ApiTokenGrantDenialReasonV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectDeploymentNativeAdmissionV1,
-    isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
+    isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
     createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1,
     projectExternalActionDeploymentMetadataReceiptIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1,
-    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EmbedConfigV1Schema, StoredEmbedConfigV1Schema, type EmbedConfigV1 } from '@happier-dev/protocol/embed';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { type AccountStatusV1 } from '@happier-dev/protocol/home/governance';
@@ -673,6 +673,8 @@ class AuthModule {
             && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission);
         const configureRoot = input.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
         if (configureRoot && !isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission)) throw new ApiTokenOperationError('credential_scope_denied');
+        const telemetryRoot = input.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
+        if (telemetryRoot && !isDeploymentTelemetryNativeAdmissionV1(nativeAdmission)) throw new ApiTokenOperationError('credential_scope_denied');
         const nativeMemberRoot = input.actionId === 'deployments.restart' || input.actionId === 'deployments.backups.restore'
             || isDeploymentBackupActionIdV1(input.actionId);
         // Domain API roots need the canonical sealed requester projection first.
@@ -733,7 +735,7 @@ class AuthModule {
         }
         const environmentId = metadataEnvironmentId
             ?? (input.actionId === 'deployments.deploy' || input.actionId === 'action.operations.get'
-                || domainRoot || nativeMemberRoot || ingressUpdateRoot || configureRoot
+                || domainRoot || nativeMemberRoot || ingressUpdateRoot || configureRoot || telemetryRoot
                 || 'authentication' in input && (input.actionId === 'deployments.rollback' || input.actionId === 'deployments.promote'
                     || input.actionId === 'deployments.teardown')
                 ? nativeAdmission?.environmentId : undefined);
@@ -790,11 +792,11 @@ class AuthModule {
             ...(managedAccountExecutor ? { managedAccountExecutor } : {}),
             ...(automationId ? { automationId } : {}),
             ...(environmentId ? { environmentId } : {}),
-            ...((nativeAdmission && 'kind' in nativeAdmission && nativeAdmission.kind === 'promote' || ingressUpdateRoot || configureRoot || domainRoot && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
+            ...((nativeAdmission && 'kind' in nativeAdmission && nativeAdmission.kind === 'promote' || ingressUpdateRoot || configureRoot || telemetryRoot || domainRoot && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
                 || nativeMemberRoot && nativeAdmission && 'kind' in nativeAdmission
                     && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup'))
                 ? { deploymentNativeAdmission: nativeAdmission } : {}),
-            ...(nativeAdmission && nativeSource && !domainRoot && !nativeMemberRoot && !ingressUpdateRoot && !configureRoot ? { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({
+            ...(nativeAdmission && nativeSource && !domainRoot && !nativeMemberRoot && !ingressUpdateRoot && !configureRoot && !telemetryRoot ? { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({
                 ...input, environmentId: nativeAdmission.environmentId, source: nativeSource,
             }) } : {}),
             accountEncryptionMode: accountMode.encryptionMode,
@@ -961,7 +963,8 @@ class AuthModule {
             }),
             target: supplied.target, targetMachineId: supplied.machineId,
             automationId,
-            ...(environmentId ? { environmentId, environmentAdmission: 'pre_open' as const } : {}),
+            ...(environmentId ? { environmentId, ...(API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some(id => id === supplied.actionId)
+                ? { environmentAdmission: 'pre_open' as const } : {}) } : {}),
             ...(supplied.actionId === "session.spawn_new" && !supplied.handoffContinuation && context.input !== undefined ? { spawnInput: context.input } : {}),
         });
         if (!admission.ok) throw new ApiTokenOperationError("credential_scope_denied", admission.reason);

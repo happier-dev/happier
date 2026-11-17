@@ -13,6 +13,7 @@ import {
     DeploymentPendingCancelInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
     DeploymentTargetLinkInputV1Schema,
     DeploymentTimestampV1Schema,
+    DeploymentTelemetryAssignmentsInputV1Schema, DeploymentTelemetryAssignmentsV1Schema,
 } from '@happier-dev/protocol';
 import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentEnvironmentBackupSetInputV1Schema,
     DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/deployment-protocol';
@@ -37,6 +38,7 @@ import { registerEnvironmentSecretLaunchAdmissionRoute } from './environmentSecr
 import { registerDeploymentDomainRoutes } from './deploymentDomainRoutes';
 import { deploymentNewWorkFeatureGate } from './deploymentFeatureGate';
 import { deploymentLinkValidationFailure } from './deploymentValidation';
+import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from '@/app/plugins/installations/publisherProof';
 
 const environmentParams = z.strictObject({ environmentId: z.string().check(z.minLength(1)) });
 const receiptParams = z.extend(environmentParams, { deploymentId: z.string().check(z.minLength(1)) });
@@ -56,6 +58,28 @@ function status(result: { ok: boolean; error?: string }) {
 /** Authenticated storage only: the daemon owns review, effects and observation. */
 export function registerDeploymentRoutes(app: Fastify): void {
     registerDeploymentDomainRoutes(app);
+    app.post('/v1/deployments/machines/:machineId/telemetry-assignments', {
+        preHandler: app.authenticate, attachValidation: true,
+        schema: { params: z.strictObject({ machineId: z.string().check(z.minLength(1)) }),
+            body: DeploymentTelemetryAssignmentsInputV1Schema,
+            response: responses(z.union([DeploymentTelemetryAssignmentsV1Schema, DeploymentActionFailureV1Schema])) },
+    }, async (request, reply) => {
+        if (request.validationError) return reply.code(400).send(invalid);
+        const denied = { ok: false as const, error: 'deployment_access_denied' as const };
+        try {
+            const publisher = await verifyPluginInstallationPublisherHeader({ accountId: request.userId,
+                request, path: request.url, required: true });
+            if (!publisher || publisher.machineId !== request.params.machineId) return reply.code(403).send(denied);
+        } catch (error) {
+            if (error instanceof PluginInstallationPublisherProofError) return reply.code(403).send(denied);
+            throw error;
+        }
+        const rows = await inReadSnapshot(tx => tx.deploymentEnvironment.findMany({
+            where: { telemetryMachineId: request.params.machineId, deletedAt: null },
+            select: { id: true, telemetryTokenHash: true }, orderBy: { id: 'asc' },
+        }));
+        return reply.send({ ok: true as const, assignments: rows.map(row => ({ environmentId: row.id, tokenHash: row.telemetryTokenHash })) });
+    });
     app.get('/v1/deployments/domains', {
         preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
         schema: { querystring: z.extend(inputs['deployments.domains.page'], {
@@ -181,7 +205,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
         // The Environment lock and revision CAS serialize this write, independently of Account publication.
         const result = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), {
+            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), {
                 isolationLevel: deploymentWriteIsolationLevel(),
             });
         return reply.code(status(result)).send(result);

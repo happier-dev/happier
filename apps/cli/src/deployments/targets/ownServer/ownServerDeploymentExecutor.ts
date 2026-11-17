@@ -334,15 +334,23 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             try {
                 const manifest = (await readProjectManifest({ root: source.rootPath })).document;
                 if (manifest && manifest.status !== 'valid') refuse('deployment_invalid');
+                let secretMaterial: Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>> | undefined;
+                let deliveredTelemetry: { telemetryMachineId: string; telemetryTokenHash: string } | undefined;
                 const envPort = createDeploymentExecEnvPortForHost({ source, phase: 'runtime', signal,
                     isCurrent: () => !signal.aborted,
-                    prepare: ({ phase }: Readonly<{ phase: 'build' | 'runtime' }>) => prepareEnvironmentSecretBindingsForLaunch({ ...runtime.secrets,
+                    prepare: async ({ phase }: Readonly<{ phase: 'build' | 'runtime' }>) => secretMaterial = await prepareEnvironmentSecretBindingsForLaunch({ ...runtime.secrets,
                         environmentId: environment.environment.id, machineId: host.machineId, installationId: source.installationId,
                         phase, requirements: manifest?.status === 'valid' ? manifest.manifest.environmentVariables : [],
                         bindings: environment.content.bindings, assertCurrent }),
                 });
                 const referenceAddresses: NonNullable<NonNullable<OwnServerDeploymentReceipt['content']['ownServer']>['referenceAddresses']> = [];
                 const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec: runtime.exec, envPort, source,
+                    onTelemetryProjection: facts => {
+                        const telemetryTokenHash = secretMaterial?.telemetryTokenHash;
+                        const telemetryMachineId = environment.environment.telemetryMachineId;
+                        deliveredTelemetry = facts.some(fact => fact.receivesTelemetry) && telemetryMachineId && telemetryTokenHash
+                            ? { telemetryMachineId, telemetryTokenHash } : undefined;
+                    },
                     ...(runtime.prepareReferenceContainerNetwork ? { prepareReferenceContainerNetwork: runtime.prepareReferenceContainerNetwork } : {}),
                     onReferenceAddresses: addresses => {
                         for (const address of addresses) {
@@ -403,6 +411,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             || request.materialization.kind === 'restoration' ? 'rollback' : 'deploy',
                         signal, assertCurrent }) });
                 return { runtime, source, project, assertCurrent, stageOutput, referenceAddresses,
+                    get deliveredTelemetry() { return deliveredTelemetry; },
                     homeServerIdentityId: expectedIdentity.homeServerIdentityId };
             } catch (error) { await source.abort(); throw error; }
         } catch (error) { try { await runtime.release(); } finally { await stageOutput?.close(); } throw error; }
@@ -1048,13 +1057,21 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             const stage = (row: DeploymentMachineResultV1, failureFact?: NonNullable<OwnServerDeploymentReceipt['content']['failure']>) =>
                 stageMember(request, row, prepared.stageOutput, failureFact, readDeploymentSourceCommitSubjectForHost(prepared.source),
                     prepared.referenceAddresses);
-            const row = (health: DeploymentMachineResultV1['health']): DeploymentMachineResultV1 => ({
+            const row = (health: DeploymentMachineResultV1['health']): DeploymentMachineResultV1 => {
+                const result: DeploymentMachineResultV1 = {
                 ...previous, machineId: host.machineId, installationId: input.installationId, steps: previous?.steps ?? [],
                 actionOperationId: receipt.deployment.actionOperationId, activation: restored ? previous?.activation ?? 'pending' : 'succeeded',
                 currentDeploymentId: restored ? selected.deployment.id : receipt.deployment.id, health,
                 incumbentStopped: undefined,
                 ...(input.phase === 'restore' ? { restoration: 'succeeded' as const } : { restoration: undefined }),
-            });
+                };
+                if (!restored) {
+                    delete result.telemetryMachineId;
+                    delete result.telemetryTokenHash;
+                    Object.assign(result, prepared.deliveredTelemetry);
+                }
+                return result;
+            };
             try {
                 await prepared.stageOutput?.beginStep({ stepId: input.phase });
                 const rendered = await prepared.project.render({ signal: snapshot.signal });

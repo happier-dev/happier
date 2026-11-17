@@ -33,6 +33,31 @@ it.each([
   expect(readExternalActionBindingAuthority(binding)).toBe(expected);
 });
 
+it.each(['plain', 'e2ee'] as const)('retains telemetry native scope across its %s authorization envelope', mode => {
+  const actionId = 'deployments.environments.telemetry.set';
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const input = { serverId: 'srv_home', environmentId: 'environment', expectedRevision: 4, collector: { machineId: 'collector' } };
+  const envelope = mode === 'plain' ? { v: 1, requestId: 'telemetry-request', target, input } as const
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { serverIdentityId: input.serverId, accountId: 'actor', actionId, requestId: 'telemetry-request', target,
+        authentication: { kind: 'account', tokenEpoch: 1 } }, input,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'telemetry-proof', binding: {
+    accountId: 'actor', custodianAccountId: 'actor', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: input.serverId, machineId: target.machineId, installationId: 'installation', actionId,
+    requestId: envelope.requestId, target, accountEncryptionMode: mode, environmentId: input.environmentId,
+    ...(envelope.v === 2 && envelope.machineRuntimeDemand ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+    deploymentNativeAdmission: native, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  const received = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(authorization)));
+  expect(isExternalActionAuthorizationBoundToEnvelope(received.binding,
+    { actionId, machineId: target.machineId, envelope })).toBe(true);
+  const changed = projectDeploymentNativeAdmissionV1(actionId, { ...input, collector: { machineId: 'other' } });
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...received.binding, deploymentNativeAdmission: changed },
+    { actionId, machineId: target.machineId, envelope })).toBe(false);
+});
+
 it('binds private preview template content while preserving the reviewed Environment metadata', () => {
   const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
     repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },

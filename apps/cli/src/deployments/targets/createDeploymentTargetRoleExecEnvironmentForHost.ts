@@ -66,6 +66,7 @@ export function createDeploymentTargetRoleExecEnvironmentForHost(input: Readonly
                             commitSha: admission.receipt.content.sourceIntent?.kind === 'repository' ? admission.receipt.content.sourceIntent.sha : undefined,
                             domainUrl: undefined,
                             primaryUrl: undefined,
+                            telemetryEndpoint: undefined,
                         });
                         const owner = input.readOwner();
                         if (!owner) return unavailable();

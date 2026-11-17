@@ -23,7 +23,7 @@ import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from '.
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedChildPlanV1,
   readHostReviewedChildOriginalAuthorizationV1,
-  readHostAdmittedReviewedChildV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1,
+  readHostAdmittedReviewedChildV1, readHostAdmittedReviewedChildRoleV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1,
   retainManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';
 export type { HostReviewedChildV1, HostReviewedParentV1, HostReviewedChildPolicyV1,
   ManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';
@@ -61,7 +61,7 @@ import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreview
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
 import { createConfidentialApprovalContinuation } from './executor/confidentialContinuation.js';
@@ -6131,6 +6131,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.deploymentRestore) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.backups.restore' };
           const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
           const result = await deps.deploymentRestore(input, ctx);
+          return 'errorCode' in result ? result : { ok: true, result };
+        }
+        if (actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) {
+          if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+          if (!deps.deploymentTelemetrySet) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.environments.telemetry.set' };
+          const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
+          const result = await deps.deploymentTelemetrySet(input, ctx);
           return 'errorCode' in result ? result : { ok: true, result };
         }
         if (actionId === 'deployments.environments.moveToRepository') {

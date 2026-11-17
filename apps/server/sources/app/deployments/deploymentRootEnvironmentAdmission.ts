@@ -2,6 +2,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import {
   isDeploymentBackupConfigureNativeAdmissionV1,
+  isDeploymentTelemetryNativeAdmissionV1,
   isDeploymentEnvironmentUpdateNativeAdmissionV1,
   isDeploymentPreparationActionIdV1,
   isDeploymentReadAdmissionActionIdV1,
@@ -14,6 +15,7 @@ import {
 import {
   isDeploymentBackupReadActionIdV1,
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
@@ -63,6 +65,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission);
   const configureRoot =
     root.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
+  const telemetryRoot = root.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
   const nativeMemberRoot =
     root.actionId === 'deployments.restart' ||
     root.actionId === 'deployments.backups.restore' ||
@@ -128,7 +131,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     !isDeploymentBackupReadActionIdV1(root.actionId)
   ) {
     if (
-      !(ingressUpdateRoot || configureRoot
+      !(ingressUpdateRoot || configureRoot || telemetryRoot
         ? environment.admission.canManage && !environment.row.deletedAt
         : root.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
         ? canTeardownDeploymentEnvironment(environment.admission, environment.row)
@@ -162,6 +165,15 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
           nativeAdmission.receiverMachineId, 'target')) return { ok: false };
     }
   }
+  if (telemetryRoot) {
+    if (!isDeploymentTelemetryNativeAdmissionV1(nativeAdmission)
+      || environment.row.revision !== nativeAdmission.expectedRevision) return { ok: false };
+    if (nativeAdmission.collector) {
+      const placement = await admitDeploymentMachineInTx(tx, environment.admission.owner,
+        nativeAdmission.collector.machineId, 'telemetry');
+      if (placement) return { ok: false };
+    }
+  }
   if (nativeMemberRoot) {
     if (
       !('kind' in nativeAdmission) ||
@@ -187,7 +199,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
   }
   return root.actionId !== 'action.operations.get' &&
     !ingressUpdateRoot &&
-    !configureRoot
+    !configureRoot && !telemetryRoot
     ? {
         ok: true,
         source: {

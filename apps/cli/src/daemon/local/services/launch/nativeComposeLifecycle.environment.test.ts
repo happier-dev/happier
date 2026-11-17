@@ -383,12 +383,18 @@ describe('Environment project native activation', () => {
             expect(configReads).toBe(beforeUnavailableEngine);
         } finally { await project.dispose(); await rm(root, { recursive: true, force: true }); }
     });
-    it('renders native risks and actual mount keys, activates pinned images once and retains N observation leases', async () => {
+    it.each(['private reference', 'managed telemetry', 'own collector while managed collector offline'] as const)('prepares %s networking before activation and retains native observation leases', async path => {
         const root = await mkdtemp(join(tmpdir(), 'happier-environment-compose-'));
         const requests: Parameters<ProjectNativeToolchainIo['run']>[0][] = [];
         let disposed = 0;
         let prepared = 0;
         let current = true;
+        const telemetry = path !== 'private reference';
+        const ownCollector = path === 'own collector while managed collector offline';
+        const authoredCollector = 'https://project-collector.example';
+        const referenceName = telemetry ? 'OTEL_EXPORTER_OTLP_ENDPOINT' : 'DATABASE_URL';
+        const telemetryNames = telemetry ? ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'] : [];
+        const telemetryFacts: unknown[] = [];
         const reviewReferenceAddress = 'http://127.0.0.1:44111';
         const containerReferenceAddress = 'http://172.22.0.1:44111';
         let referenceAddress = reviewReferenceAddress;
@@ -408,9 +414,17 @@ describe('Environment project native activation', () => {
         });
         const envPort = createDeploymentExecEnvPortForHost({ source, phase: 'runtime',
             signal: new AbortController().signal, isCurrent: () => current,
-            async prepare() { prepared += 1; return { env: { PATH: '/tools', HOME: root, SECRET: 'native-secret', PORT: '3000', DATABASE_URL: referenceAddress },
+            async prepare() { prepared += 1; return { env: { PATH: '/tools', HOME: root, SECRET: 'native-secret', PORT: '3000',
+                ...(!ownCollector ? { [referenceName]: referenceAddress } : {}),
+                ...(telemetry && !ownCollector ? { OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer%20telemetry-test' } : {}) },
                 secretValues: ['native-secret'], refs: [{ resourceId: 'credential', resourceRevision: 7 }],
-                referenceAddresses: [{ machineId: 'machine', installationId: 'installation', phase: 'runtime' as const, name: 'DATABASE_URL',
+                telemetryEnvironmentNames: telemetryNames,
+                // The managed endpoint acquisition is a Home/network boundary;
+                // native demand selection and opaque attachment consumption remain real.
+                async resolveTelemetry(names: readonly string[]) {
+                    if (ownCollector && names.some(name => telemetryNames.includes(name))) throw new Error('collector_offline');
+                },
+                referenceAddresses: telemetry ? [] : [{ machineId: 'machine', installationId: 'installation', phase: 'runtime' as const, name: 'DATABASE_URL',
                     source: { kind: 'reference' as const, environmentId: 'database-env', export: 'database', via: 'auto' as const },
                     address: referenceAddress, route: { kind: 'iroh' as const, observedPath: 'unknown' as const } }],
                 async recheck() {}, dispose() { disposed += 1; } }; },
@@ -422,7 +436,8 @@ describe('Environment project native activation', () => {
         const model = { name: 'happier-project', 'x-build': { args: { BUILDER_ONLY: '${BUILD_PUBLIC:?required}' } }, services: {
             web: { image: 'mutable:latest', deploy: { replicas: 2, resources: { limits: { cpus: '0.5', memory: '512M' } } },
                 build: { args: { BUILDER_ONLY: '${BUILD_PUBLIC:?required}' }, secrets: ['BUILD_SECRET'] },
-                environment: { SECRET: '${SECRET:?required}', DATABASE_URL: '${DATABASE_URL:?required}', 'x-setting': 'runtime-literal' },
+                environment: { SECRET: '${SECRET:?required}', [referenceName]: ownCollector ? authoredCollector : telemetry ? null : '${DATABASE_URL:?required}',
+                    ...(telemetry ? { OTEL_EXPORTER_OTLP_HEADERS: null } : {}), 'x-setting': 'runtime-literal' },
                 networks: { default: {} }, configs: ['runtime'], privileged: true,
                 volumes: [{ type: 'bind', source: '/actual-native-bind', target: '/data' }] },
             db: { image: 'mutable-db:latest', volumes: [{ type: 'volume', source: 'db', target: '/db' }] },
@@ -465,7 +480,8 @@ describe('Environment project native activation', () => {
                 if (request.args.includes('ps')) return { exitCode: 0, stdout: ['a'.repeat(64), 'c'.repeat(64)].join('\n') };
                 if (request.args.includes('up')) {
                     const projection = await readNativeProjection(request);
-                    expect(projection.services.web.environment.DATABASE_URL).toBe(containerReferenceAddress);
+                    expect(projection.services.web.environment[referenceName]).toBe(ownCollector ? authoredCollector : containerReferenceAddress);
+                    if (ownCollector) expect(projection.services.web.environment).not.toHaveProperty('OTEL_EXPORTER_OTLP_HEADERS');
                 }
                 if (selectedSubset && request.args.includes('up')) {
                     const projection = await readNativeProjection(request);
@@ -493,15 +509,17 @@ describe('Environment project native activation', () => {
             const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec, envPort, source, files: ['compose.yaml'],
                 services: ['web', 'db'], images: ['web', 'db'].map(service => ({ service, platform: 'linux/amd64', configDigest, manifestDigest })), io,
                 async prepareReferenceContainerNetwork(request) {
+                    if (ownCollector) throw new Error('Own collector must not acquire the managed bridge');
                     expect(request.networkId).toBe('reference-consumer-network');
                     referenceAddress = containerReferenceAddress;
                 },
+                onTelemetryProjection(facts) { telemetryFacts.push(...facts); },
                 async settleNative() {} });
             await expect(project.prepareImages()).rejects.toMatchObject({ code: 'unsupported' });
             expect(requests.some(request => request.args.includes('build') || request.args.includes('up'))).toBe(false);
             const rendered = await project.render();
             expect(referenceAddress).toBe(reviewReferenceAddress);
-            expect(rendered.referenceAddresses?.[0]?.address).toBe(reviewReferenceAddress);
+            if (!telemetry) expect(rendered.referenceAddresses?.[0]?.address).toBe(reviewReferenceAddress);
             const sourceDigest = `sha256:${createHash('sha256').update(await readFile(join(root, 'compose.yaml'))).digest('hex')}`;
             expect(rendered.basis.configInputDigests).toEqual([{ path: 'compose.yaml', digest: sourceDigest }]);
             expect(rendered).toMatchObject({ engine: { id: 'actual-engine', kind: 'native' } });
@@ -514,7 +532,9 @@ describe('Environment project native activation', () => {
             expect(JSON.stringify(rendered)).not.toContain('native-secret');
             const activation = await machineNativeEffectAdmission.run({ operation: { operationId: 'deploy', kind: 'deploy' }, keys: rendered.keys },
                 context => project.activate({ render: rendered, context }));
-            expect(referenceAddress).toBe(containerReferenceAddress);
+            expect(referenceAddress).toBe(ownCollector ? reviewReferenceAddress : containerReferenceAddress);
+            if (telemetry) expect(telemetryFacts).toContainEqual({ service: 'web', usesOwnCollector: ownCollector,
+                receivesTelemetry: !ownCollector, requiresTelemetryEndpoint: !ownCollector });
             expect(rendered.basis.configInputDigests).toEqual([{ path: 'compose.yaml', digest: sourceDigest }]);
             expect(activation.nativeIdsForService('web')).toEqual(['a'.repeat(64)]);
             expect(activation.nativeIdsForService('db')).toEqual(['c'.repeat(64)]);

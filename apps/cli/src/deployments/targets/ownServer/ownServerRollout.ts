@@ -57,8 +57,8 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
     };
     const current = () => receipt.deployment.state === 'running';
     const write = (state: 'running' | 'succeeded' | 'running_unverified' | 'failed' | 'cancelled' | 'outcome_unknown',
-        content = receipt.content) => host.writeTransition({ environmentId: receipt.deployment.environmentId,
-        deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content, context });
+        content = receipt.content, telemetry?: Pick<DeploymentMachineResultV1, 'telemetryMachineId' | 'telemetryTokenHash'>) => host.writeTransition({ environmentId: receipt.deployment.environmentId,
+        deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content, context, ...telemetry });
     const member = (machineId: string) => receipt.content.machineResults.find(row => row.machineId === machineId);
     const projectFailure = (phase: DeploymentReceiptFailureV1['phase'], code: string, error?: unknown): DeploymentReceiptFailureV1 => {
         const projected = error === undefined ? undefined : projectDeploymentFailure(code, error);
@@ -236,7 +236,10 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
     if (!started.ok) return started;
     await read();
     const settle = async (content = receipt.content) => {
-        const settled = await write(content.machineResults.every(row => row.health === 'healthy') ? 'succeeded' : 'running_unverified', content);
+        const delivered = content.machineResults.find(row => row.activation === 'succeeded'
+            && row.currentDeploymentId === receipt.deployment.id && row.telemetryMachineId && row.telemetryTokenHash);
+        const settled = await write(content.machineResults.every(row => row.health === 'healthy') ? 'succeeded' : 'running_unverified', content,
+            delivered ? { telemetryMachineId: delivered.telemetryMachineId, telemetryTokenHash: delivered.telemetryTokenHash } : undefined);
         if (settled.ok || settled.errorCode === 'outcome_unknown') return settled;
         throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: settled.errorCode, error: settled.errorCode }), { cause: settled });
     };

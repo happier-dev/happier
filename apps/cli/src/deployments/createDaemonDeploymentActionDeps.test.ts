@@ -1307,12 +1307,16 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const providerTeardown = scenario.startsWith('provider teardown');
         const retainedTraffic = scenario === 'promote retained platform' || scenario === 'rollback retained platform';
         const variableScenario = scenario.startsWith('variable ');
+        const telemetryRemoteEndpoint = scenario === 'variable telemetry remote endpoint' || scenario === 'variable telemetry managed header cleanup';
+        const telemetryManagedCleanup = scenario === 'variable telemetry managed header cleanup';
+        const nativeVariableRequests: { method: string; path: string; body?: unknown }[] = [];
+        let nativeVariableSecretReads = 0;
         const runtimeLogs = scenario === 'runtime logs';
         const domainScenario = scenario.startsWith('provider Domain');
         const domainTeardown = scenario === 'provider Domain retained native teardown';
@@ -1411,6 +1415,25 @@ describe('installed deployment storage and target composition', () => {
             } }) },
         }) : null;
         if (nativeDomainKit) onTestFinished(() => nativeDomainKit.dispose());
+        const unsupportedSecretMutation = async (): Promise<never> => { throw new Error('Unexpected Secret mutation'); };
+        const nativeVariablesKit = telemetryRemoteEndpoint ? await createPluginTestkit({
+            manifest: vercelDomainPlugin.manifest, module: vercelDomainPlugin,
+            services: { secrets: { readSavedSecret: async () => { nativeVariableSecretReads++; return 'fixture-telemetry-token'; },
+                saveShared: unsupportedSecretMutation, status: unsupportedSecretMutation, get: unsupportedSecretMutation,
+                set: unsupportedSecretMutation, delete: unsupportedSecretMutation },
+            http: createPluginHttpFixture({ async request(request) {
+                const body = request.body ? JSON.parse(new TextDecoder().decode(request.body)) : undefined;
+                nativeVariableRequests.push({ method: request.method, path: new URL(request.url).pathname, body });
+                const response = request.method === 'DELETE' ? {} : request.method === 'GET' ? { envs: [
+                    { id: 'remote-endpoint', key: 'OTEL_EXPORTER_OTLP_ENDPOINT', type: 'plain', target: ['production'],
+                        value: 'https://own.example.test', updatedAt: 1 },
+                    { id: 'remote-header', key: 'OTEL_EXPORTER_OTLP_HEADERS', type: 'sensitive', target: ['production'],
+                        value: 'Authorization=own', updatedAt: 1 },
+                ] } : { created: { ...body, id: body.key === 'MODE' ? 'provider-mode' : 'provider-headers', updatedAt: 10 } };
+                return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(response)) };
+            } }) },
+        }) : null;
+        if (nativeVariablesKit) onTestFinished(() => nativeVariablesKit.dispose());
         const runtime = await runWithServerHttpBaseUrl(sdkHomeUrl, () => createAuthoredAdmittedPluginRuntimeFixture({
             // Observe only the physically admitted fixture plugin, independent of bundled dependencies.
             ...(scenario === 'background receipt observe' || providerTeardown ? { resolveContributes: async (happyHomeDir: string) => createResolvedContributionRegistry(
@@ -1428,13 +1451,14 @@ describe('installed deployment storage and target composition', () => {
                     externalActionHomeBinding: { serverId: 'home', serverIdentityId: 'home' },
                     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home', machineId: 'machine-a' }) } : {}),
                 actionFormConnectedAccounts: connectedAccounts }, plugins: [{
-            ...(vercelActiveDomainAdd ? { instantiateCommittedModule: module => ({ ...module, async activate(api: PluginApi) {
+            ...(vercelActiveDomainAdd || telemetryRemoteEndpoint ? { instantiateCommittedModule: module => ({ ...module, async activate(api: PluginApi) {
                 if (typeof module.activate !== 'function') throw new Error('Expected fixture daemon activation');
                 await module.activate(api);
-                const kit = nativeDomainKit;
+                const kit = nativeDomainKit ?? nativeVariablesKit;
                 if (!kit) throw new Error('Expected the Vercel Account runtime');
                 // Portable Account activation supplies its own context; the daemon child forwards only operands/cancellation.
-                api.actions.register('domains-add', (input, context) => kit.invokeAction('domains-add', input, { signal: context.signal }));
+                const actionId = telemetryRemoteEndpoint ? 'variables-sync' : 'domains-add';
+                api.actions.register(actionId, (input, context) => kit.invokeAction(actionId, input, { signal: context.signal }));
             } }) } : {}),
             manifest: { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Platform',
                 entrypoints: { daemon: './daemon.mjs' }, hostAccess: { required: [{ id: 'manage', capability: 'connectedAccounts',
@@ -1493,7 +1517,7 @@ describe('installed deployment storage and target composition', () => {
                     catch (error) { backgroundProbe = { errorCode: error.code, error: error.message }; }
                     finally { finishBackground(); }
                 });` : ''}
-                ${roles.filter(role => !vercelActiveDomainAdd || role !== 'domains.add').map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'logs.runtime' ? 'runtime-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role === 'domains.add' ? 'domains-add' : role}', async (input, context) => {
+                ${roles.filter(role => (!vercelActiveDomainAdd || role !== 'domains.add') && (!telemetryRemoteEndpoint || role !== 'variables.sync')).map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'logs.runtime' ? 'runtime-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role === 'domains.add' ? 'domains-add' : role}', async (input, context) => {
                     ${providerTeardown && (role === 'teardown' || role === 'observe') ? `if (input.providerIdentity.providerResourceId !== 'project' || input.providerIdentity.providerAccountId !== 'provider-account' || input.providerIdentity.providerEnvironment !== 'production' || input.operation !== 'teardown') throw new Error('Wrong exact resource');
                     observationCount++; return { v: 1, ${scenario === 'provider teardown Vercel absence' ? "providerDeploymentId: 'dpl_retained'," : ''} state: '${scenario === 'provider teardown ambiguous unverified' ? 'running_unverified' : 'succeeded'}', observedAtMs: 1, ${scenario.startsWith('provider teardown ambiguous') ? '' : 'providerResourceAbsent: true'} };` : ''}
                     ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
@@ -1588,6 +1612,13 @@ describe('installed deployment storage and target composition', () => {
             if (variableScenario) environment.content.bindings.push({ purpose: 'registry', targetLinkId: row.targetLink.id,
                 access: 'pull', registryOrigin: 'https://registry.example.test',
                 source: { kind: 'secret', ref: 'happier:shared-secret:v1:registry', resourceRevision: 1 } });
+            if (telemetryRemoteEndpoint) {
+                environment.content.bindings.push({ ...createDeploymentVariableBindingV1({ phase: 'runtime',
+                    name: 'OTEL_EXPORTER_OTLP_HEADERS', source: { kind: 'value', value: 'Authorization=own' } }),
+                    ...(telemetryManagedCleanup ? { managedBy: 'telemetry' as const, valueFormat: 'otelAuthorizationHeader' as const } : {}) });
+                row.content = { ...row.content, ownedVariables: [{ key: 'OTEL_EXPORTER_OTLP_HEADERS', providerId: 'remote-header',
+                    desiredRevision: 1, providerRevision: '1' }] };
+            }
             const documents = new Map<string, Record<string, unknown>>();
             let settling = false;
             const settlementReads = { metadata: 0, environmentBodies: 0, targetBodies: 0 };
@@ -2028,7 +2059,31 @@ describe('installed deployment storage and target composition', () => {
                 });
                 const result = await executor.execute('deployments.bindings.set', { serverId: 'home',
                     environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
-                    set: [{ purpose: 'variable', phase: 'build', name: 'MODE', source: { kind: 'value', value: 'release' } }], remove: [] }, context);
+                    set: [{ purpose: 'variable', phase: 'build', name: 'MODE', source: { kind: 'value', value: 'release' } },
+                        ...(telemetryRemoteEndpoint ? [
+                            { purpose: 'variable', phase: 'runtime', name: 'OTEL_EXPORTER_OTLP_ENDPOINT', managedBy: 'telemetry',
+                                source: { kind: 'value', value: 'https://collector.example.test' } },
+                            { purpose: 'variable', phase: 'runtime', name: 'OTEL_EXPORTER_OTLP_HEADERS', managedBy: 'telemetry',
+                                valueFormat: 'otelAuthorizationHeader', source: { kind: 'secret',
+                                    ref: 'happier:shared-secret:v1:telemetry', resourceRevision: 1 } },
+                        ] : [])], remove: [], ...(telemetryRemoteEndpoint ? { providerVariables: {
+                            useOurs: ['OTEL_EXPORTER_OTLP_HEADERS'], keepTheirs: ['OTEL_EXPORTER_OTLP_ENDPOINT'] } } : {}) }, context);
+                if (telemetryRemoteEndpoint) {
+                    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true,
+                        providerVariables: { persisted: true, failures: [], variables: expect.arrayContaining([
+                            expect.objectContaining({ key: 'MODE', owned: true }),
+                            ...(telemetryManagedCleanup ? [] : [expect.objectContaining({ key: 'OTEL_EXPORTER_OTLP_HEADERS', owned: false })]),
+                        ]) } } });
+                    expect(nativeVariableRequests.filter(request => request.method !== 'GET'))
+                        .toEqual([{ method: 'POST', path: '/v10/projects/project/env',
+                            body: { key: 'MODE', value: 'release', type: 'plain', target: ['production'] } },
+                            ...(telemetryManagedCleanup ? [{ method: 'DELETE', path: '/v9/projects/project/env/remote-header', body: undefined }] : [])]);
+                    if (telemetryManagedCleanup) expect(result).not.toMatchObject({ result: { providerVariables: {
+                        variables: expect.arrayContaining([expect.objectContaining({ key: 'OTEL_EXPORTER_OTLP_HEADERS' })]) } } });
+                    expect(nativeVariableSecretReads).toBe(0);
+                    expect(nativeReads).toBe(0);
+                    return;
+                }
                 expect(result, JSON.stringify(result)).toMatchObject(scenario === 'variable sync storage conflict'
                     ? { ok: false, errorCode: 'deployment_conflict', effectAttempted: true, details: {
                         providerVariables: { persisted: false, failures: [], variables: [{ key: 'MODE', owned: true }] } } }

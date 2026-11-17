@@ -64,6 +64,8 @@ export const DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 = 'deployments.environment
 export const DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 = 'deployments.environments.get' as const;
 /** A host-selected saved service reference retains its exact Environment read operand. */
 export const DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 = 'deployment.reference';
+export const DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 = 'deployments.environments.telemetry.set';
+export const DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 = 'telemetry.bindings';
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
@@ -113,7 +115,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1,
   DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
   DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
-  'deployments.environments.controller.set',
+  'deployments.environments.controller.set', DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   'deployments.promote',
   'deployments.restart', DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
@@ -130,7 +132,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
 ] as const;
 export type DeploymentActionIdV1 = typeof DEPLOYMENT_ACTION_IDS_V1[number];
 /** Semantic composition/handoff have their own typed ports, never storage HTTP transports. */
-export type DeploymentTransportActionIdV1 = Exclude<DeploymentActionIdV1, 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.environments.moveToRepository' | 'deployments.backups.restore' | DeploymentBackupActionIdV1>;
+export type DeploymentTransportActionIdV1 = Exclude<DeploymentActionIdV1, 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.environments.moveToRepository' | 'deployments.backups.restore' | typeof DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 | DeploymentBackupActionIdV1>;
 const ids: ReadonlySet<string> = new Set(DEPLOYMENT_ACTION_IDS_V1);
 export function isDeploymentActionIdV1(value: string): value is DeploymentActionIdV1 { return ids.has(value); }
 

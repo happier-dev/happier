@@ -20,6 +20,8 @@ export type DeploymentExecEnvironmentMaterialForHost = Readonly<{
     secretValues: readonly string[];
     refs: readonly Readonly<{ resourceId: string; resourceRevision: number }>[];
     referenceAddresses?: Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>>['referenceAddresses'];
+    telemetryEnvironmentNames?: readonly string[];
+    resolveTelemetry?(names: readonly string[]): Promise<void>;
     recheck(): Promise<void>;
     dispose(): void;
 }>;
@@ -168,7 +170,7 @@ export function createDeploymentExecEnvPortForHost(input: Readonly<{
                 let material: DeploymentExecEnvironmentMaterialForHost | undefined = sourceInput ? await sourceInput.prepare({ phase: sourceInput.phase, signal })
                     : backupInput ? await backupInput.prepare({ configKey: backupConfigKey!, signal })
                         : await operationalInput!.prepare({ bindingIdentity: operationalInput!.bindingIdentity, signal });
-                const refs = Object.freeze(material.refs.map(ref => Object.freeze({ ...ref })));
+                const telemetryEnvironmentNames = Object.freeze([...(material.telemetryEnvironmentNames ?? [])]);
                 const referenceAddresses = Object.freeze((material.referenceAddresses ?? []).map(value =>
                     Object.freeze({ ...value, source: Object.freeze({ ...value.source }) })));
                 let disposed = false;
@@ -264,17 +266,28 @@ export function createDeploymentExecEnvPortForHost(input: Readonly<{
                                 // launch and again at its actual effect boundary.
                                 await assertCurrent();
                                 if (disposed || retired || launchSignal?.aborted) refuse();
+                                const resolveTelemetry = async (names: readonly string[]) => {
+                                    const current = material ?? refuse();
+                                    await current.resolveTelemetry?.(names);
+                                    if (!validateEnvVarRecordStrict(current.env).ok) refuse();
+                                    Object.assign(env, current.env);
+                                    loanRedaction.add(current.secretValues.flatMap(rawCredential => readCredentialRedactionValues({ rawCredential })));
+                                };
+                                if (delivery !== 'runtimeProjection') await resolveTelemetry(telemetryEnvironmentNames);
                                 // Node's process-env validation echoes a NUL-bearing
                                 // value in its error cause. The private native-file
                                 // projection never sends these bytes as OS env.
                                 if (delivery !== 'runtimeProjection' && Object.values(loanEnvironment).some(value => value.includes('\0'))) refuse();
-                                return { env: loanEnvironment, redaction: loanRedaction, refs, referenceAddresses, recheck,
+                                return { env: loanEnvironment, redaction: loanRedaction,
+                                    get refs() { return Object.freeze((material ?? refuse()).refs.map(ref => Object.freeze({ ...ref }))); },
+                                    referenceAddresses, recheck,
                                     retireEnvironment: retireLoan, dispose: disposeLoan,
                                     async projectRuntime(projection, host, admit, signal) {
                                         if (sourceInput?.phase !== 'runtime' || projection.source !== sourceInput.source) refuse();
                                         await recheck();
                                         runtimeCarrier ??= createAttachmentRuntimeCarrierForHost({ source: sourceInput.source,
-                                            environment: env, redaction: redaction!, assertCurrent: recheck });
+                                            environment: env, telemetryEnvironmentNames, resolveSelectedEnvironment: resolveTelemetry,
+                                            redaction: redaction!, assertCurrent: recheck });
                                         return await runtimeCarrier.project(projection, host, admit, signal);
                                     },
                                     retainRuntimeBytes(bytes) {

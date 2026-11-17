@@ -13,6 +13,30 @@ const common = { v: 1, serverId: 'home', environmentId: 'environment', expectedR
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
   providerEnvironment: { kind: 'production' } };
 
+it('writes a telemetry Saved Secret as sensitive OTLP headers and discards the provider echo', async () => {
+  const rawToken = 'telemetry-fixture-token';
+  let written: Record<string, unknown> | undefined;
+  const http = createPluginHttpFixture({ async request(request) {
+    if (request.method === 'POST') written = JSON.parse(new TextDecoder().decode(request.body));
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(request.method === 'GET' ? { envs: [] }
+      : { created: { ...written, id: 'headers', target: ['production'], updatedAt: 1 }, failed: [] })) };
+  } });
+  const unsupported = async (): Promise<never> => { throw new Error('Unexpected secret mutation'); };
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http,
+    secrets: { readSavedSecret: async () => rawToken, saveShared: unsupported, status: unsupported,
+      get: unsupported, set: unsupported, delete: unsupported } } });
+  try {
+    const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2, owned: [],
+      set: [{ ...createDeploymentVariableBindingV1({ name: 'OTEL_EXPORTER_OTLP_HEADERS', phase: 'runtime',
+        source: { kind: 'secret', ref: 'happier:shared-secret:v1:telemetry', resourceRevision: 1 } }),
+        managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader' }],
+      remove: [], useOurs: [], keepTheirs: [] });
+    expect(written).toMatchObject({ type: 'sensitive', value: `Authorization=Bearer%20${rawToken}` });
+    expect(result).toMatchObject({ failures: [], owned: [{ key: 'OTEL_EXPORTER_OTLP_HEADERS', providerId: 'headers' }] });
+    expect(JSON.stringify(result)).not.toContain(rawToken);
+  } finally { await kit.dispose(); }
+});
+
 // Constructed vectors follow Vercel's project-env GET/POST/DELETE schemas,
 // inspected 2026-11-10. Provider values deliberately appear in list/write echoes.
 it('preserves foreign keys and removes owned keys when secret custody is unavailable', async () => {

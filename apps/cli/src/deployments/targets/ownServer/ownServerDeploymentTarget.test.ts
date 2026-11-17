@@ -320,11 +320,16 @@ describe('own-server target at the Action host boundary', () => {
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
         ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['telemetry_delivery', 'telemetry_own_collector', 'telemetry_no_header'] as const)
+            .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         { scenario: 'standalone_public_restore_volume_upload_activation_failure' as const, sourceKind: 'repository' as const },
         { scenario: 'standalone_public_restore_volume_upload_activation_failure_superseded' as const, sourceKind: 'repository' as const },
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
+        const telemetry = scenario.startsWith('telemetry_');
+        const deliveredTelemetryHash = createHash('sha256').update('review-secret-value-sentinel').digest('hex');
+        const telemetrySettlements: Readonly<{ telemetryMachineId?: string | null; telemetryTokenHash?: string | null }>[] = [];
         // Native pushes and their HTTP work share the composed scenario's
         // integration budget, including setup; no shorter per-wait deadline.
         const waitForNativeRead = (assertion: () => unknown) => vi.waitFor(assertion,
@@ -373,6 +378,9 @@ describe('own-server target at the Action host boundary', () => {
                 volumes: [{ type: 'volume', source: 'shared', target: '/data' }],
                 ports: [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: scenario === 'iroh_publication_loopback' || scenario === 'iroh_publication_host_network' ? '127.0.0.1' : scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'private_publication_forward_withdrawal' || scenario === 'runtime_stage' ? '100.81.1.12' : '0.0.0.0' }],
             }), environment: { PRIVATE_INPUT: 'sensitive-host-value',
+                ...(telemetry ? { OTEL_EXPORTER_OTLP_ENDPOINT: scenario === 'telemetry_own_collector'
+                    ? 'https://project-collector.example' : null,
+                    ...(scenario !== 'telemetry_no_header' ? { OTEL_EXPORTER_OTLP_HEADERS: null } : {}) } : {}),
                 ...(previewCopy ? { DATABASE_URL: previewCompanion ? 'postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}'
                     : 'postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}' }
                     : { DEPLOY_PASSWORD: '${DEPLOY_PASSWORD:?required}' }) } },
@@ -477,6 +485,12 @@ describe('own-server target at the Action host boundary', () => {
         const secretBinding = createDeploymentSecretVariableBindingV1({ name: 'DEPLOY_PASSWORD', phase: 'runtime',
             resourceId: 'review-secret', resourceRevision: 1 });
         environment.content.bindings = [secretBinding];
+        if (telemetry) {
+            environment.environment.telemetryMachineId = 'collector-machine';
+            environment.content.bindings.push({ ...createDeploymentSecretVariableBindingV1({
+                name: 'OTEL_EXPORTER_OTLP_HEADERS', phase: 'runtime', resourceId: 'review-secret', resourceRevision: 1,
+            }), managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader' });
+        }
         if (scenario === 'runtime_stage') {
             environment.content.bindings.push({ purpose: 'variable', phase: 'runtime', name: 'RUNNING_SERVICE_URL',
                 source: { kind: 'reference', environmentId: environment.environment.id, export: 'application', via: 'auto' } });
@@ -846,6 +860,8 @@ describe('own-server target at the Action host boundary', () => {
             },
             async writeTransition(input) {
                 transitionWrites++;
+                if (telemetry && (input.state === 'succeeded' || input.state === 'running_unverified'))
+                    telemetrySettlements.push({ telemetryMachineId: input.telemetryMachineId, telemetryTokenHash: input.telemetryTokenHash });
                 // This host port is the persistence boundary. Only its typed
                 // failure crosses back through real native stage callbacks.
                 if (scenario === 'transition_provenance_reason' && transitionWrites === 1
@@ -969,7 +985,7 @@ describe('own-server target at the Action host boundary', () => {
             ...(scenario === 'canonical_home_build' ? { reviewMember: input => target.reviewMember(input) } : {}),
             // Observe the member transport boundary while forwarding into the
             // real executor, so aggregate failure cannot hide its native cause.
-            ...(runtimeRead ? { dispatchMember: async (input: Parameters<NonNullable<OwnServerDeploymentTargetHostInput['dispatchMember']>>[0]) => {
+            ...(runtimeRead || telemetry ? { dispatchMember: async (input: Parameters<NonNullable<OwnServerDeploymentTargetHostInput['dispatchMember']>>[0]) => {
                 const result = await target.executeMember(input);
                 if (!result.ok) memberFailures.push(result.errorCode);
                 return result;
@@ -4018,7 +4034,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                     id: 'own-server-candidate-cleanup', state: 'succeeded' }));
                 return;
             }
-            if (!retainedHealth && !runtimeRead && scenario !== 'runtime_stage') {
+            if (!retainedHealth && !runtimeRead && !telemetry && scenario !== 'runtime_stage') {
                 delete environment.targetLinks[0].targetLink.activeDeploymentId;
                 receipt.deployment.state = 'running';
                 receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
@@ -4118,7 +4134,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 machineId: 'machine-a', environment: { id: environment.environment.id, name: environment.content.name },
                 revision: { kind: 'repository', sha: receipt.content.sourceIntent.sha },
                 replaces: { deploymentId: serving.deployment.id, revision: { kind: 'repository', sha: 'b'.repeat(40) } },
-                secretBindingNames: ['DEPLOY_PASSWORD'],
+                secretBindingNames: telemetry ? ['DEPLOY_PASSWORD', 'OTEL_EXPORTER_OTLP_HEADERS'] : ['DEPLOY_PASSWORD'],
                 downtime: 'stopThenStart',
                 rollbackStorage: { keepPreviousDeployments: environment.content.retainPreviousDeployments },
             });
@@ -4184,6 +4200,22 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 const executed = await target.execute(request);
                 expect(executed, JSON.stringify({ memberFailures, machineResults: receipt.content.machineResults }))
                     .toMatchObject({ ok: true, state: 'succeeded' });
+            }
+            if (telemetry) {
+                const delivered = scenario === 'telemetry_delivery';
+                const nativeEnvironment = await docker.readRuntimeEnvironment('app');
+                expect.soft(Object.hasOwn(nativeEnvironment, 'OTEL_EXPORTER_OTLP_HEADERS')).toBe(delivered);
+                if (scenario === 'telemetry_own_collector') expect.soft(nativeEnvironment.OTEL_EXPORTER_OTLP_ENDPOINT)
+                    .toBe('https://project-collector.example');
+                expect(receipt.content.machineResults[0]).toMatchObject(delivered ? {
+                    activation: 'succeeded', telemetryMachineId: 'collector-machine', telemetryTokenHash: deliveredTelemetryHash,
+                } : { activation: 'succeeded' });
+                if (!delivered) expect(receipt.content.machineResults[0]).not.toHaveProperty('telemetryTokenHash');
+                expect(telemetrySettlements).toEqual([delivered ? {
+                    telemetryMachineId: 'collector-machine', telemetryTokenHash: deliveredTelemetryHash,
+                } : {}]);
+                expect(JSON.stringify(receipt.content)).not.toContain('review-secret-value-sentinel');
+                return;
             }
             expect(stored.size).toBe(0);
             if (scenario !== 'runtime_stage') caller.abort();
@@ -4527,7 +4559,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
     }, scenario === 'public_backup_restore' ? 6 * 60_000
         : scenario === 'runtime_stage' || scenario === 'private_publication_forward_withdrawal' || scenario === 'public_restore' || scenario.startsWith('standalone_public_restore') || scenario === 'public_copy' || scenario === 'public_restore_drill' || scenario === 'public_preview_copy' || scenario === 'public_preview_copy_failure' || scenario === 'public_preview_configure_failure' || scenario.startsWith('public_preview_companion_') || scenario.startsWith('public_backup') || scenario.startsWith('candidate_start_first_restore') ? 3 * 60_000
         : scenario.startsWith('candidate_start_first') || scenario === 'member_health' || scenario.startsWith('candidate_backup_configured') ? 2 * 60_000 : scenario === 'runtime_reads' || scenario === 'runtime_health'
-        || scenario.startsWith('retained_health') || scenario.startsWith('candidate_') || scenario.startsWith('native_preview_cleanup') ? 60_000 : undefined);
+        || scenario.startsWith('telemetry_') || scenario.startsWith('retained_health') || scenario.startsWith('candidate_') || scenario.startsWith('native_preview_cleanup') ? 60_000 : undefined);
     it('reviews the prepared candidate before receipt admission without requiring an accepted operation', async () => {
         const { target, request, receipt, receiptReads, effects } = fixture();
         await expect(target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: {} }))

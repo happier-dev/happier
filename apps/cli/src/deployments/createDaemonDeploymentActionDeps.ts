@@ -1,3 +1,6 @@
+import { createEnvironmentTelemetrySetForHost } from './telemetry/setForHost';
+import { ApiClient } from '@/api/api';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createOwnServerDataRoleBindingsForHost } from './targets/ownServer/dataRoleBindings';
 import { createDomainDnsActionsForHost } from './targets/domainDnsActionsForHost';
@@ -636,6 +639,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     expectedRevision: request.expectedRevision, actionOperationId: receipt.actionOperationId,
                     machineId: host.machineId, installationId: identity.installationId,
                     kind: settled ? 'settle' : 'stage', state: request.state,
+                    ...(request.telemetryMachineId !== undefined ? { telemetryMachineId: request.telemetryMachineId,
+                        telemetryTokenHash: request.telemetryTokenHash } : {}),
                     ...contentReference, ...(prepared ? { contentUpdate: prepared.mutation } : {}),
                     ...uniformProof,
                     ...(request.teardownProof ? { teardownProof: request.teardownProof } : {}),
@@ -1383,7 +1388,24 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             return { values: defaults.values, sources: defaults.sources };
         },
     });
+    const deploymentTelemetrySet = createEnvironmentTelemetrySetForHost({ ...host,
+        readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
+        async readProject(environment, context, readDefault) {
+            const source = await publicationSources.projectSourcesRead!({ serverId: host.serverId, sourceId: environment.environment.projectSourceId }, context);
+            if (!source.ok) return refuse('errorCode' in source ? source.errorCode : source.error);
+            const defaults = readDefault ? await readCreationDefaultInputs({ projectSourceId: source.source.id,
+                sourceRevision: source.source.revision, projectOwner: source.source.owner ?? { kind: 'account', accountId: source.source.createdByAccountId },
+                actionId: DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, context }) : undefined;
+            const telemetryMachineId = defaults?.projectDefaults?.deploymentDefaults.telemetryMachineId;
+            return { name: source.source.name, ...(telemetryMachineId ? { telemetryMachineId } : {}) };
+        },
+        readMachine: (machineId, context) => atHome(() => context.externalActionExecutionAuthorization
+            ? ApiClient.getRequesterMachine(machineId, { authorization: context.externalActionExecutionAuthorization, signal: context.signal,
+                effectActionId: DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 })
+            : ApiClient.create(host.credentials).then(api => api.getMachine(machineId, { signal: context.signal }))),
+    });
     const deps = {
+        deploymentTelemetrySet,
         deploymentChild,
         deploymentBackupAction: createDeploymentBackupActionForHost({ ...host, assertCurrent, backup: target.backup }),
         projectReadinessRead: (async (input, context, executeCanonicalAction) => {
@@ -1538,6 +1560,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         async prepareHostReviewedChildren(request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0]) {
+            if (request.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) return { children: [
+                { action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 },
+            ] };
             if (request.actionId === 'deployments.bindings.set' || request.actionId === 'deployments.observation.get') {
                 try {
                     if (request.actionId === 'deployments.bindings.set') {

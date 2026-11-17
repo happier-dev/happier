@@ -12,7 +12,7 @@ import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEn
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import { readDeploymentDomainInventoryInTx } from './deploymentDomainService';
-import { publishDeploymentChangesInTx } from './deploymentPublication';
+import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
 import { withdrawEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
 import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx } from './deploymentTeardownProof';
@@ -191,11 +191,12 @@ export async function removeAdmittedDeploymentEnvironmentInTx(tx: Tx, input: Rea
     await tx.deploymentTargetLink.updateMany({ where: { environmentId: environment.id, deletedAt: null, detachedAt: null },
         data: { deletedAt: now, ...(input.detachKeepRunning ? { detachedAt: now } : {}), revision: { increment: 1 } } });
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: environment.id, revision: environment.revision },
-        data: { deletedAt: now, runtimeTargetLinkId: null, revision: { increment: 1 } } });
+        data: { deletedAt: now, runtimeTargetLinkId: null, telemetryMachineId: null, telemetryTokenHash: null, revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during deletion');
     await publishSavedSecretUsageChangesInTx(tx,
         (readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions) ?? []).map(capture => capture.resourceId));
     const revision = environment.revision + 1;
+    await publishDeploymentTelemetryMachinesInTx(tx, [environment.telemetryMachineId]);
     await publishDeploymentChangesInTx(tx, input, environment.id, revision, undefined, true, input.knownAccountIds);
     return revision;
 }

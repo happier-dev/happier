@@ -19,6 +19,31 @@ const sync = { ...common, desiredRevision: 2, owned: [], set: [], remove: [], us
 const response = (result: unknown, status = 200) => ({ status, headers: {},
   body: new TextEncoder().encode(JSON.stringify({ success: status === 200, result, errors: [], messages: [] })) });
 
+it('encodes a telemetry Saved Secret only in the sensitive provider write', async () => {
+  const rawToken = 'telemetry-fixture-token';
+  let written: Record<string, unknown> | undefined;
+  const http = createPluginHttpFixture({ async request(request) {
+    if (request.method === 'PATCH') written = JSON.parse(new TextDecoder().decode(request.body));
+    return response({ id: 'project-exact', name: 'my-project', deployment_configs: {
+      production: { env_vars: request.method === 'GET' ? {} : { OTEL_EXPORTER_OTLP_HEADERS: {
+        type: 'secret_text', value: rawToken } } } } });
+  } });
+  const unsupported = async (): Promise<never> => { throw new Error('Unexpected secret mutation'); };
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http,
+    secrets: { readSavedSecret: async () => rawToken, saveShared: unsupported, status: unsupported,
+      get: unsupported, set: unsupported, delete: unsupported } } });
+  try {
+    const result = await kit.invokeAction('pages-variables-sync', { ...sync,
+      set: [{ ...createDeploymentVariableBindingV1({ name: 'OTEL_EXPORTER_OTLP_HEADERS', phase: 'runtime',
+        source: { kind: 'secret', ref: 'happier:shared-secret:v1:telemetry', resourceRevision: 1 } }),
+        managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader' }] });
+    expect(written).toMatchObject({ deployment_configs: { production: { env_vars: {
+      OTEL_EXPORTER_OTLP_HEADERS: { type: 'secret_text', value: `Authorization=Bearer%20${rawToken}` } } } } });
+    expect(result).toMatchObject({ failures: [], owned: [{ key: 'OTEL_EXPORTER_OTLP_HEADERS' }] });
+    expect(JSON.stringify(result)).not.toContain(rawToken);
+  } finally { await kit.dispose(); }
+});
+
 it.each(['daemon-root', 'portable-account'] as const)('reads only exact native Preview variable metadata through %s', async target => {
   const requests: HttpRequest[] = [];
   const previewId = '63bafce9179948688866bb22268eb1c6';

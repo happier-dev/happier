@@ -34,11 +34,12 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   const accountPage = isDeploymentAccountPageActionIdV1(id);
   const backup = isDeploymentBackupActionIdV1(id);
   const query = isDeploymentDataQueryActionIdV1(id);
+  const telemetrySet = id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
   const backupConfigure = id === deploymentActionIds.DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
   const rolloutReview = id === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(id);
   const irreversible = id === deploymentActionIds.DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1;
   const preparedContentRequired = id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1
-    && id !== deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 && !backupConfigure && !isDeploymentPromoteActionIdV1(id);
+    && id !== deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 && !backupConfigure && !telemetrySet && !isDeploymentPromoteActionIdV1(id);
   const previewForInput = id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1
     ? (input: unknown): boolean => {
       const parsed = DeploymentActionInputSchemasV1[id].safeParse(input);
@@ -46,7 +47,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     } : undefined;
   const secretPath = id === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 ? 'set.[].source.ref'
     : id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? 'bindings.[].source.ref' : null;
-  const inputHints = deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) ? { description: 'Create or inspect the DNS records already required by the retained Domain. Select a DNS Action, connected account, hosted zone and TTL. A configured match does not establish public propagation, route readiness or application health.', fields: [
+  const inputHints = telemetrySet ? { description: 'Configure the Environment collector. Changes apply on redeploy. Moving or turning off deletes telemetry stored on the previous collector; confirmDelete acknowledges that deletion. Omit collector to use the Project default or runtime Machine.', fields: [
+      { path: 'serverId', title: 'Home', widget: 'text', required: true },
+      { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
+      { path: 'collector', title: 'Collector, or null to turn off', widget: 'json' },
+      { path: 'rotate', title: 'Rotate the ingest token', widget: 'boolean' },
+      { path: 'confirmDelete', title: 'Delete telemetry on the previous collector', widget: 'boolean' },
+    ] } as const : deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) ? { description: 'Create or inspect the DNS records already required by the retained Domain. Select a DNS Action, connected account, hosted zone and TTL. A configured match does not establish public propagation, route readiness or application health.', fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'domainId', title: 'Domain', widget: 'text', required: true },
@@ -286,7 +294,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
     ...(id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 && !accountPage
       ? { approvalScope: 'environment' } : {}),
-    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || backup || backupConfigure || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || backup || backupConfigure || telemetrySet || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? {
       executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
@@ -304,7 +312,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id)
-      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : rolloutReview || backup || backupConfigure || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : rolloutReview || backup || backupConfigure || telemetrySet || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
@@ -381,6 +389,7 @@ function createDeploymentActionSpecsV1() {
     deploymentReadScope: createDeploymentReadScopeV1({ requireEnvironmentRevision: true }), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, 'Create deployment environment', '/v1/deployments/environments'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('create'), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, 'Update deployment environment', '/v1/deployments/environments/:environmentId'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('update'), requesterAccountContentDemandForInput: () => true },
+  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, 'Configure Environment telemetry', undefined), requesterAccountContentDemandForInput: () => true },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENTS_CONTROLLER_SET_ACTION_ID_V1, 'Change environment controller', '/v1/deployments/environments/:environmentId/controller'),
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1, 'Link deployment target', '/v1/deployments/environments/:environmentId/targets'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('link'), requesterAccountContentDemandForInput: (input: unknown) => !('contentArtifactId' in readRecord(input)) },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, 'Unlink deployment target', '/v1/deployments/environments/:environmentId/targets/:targetLinkId/unlink'),

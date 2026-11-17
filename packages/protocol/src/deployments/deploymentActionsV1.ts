@@ -1,3 +1,6 @@
+import { DeploymentEnvironmentTelemetrySetInputV1Schema, DeploymentEnvironmentTelemetrySetSuccessV1Schema,
+  DeploymentTelemetryTokenHashV1Schema } from './deploymentTelemetryV1.js';
+export * from './deploymentTelemetryV1.js';
 import { DeploymentDomainDnsInputV1Schema, DeploymentDomainDnsResultV1Schema } from './deploymentDomainDnsV1.js';
 import { DeploymentDomainTunnelDispositionV1Schema } from './deploymentDomainProviderResultV1.js';
 export * from './deploymentDomainDnsV1.js';
@@ -169,6 +172,7 @@ export const DeploymentEnvironmentHeaderV1Schema = lazyZodSchema(() => z.strictO
   /** Database access (P3): server-readable decision facts, ids only (docs/encryption.md). */
   dataEditorMode: DeploymentEnvironmentDataEditorModeV1Schema, dataEditors: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
   dataAgentAccess: DatabaseAgentAccessV1Schema,
+  telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
   controllerMachineId: DeploymentIdentifierV1Schema, buildMachineId: z.optional(DeploymentIdentifierV1Schema),
   ingress: z.optional(DeploymentIngressV1Schema),
   runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
@@ -414,7 +418,7 @@ export const DeploymentMachinePlacementDiagnosticV1Schema = lazyZodSchema(() => 
 export type DeploymentMachinePlacementDiagnosticV1 = z.infer<typeof DeploymentMachinePlacementDiagnosticV1Schema>;
 export const DeploymentMachineUnavailableV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false), error: z.literal('machine_unavailable'),
-  role: z.enum(['controller', 'build', 'target']), machineIds: z.array(DeploymentIdentifierV1Schema).check(z.minLength(1)),
+  role: z.enum(['controller', 'build', 'target', 'telemetry']), machineIds: z.array(DeploymentIdentifierV1Schema).check(z.minLength(1)),
   nextActions: z.array(z.enum(['start', 'chooseAnother', 'removeFromEnvironment'])).check(z.minLength(1)),
   diagnostic: z.optional(DeploymentMachinePlacementDiagnosticV1Schema), effectAttempted: z.optional(z.literal(false)),
 }));
@@ -729,6 +733,7 @@ export type DeploymentDataQueryResultV1 = z.infer<typeof DeploymentDataQueryResu
 // Reading a sibling Action can admit the map while templates are still loading;
 // keep their forwarded schemas deferred for that whole cyclic load.
 export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
+  'deployments.environments.telemetry.set': DeploymentEnvironmentTelemetrySetInputV1Schema,
   ...DeploymentBackupActionInputSchemasV1,
   'deployments.backups.configure': DeploymentBackupConfigureInputV1Schema,
   'deployments.domains.dns.create': DeploymentDomainDnsInputV1Schema,
@@ -786,6 +791,7 @@ export const DeploymentEnvironmentCreateActionResultV1Schema = lazyZodSchema(() 
   DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreatePreviewV1Schema,
 ]));
 export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
+  'deployments.environments.telemetry.set': lazyZodSchema(() => z.union([DeploymentEnvironmentTelemetrySetSuccessV1Schema, DeploymentActionFailureV1Schema])),
   ...DeploymentBackupActionResultSchemasV1,
   'deployments.backups.configure': DeploymentBackupConfigureResultV1Schema,
   'deployments.domains.dns.create': DeploymentDomainDnsResultV1Schema,
@@ -887,6 +893,8 @@ export const DeploymentTransitionInputV1Schema = lazyZodSchema(() => z.strictObj
   machineId: DeploymentIdentifierV1Schema, installationId: DeploymentIdentifierV1Schema,
   proof: MachineInstallationProofV1Schema,
   kind: z.enum(['stage', 'settle']), state: DeploymentStateV1Schema,
+  telemetryTokenHash: z.optional(z.nullable(DeploymentTelemetryTokenHashV1Schema)),
+  telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
   contentUpdate: z.optional(ArtifactJsonUpdateHttpInputV1Schema),
   contentArtifactId: z.optional(DeploymentIdentifierV1Schema),
   contentHeaderVersion: z.optional(DeploymentRevisionV1Schema), contentBodyVersion: z.optional(DeploymentRevisionV1Schema),
@@ -895,6 +903,9 @@ export const DeploymentTransitionInputV1Schema = lazyZodSchema(() => z.strictObj
   servingDeploymentId: z.optional(DeploymentIdentifierV1Schema),
   teardownProof: z.optional(DeploymentTeardownProofV1Schema),
 }).check(z.superRefine((input, context) => {
+  if ((input.telemetryTokenHash === undefined) !== (input.telemetryMachineId === undefined)) {
+    context.addIssue({ code: 'custom', path: ['telemetryTokenHash'], message: 'Delivered telemetry identifies both collector and token hash.' });
+  }
   const content = [input.contentArtifactId, input.contentHeaderVersion, input.contentBodyVersion];
   if (content.some(value => value !== undefined) && !content.every(value => value !== undefined)) {
     context.addIssue({ code: 'custom', message: 'Content transitions require the complete Artifact reference.' });

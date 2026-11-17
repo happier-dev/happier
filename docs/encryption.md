@@ -112,6 +112,19 @@ and any unresolved shared-user peer warning remain required.
 
 ## Environment installation grants (0.3 development source)
 
+Production telemetry extends Environment routing metadata with nullable
+`telemetryMachineId` and `telemetryTokenHash` (unreleased 0.3). The former selects
+the collector; the latter is SHA-256 of the high-entropy ingest token. Neither
+contains telemetry content. The token remains an ordinary Account-mode Saved
+Secret, accessed through the application's admitted runtime installation grants. The
+collector receives assignments containing hashes, never token secret grants.
+The signed successful deployment settlement carries the delivered collector id
+and hash together; Home applies the hash only while that collector remains the
+Environment's selection. Rotation retains the previous hash until redeploy.
+Ingest authorizes before reading the body and attributes the batch from the
+matched assignment, never from caller-supplied resource attributes. Raw spans,
+logs and query text stay in the collector's Machine-local capture store.
+
 Environment Duplicate prepares one opaque create-intent commitment at the
 Account crypto owner before allocating new content Artifacts. It binds the exact
 source revision, explicit copy choices and resolved reviewed configuration. Plain

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
-import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from './externalActionApi.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { DeploymentTargetRoleInputSchemasV1 } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
@@ -43,6 +43,26 @@ function context(): ActionExecutorContext {
 }
 
 describe('deployment role host-child scope', () => {
+  it('retains the exact telemetry admission for its reviewed bindings child', async () => {
+    const root = context();
+    const authorization = root.externalActionExecutionAuthorization!;
+    const actionId = 'deployments.environments.telemetry.set';
+    const input = { serverId: 'home-identity', environmentId: 'environment', expectedRevision: 3,
+      collector: { machineId: 'collector' } };
+    const child = { action: 'deployments.bindings.set' as const, role: 'telemetry.bindings',
+      input: { serverId: input.serverId, environmentId: input.environmentId, expectedRevision: 3,
+        set: [], remove: [], telemetryMachineId: 'collector' } };
+    const result = await invokeHostReviewedChildV1({ parent: { actionId, input }, child,
+      context: { ...root, externalActionExecutionAuthorization: { ...authorization,
+        binding: { ...authorization.binding, actionId, deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input) } } },
+      admittedReview: { action: child.action, role: child.role, surface: 'api' },
+      execute: async (_input, childContext) => ({ ok: true, result: readHostAdmittedReviewedChildV1(childContext) }),
+    });
+    expect(result).toMatchObject({ ok: true, result: { actionId: child.action, role: child.role,
+      deploymentNativeAdmission: { kind: 'telemetry', actionId, environmentId: 'environment', expectedRevision: 3,
+        collector: { machineId: 'collector' }, inputDigest: expect.any(String) } } });
+  });
+
   it('retains the exact configure admission for the reviewed preview backup child', async () => {
     const root = context();
     const authorization = root.externalActionExecutionAuthorization!;

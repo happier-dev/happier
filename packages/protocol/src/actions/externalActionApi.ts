@@ -31,7 +31,7 @@ import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifie
 import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
-  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
@@ -42,7 +42,7 @@ import { DeploymentChildRoutingV1Schema } from '../deployments/deploymentChildRo
 import { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdmissionV1Schema, DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema, DeploymentBackupNativeAdmissionV1Schema, DeploymentCandidatePublicationV1Schema,
   projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1,
   isDeploymentEnvironmentUpdateNativeAdmissionV1, DeploymentBackupConfigureNativeAdmissionV1Schema,
-  isDeploymentBackupConfigureNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+  isDeploymentBackupConfigureNativeAdmissionV1, DeploymentTelemetryNativeAdmissionV1Schema, isDeploymentTelemetryNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 export { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdmissionV1Schema, DeploymentDomainNativeAdmissionV1Schema, DeploymentDomainDnsNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema, DeploymentBackupNativeAdmissionV1Schema, DeploymentCandidatePublicationV1Schema,
   projectDeploymentNativeAdmissionV1, createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
   createDeploymentDomainContentArtifactIdV1, computeDeploymentDomainAuthoredMetadataDigestV1, matchesDeploymentDomainPreparedInputV1,
@@ -51,6 +51,7 @@ export { DeploymentNativeAdmissionV1Schema, DeploymentEnvironmentUpdateNativeAdm
   isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1,
   DeploymentBackupConfigureNativeAdmissionV1Schema, isDeploymentBackupConfigureNativeAdmissionV1,
   type DeploymentBackupConfigureNativeAdmissionV1,
+  DeploymentTelemetryNativeAdmissionV1Schema, isDeploymentTelemetryNativeAdmissionV1, type DeploymentTelemetryNativeAdmissionV1,
   type DeploymentNativeAdmissionV1, type DeploymentDomainNativeAdmissionV1, type DeploymentDomainDnsNativeAdmissionV1, type DeploymentRestoreNativeAdmissionV1, type DeploymentBackupNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
@@ -1116,6 +1117,7 @@ export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: 
     || input.actionId === 'deployments.promote' || input.actionId === 'deployments.teardown'
     || input.actionId === 'deployments.restart' || input.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(input.actionId)
     || input.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
+    || input.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
     || isDeploymentDomainChildActionIdV1(input.actionId) || input.actionId === 'deployments.environments.update';
   const operationRead = input.actionId === 'action.operations.get';
   if (!native && !operationRead) {
@@ -1148,6 +1150,9 @@ export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: 
   }
   if ((input.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) !== isDeploymentBackupConfigureNativeAdmissionV1(admission)) {
     throw new TypeError('Native backup configure admission mismatch');
+  }
+  if ((input.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) !== isDeploymentTelemetryNativeAdmissionV1(admission)) {
+    throw new TypeError('Native telemetry admission mismatch');
   }
   return admission;
 }
@@ -1394,6 +1399,9 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   if (native && 'kind' in native && native.kind === 'promote'
     ? !isDeploymentPromoteActionIdV1(value.actionId) || native.environmentId !== value.environmentId
       || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    : value.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 || isDeploymentTelemetryNativeAdmissionV1(native)
+    ? !isDeploymentTelemetryNativeAdmissionV1(native) || value.actionId !== native.actionId
+      || native.environmentId !== value.environmentId || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
     : value.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 || isDeploymentBackupConfigureNativeAdmissionV1(native)
     ? !isDeploymentBackupConfigureNativeAdmissionV1(native) || value.actionId !== native.actionId
       || native.environmentId !== value.environmentId || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
@@ -1474,6 +1482,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   if (value.environmentId !== undefined && ((!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === value.actionId)
     && projectExternalActionDeploymentMetadataEnvironmentIdV1(value.actionId, { environmentId: value.environmentId }) === undefined
     && value.actionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
+    && value.actionId !== DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
     && !('authentication' in value && (value.deploymentChildRoot === true || value.actionId === 'deployments.teardown'
       || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(value.actionId) || value.actionId === 'deployments.receipts.observe')))
     || value.target.kind !== 'machine')) {
@@ -1604,7 +1613,7 @@ export const ReviewedActionChildHttpProofV1Schema = lazyZodSchema(() => z.strict
   inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
   /** Selected by the host's existing private child issuer, never ambient Account scope. */
   environmentId: z.optional(z.string().check(z.minLength(1))),
-  deploymentNativeAdmission: z.optional(z.union([DeploymentDomainNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema])),
+  deploymentNativeAdmission: z.optional(z.union([DeploymentDomainNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema, DeploymentTelemetryNativeAdmissionV1Schema])),
 }));
 export type ReviewedActionChildHttpProofV1 = Readonly<z.infer<typeof ReviewedActionChildHttpProofV1Schema>>;
 

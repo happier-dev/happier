@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
@@ -49,9 +49,10 @@ async function withInvocation(run: (input: Readonly<{
     service: ReturnType<typeof createStablePluginExecService>;
     source: Awaited<ReturnType<ReturnType<typeof createDeploymentSourceMaterializationPort>['materialize']>>;
     port: ReturnType<typeof createDeploymentExecEnvPortForHost>;
+    readMaterial(): Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>> | undefined;
     buildPort?: ReturnType<typeof createDeploymentExecEnvPortForHost>;
     outside: string;
-}>) => Promise<void>, connections?: 'both' | 'pooledOnly' | 'revokedDirect' | 'retainedBuilder' | 'nativeInterpolation' | 'nativeRepository' | 'nativeActivation',
+}>) => Promise<void>, connections?: 'both' | 'pooledOnly' | 'revokedDirect' | 'retainedBuilder' | 'nativeInterpolation' | 'nativeRepository' | 'nativeActivation' | 'telemetry' | 'telemetryOffline',
     envFileForm: 'literal' | 'bare' | 'required' = 'literal', finiteReferences = false, runtimeSecret = sentinel) {
     await withTempDir('deployment-exec-port-', async root => {
         const controller = new AbortController();
@@ -105,7 +106,14 @@ async function withInvocation(run: (input: Readonly<{
             materialStatus: 'ready', capabilities: { use: true },
             storedContent: { t: 'plain', v: { v: 1, name: 'Credential', kind: 'password', value: runtimeSecret } } };
         const resources = [resource];
-        if (connections && connections !== 'retainedBuilder' && connections !== 'nativeInterpolation' && connections !== 'nativeRepository') {
+        if (connections === 'telemetry' || connections === 'telemetryOffline') {
+            bindings.push({ ...createDeploymentSecretVariableBindingV1({ phase: 'runtime', name: 'OTEL_EXPORTER_OTLP_HEADERS',
+                resourceId: 'credential', resourceRevision: 3 }), managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader' });
+            bindings.push({ ...createDeploymentVariableBindingV1({ phase: 'runtime', name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+                source: connections === 'telemetryOffline' ? { kind: 'deploymentFact', fact: 'telemetryEndpoint' }
+                    : { kind: 'value', value: 'http://collector:4318' } }), managedBy: 'telemetry' });
+        }
+        if (connections && connections !== 'retainedBuilder' && connections !== 'nativeInterpolation' && connections !== 'nativeRepository' && connections !== 'telemetry' && connections !== 'telemetryOffline') {
             for (const [name, resourceId, value] of [
                 ['DATABASE_URL', 'pooled-connection', pooledSentinel],
                 ...(connections === 'pooledOnly' ? [] : [['DIRECT_URL', 'direct-connection', directSentinel]]),
@@ -163,23 +171,112 @@ async function withInvocation(run: (input: Readonly<{
                 if (native) throw new Error('Expected canonical native Docker tool resolution');
                 return { command: process.execPath };
             }, resolvePath: async () => source.rootPath });
+        let material: Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>> | undefined;
         const port = createDeploymentExecEnvPortForHost({ source, phase: 'runtime', signal: controller.signal,
             isCurrent: () => !controller.signal.aborted,
-            prepare: ({ phase }) => prepareEnvironmentSecretBindingsForLaunch({ environmentId: source.environmentId,
+            prepare: async ({ phase }) => material = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: source.environmentId,
                 machineId: source.machineId, installationId: source.installationId, installationPrivateSeed: seed,
                 phase, bindings, grants: prepared.grants.filter(grant => connections !== 'revokedDirect'
-                    || grant.kind !== 'secret' || grant.resourceId !== 'direct-connection'), assertCurrent }) });
+                    || grant.kind !== 'secret' || grant.resourceId !== 'direct-connection'), assertCurrent,
+                resolveNonSecret: async () => { throw new Error('collector_unreachable'); } }) });
         const buildPort = connections === 'retainedBuilder' ? createDeploymentExecEnvPortForHost({ source,
             phase: 'build', signal: controller.signal, isCurrent: () => !controller.signal.aborted,
             prepare: ({ phase }) => prepareEnvironmentSecretBindingsForLaunch({ environmentId: source.environmentId,
                 machineId: source.machineId, installationId: source.installationId, installationPrivateSeed: seed,
                 phase, bindings, grants: prepared.grants, assertCurrent }) }) : undefined;
-        try { await run({ service, source, port, outside, buildPort }); }
+        try { await run({ service, source, port, outside, buildPort, readMaterial: () => material }); }
         finally { controller.abort(); await source.abort(); }
     });
 }
 
 describe('deployment opaque environment through source, installation grants and canonical Exec', () => {
+    it('keeps authored collector values while injecting declared empty telemetry slots at native launch', async () => {
+        await withInvocation(async ({ service, source, port }) => {
+            const telemetryFacts: unknown[] = [];
+            const authored = { services: { web: { image: 'app', environment: {
+                OTEL_EXPORTER_OTLP_ENDPOINT: 'https://project-collector.example',
+                OTEL_EXPORTER_OTLP_HEADERS: null,
+                PASSWORD: 'authored-ordinary-value',
+            } }, worker: { image: 'worker', environment: {
+                OTEL_EXPORTER_OTLP_ENDPOINT: null, OTEL_EXPORTER_OTLP_HEADERS: null,
+            } } } };
+            const attachment = await port.prepare({ source, phase: 'runtime' });
+            // Docker normalization is the system boundary; carrier files, grants,
+            // value selection, projection and Exec admission stay real.
+            const projection = createNativeRuntimeProjectionForHost({ kind: 'configuration', bindRuntimeEnvironment: true,
+                source, composeArguments: ['compose'], services: ['web', 'worker'], model: authored,
+                onTelemetryProjection: facts => telemetryFacts.push(...facts),
+                assertCurrent: () => source.assertCurrent(), io: {
+                    async resolveTool() { return null; },
+                    async run(request) {
+                        return { exitCode: 0, stdout: JSON.stringify(request.args.includes('--variables')
+                            ? { OTEL_EXPORTER_OTLP_ENDPOINT: {}, OTEL_EXPORTER_OTLP_HEADERS: {}, PASSWORD: {} } : authored) };
+                    },
+                } });
+            const launch = await authorizePluginExecLaunchForHost(service, { executable, cwd: source.rootPath,
+                args: ['compose', 'config'], deploymentEnv: attachment }, { agentIsolation: null,
+                signal: new AbortController().signal, deploymentRuntimeProjection: projection });
+            try {
+                const include = JSON.parse(await readFile(launch.args[launch.args.indexOf('--file') + 1]!, 'utf8'));
+                const model = JSON.parse(await readFile(include.include[0].path, 'utf8'));
+                expect(model.services.web.environment).toEqual([
+                    'OTEL_EXPORTER_OTLP_ENDPOINT=https://project-collector.example',
+                    'PASSWORD=authored-ordinary-value',
+                    'PASSWORD=${PASSWORD}',
+                ]);
+                expect(telemetryFacts).toEqual([
+                    { service: 'web', usesOwnCollector: true, receivesTelemetry: false, requiresTelemetryEndpoint: false },
+                    { service: 'worker', usesOwnCollector: false, receivesTelemetry: true, requiresTelemetryEndpoint: true },
+                ]);
+            } finally { await launch.release(); }
+        }, 'telemetry');
+    });
+    it.each(['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
+        'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', 'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT'])(
+        'launches with an authored collector %s while the unused managed collector is offline', async endpointName => {
+        await withInvocation(async ({ service, source, port, readMaterial }) => {
+            const authored = { services: { web: { image: 'app', environment: {
+                [endpointName]: 'https://project-collector.example',
+                OTEL_EXPORTER_OTLP_HEADERS: null, PASSWORD: null,
+            } } } };
+            const attachment = await port.prepare({ source, phase: 'runtime' });
+            const projection = createNativeRuntimeProjectionForHost({ kind: 'configuration', bindRuntimeEnvironment: true,
+                source, composeArguments: ['compose'], services: ['web'], model: authored,
+                assertCurrent: () => source.assertCurrent(), io: { async resolveTool() { return null; },
+                    async run(request) { return { exitCode: 0, stdout: JSON.stringify(request.args.includes('--variables')
+                        ? { PASSWORD: {} } : authored) }; } } });
+            const launch = await authorizePluginExecLaunchForHost(service, { executable, cwd: source.rootPath,
+                args: ['compose', 'config'], deploymentEnv: attachment }, { agentIsolation: null,
+                signal: new AbortController().signal, deploymentRuntimeProjection: projection });
+            try {
+                const include = JSON.parse(await readFile(launch.args[launch.args.indexOf('--file') + 1]!, 'utf8'));
+                const model = JSON.parse(await readFile(include.include[0].path, 'utf8'));
+                expect(model.services.web.environment).toEqual([
+                    `${endpointName}=https://project-collector.example`,
+                    'PASSWORD', 'PASSWORD=${PASSWORD}',
+                ]);
+                expect(readMaterial()?.env.PASSWORD).toBe(sentinel);
+                expect(readMaterial()?.env).not.toHaveProperty('OTEL_EXPORTER_OTLP_HEADERS');
+                expect(readMaterial()?.telemetryTokenHash).toBeUndefined();
+            } finally { await launch.release(); }
+        }, 'telemetryOffline');
+    });
+    it('delivers a Saved Secret as an OTLP header without changing ordinary secret variables', async () => {
+        await withInvocation(async ({ service, source, port, readMaterial }) => {
+            // Positive control uses the same installation grants and real Exec.
+            const ordinary = await port.prepare({ source, phase: 'runtime' });
+            const launch = await authorizePluginExecLaunchForHost(service, { executable, cwd: source.rootPath,
+                args: ['-e', ''], deploymentEnv: ordinary }, { agentIsolation: null, signal: new AbortController().signal });
+            try {
+                expect(launch.env.PASSWORD).toBe(sentinel);
+                expect(launch.env.OTEL_EXPORTER_OTLP_HEADERS).toBe(`Authorization=Bearer%20${sentinel}`);
+                expect(launch.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://collector:4318');
+                expect(launch.env).not.toHaveProperty('OTEL_TRACES_SAMPLER');
+                expect(launch.env).not.toHaveProperty('OTEL_TRACES_SAMPLER_ARG');
+                expect(readMaterial()?.telemetryTokenHash).toBe(createHash('sha256').update(sentinel).digest('hex'));
+            } finally { await launch.release(); }
+        }, 'telemetry');
+    });
     // Native opt-in runs pass the worker's DOCKER_CONFIG explicitly: Vitest's
     // isolated HOME intentionally does not contain user-installed CLI plugins.
     it.runIf(process.env.HAPPIER_NATIVE_SERVICE_EXEC_TEST === '1')(

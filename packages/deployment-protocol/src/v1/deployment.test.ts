@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentReceiptDetailV1, createDeploymentV1 } from '../testing/v1.js';
 import { canTransitionDeploymentV1, DeploymentContentV1Schema, DeploymentV1Schema,
-    DeploymentPlatformContentV1Schema } from './deployment.js';
+    DeploymentPlatformContentV1Schema, DeploymentMachineResultV1Schema } from './deployment.js';
 import { DeploymentTargetRoleFailureV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 describe('receipt structural integrity', () => {
+    it('retains the delivered telemetry hash across a native result receipt round trip', () => {
+        const result = { machineId: 'runtime', installationId: 'installation', steps: [],
+            activation: 'succeeded', health: 'healthy', telemetryMachineId: 'collector', telemetryTokenHash: 'a'.repeat(64) };
+        expect(DeploymentMachineResultV1Schema.parse(JSON.parse(JSON.stringify(result)))).toEqual(result);
+        expect(DeploymentMachineResultV1Schema.safeParse({ ...result, telemetryTokenHash: 'raw-bearer-token' }).success).toBe(false);
+    });
     it('admits provider-built repository source without admitting a native receipt without Compose', () => {
         const { content } = createDeploymentReceiptDetailV1();
         const sourceIntent = { kind: 'repository', projectSourceId: 'source', sourceRevision: 1, sha: 'a'.repeat(40) };

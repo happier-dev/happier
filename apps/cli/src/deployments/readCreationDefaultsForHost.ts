@@ -10,7 +10,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
-import type { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
@@ -21,7 +21,7 @@ export type DeploymentCreationDefaultInputsForHost = Pick<DeploymentCreationDefa
     reviewBasis?: DeploymentTemplateInstantiationReviewV1['creationDefaultsBasis'];
 }>;
 type CreationPreparationActionId = 'deployments.templates.instantiate' | 'deployments.publish.prepare' | 'deployments.environments.create' | 'deployments.environments.update'
-    | typeof DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
+    | typeof DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 | typeof DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
 export type DeploymentCreationDefaultRequestForHost = Readonly<{
     projectSourceId?: string; sourceRevision?: number; projectOwner: ProjectSourceOwnerV1; context: ActionExecutorContext;
     actionId?: CreationPreparationActionId;

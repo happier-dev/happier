@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
+import { encodeTelemetryAuthorizationHeaderV1 } from '@happier-dev/deployments/telemetry';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, type EnvironmentSecretBindingV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
@@ -108,6 +110,10 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     const env: Record<string, string> = Object.create(null);
     const operationalValues = new Map<string, string>();
     const secretValues: string[] = [];
+    let telemetryTokenHash: string | undefined;
+    const telemetryEnvironmentNames = selected.flatMap(binding => binding.purpose === 'variable' && binding.managedBy === 'telemetry'
+        ? [binding.name] : []);
+    const telemetryBindings = selected.filter(binding => binding.purpose === 'variable' && binding.managedBy === 'telemetry');
     const missingRequiredSecretNames = new Set<string>();
     const availableSecretNames = new Set<string>();
     let registryConfig: ReturnType<typeof createEnvironmentRegistryConfigForHost> | undefined;
@@ -125,8 +131,8 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             operationalValues.clear();
         }
     };
-    try {
-    for (const binding of selected) {
+    const materialize = async (selectedBindings: readonly EnvironmentSecretBindingV1[]) => {
+    for (const binding of selectedBindings) {
         const base = { v: 1 as const, machineId: input.machineId, installationId: input.installationId,
             environmentId: input.environmentId };
         if (binding.source.kind === 'secret') {
@@ -181,7 +187,9 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             });
         }
     }
-    for (const name of listMissingProjectSecretRequirements(input.requirements ?? [], availableSecretNames)) {
+    const requirements = (input.requirements ?? []).filter(requirement => !telemetryEnvironmentNames.includes(requirement.name)
+        || selectedBindings.some(binding => binding.purpose === 'variable' && binding.name === requirement.name));
+    for (const name of listMissingProjectSecretRequirements(requirements, availableSecretNames)) {
         missingRequiredSecretNames.add(name);
     }
     if (missingRequiredSecretNames.size > 0) {
@@ -189,7 +197,7 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             missingRequiredSecretNames: [...missingRequiredSecretNames] };
         throw new PluginError({ code: 'secret_missing', message: 'Required Environment secrets are unavailable', details });
     }
-    for (const binding of selected) {
+    for (const binding of selectedBindings) {
         if (binding.source.kind === 'secret') {
             const ref = parseSavedSecretRefV1(binding.source.ref);
             if (ref.kind !== 'shared_resource') return missing();
@@ -198,7 +206,14 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
                 resourceId: ref.resourceId, resourceRevision: binding.source.resourceRevision }));
             if (!opened || opened.kind !== 'secret') return missing();
             const value = opened.value;
-            if (binding.purpose === 'variable') env[binding.name] = value;
+            if (binding.purpose === 'variable') {
+                const delivered = binding.valueFormat === 'otelAuthorizationHeader' ? encodeTelemetryAuthorizationHeaderV1(value) : value;
+                env[binding.name] = delivered;
+                if (binding.managedBy === 'telemetry' && binding.valueFormat === 'otelAuthorizationHeader') {
+                    telemetryTokenHash = createHash('sha256').update(value).digest('hex');
+                }
+                if (delivered !== value && !secretValues.includes(delivered)) secretValues.push(delivered);
+            }
             else operationalValues.set(environmentSecretBindingIdentityV1(binding), value);
             if (!secretValues.includes(value)) secretValues.push(value);
         } else if (binding.purpose === 'variable') {
@@ -210,6 +225,9 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
         else return missing();
     }
     await input.assertCurrent();
+    };
+    try {
+    await materialize(selected.filter(binding => binding.purpose !== 'variable' || binding.managedBy !== 'telemetry'));
     const registryUses = selected.filter((binding): binding is Extract<EnvironmentSecretBindingV1, { purpose: 'registry' }> => binding.purpose === 'registry');
     if (registryConfigRequested) {
         try {
@@ -243,7 +261,12 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
         } finally { operationalValues.clear(); }
     }
     return {
-        env, operationalValues, secretValues, refs, referenceAddresses,
+        env, operationalValues, secretValues, refs, referenceAddresses, telemetryEnvironmentNames,
+        get telemetryTokenHash() { return telemetryTokenHash; },
+        async resolveTelemetry(names: readonly string[]) {
+            if (disposed) return missing();
+            await materialize(telemetryBindings.filter(binding => binding.purpose === 'variable' && names.includes(binding.name)));
+        },
         backupDatabases: new Map((input.backupDatabaseBindings ?? []).map(database =>
             [definitions.get(environmentSecretBindingIdentityV1(database))?.name ?? missing(), definitions.get(environmentSecretBindingIdentityV1(database))?.value ?? missing()] as const)),
         credentialFiles: backupConfig?.credentialFiles ?? [],
