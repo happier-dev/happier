@@ -784,13 +784,14 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
   const [adding, setAdding] = React.useState(false);
   const [reads, setReads] = React.useState(0);
   // The page's one failure presenter: its reason leads, the code and request id stay in Details for support.
-  const showFailure = (error: unknown) => {
+  const showFailure = (error: unknown, phase: 'read' | 'change') => {
     const outcome = readDeploymentActionError(error);
     const requestId = error instanceof HappyError ? error.requestId : undefined;
     const code = outcome.kind === 'refused' ? outcome.code : null;
     const presented = code ? presentActionFailureOutcome({ ...(outcome.kind === 'refused' && outcome.failure
-      ? outcome.failure : { ok: false as const, errorCode: code, error: code }), ...(requestId ? { requestId } : {}) }, 'deployment') : null;
-    setFailure({ reason: presented?.reason ?? t('common.error'), code: presented?.code ?? code,
+      ? outcome.failure : { ok: false as const, errorCode: code, error: code }), ...(requestId ? { requestId } : {}) },
+      phase === 'change' ? 'deployment' : undefined) : null;
+    setFailure({ reason: phase === 'read' ? t('automations.session.failedToLoad') : presented?.reason ?? t('common.error'), code: presented?.code ?? code,
       detail: presented?.technicalDetails.filter(line => line.key !== 'failure-code').map(line => `${line.label}: ${line.value}`).join('\n') || null });
   };
   const environmentId = props.detail.environment.id;
@@ -800,7 +801,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
     actions.backupScheduleSets({ environmentId }).then((next) => {
       if (live) { setSets(next); setFailure(null); }
     }, (error) => {
-      if (live) { setSets(null); showFailure(error); }
+      if (live) { setSets(null); showFailure(error, 'read'); }
     });
     return () => { live = false; };
   }, [actions, environmentId, reads]);
@@ -814,7 +815,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
         controllerMachineId: props.detail.environment.controllerMachineId });
       setSets(current => [...(current ?? []), result.set]);
       setFailure(null);
-    } catch (error) { showFailure(error); }
+    } catch (error) { showFailure(error, 'change'); }
     finally { setAdding(false); }
   };
   const schedules = sets?.flatMap(set => set.triggers.flatMap(trigger => trigger.kind === 'schedule' && trigger.enabled

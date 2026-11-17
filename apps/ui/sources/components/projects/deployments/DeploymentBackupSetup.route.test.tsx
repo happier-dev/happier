@@ -90,6 +90,7 @@ it('shows a failed schedule read with its code, request id and Retry, not a bare
   try {
     const card = () => screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'backups.schedule.failed');
     await vi.waitFor(() => expect(card()).toBeDefined());
+    expect(card()!.props.title).toBe(t('automations.session.failedToLoad'));
     expect(card()!.props.diagnosticCode).toBe('internal_error');
     expect(card()!.props.diagnosticDetail).toContain('5b2057fb-request');
     await act(async () => { card()!.props.action.onPress(); });
