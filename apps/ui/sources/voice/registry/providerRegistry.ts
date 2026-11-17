@@ -2,7 +2,7 @@ import { isVoiceProviderSettingsProjectionCurrent, projectVoiceProviderSettings,
 export { isVoiceProviderSettingsProjectionCurrent, projectVoiceProviderSettings, projectVoiceProviderDeclarationRequirements, projectVoiceProviderDeclarationRegistryBase, createDeclaredSettingsProjector, type VoiceProviderSettingsProjection, type VoiceProviderSelectionOption } from '@happier-dev/protocol/voice/settings/providerRegistry';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
-import { VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
+import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { VoiceReadinessRequirement, VoiceReadinessRole, VoiceRuntimePlatform } from '@happier-dev/protocol/voice/realtime/capabilities';
 import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
 
@@ -251,7 +251,8 @@ function normalizeBundledContribution(
   raw: BundledVoiceManifestContribution,
   presentation: VoiceProviderPresentation,
 ): VoiceProviderRegistryEntry {
-  const declaration = VoiceProviderContributionSchema.parse(raw.declaration);
+  // Generated in admitted form (see the generator's declaration test); not re-admitted at startup.
+  const declaration = raw.declaration;
   const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
     pluginId: raw.pluginId,
     localId: declaration.id,

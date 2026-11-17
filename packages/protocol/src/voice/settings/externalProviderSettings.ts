@@ -108,23 +108,25 @@ export function createExternalVoiceProviderSettingsDescriptor(
   const defaultConfig: Readonly<Record<string, VoiceProviderSettingsJsonValueV1>> = deepFreeze(
     mutableDefaultConfig,
   );
-  const fieldConfigSchema = createPluginJsonSchemaZodValueAdapter({
-    type: 'object',
-    properties: {
-      ...Object.fromEntries(fields.map((field) => [field.id, field.schema])),
-    },
-    required: fields.map((field) => field.id),
-    additionalProperties: false,
-  });
-  const defaultFieldConfig = connectedServicesBinding
-    ? Object.fromEntries(
-        Object.entries(defaultConfig).filter(([key]) => key !== connectedServicesBinding.id),
-      )
-    : defaultConfig;
-  const storedFieldConfigSchema = createStoredReadSchema(fieldConfigSchema);
-  if (!fieldConfigSchema.safeParse(defaultFieldConfig).success) {
-    throw new Error('invalid_external_voice_provider_settings_defaults');
-  }
+  // Every caller passes a declaration admitted by VoiceProviderContributionSchema,
+  // which already checked each field default against its own schema. A descriptor
+  // exists for every bundled provider while the first Account settings parse runs,
+  // but only providers with a stored config parse one, so compile on first parse.
+  let configSchemas: Readonly<{ current: ReturnType<typeof createPluginJsonSchemaZodValueAdapter>;
+    stored: ReturnType<typeof createPluginJsonSchemaZodValueAdapter> }> | undefined;
+  const readConfigSchemas = () => {
+    if (configSchemas) return configSchemas;
+    const current = createPluginJsonSchemaZodValueAdapter({
+      type: 'object',
+      properties: {
+        ...Object.fromEntries(fields.map((field) => [field.id, field.schema])),
+      },
+      required: fields.map((field) => field.id),
+      additionalProperties: false,
+    });
+    configSchemas = { current, stored: createStoredReadSchema(current) };
+    return configSchemas;
+  };
   return Object.freeze({
     schemaVersion: settings?.schemaVersion ?? 1,
     fields,
@@ -145,7 +147,8 @@ export function createExternalVoiceProviderSettingsDescriptor(
           Object.entries(record).filter(([key]) => key !== connectedServicesBinding.id),
         )
       : record;
-    const parsedFields = (stored ? storedFieldConfigSchema : fieldConfigSchema).safeParse(fieldConfig);
+    const schemas = readConfigSchemas();
+    const parsedFields = (stored ? schemas.stored : schemas.current).safeParse(fieldConfig);
     if (!parsedFields.success || parsedFields.data === null
       || typeof parsedFields.data !== 'object' || Array.isArray(parsedFields.data)) return null;
     if (!connectedServicesBinding) return cloneJson(parsedFields.data);

@@ -17,15 +17,21 @@ it('loads the actual generated Voice declarations through the strict consumer an
     writeFileSync(entry, `
       import assert from 'node:assert/strict';
       import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
+      import { createVoiceProviderSettingsCatalog } from '@happier-dev/protocol/voice/settings/providerSettings';
       import { BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS as declarations } from ${JSON.stringify(join(uiRoot, 'voice/registry/generatedBundledVoiceEntries.ts'))};
       import { createDefaultVoiceProviderRegistry } from ${JSON.stringify(join(uiRoot, 'voice/registry/defaultRegistry.ts'))};
       assert.ok(declarations.length > 0);
       const registry = createDefaultVoiceProviderRegistry();
       for (const { declaration, providerId } of declarations) {
-        VoiceProviderContributionSchema.parse(declaration);
+        // Runtime owners use these declarations as admitted, so the generated form must be the admitted form.
+        assert.deepEqual(JSON.parse(JSON.stringify(VoiceProviderContributionSchema.parse(declaration))), JSON.parse(JSON.stringify(declaration)));
         assert.equal(registry.get(providerId)?.providerId, providerId);
       }
       assert.ok(registry.list().length >= declarations.length);
+      // Voice settings parsing keeps an untouched provider's default without re-admitting it.
+      for (const owner of createVoiceProviderSettingsCatalog({ bundledContributions: declarations }).list()) {
+        assert.deepEqual(owner.parseStoredConfig(owner.defaultConfig), owner.defaultConfig);
+      }
     `);
     const output = join(root, 'consumer.cjs');
     await build({ entryPoints: [entry], outfile: output, bundle: true, platform: 'node', format: 'cjs',

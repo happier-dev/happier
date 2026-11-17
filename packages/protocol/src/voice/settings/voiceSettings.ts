@@ -308,6 +308,11 @@ function parseProviderEnvelopes(raw: unknown): Record<string, VoiceProviderSetti
       result[providerId.data] = { schemaVersion: envelope.data.schemaVersion, config: configCopy };
       continue;
     }
+    // An untouched provider still holds its default, which was admitted with its
+    // declaration and is already in `result`; startup parses every such envelope.
+    const defaultEnvelope = result[providerId.data];
+    if (defaultEnvelope?.schemaVersion === owner.currentSchemaVersion
+      && JSON.stringify(configCopy) === JSON.stringify(defaultEnvelope.config)) continue;
     const config = owner.parseStoredConfig(configCopy);
     // The generic envelope owner must preserve valid JSON even when a bundled
     // provider rejects its config. Runtime/readiness then fail closed instead

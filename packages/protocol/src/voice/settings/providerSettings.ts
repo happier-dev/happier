@@ -4,7 +4,6 @@ import type {
   VoiceProviderSettingsEnvelopeV1,
   VoiceProviderSettingsJsonValueV1,
 } from '../realtime/providerSettings.js';
-import { VoiceProviderContributionSchema } from '../../plugins/contributions/voiceProviders.js';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '../../plugins/contributionIdentity.js';
 
 import {
@@ -85,10 +84,6 @@ export function createExternalVoiceProviderSettingsOwner(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function cloneJson(value: unknown): VoiceProviderSettingsJsonValueV1 {
   return JSON.parse(JSON.stringify(value)) as VoiceProviderSettingsJsonValueV1;
 }
@@ -141,16 +136,20 @@ function createBuiltInOwners(): readonly VoiceProviderSettingsOwner[] {
   ]);
 }
 
-function extractBundledOwner(raw: unknown): VoiceProviderSettingsOwner | null {
-  if (!isRecord(raw) || typeof raw.pluginId !== 'string') return null;
-  const publicDeclaration = VoiceProviderContributionSchema.safeParse(raw.declaration);
-  if (publicDeclaration.success
-    && publicDeclaration.data.settings !== undefined) {
+/**
+ * Bundled declarations are generated in their admitted form: plugin manifest
+ * ingestion admits them at build time and the generator's test loads every
+ * generated declaration through VoiceProviderContributionSchema. Startup builds
+ * this catalog for the first Account settings parse, so it does not re-admit them.
+ */
+function extractBundledOwner(raw: Pick<BundledVoiceSettingsContribution, 'pluginId' | 'declaration'>): VoiceProviderSettingsOwner | null {
+  const declaration = raw.declaration;
+  if (declaration.settings !== undefined) {
     const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
       pluginId: raw.pluginId,
-      localId: publicDeclaration.data.id,
+      localId: declaration.id,
     }));
-    const settings = createExternalVoiceProviderSettingsDescriptor(publicDeclaration.data.settings);
+    const settings = createExternalVoiceProviderSettingsDescriptor(declaration.settings);
     const releasedCompatibility = getReleasedVoiceSettingsCompatibility(providerId, settings);
     return Object.freeze({
       providerId,
@@ -198,7 +197,7 @@ export function resolveBundledVoiceProviderSettingsOwner(
     declaration?: import('../../plugins/contributions/voiceProviders.js').VoiceProviderContribution;
   }>,
 ): VoiceProviderSettingsOwner | null {
-  return extractBundledOwner(raw);
+  return raw.declaration ? extractBundledOwner({ pluginId: raw.pluginId, declaration: raw.declaration }) : null;
 }
 
 export function createVoiceProviderSettingsCatalog(input: Readonly<{
