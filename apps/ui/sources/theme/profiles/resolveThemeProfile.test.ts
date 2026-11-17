@@ -3,7 +3,8 @@ import { compositeThemeColor, parseThemeColorValue, themeContrastRatio } from '@
 
 import { darkTheme, lightTheme } from '@/theme';
 import type { ThemeProfileV1 } from './themeProfileTypes';
-import { clearEffectiveThemeCache, resolveThemeProfile } from './resolveThemeProfile';
+import { clearEffectiveThemeCache, createThemeProfileResolver, resolveThemeProfile } from './resolveThemeProfile';
+import { deriveThemeColorsWithPaint } from './deriveThemeColors';
 
 const profile = (overrides: ThemeProfileV1['overrides'], updatedAt = '2026-05-11T00:00:00.000Z'): ThemeProfileV1 => ({
     schemaVersion: 1,
@@ -16,6 +17,53 @@ const profile = (overrides: ThemeProfileV1['overrides'], updatedAt = '2026-05-11
 });
 
 describe('resolveThemeProfile', () => {
+    it('retains the actual paint derivation with the resolved palette across metadata and CSS changes', () => {
+        const resolver = createThemeProfileResolver();
+        const authored = { ...profile({ light: {}, dark: { 'text.primary': '#cdd6f4', 'surface.elevated': '#303030' } }),
+            css: '[data-surface="composer"] { padding: 20px }' };
+        const result = resolver.resolveWithPaint({ mode: 'dark', profile: authored });
+        expect(result.theme).toBe(resolver.resolve({ mode: 'dark', profile: authored }));
+        expect(result.paint.glassComposer).toEqual({ color: '#303030', source: { kind: 'derived', from: ['surface.elevated'] } });
+        expect(result.paint.edgeHighlight.source).toEqual({ kind: 'derived', from: ['text.primary'] });
+        const cssOnly = { ...authored, name: 'Renamed', css: '[data-surface="composer"] { padding: 24px }' };
+        expect(resolver.resolveWithPaint({ mode: 'dark', profile: cssOnly })).toBe(result);
+        const explicit = { ...authored, overrides: { ...authored.overrides,
+            dark: { ...authored.overrides.dark, 'effect.surfaceHighlight': '#554433' } } };
+        const changed = resolver.resolveWithPaint({ mode: 'dark', profile: explicit });
+        expect(changed.paint.edgeHighlight).toEqual({ color: '#554433', source: { kind: 'token', ref: 'effect.surfaceHighlight' } });
+        expect(changed.theme.colors.effect.surfaceHighlight).toBe(changed.paint.edgeHighlight.color);
+        expect(resolver.resolveWithPaint({ mode: 'light', profile: null }).theme).toBe(lightTheme);
+    });
+
+    it('keeps canonical composer paint fixed and attributes changed dark glass paint to its actual surface', () => {
+        const unchanged = deriveThemeColorsWithPaint(darkTheme, darkTheme);
+        expect(unchanged.paint.glassComposer.source).toEqual({ kind: 'fixed' });
+        const input = { ...darkTheme, colors: { ...darkTheme.colors,
+            surface: { ...darkTheme.colors.surface, elevated: '#654321' } } };
+        const result = deriveThemeColorsWithPaint(input, darkTheme);
+        expect(result.paint.glassComposer).toEqual({ color: '#654321', source: { kind: 'derived', from: ['surface.elevated'] } });
+        expect(result.theme.colors.glass.composerSurface).toBe(result.paint.glassComposer.color);
+    });
+
+    it('attributes selection and raised material to the exact editable inputs used to calculate paint', () => {
+        const input = { ...darkTheme, colors: { ...darkTheme.colors,
+            text: { ...darkTheme.colors.text, primary: '#cdd6f4' },
+            surface: { ...darkTheme.colors.surface, base: '#101010', elevated: '#303030' } } };
+        const result = deriveThemeColorsWithPaint(input, darkTheme);
+        expect(result.paint.hover.source).toEqual({ kind: 'derived', from: ['text.primary'] });
+        expect(result.paint.selectedFocused.source).toEqual({ kind: 'derived', from: ['text.primary'] });
+        expect(result.paint.cardFill.source).toEqual({ kind: 'derived', from: ['surface.elevated'] });
+        expect(result.paint.floatingFill.source).toEqual({ kind: 'derived', from: ['surface.elevated'] });
+        expect(result.theme.colors.edge.cardFill).toBe(result.paint.cardFill.color);
+        expect(result.paint.edgeHighlight.source).toEqual({ kind: 'derived', from: ['text.primary'] });
+        const authored = deriveThemeColorsWithPaint({ ...input, colors: { ...input.colors,
+            effect: { ...input.colors.effect, surfaceHighlight: '#554433' } } }, darkTheme);
+        expect(authored.paint.edgeHighlight.source).toEqual({ kind: 'token', ref: 'effect.surfaceHighlight' });
+        const lifted = deriveThemeColorsWithPaint({ ...input, colors: { ...input.colors,
+            surface: { ...input.colors.surface, elevated: '#000000' } } }, darkTheme);
+        expect(lifted.paint.cardFill.source).toEqual({ kind: 'derived', from: ['surface.base', 'text.primary'] });
+    });
+
     it('preserves custom status ink and tint without contrast clamps, including an explicit text override', () => {
         const custom = profile({ light: {
             'state.success.foreground': '#ffffff',

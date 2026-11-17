@@ -1,7 +1,7 @@
 import type { Theme } from '@/theme';
 
 import { getBaseTheme } from './baseThemeCatalog';
-import { deriveThemeColors } from './deriveThemeColors';
+import { deriveThemeColorsWithPaint, type ResolvedThemePaints } from './deriveThemeColors';
 import { deriveThemeSeedColors } from './deriveThemeSeedColors';
 import { resolveThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
 import { applyThemeStyleScales, resolveThemeStyleScales } from '../themeStyleScales';
@@ -15,6 +15,8 @@ type ResolveThemeProfileInput = Readonly<{
     profile: Pick<ThemeProfileV1, 'overrides' | 'seeds' | 'assetAppearance' | 'style'> | null;
 }>;
 
+export type ResolvedThemeProfile = Readonly<{ theme: Theme; paint: ResolvedThemePaints }>;
+
 const overrideHash = (overrides: ThemeProfileV1['overrides'][ThemeProfileMode]): string => (
     JSON.stringify(Object.entries(overrides).sort(([left], [right]) => left.localeCompare(right)))
 );
@@ -26,10 +28,10 @@ const getCacheKey = (mode: ThemeProfileMode, profile: NonNullable<ResolveThemePr
     JSON.stringify(profile.style),
 ].join('|');
 
-const resolveUncachedThemeProfile = ({ mode, profile }: ResolveThemeProfileInput): Theme => {
+const resolveUncachedThemeProfile = ({ mode, profile }: ResolveThemeProfileInput): ResolvedThemeProfile => {
     const baseTheme = getBaseTheme(mode);
     if (!profile) {
-        return baseTheme;
+        return { theme: baseTheme, paint: deriveThemeColorsWithPaint(baseTheme, baseTheme).paint };
     }
 
     const seeds = mode === resolveThemeProfileAssetAppearance(profile) ? profile.seeds : undefined;
@@ -46,27 +48,33 @@ const resolveUncachedThemeProfile = ({ mode, profile }: ResolveThemeProfileInput
         explicitOverrides.add(tokenId);
     }
 
-    const resolved = seeds || explicitOverrides.size > 0
-        ? deriveThemeColors({ ...baseTheme, colors: nextColors }, baseTheme, explicitOverrides) : baseTheme;
-    return profile.style ? applyThemeStyleScales(resolved, resolveThemeStyleScales(profile.style)) : resolved;
+    const resolved = deriveThemeColorsWithPaint({ ...baseTheme, colors: nextColors }, baseTheme, explicitOverrides);
+    const theme = seeds || explicitOverrides.size > 0 ? resolved.theme : baseTheme;
+    return { theme: profile.style ? applyThemeStyleScales(theme, resolveThemeStyleScales(profile.style)) : theme,
+        paint: resolved.paint };
 };
 
 /** Each consumer retains its current palette per mode; gallery reads cannot evict runtime identity. */
 export function createThemeProfileResolver(): Readonly<{
     resolve(input: ResolveThemeProfileInput): Theme;
+    resolveWithPaint(input: ResolveThemeProfileInput): ResolvedThemeProfile;
     clear(): void;
 }> {
-    const current = new Map<ThemeProfileMode, Readonly<{ key: string; theme: Theme }>>();
+    const current = new Map<ThemeProfileMode, Readonly<{ key: string; result: ResolvedThemeProfile }>>();
+    const resolveWithPaint = (input: ResolveThemeProfileInput): ResolvedThemeProfile => {
+        const key = input.profile ? getCacheKey(input.mode, input.profile) : '';
+        const cached = current.get(input.mode);
+        if (cached?.key === key) return cached.result;
+        const result = resolveUncachedThemeProfile(input);
+        current.set(input.mode, { key, result });
+        return result;
+    };
     return {
         resolve(input) {
             if (!input.profile) return getBaseTheme(input.mode);
-            const key = getCacheKey(input.mode, input.profile);
-            const cached = current.get(input.mode);
-            if (cached?.key === key) return cached.theme;
-            const theme = resolveUncachedThemeProfile(input);
-            current.set(input.mode, { key, theme });
-            return theme;
+            return resolveWithPaint(input).theme;
         },
+        resolveWithPaint,
         clear: () => { current.clear(); },
     };
 }
@@ -74,3 +82,4 @@ export function createThemeProfileResolver(): Readonly<{
 const effectiveThemeResolver = createThemeProfileResolver();
 export const clearEffectiveThemeCache = effectiveThemeResolver.clear;
 export const resolveThemeProfile = effectiveThemeResolver.resolve;
+export const resolveThemeProfileWithPaint = effectiveThemeResolver.resolveWithPaint;
