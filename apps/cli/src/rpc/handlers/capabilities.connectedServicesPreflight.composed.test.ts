@@ -113,7 +113,7 @@ afterEach(async () => {
 });
 
 describe('capabilities.invoke connected-service preflight', () => {
-  it('refuses a selected account on an unsupported Agent for every discovery method without using native auth', async () => {
+  it('ignores unrelated Account selections for every discovery method without reading credentials', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'happier-capability-unsupported-selection-'));
     process.env = { ...originalEnv, HAPPIER_HOME_DIR: tempDir, OPENAI_API_KEY: 'ambient-must-not-be-used' };
     const [capabilities, , config, persistence] = malformedSelectionModules;
@@ -123,13 +123,16 @@ describe('capabilities.invoke connected-service preflight', () => {
     await call(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
     readStoredCredentials.mockClear();
     for (const method of ['probeConfigOptions', 'probeModes', 'probeModels', 'probeCatalogs']) {
+      const unbound = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
+        id: 'cli.auggie', method, params: { cwd: tempDir },
+      });
       const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
         id: 'cli.auggie', method,
         params: { cwd: tempDir, connectedServices: { v: 2, bindingsByServiceId: {
           'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'selected-work' },
         } } },
       });
-      expect(response, method).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
+      expect(response, method).toEqual(unbound);
     }
     expect(readStoredCredentials).not.toHaveBeenCalled();
   });
@@ -588,7 +591,13 @@ describe('capabilities.invoke connected-service preflight', () => {
         metadataReads.length = 0;
         expect.soft(await inventory.agentsModelsList(input))
           .toEqual({ ok: false, errorCode, error: errorCode,
-            ...(refusal === 'reauth' ? { details: { retryable: false } } : {}) });
+            details: {
+              ...(refusal === 'reauth' ? { retryable: false } : {}),
+              failureCause: { phase: 'client_start', failureReason: 'unknown', actionCause: {
+                phase: refusal === 'reauth' ? 'capabilities.preflight.credentials' : 'capabilities.invoke',
+                errorClass: 'Error', errorCode: null, httpStatus: null,
+              } },
+            } });
         expect(metadataReads).toContain('/v4/connect/qualified/group');
         if (refusal !== 'missing') expect(metadataReads).toContain('/v4/connect/qualified/accounts');
         expect(credentialReads).toEqual([]);
@@ -618,17 +627,6 @@ describe('capabilities.invoke connected-service preflight', () => {
       },
     });
 
-    if (targetId === 'opencode') {
-      // Model-less discovery consumes the same selected-account preparation as
-      // Session launch. It must refuse before credentials or a native catalog.
-      expect(response).toMatchObject({ ok: false, error: {
-        code: 'agent_startup_model_reconciliation_failed', retryable: false,
-      } });
-      expect(credentialReads).toEqual([]);
-      expect(existsSync(join(tempDir, 'opencode-native-started'))).toBe(false);
-      complete = true;
-      return;
-    }
     if (targetId === 'kimi') {
       const connectedServices = { v: 2, bindingsByServiceId: {
         [serviceKey]: { source: 'connected', selection: 'profile', profileId: account.accountId },
@@ -869,6 +867,9 @@ describe('capabilities.invoke connected-service preflight', () => {
       error: {
         code: 'connected-service-preflight-failed',
         message: 'Could not prepare the selected connected-service account for this probe.',
+        failureCause: { phase: 'client_start', failureReason: 'unknown', actionCause: {
+          phase: 'capabilities.preflight.credentials', errorClass: 'Error', errorCode: null, httpStatus: null,
+        } },
       },
     });
   }, 90_000);

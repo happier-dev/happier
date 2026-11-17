@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest';
+import axios from 'axios';
 import { accountSettingsParse, createActionExecutor, PluginManifestV2Schema, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
@@ -10,6 +11,7 @@ import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/cata
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 
 const home = await mkdtemp(join(tmpdir(), 'happier-preflight-lazy-'));
 vi.stubEnv('HAPPIER_HOME_DIR', home);
@@ -126,6 +128,14 @@ describe('capability preflight with a cold Agent plugin', () => {
       else await removeStoredCredentialsForServerId(credentialServerId);
     });
     await writeStoredCredentialsForServerId(credentialServerId, { token: 'fixture-token', encryption: null });
+    // Home availability is a transport boundary. This fixture Account has no
+    // selected releases; retain real catalog admission for its bundled Agents.
+    const availability = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      const response = absentAccountPluginAvailabilityHttpResponse(String(url), body);
+      if (!response) throw new Error('Unexpected fixture Account HTTP mutation');
+      return response;
+    });
+    onTestFinished(() => availability.mockRestore());
     setActiveAccountSettingsSnapshot({ source: 'network', settings, settingsVersion: 1,
       loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
       scopeKey: resolveAccountSettingsScopeKey({ token: 'fixture-token', encryption: null }),
@@ -191,19 +201,27 @@ describe('capability preflight with a cold Agent plugin', () => {
           installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
         verifyMachineAdmissionCurrent: async () => true,
       };
-      const registeredResult = await registeredExecutor.execute('agents.models.list', input, admittedContext);
-      expect(registeredResult.ok ? undefined : { code: registeredResult.errorCode, message: registeredResult.error }).toBeUndefined();
-      expect(registeredResult).toMatchObject({
-        ok: true, result: { source: 'dynamic', items: expectedItems },
-      });
+      // Manage grants full control of this Machine; Use members still require
+      // their own native execution identity instead of the custodian's process.
+      for (const allowedContext of [admittedContext,
+        { ...admittedContext, machineAdmission: { ...admittedContext.machineAdmission, actorAccountId: 'member', role: 'manage' as const } },
+      ]) {
+        const registeredResult = await registeredExecutor.execute('agents.models.list', input, allowedContext);
+        expect(registeredResult.ok ? undefined : { code: registeredResult.errorCode, message: registeredResult.error }).toBeUndefined();
+        expect(registeredResult).toMatchObject({
+          ok: true, result: { source: 'dynamic', items: expectedItems },
+        });
+      }
       const admittedLaunches = await readFile(nativeLaunchMarker, 'utf8');
       expect(admittedLaunches.length).toBeGreaterThan(0);
-      for (const deniedContext of [
-        { ...admittedContext, machineAdmission: { ...admittedContext.machineAdmission, actorAccountId: 'member', role: 'manage' as const } },
-        { ...admittedContext, actionCaller: { kind: 'session' as const, sessionId: 'copied-owner', starterDepth: 0, turnDepth: 0 } },
+      for (const { deniedContext, errorCode } of [
+        { deniedContext: { ...admittedContext, machineAdmission: { ...admittedContext.machineAdmission, actorAccountId: 'member', role: 'use' as const } },
+          errorCode: 'filesystem_identity_custody_unavailable' },
+        { deniedContext: { ...admittedContext, actionCaller: { kind: 'session' as const, sessionId: 'copied-owner', starterDepth: 0, turnDepth: 0 } },
+          errorCode: 'approval_context_unavailable' },
       ]) {
         const refusal = await registeredExecutor.execute('agents.models.list', input, deniedContext);
-        expect(refusal).toMatchObject({ ok: false, errorCode: 'filesystem_identity_custody_unavailable' });
+        expect(refusal).toMatchObject({ ok: false, errorCode });
         expect(refusal).not.toHaveProperty('result');
         expect(await readFile(nativeLaunchMarker, 'utf8')).toBe(admittedLaunches);
       }
@@ -470,6 +488,16 @@ describe('capability preflight with a cold Agent plugin', () => {
       generation: pluginReloadController.getState().generation + 1,
       contributes: await resolveMergedContributionRegistry({ happyHomeDir: home }),
       pluginIds: ['happier.agent.claude'],
+      // Persistent Account settings are outside this native-HTTP observation.
+      // An absent record exercises the real declared plugin defaults.
+      accountSettingsRecordAdapter: {
+        async bindOperation() {
+          return {
+            async readRecord() { return { status: 'absent' }; },
+            async writeRecord() { return { status: 'unavailable' }; },
+          };
+        },
+      },
       // The registered development root is a filesystem authority boundary;
       // use the same fixture contract as the real bundled-registry integration suite.
       resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
