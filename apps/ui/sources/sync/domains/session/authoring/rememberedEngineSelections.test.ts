@@ -180,6 +180,16 @@ describe('remembered engine selections', () => {
         expect(restored?.modelSelection).toBeNull();
     });
 
+    it('remembers the full qualified Team model without converting it to a native selection', () => {
+        const modelSelection = { v: 2 as const, updatedAt: 50, ref: { source: 'team_resource' as const,
+            teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7, deliveryMode: 'brokered' as const,
+            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'same' } };
+        const written = upsertRememberedEngineSelection({ selectionsByScope: {}, serverId: 'server-a',
+            backendTarget: codexTarget, selection: { modelSelection }, updatedAt: 50 });
+        expect(readRememberedEngineSelection({ enabled: true, selectionsByScope: written, serverId: 'server-a',
+            backendTarget: codexTarget })?.modelSelection).toEqual(modelSelection);
+    });
+
     it('preserves provider connection identity and refuses a different target', () => {
         const modelSelection = SessionModelSelectionV1Schema.parse({
             v: 1,

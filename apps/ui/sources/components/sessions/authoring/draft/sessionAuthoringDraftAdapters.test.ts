@@ -279,6 +279,22 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(executionTarget.machineId).toBe('enrolled');
         expect(continuation).toEqual(spawnAuthoring);
     });
+    it('preserves a qualified Team model through draft storage and both launch carriers', () => {
+        const modelSelection = { v: 2 as const, updatedAt: 1, ref: { source: 'team_resource' as const,
+            teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
+            deliveryMode: 'brokered' as const, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model' } };
+        const draft = buildNewSessionAuthoringDraftFromTempData({ prompt: 'Start here', directory: '/workspace/project',
+            agentType: 'codex', executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } }, modelSelection });
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({ draft, machineId: 'machine-1', updatedAt: 1,
+            selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: {}, backendNewSessionOptionStateByTargetKey: {} });
+        const reopened = buildNewSessionAuthoringDraftFromPersistedDraft(persisted);
+        expect(reopened.modelSelection).toEqual(modelSelection);
+        expect(buildNewSessionTempDataFromAuthoringDraft({ draft: reopened, machineId: 'machine-1' }).modelSelection).toEqual(modelSelection);
+        const params = { draft: reopened, creationKey: 'team-model-creation', permissionMode: 'default', configurationUpdatedAtMs: 1 };
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft(params).modelSelection).toEqual(modelSelection);
+        expect(buildManagedAcquireAgentStartV1FromAuthoringDraft(params).modelSelection).toEqual(modelSelection);
+    });
     it('retains Project files with its placement through reopen and both Session admission paths', () => {
         const sessionPlacement = { kind: 'machine' as const,
             target: { serverId: 'server-1', machineId: 'machine-1' },
