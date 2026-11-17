@@ -2,7 +2,7 @@ import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '../account/
 import type { InputTypeReferenceV1 } from '../inputs/inputTypes.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionKey.js';
-import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { SessionModelSelectionSchema } from '../providers/selection/v2.js';
 import { BackendTargetRefV2InputSchema, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '../backends/targets/backendTargetRefV2.js';
 import type { ApprovalActionReference } from './actionApprovalPresentation.js';
 
@@ -22,6 +22,12 @@ export function readApprovalModelReference(
     typeof ref.agentTargetKey !== 'string'
   )
     return undefined;
+  if (ref.source === 'team_resource') {
+    const selection = SessionModelSelectionSchema.safeParse(value);
+    if (!selection.success || selection.data.v !== 2 || selection.data.ref.source !== 'team_resource') return undefined;
+    return { kind: 'teamModel', id: selection.data.ref.modelId, teamId: selection.data.ref.teamId,
+      resourceId: selection.data.ref.resourceId, agentTargetKey: selection.data.ref.agentTargetKey };
+  }
   if (
     typeof ref.providerConnectionId === 'string' &&
     ref.providerConnectionId.trim()
@@ -47,7 +53,7 @@ export function readApprovalModelReference(
 export function readApprovalDeclaredModelSelection(
   value: unknown,
 ): ApprovalActionReference | undefined {
-  return SessionModelSelectionV1Schema.safeParse(value).success
+  return SessionModelSelectionSchema.safeParse(value).success
     ? readApprovalModelReference(value)
     : undefined;
 }

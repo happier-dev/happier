@@ -349,6 +349,11 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
             : saved?.resolving ? { text: t('common.loading'), named: true, resolving: true }
             : { text: t('common.unavailable'), named: true };
     }
+    if (reference?.kind === 'teamModel') {
+        if (sources.principalName) return { text: `${reference.id} · ${sources.principalName}`, named: true };
+        if (sources.principalResolving) return { text: t('common.loading'), named: false, resolving: true };
+        return { text: reference.id, named: false };
+    }
     if (reference?.kind === 'agentModel') {
         // The Agent catalog's own title for its model ("GPT-6 Luna"), as every Session surface reads it.
         const title = resolveRunNativeModelLabel(reference.agentTargetKey)(reference.id);

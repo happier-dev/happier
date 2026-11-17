@@ -9,6 +9,7 @@ import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDi
 function approvalPrincipal(reference: ApprovalActionReference | undefined): PrincipalRefV1 | null {
     if (reference?.kind === 'account') return { kind: 'account', accountId: reference.id };
     if (reference?.kind === 'team') return { kind: 'team', teamId: reference.id };
+    if (reference?.kind === 'teamModel') return { kind: 'team', teamId: reference.teamId };
     if (reference?.kind === 'group') return { kind: 'group', teamId: reference.teamId, groupId: reference.id };
     return null;
 }

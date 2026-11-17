@@ -53,6 +53,20 @@ async function readReview(actionId: string, input: unknown) {
 }
 
 describe('an approval review reads values by meaning, from the real approval an Action creates', () => {
+  it('keeps a Team model source in the approval created by Session spawn', async () => {
+    const { readable } = await readReview('session.spawn_new', {
+      creationKey: 'approval:team-model', executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path', path: '/workspace/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      modelSelection: { v: 2, updatedAt: 12, ref: { source: 'team_resource', teamId: 'team-design',
+        resourceId: 'resource-model', expectedResourceRevision: 3, deliveryMode: 'vendor-native',
+        agentTargetKey: codex, modelId: 'shared-model' } },
+    });
+    expect(readable).toContainEqual(expect.objectContaining({ path: 'modelSelection', reference: {
+      kind: 'teamModel', id: 'shared-model', teamId: 'team-design', resourceId: 'resource-model', agentTargetKey: codex,
+    } }));
+  });
+
   it.each([
     { target: undefined, reference: { kind: 'providerConnection', id: 'saved-provider' } },
     { target: { kind: 'account', account: { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: 'personal-muse' } },

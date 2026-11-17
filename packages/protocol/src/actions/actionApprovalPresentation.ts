@@ -205,6 +205,8 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'setting'; id: string }>
   | Readonly<{ kind: 'providerConnection'; id: string; displayName?: string; catalogSourceKey?: string; agentTargetKey?: string }>
   | Readonly<{ kind: 'providerModel'; id: string; connectionId: string; agentTargetKey: string; catalogSourceKey?: string }>
+  /** A Team resource's model, read with its Team rather than through the Agent's native catalog. */
+  | Readonly<{ kind: 'teamModel'; id: string; teamId: string; resourceId: string; agentTargetKey: string }>
   | Readonly<{ kind: 'providerContribution'; id: string }>
   /** An Agent's own model (no Provider connection): read by the Agent catalog's title for it. */
   | Readonly<{ kind: 'agentModel'; id: string; agentTargetKey: string }>
