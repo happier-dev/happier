@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { PetPortableImportSourceV1 } from '@happier-dev/protocol/pets/importActionV1';
-import { findMatchingAccountPetV1 } from '@happier-dev/protocol/pets/portablePetV1';
+import { computeAccountPetPackageDigestV1, findMatchingAccountPetV1 } from '@happier-dev/protocol/pets/portablePetV1';
 import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 
 import { usePetSheetSpriteVersion } from '@/components/pets/render/usePetSheetSpriteVersion';
@@ -48,12 +49,17 @@ export const PortablePetFace = React.memo(function PortablePetFace(
   const sync = useFeatureEnabled('pets.sync');
   usePeripheralFeedDemand('accountPets', companion && sync);
   const source = props.pet.source;
-  const identity =
-    source.kind === 'registry'
-      ? source
-      : { kind: 'digest' as const, digest: source.package.spritesheet.digest };
+  const identity = React.useMemo(() => {
+    if (!companion || !sync) return null;
+    if (source.kind === 'registry') return source;
+    const { manifest, spritesheet } = source.package;
+    return {
+      kind: 'digest' as const,
+      digest: computeAccountPetPackageDigestV1(manifest, decodeBase64(spritesheet.data)),
+    };
+  }, [companion, sync, source]);
   const heldId = storage((state) =>
-    companion && sync
+    identity
       ? (findMatchingAccountPetV1(
           Object.values(state.accountPetsById),
           identity,

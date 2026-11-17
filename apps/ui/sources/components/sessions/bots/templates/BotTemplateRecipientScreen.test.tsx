@@ -27,6 +27,10 @@ import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/ex
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
+import { buildAccountPetCreateRequestV1 } from '@happier-dev/protocol/pets/importActionV1';
+import { computeAccountPetPackageDigestV1 } from '@happier-dev/protocol/pets/portablePetV1';
+import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { BotFacePet } from '../face/BotFacePet';
 import { NewBotDraftFace } from '@/components/sessions/bots/NewBotDraftHeader';
 import { Switch } from '@/components/ui/forms/Switch';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
@@ -337,16 +341,32 @@ describe('recipient template page', () => {
         await screen.unmount();
     });
 
-    it('offers the template pet as one Copy item, on by default, and leaves it out when deselected', async () => {
+    it.each(['registry', 'package'] as const)('offers a %s pet in Copy and leaves it out when deselected', async kind => {
+        const bytes = Uint8Array.of(1, 2, 3);
+        const pkg = buildAccountPetCreateRequestV1({
+            manifest: { id: 'capy', displayName: 'Capy', description: 'A companion', spritesheetPath: 'spritesheet.webp', spriteVersionNumber: 1 },
+            mediaType: 'image/webp', spritesheetBytes: bytes, origin: { kind: 'manualImport' },
+        });
+        const heldPet: AccountPetLibraryEntryV1 = {
+            accountPetId: 'my-capy', manifest: pkg.manifest, origin: pkg.origin, packageFormat: 'codex-compatible-atlas-v1',
+            spritesheetAssetRef: { assetId: 'my-sheet', mediaType: pkg.spritesheet.mediaType, digest: pkg.spritesheet.digest, sizeBytes: bytes.length },
+            digest: computeAccountPetPackageDigestV1(pkg.manifest, bytes), sizeBytes: bytes.length, createdAt: 1, updatedAt: 1,
+        };
         const petFeatures = createRootLayoutFeaturesResponse({ features: { pets: { companion: { enabled: true }, sync: { enabled: true } } } });
         home = await createPlainArtifactHomeFixture('https://template-recipient-pet.test', { currentAccount: true, serverFeatures: petFeatures,
-            handleRequest: async path => path === '/v1/features/authenticated' ? Response.json(petFeatures)
-                : path === '/v2/account/session-drafts/read' ? Response.json({ status: 'absent' }) : null });
+            handleRequest: async path => {
+                if (path === '/v1/features/authenticated') return Response.json(petFeatures);
+                if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'absent' });
+                if (path === '/v1/account/pets') return Response.json({ ok: true, pets: kind === 'package' ? [heldPet] : [] });
+                if (path === '/v1/account/pets/my-capy/spritesheet') return new Response(bytes, { headers: { 'Content-Type': 'image/webp' } });
+                return null;
+            } });
         storage.setState({ isSessionDraftsReady: true });
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'pets.companion': true, 'pets.sync': true } });
+        storage.getState().applyAccountPets(kind === 'package' ? [heldPet] : []);
         const release = BotTemplateReleaseV1Schema.parse({ v: 1, version: '1.0.0', releasedAtMs: 1, changelog: '',
             content: { v: 1, identity: { name: 'Garden', description: 'Garden advice', face: { seed: 'fallback' } },
-                pet: { name: 'Capy', source: { kind: 'registry', sourceId: 'codex-pets', itemId: 'capy' } },
+                pet: { name: 'Capy', source: kind === 'package' ? { kind, package: pkg } : { kind, sourceId: 'codex-pets', itemId: 'capy' } },
                 instructions: { markdown: 'Grow herbs' }, skills: [], memoryRules: [],
                 needs: { software: [], connectedAccounts: [], mcpServers: [] } } });
         const artifact = { v: 1 as const, state: 'released' as const, release };
@@ -366,6 +386,13 @@ describe('recipient template page', () => {
         // Selected by default: the copy wears the pet, so "Your copy" shows it rather than the face chooser.
         expect(petSwitch().props.value).toBe(true);
         expect(screen.findByTestId('bot-template-copy-pet-face')).not.toBeNull();
+        if (kind === 'package') {
+            await vi.waitFor(() => {
+                expect(home?.requests.some(request => request.path === '/v1/account/pets/my-capy/spritesheet')).toBe(true);
+                const face = screen.findAllByType(BotFacePet).find(node => node.props.testID === 'bot-template-copy-pet-face');
+                expect(face?.props.spritesheetSource).toBe('data:image/webp;base64,AQID');
+            });
+        }
         expect(screen.root.findAllByType(NewBotDraftFace)).toHaveLength(0);
         await act(async () => { petSwitch().props.onValueChange(false); });
         expect(petSwitch().props.value).toBe(false);

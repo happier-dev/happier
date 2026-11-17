@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '../actions/actionIdsPetsV1.js';
-import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from './constants.js';
+import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from './constants.js';
 import type { AccountPetLibraryEntryV1 } from './accountLibrary.js';
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 import { projectSettledApprovalExecution } from '../actions/executor/approvalResults.js';
@@ -19,6 +19,35 @@ describe('pet import confirmation projection', () => {
     expect(PetImportInputV1Schema.parse({ source })).toEqual({ source });
     expect(PetImportInputV1Schema.safeParse({ source: { kind: 'registry', sourceId: 'catalog', itemId: 'capy',
       spritesheetUrl: 'https://unexpected.test/pet' } }).success).toBe(false);
+  });
+
+  it('accepts registry identities only as references through portable templates and the import Action', async () => {
+    const { buildAccountPetCreateRequestV1, PetImportInputV1Schema, PetPortableImportSourceV1Schema } = await import('./importActionV1.js');
+    const origin = { kind: 'registry', sourceId: 'catalog', itemId: 'capy' } as const;
+    const bundled = { kind: 'package', package: buildAccountPetCreateRequestV1({
+      manifest, origin, mediaType: 'image/webp', spritesheetBytes: Uint8Array.of(1, 2, 3),
+    }) };
+    expect(PetPortableImportSourceV1Schema.safeParse(origin).success).toBe(true);
+    expect(PetImportInputV1Schema.safeParse({ source: origin }).success).toBe(true);
+    expect.soft(PetPortableImportSourceV1Schema.safeParse(bundled).success).toBe(false);
+    expect.soft(PetImportInputV1Schema.safeParse({ source: bundled }).success).toBe(false);
+  });
+
+  it('accepts the canonical sheet byte limit and refuses one byte over even with an in-range declared size', async () => {
+    const { PetImportInputV1Schema, PetPortableImportSourceV1Schema } = await import('./importActionV1.js');
+    const limit = PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes;
+    const bundle = (bytes: number) => ({
+      kind: 'package',
+      package: { manifest, origin: { kind: 'manualImport' }, spritesheet: {
+        mediaType: 'image/webp', encoding: 'base64', data: Buffer.alloc(bytes).toString('base64'), sizeBytes: limit, digest: 'sha256:a',
+      } },
+    });
+    const atLimit = bundle(limit);
+    const tooLarge = bundle(limit + 1);
+    expect(PetPortableImportSourceV1Schema.safeParse(atLimit).success).toBe(true);
+    expect(PetImportInputV1Schema.safeParse({ source: atLimit }).success).toBe(true);
+    expect.soft(PetPortableImportSourceV1Schema.safeParse(tooLarge).success).toBe(false);
+    expect.soft(PetImportInputV1Schema.safeParse({ source: tooLarge }).success).toBe(false);
   });
 
   it('projects one set of import outcomes and derives Undo from the Account identity', async () => {

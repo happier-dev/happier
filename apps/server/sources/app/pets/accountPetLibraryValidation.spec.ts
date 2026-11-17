@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { validateAccountPetCreateRequest } from "./accountPetLibraryValidation";
 
@@ -182,6 +182,22 @@ describe("validateAccountPetCreateRequest", () => {
         }));
     });
 
+    it("refuses an oversize encoded sheet before allocating decoded bytes", async () => {
+        const bytes = Uint8Array.from([...WEBP_BYTES, 0]);
+        const request = requestFor(bytes, { sizeBytes: WEBP_BYTES.byteLength });
+        const decode = vi.spyOn(Buffer, "from");
+        try {
+            const result = await validateAccountPetCreateRequest(request, {
+                maxSpritesheetBytes: WEBP_BYTES.byteLength,
+            });
+            expect(result).toMatchObject({ ok: false, errorCode: "invalid_request" });
+            // Buffer.from is Node's base64 decode and allocation boundary.
+            expect(decode).not.toHaveBeenCalledWith(request.spritesheet.data, "base64");
+        } finally {
+            decode.mockRestore();
+        }
+    });
+
     it("rejects packages that exceed the configured canonical package byte limit", async () => {
         const result = await validateAccountPetCreateRequest(requestFor(WEBP_BYTES), {
             maxPackageBytes: WEBP_BYTES.byteLength,
@@ -213,6 +229,17 @@ describe("validateAccountPetCreateRequest", () => {
             ok: false,
             errorCode: "invalid_request",
         }));
+    });
+
+    it("rejects a client storage key inside an otherwise valid registry origin", async () => {
+        const result = await validateAccountPetCreateRequest({
+            ...requestFor(WEBP_BYTES),
+            origin: { kind: "registry", sourceId: "catalog", itemId: "blink", storageKey: "client-chosen" },
+        }, {
+            inspectAtlas: async () => ({ width: 1536, height: 1872, hasAlpha: true }),
+        });
+
+        expect(result).toMatchObject({ ok: false, errorCode: "invalid_request" });
     });
 
     it("rejects local path metadata from symlink-derived imports", async () => {

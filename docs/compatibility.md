@@ -40,11 +40,14 @@ transport; the adapters alone do not establish that availability.
 Bot faces accept an optional Account pet reference while retaining their seeded
 style. Registry references additionally carry portable origin and display name;
 shared viewers match that origin against their own library rather than another
-Account's pet id. Template `content.pet` carries a registry reference or the
-existing Account create package envelope, while `identity.face` carries the
-seeded fallback. Copy optionally imports through `pet.import`, deduplicates by
-registry origin or package digest, and rewrites the newborn face to the recipient
-entry. Typed import failure preserves Copy with the fallback face. Reused entries
+Account's pet id. Template `content.pet` carries registry pets by reference and
+other pets in the existing Account create package envelope. The portable template
+and `pet.import` schemas share the canonical spritesheet byte limit for bundled
+packages. The recipient preview uses the package digest to draw an existing
+library copy when available. `identity.face` carries the seeded fallback.
+Copy optionally imports through `pet.import`, deduplicates by registry origin or
+package digest, and rewrites the newborn face to the recipient entry. Typed
+import failure preserves Copy with the fallback face. Reused entries
 have no delete Undo. Created pets on shared sessions retain the seeded fallback
 without session-wide bytes. Matching development writers and strict readers
 reload together; existing faces and templates without pets remain unchanged.

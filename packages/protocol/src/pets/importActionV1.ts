@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { encodeBase64 } from '../crypto/base64.js';
 import { computeSha256HexDigest } from '../crypto/canonicalDigest.js';
 import { AccountPetCreateRequestV1Schema, AccountPetDeleteRequestV1Schema, AccountPetLibraryEntryV1Schema, type AccountPetCreateRequestV1 } from './accountLibrary.js';
+import { PET_PACKAGE_LIMITS_V1 } from './constants.js';
 import { PetRegistryOriginV1Schema } from './portablePetV1.js';
 import { DaemonPetImportAccountPackageRequestV1Schema, DaemonPetValidatePackageResponseV1Schema, PetPackageValidationResultV1Schema, hasPetPackageLocatorV1 } from './daemonRpc.js';
 import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '../actions/actionIdsPetsV1.js';
@@ -11,7 +12,18 @@ import type { ApprovalExecutionV2 } from '../approvals/approvalRequestV1.js';
 /** Portable sources carry either registry identity or the Account create owner's package envelope. */
 export const PetPortableImportSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PetRegistryOriginV1Schema,
-  z.strictObject({ kind: z.literal('package'), package: AccountPetCreateRequestV1Schema }),
+  z.strictObject({ kind: z.literal('package'), package: AccountPetCreateRequestV1Schema }).check(
+    z.refine(source => source.package.origin.kind !== 'registry', {
+      path: ['package', 'origin'],
+      message: 'Registry pets must use a registry reference',
+    }),
+    z.refine(source => {
+      const { data } = source.package.spritesheet;
+      // At the limit, padded base64 can use the same number of characters as a larger sheet.
+      const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+      return Math.floor((data.length - padding) * 3 / 4) <= PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes;
+    }, { path: ['package', 'spritesheet', 'data'], message: 'Bundled spritesheet exceeds the byte limit' }),
+  ),
 ]));
 export type PetPortableImportSourceV1 = z.infer<typeof PetPortableImportSourceV1Schema>;
 

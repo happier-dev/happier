@@ -52,7 +52,6 @@ const SPRITESHEET_KEYS = new Set(Object.keys(AccountPetCreateRequestV1Schema.def
 const ORIGIN_KEYS_BY_KIND: ReadonlyMap<string, ReadonlySet<string>> = new Map(AccountPetOriginV1Schema.def.options.map(schema => [
     schema.def.shape.kind.def.values[0], new Set(Object.keys(schema.def.shape)),
 ]));
-const BLOCKED_CLIENT_STORAGE_KEYS = new Set(["objectKey", "storageKey", "path", "packagePath", "filename"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -61,11 +60,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasUnexpectedKeys(value: unknown, allowedKeys: ReadonlySet<string>): boolean {
     if (!isRecord(value)) return true;
     return Object.keys(value).some((key) => !allowedKeys.has(key));
-}
-
-function hasBlockedClientStorageKeys(value: unknown): boolean {
-    if (!isRecord(value)) return false;
-    return Object.keys(value).some((key) => BLOCKED_CLIENT_STORAGE_KEYS.has(key));
 }
 
 function hasUnexpectedOriginKeys(value: unknown): boolean {
@@ -88,11 +82,10 @@ function isSafeManifestSpritesheetPath(path: string): boolean {
 
 function decodeStrictBase64(value: string): Uint8Array | null {
     try {
-        const normalized = value.trim();
-        const bytes = Buffer.from(normalized, "base64");
+        const bytes = Buffer.from(value, "base64");
         if (bytes.byteLength === 0) return null;
         const canonical = bytes.toString("base64").replace(/=+$/, "");
-        const provided = normalized.replace(/=+$/, "");
+        const provided = value.replace(/=+$/, "");
         if (canonical !== provided) return null;
         return new Uint8Array(bytes);
     } catch {
@@ -168,13 +161,10 @@ export async function validateAccountPetCreateRequest(
 ): Promise<AccountPetCreateValidationResult> {
     if (
         hasUnexpectedKeys(rawRequest, TOP_LEVEL_KEYS)
-        || hasBlockedClientStorageKeys(rawRequest)
         || !isRecord(rawRequest)
         || hasUnexpectedKeys(rawRequest.manifest, MANIFEST_KEYS)
         || hasUnexpectedKeys(rawRequest.spritesheet, SPRITESHEET_KEYS)
-        || hasBlockedClientStorageKeys(rawRequest.spritesheet)
         || hasUnexpectedOriginKeys(rawRequest.origin)
-        || hasBlockedClientStorageKeys(rawRequest.origin)
     ) {
         return INVALID_RESULT;
     }
@@ -201,7 +191,13 @@ export async function validateAccountPetCreateRequest(
         return INVALID_RESULT;
     }
 
-    const bytes = decodeStrictBase64(spritesheet.data);
+    const encoded = spritesheet.data.trim();
+    // Use the encoded payload to verify the size claim before allocating decoded bytes.
+    if (Buffer.byteLength(encoded, "base64") !== spritesheet.sizeBytes) {
+        return INVALID_RESULT;
+    }
+
+    const bytes = decodeStrictBase64(encoded);
     if (!bytes || bytes.byteLength !== spritesheet.sizeBytes) {
         return INVALID_RESULT;
     }
