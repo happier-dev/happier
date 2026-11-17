@@ -12,10 +12,20 @@ import { fileSha256 } from './lib/release-files.mjs';
 import { execFileSyncPortable } from '../lib/exec-file-sync-portable.mjs';
 import { downloadReleaseAssetWithRetry } from '../github/lib/release-asset-transfer.mjs';
 import { BUNDLE_CANDIDATE_PLATFORMS } from '../tauri/bundle-candidate.mjs';
+import { resolveImmutableCandidateIdentity } from './lib/immutable-release-candidate.mjs';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const RESUMABLE_PRODUCTS = new Set(['cli', 'stack', 'server', 'ui-web']);
+/** @param {unknown} surfaceId */
+const immutableProduct = (surfaceId) => [...RESUMABLE_PRODUCTS].find(
+  product => surfaceId === `${product === 'stack' ? 'hstack' : product}-immutable-candidate`,
+);
+
+// Older status artifacts dropped product/version when publication succeeded but verification failed.
+/** @param {{ requested?: unknown; state?: unknown; result?: unknown; id?: unknown; identity?: { version?: unknown } }} surface */
+const legacyPublishedCandidate = (surface) => surface?.requested === true && surface.state === 'partial'
+  && surface.result === 'success' && immutableProduct(surface.id) && !surface.identity?.version;
 const RESUMABLE_REQUESTED_SURFACES = new Map([
   ['deploy_docs', 'deployDocs'],
   ['deploy_server', 'deployServer'],
@@ -287,6 +297,8 @@ export function inspectReleaseResumeOrigin(input) {
  *   downloadedDigest: string;
  *   status: unknown;
  *   jobs?: unknown;
+ *   publishedReleases?: Array<{ tag_name: string; draft: boolean }>;
+ *   tagRefs?: Array<{ ref: string; object: { type: string; sha: string } }>;
  *   expected: { repository: string; workflowPath: string; channel: string; sourceSha?: string; operationId?: string; statusArtifactName?: string };
  * }} input
  */
@@ -423,16 +435,22 @@ export function resolveReleaseResume(input) {
         completed[typedRequestKey] = true;
       }
     }
-    if (surface.state !== 'complete' || surface.result !== 'success') continue;
+    const publishedPartial = surface.requested === true && surface.state === 'partial'
+      && surface.result === 'success' && immutableProduct(surfaceId);
+    if (!publishedPartial && (surface.state !== 'complete' || surface.result !== 'success')) continue;
+    if (publishedPartial) asRecord(surface.identity, `published ${publishedPartial} candidate identity`);
     if (!surface.identity || typeof surface.identity !== 'object' || Array.isArray(surface.identity)) continue;
     const identity = /** @type {Record<string, unknown>} */ (surface.identity);
-    if (!Object.hasOwn(identity, 'product')) continue;
-    const rawProduct = requiredString(identity.product, `resume status surface ${index} product`);
+    if (!Object.hasOwn(identity, 'product') && !publishedPartial) continue;
+    const rawProduct = requiredString(identity.product ?? publishedPartial, `resume status surface ${index} product`);
     const product = rawProduct === 'hstack' ? 'stack' : rawProduct;
     if (!RESUMABLE_PRODUCTS.has(product)) {
       throw new Error(`[release] unsupported resumable product: ${rawProduct}`);
     }
-    if (identity.verified !== true) {
+    if (publishedPartial && product !== publishedPartial) {
+      throw new Error('[release] published candidate product does not match its surface');
+    }
+    if (identity.verified !== true && !(publishedPartial && identity.verified === false)) {
       throw new Error(`[release] resumable ${product} candidate is not owner-verified`);
     }
     if (requiredSha(identity.sourceSha, `resumable ${product} source SHA`) !== statusSourceSha) {
@@ -441,8 +459,23 @@ export function resolveReleaseResume(input) {
     if (versions[/** @type {'cli' | 'stack' | 'server' | 'ui-web'} */ (product)]) {
       throw new Error(`[release] duplicate resumable ${product} candidate`);
     }
+    let version = identity.version;
+    if (legacyPublishedCandidate(surface)) {
+      const matches = (input.publishedReleases ?? []).filter(release => {
+        if (release.draft !== false) return false;
+        const candidateVersion = release.tag_name.split('-v').at(-1) ?? '';
+        try {
+          validateCandidateVersions({ channel: input.expected.channel, versions: { [product]: candidateVersion } });
+          if (resolveImmutableCandidateIdentity({ product, version: candidateVersion }).sourceTag !== release.tag_name) return false;
+        } catch { return false; }
+        return (input.tagRefs ?? []).some(tag => tag.ref === `refs/tags/${release.tag_name}`
+          && tag.object.type === 'commit' && tag.object.sha === statusSourceSha);
+      });
+      if (matches.length !== 1) throw new Error(`[release] cannot recover a unique published ${product} candidate at the release source SHA`);
+      version = matches[0].tag_name.split('-v').at(-1);
+    }
     versions[/** @type {'cli' | 'stack' | 'server' | 'ui-web'} */ (product)] = requiredString(
-      identity.version,
+      version,
       `resumable ${product} version`,
     );
   }
@@ -542,11 +575,24 @@ export async function main(argv = process.argv.slice(2)) {
     return inspected;
   }
   if (mode === 'resolve') {
+    const status = await readJson(String(values['status-json'] ?? ''));
+    let legacyEvidence = {};
+    if (Array.isArray(status?.surfaces) && status.surfaces.some(legacyPublishedCandidate)) {
+      const api = (path, query) => execFileSyncPortable('gh', ['api', '--paginate',
+        `repos/${expected.repository}/${path}`, '--jq', `${query} | @json`], { encoding: 'utf8' })
+        .trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+      const sourceSha = requiredSha(status.sourceSha, 'resume status source SHA');
+      legacyEvidence = {
+        publishedReleases: api('releases?per_page=100', '.[] | {tag_name, draft}'),
+        tagRefs: api('git/matching-refs/tags/', `.[] | select(.object.type == "commit" and .object.sha == "${sourceSha}") | {ref, object: {type: .object.type, sha: .object.sha}}`),
+      };
+    }
     const resolved = resolveReleaseResume({
       originRun,
       artifacts,
       downloadedDigest: String(values['downloaded-digest'] ?? ''),
-      status: await readJson(String(values['status-json'] ?? '')),
+      status,
+      ...legacyEvidence,
       jobs: values['jobs-json'] ? await readJson(values['jobs-json']) : undefined,
       expected,
     });

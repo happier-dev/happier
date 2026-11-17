@@ -501,8 +501,10 @@ prune local branch, remote-tracking, or tag refs.
 
 When a hosted run fails, use native failed-job rerun if workflow code and
 candidate bytes are unchanged. If workflow control changed, resume the failed
-operation through `hmaint release resume`; a new attempt may reuse only
-individually verified immutable candidates from the exact prior run. Any
+operation through `hmaint release resume`; a new attempt reuses exact published
+immutable candidates from the prior run, including candidates whose verification
+failed. Reuse skips rebuilding and signing;
+the candidate verification jobs still run before promotion. Any
 release-output-affecting source change requires new release outputs.
 
 Use this decision table instead of restarting the full graph:
@@ -511,6 +513,8 @@ Use this decision table instead of restarting the full graph:
 | --- | --- |
 | Same control SHA; transient runner, download, read-only API, or safely recoverable external failure | `gh run rerun <run-id> --failed` |
 | Corrected workflow control, tests, or validation; unchanged candidate bytes; terminal origin with verified candidates | `hmaint release resume` from the richest valid origin |
+| Published immutable candidate; verification failed; unchanged candidate bytes | `hmaint release resume` binds the published version and re-verifies existing bytes without rebuilding |
+| Legacy status omitted the published candidate version | Resume resolves a unique public product/channel release whose lightweight tag points to the exact authorized source SHA; missing or ambiguous identity fails closed |
 | Changed source, package/build dependency, signing input, or immutable candidate bytes | Prepare a fresh release |
 | Ambiguous publication mutation | Inspect the canonical remote state, then use the owning recovery-aware job; never blind-retry |
 
