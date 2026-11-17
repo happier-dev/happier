@@ -21,6 +21,8 @@ import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/se
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { describeAgentReadinessCause } from '@/components/sessions/model/sessionReadinessPresentation';
 import { readSessionModelTransitionFailureStatus } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { readHappierActionToolPayload } from '@happier-dev/protocol/actions/happierActionToolResult';
 
 /** Closed spawn refusals retain the same availability vocabulary as the Machine inventory. */
 export function readSessionAgentAvailabilityFailure(code: unknown): 'needsSignIn' | 'notInstalled' | null {
@@ -195,6 +197,22 @@ export function presentExecutionRunFailure(error: Readonly<{ code: string; runti
         reset: null,
         recovery: null,
     };
+}
+
+/**
+ * The sentence for a failed Run's own result (a SubAgentRun marker that settled `failed` with a typed
+ * error): the same words as the Run's failure, never the executor's raw text, which can carry SDK
+ * output and local paths. Null when the result is not a typed failure.
+ */
+export function presentExecutionRunResultFailure(result: unknown): string | null {
+    const payload = readHappierActionToolPayload(result);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+    const record = payload as Record<string, unknown>;
+    if (record.status !== 'failed') return null;
+    const error = ExecutionRunErrorSchema.safeParse(record.error);
+    if (!error.success) return null;
+    const presented = presentExecutionRunFailure(error.data);
+    return presented ? [presented.message, presented.reset].filter(Boolean).join(' · ') : null;
 }
 
 /** The one next step for queued input whose Session's Agent account refused it; both reuse existing recovery owners. */

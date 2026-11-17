@@ -17,6 +17,14 @@ import { t } from '@/text';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { resolveExecutionRunVisibleMessages } from '@/sync/domains/session/subagents/visibleMessages/resolveSessionSubagentVisibleMessages';
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
+import { presentExecutionRunResultFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { resolveToolActionFailure } from '../../shell/presentation/resolveToolActionFailure';
+
+/** A failed Run's sentence: a typed cause the tool vocabulary names in words, else the Run failure's words. */
+function presentRunFailure(tool: ToolViewProps['tool']): string | null {
+    const failure = presentExecutionRunResultFailure(tool.result);
+    return failure === null ? null : resolveToolActionFailure(tool)?.summary ?? failure;
+}
 
 
 type FindingsDigest = Readonly<{
@@ -82,7 +90,10 @@ export const projectSubAgentRunDisplayText: ToolDisplayTextProjector = (tool, _m
     if (shouldRenderInterruptedSidechain(tool, messages)) {
         return projectSubAgentSummaryDisplayText({ ...tool, state: 'running', result: null }, null, visibleContext);
     }
-    if (tool.state === 'error') return projectStructuredResultDisplayText({ ...tool, state: 'completed' });
+    if (tool.state === 'error') {
+        const failure = presentRunFailure(tool);
+        return failure ? toolTextBlock('tool-run-failure', failure) : projectStructuredResultDisplayText({ ...tool, state: 'completed' });
+    }
     if (tool.state !== 'completed' || !tool.result) return [];
     const digest = getFindingsDigest(tool.result);
     if (digest) return [
@@ -144,6 +155,9 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages: rawM
     }
 
     if (tool.state === 'error') {
+        // A failed Run says its cause in the Run's words; the raw executor text stays in the debug record.
+        const failure = presentRunFailure(tool);
+        if (failure) return <ToolFindText messageId={messageId} blockId="tool-run-failure" text={failure} style={styles.failure} />;
         if (tool.result) {
             return (
                 <StructuredResultView
@@ -207,6 +221,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.variant('meta', 'semiBold'),
+        color: theme.colors.text.secondary,
+    },
+    failure: {
+        ...Typography.variant('body'),
         color: theme.colors.text.secondary,
     },
     line: {

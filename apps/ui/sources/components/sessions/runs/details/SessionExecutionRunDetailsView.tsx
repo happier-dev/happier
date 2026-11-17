@@ -100,7 +100,7 @@ import { hasBrowserContextComposerAttachments } from '@/sync/domains/session/inp
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentExecutionRunFailure, presentExecutionRunResultFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { confirmSessionDelete } from '@/components/sessions/actions/confirmSessionDelete';
 import { Modal } from '@/modal';
@@ -871,6 +871,9 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     // A failed Run says its typed cause the same way a failed turn does: one line and its account action.
     const runError = failedTurn?.error ?? (state.status === 'loaded' && state.run.status === 'failed' ? state.run.error : undefined);
     const turnIssue = runError?.runtimeIssueV1;
+    // A failed Run whose transcript page already says its failure (the SubAgentRun marker) says it once there.
+    const transcriptStatesFailure = failedTurn === null && transcriptMessage?.kind === 'tool-call'
+        && presentExecutionRunResultFailure(transcriptMessage.tool?.result) !== null;
     const turnFailure = presentExecutionRunFailure(runError);
     // The failure text a Run also returned as its latest result is that failure, already said above.
     const latestResultIsFailure = turnIssue !== undefined && state.status === 'loaded' && typeof state.latestToolResult === 'string'
@@ -960,7 +963,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                         {fallbackReason}
                     </Text>
                 ) : null}
-                {turnFailure ? <Text testID="session-run-details-turn-failure" accessibilityRole="alert" style={{ color: theme.colors.text.secondary }}>
+                {turnFailure && !transcriptStatesFailure ? <Text testID="session-run-details-turn-failure" accessibilityRole="alert" style={{ color: theme.colors.text.secondary }}>
                     {[turnFailure.message, turnFailure.reset].filter(Boolean).join(' · ')}
                 </Text> : null}
                 {turnFailure?.recovery ? <RoundButton testID="session-run-details-turn-failure-action" size="small" display="default"

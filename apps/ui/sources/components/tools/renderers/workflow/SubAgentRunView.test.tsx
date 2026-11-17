@@ -233,7 +233,7 @@ describe('SubAgentRunView', () => {
         expect(text).toContain('Delegated output.');
     });
 
-    it('renders structured fallback for error state when result payload exists', async () => {
+    it('says a failed Run with an untranslated code in the Run\'s words', async () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<SubAgentRunView
                     tool={{
@@ -245,7 +245,23 @@ describe('SubAgentRunView', () => {
                     messages={[] as any}
                 />)).tree;
 
-        expect(collectHostText(tree).join(' ')).toContain('Execution failed while reviewing');
+        // A failed Run says its cause in the Run's words; the executor's raw text is not the page.
+        expect(collectHostText(tree).join(' ')).toContain('errors.errorWithCode');
+        expect(collectHostText(tree).join(' ')).not.toContain('Execution failed while reviewing');
+    });
+
+    it('never shows a failed Run\'s raw SDK text or a local path', async () => {
+        const raw = 'Claude Agent SDK process exited before emitting a result (exitCode=1): Error: Invalid MCP configuration:\nMCP config file not found: /tmp/happier-1000/happier-claude-mcp-config-HhARAc/payload.json';
+        const screen = await renderScreen(<SubAgentRunView tool={{
+            name: 'SubAgentRun', state: 'error', input: { runId: 'run_1', intent: 'delegate' },
+            createdAt: 1, startedAt: 1, completedAt: 2, description: null,
+            result: { status: 'failed', summary: raw, runId: 'run_1', callId: 'call_1', sidechainId: 'call_1',
+                error: { code: 'claude_send_rejected', message: raw } },
+        }} metadata={null} messages={[]} />);
+        const text = screen.getTextContent();
+        expect(text).toContain('errors.errorWithCode');
+        expect(text).not.toContain('/tmp/');
+        expect(text).not.toContain('Claude Agent SDK');
     });
 
     it('presents the typed host failure in words while keeping raw diagnostics out of the result body', async () => {
