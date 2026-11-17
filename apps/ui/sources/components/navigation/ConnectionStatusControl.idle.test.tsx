@@ -60,7 +60,7 @@ describe('ConnectionStatusControl closed idle', () => {
 
         await act(async () => {
             storage.getState().applyMachines([{ ...machine, activeAt: now + 20_000, updatedAt: now + 20_000, daemonStateVersion: 2,
-                daemonState: { status: 'running', managedActivity: { kind: 'idle', since: now + 20_000 } } }], false,
+                daemonState: { status: 'running' } }], false,
             { sourceServerId: homeId, sourceAccountId: 'studio-account' });
         });
         expect(commits).toBe(settled);

@@ -122,8 +122,8 @@ export function areMachineLaunchInputsEqual(previous: Machine, next: Machine): b
 
 /**
  * Machine facts without the live daemon resource channel: heartbeat clocks and every content field still count,
- * while a publication that advances only `daemonStateVersion`/`seq`, `daemonState.resources` or
- * `daemonState.managedActivity` (resource samples, guard and managed activity) is equal.
+ * while a publication that advances only `daemonStateVersion`/`seq` or `daemonState.resources` (resource samples
+ * and guard) is equal.
  */
 export function areMachineFactsEqual(previous: Machine, next: Machine): boolean {
     return areStoredMachineValuesEqual(previous, next, true, false)
@@ -143,8 +143,8 @@ function areDaemonLaunchInputsEqual(previous: unknown, next: unknown): boolean {
     const left = readDaemonState(previous);
     const right = readDaemonState(next);
     if (!left || !right) return areSessionValuesDeepEqual(previous ?? null, next ?? null);
-    const keys = Object.keys(left).filter(key => key !== 'resources' && key !== 'managedActivity');
-    return keys.length === Object.keys(right).filter(key => key !== 'resources' && key !== 'managedActivity').length
+    const keys = Object.keys(left).filter(key => key !== 'resources');
+    return keys.length === Object.keys(right).filter(key => key !== 'resources').length
         && keys.every(key => Object.hasOwn(right, key) && areSessionValuesDeepEqual(left[key], right[key]));
 }
 

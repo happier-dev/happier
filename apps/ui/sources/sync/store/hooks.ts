@@ -2557,7 +2557,7 @@ export function useMachineRecordListsByServerId(enabled = true): Record<string, 
 /**
  * Visible server-scoped Machine lists (tombstones removed). Rows have facts semantics: a row keeps its identity
  * across publications that change only the daemon resource channel (`areMachineFactsEqual`), so a held row's
- * `daemonStateVersion`, `seq`, `resources` and `managedActivity` can be older than the store's. `launch` keeps
+ * `daemonStateVersion`, `seq` and `resources` can be older than the store's. `launch` keeps
  * launch inputs instead (`areMachineLaunchInputsEqual`). Readers of the live daemon version or resources read the
  * raw records (`useMachineRecordListsByServerId`, `useMachine`) or their own resource hooks.
  * `presented: false` holds the last presented lists while a retained surface is hidden.

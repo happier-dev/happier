@@ -152,14 +152,13 @@ describe('machine inventory reference stability through the real store', () => {
             activeAt: now,
             metadata: { ...machine(`field-${index}`).metadata!, agentInventory: { checkedAt: 1, installedAgentIds: ['codex'] } },
             daemonStateVersion: 1,
-            daemonState: { status: 'running', resources: { activeSessions: 1 }, managedActivity: { kind: 'idle', since: 1 } },
+            daemonState: { status: 'running', resources: { activeSessions: 1 } },
         }));
         store.getState().applyMachines(rows, true);
-        const renders = { inventory: 0, resources: 0, activity: 0, other: 0 };
+        const renders = { inventory: 0, resources: 0, other: 0 };
         const hooks = [
             await renderHook(() => { renders.inventory++; return useStore(store, state => state.machines['field-0'].metadata?.agentInventory); }),
             await renderHook(() => { renders.resources++; return useStore(store, state => state.machines['field-0'].daemonState?.resources); }),
-            await renderHook(() => { renders.activity++; return useStore(store, state => state.machines['field-0'].daemonState?.managedActivity); }),
             await renderHook(() => { renders.other++; return useStore(store, state => state.machines['field-127'].metadata?.agentInventory); }),
         ];
         const root = vi.fn();
@@ -178,9 +177,8 @@ describe('machine inventory reference stability through the real store', () => {
                 store.getState().applyMachines([changed]);
             });
             expect(root).toHaveBeenCalledTimes(1);
-            expect(renders).toEqual({ inventory: 0, resources: 1, activity: 0, other: 0 });
+            expect(renders).toEqual({ inventory: 0, resources: 1, other: 0 });
             expect(store.getState().machines['field-0'].metadata).toBe(before.machines['field-0'].metadata);
-            expect(store.getState().machines['field-0'].daemonState.managedActivity).toBe(before.machines['field-0'].daemonState.managedActivity);
             expect(store.getState().machines['field-127']).toBe(before.machines['field-127']);
             await act(async () => {
                 const changed = structuredClone(store.getState().machines['field-0']);
@@ -189,12 +187,12 @@ describe('machine inventory reference stability through the real store', () => {
                 store.getState().applyMachines([changed]);
                 store.getState().applyMachineActivityUpdates([{ id: changed.id, active: true, activeAt: now + 1 }]);
             });
-            expect(renders).toEqual({ inventory: 1, resources: 1, activity: 0, other: 0 });
+            expect(renders).toEqual({ inventory: 1, resources: 1, other: 0 });
             root.mockClear();
             vi.useFakeTimers();
             await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
             expect(root).not.toHaveBeenCalled();
-            expect(renders).toEqual({ inventory: 1, resources: 1, activity: 0, other: 0 });
+            expect(renders).toEqual({ inventory: 1, resources: 1, other: 0 });
         } finally {
             vi.useRealTimers();
             stop();
@@ -208,7 +206,7 @@ describe('machine inventory reference stability through the real store', () => {
         const options = { sourceServerId };
         const initial = machine('managed', { activeAt: Date.now(), storageMode: 'plain',
             keyBasis: { dataEncryptionKey: null, metadataVersion: 1, daemonStateVersion: 1 },
-            daemonStateVersion: 1, daemonState: { status: 'running', managedActivity: { kind: 'idle', since: 1 } } });
+            daemonStateVersion: 1, daemonState: { status: 'running' } });
         store.getState().applyMachines([initial], true, options);
         const before = store.getState();
         const receipt = vi.fn();

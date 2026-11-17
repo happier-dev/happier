@@ -117,7 +117,7 @@ describe('useAllMachines', () => {
                 clock.mockReturnValue(at);
                 latest = { ...latest, seq: latest.seq + 1, daemonStateVersion: tick + 1, activeAt: at, updatedAt: at,
                     keyBasis: { ...latest.keyBasis!, daemonStateVersion: tick + 1 },
-                    daemonState: { ...latest.daemonState, managedActivity: { kind: 'idle', since: tick }, resources: MachinePublishedResourceSummaryV1Schema.parse({
+                    daemonState: { ...latest.daemonState, resources: MachinePublishedResourceSummaryV1Schema.parse({
                         v: 1, vitals: { state: 'unavailable', since: tick, reason: 'reader_failed' }, attention: { level: 'calm', reasons: [] },
                     }) } };
                 await act(async () => storage.getState().applyMachines([latest], false, { sourceServerId: serverId }));

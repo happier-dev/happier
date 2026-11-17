@@ -454,7 +454,7 @@ describe('useMachine', () => {
     it('subscribes to the requested admitted field and retires it on locked content or removal', async () => {
         const row = createMachineFixture({ metadata: { ...createMachineFixture().metadata!,
             agentInventory: { checkedAt: 1, installedAgentIds: ['codex'] } },
-            daemonState: { status: 'running', managedActivity: { kind: 'idle', since: 1 } } });
+            daemonState: { status: 'running' } });
         storage.getState().applyMachines([row]);
         let renders = 0;
         const hook = await renderHook(() => {

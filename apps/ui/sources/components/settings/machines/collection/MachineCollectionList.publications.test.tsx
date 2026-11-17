@@ -26,7 +26,7 @@ const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/se
 
 afterEach(() => standardCleanup());
 
-// A busy Account's Machines publish daemon state all day (resource transitions, guard and managed activity). The
+// A busy Account's Machines publish daemon state all day (resource transitions and guard). The
 // Machines list column shows names, presence and each row's own summary; a publication that changes none of those
 // is not a reason to redraw the column or any row.
 it('keeps the Machines list column quiet for daemon publications it does not show', async () => {
@@ -57,20 +57,20 @@ it('keeps the Machines list column quiet for daemon publications it does not sho
     await waitForHomeGovernance(() => {
         expect(screen.getTextContent()).toContain('Busy');
     });
-    const publish = async (sample: number) => {
-        busy = { ...busy, daemonStateVersion: (busy.daemonStateVersion ?? 0) + 1,
-            daemonState: { ...(busy.daemonState ?? {}), managedActivity: { sampledAt: sample } } as unknown as Machine['daemonState'] };
+    // A daemon-only publication: the version advances while every fact the column shows stays equal.
+    const publish = async () => {
+        busy = { ...busy, daemonStateVersion: (busy.daemonStateVersion ?? 0) + 1 };
         await act(async () => storage.getState().applyMachines([busy], false, { sourceServerId: profileId }));
     };
     // Mount-time reads settle on the first publication; the steady state is what every later one costs.
-    await publish(0);
+    await publish();
     for (let quietTicks = 0, seen = -1; quietTicks < 3;) {
         seen = commits;
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); });
         quietTicks = commits === seen ? quietTicks + 1 : 0;
     }
     commits = 0;
-    for (let sample = 1; sample <= 4; sample++) await publish(sample);
+    for (let sample = 1; sample <= 4; sample++) await publish();
     expect(commits).toBe(0);
     // A real change still shows at once.
     await act(async () => storage.getState().applyMachines([{ ...busy, metadataVersion: busy.metadataVersion + 1,
