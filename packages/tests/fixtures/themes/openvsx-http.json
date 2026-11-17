@@ -1,0 +1,71 @@
+{
+  "basis": "Open VSX versioned HTTP detail captured 2026-11-16; public identities normalized, unrelated fields omitted; neutral two-face VSIX and its checksum substitute copyrighted package content. This is a normalized recording, not an unmodified response.",
+  "detail": {
+    "namespace": "fixture",
+    "name": "palette",
+    "version": "1.0.0",
+    "displayName": "Fixture palette",
+    "description": "Two neutral theme faces",
+    "license": "MIT",
+    "categories": [
+      "Themes"
+    ],
+    "files": {
+      "download": "https://open-vsx.org/api/fixture/palette/1.0.0/file/fixture.palette-1.0.0.vsix",
+      "sha256": "https://open-vsx.org/api/fixture/palette/1.0.0/file/fixture.palette-1.0.0.sha256",
+      "manifest": "https://open-vsx.org/api/fixture/palette/1.0.0/file/package.json"
+    },
+    "url": "https://open-vsx.org/api/fixture/palette/1.0.0"
+  },
+  "search": {
+    "extensions": [
+      {
+        "namespace": "fixture",
+        "name": "palette",
+        "version": "1.0.0",
+        "displayName": "Fixture palette",
+        "description": "Two neutral theme faces",
+        "license": "MIT",
+        "categories": [
+          "Themes"
+        ],
+        "files": {
+          "download": "https://open-vsx.org/api/fixture/palette/1.0.0/file/fixture.palette-1.0.0.vsix",
+          "sha256": "https://open-vsx.org/api/fixture/palette/1.0.0/file/fixture.palette-1.0.0.sha256",
+          "manifest": "https://open-vsx.org/api/fixture/palette/1.0.0/file/package.json"
+        },
+        "url": "https://open-vsx.org/api/fixture/palette/1.0.0"
+      }
+    ],
+    "offset": 0,
+    "totalSize": 1
+  },
+  "manifest": {
+    "name": "palette",
+    "publisher": "fixture",
+    "displayName": "Fixture palette",
+    "version": "1.0.0",
+    "license": "MIT",
+    "engines": {
+      "vscode": "^1.0.0"
+    },
+    "contributes": {
+      "themes": [
+        {
+          "id": "night",
+          "label": "Night",
+          "uiTheme": "vs-dark",
+          "path": "./themes/night.json"
+        },
+        {
+          "id": "day",
+          "label": "Day",
+          "uiTheme": "vs",
+          "path": "./themes/day.json"
+        }
+      ]
+    }
+  },
+  "packageBase64": "UEsDBBQAAAAIAHuUcF3STB0ruwAAAFYBAAAWAAAAZXh0ZW5zaW9uL3BhY2thZ2UuanNvbm2PsQ6CMBCGX4V0VsDV2Zg4yMRmNCn0hNNSSFuIhPDu9lpIJHG7fvf/X9uJKd4AO0as4xKsBbZzY19INDVo4k/82F57LtB0ko/Z0jiHTfTTHEAbbBVtD3Eap8QklqCMb1wvORFQFSowjkxsMGUr/PIRGrMLlK2yGoveLiFbQ+PH28RQUFhhVVtv5wVIItlKeswpTmwwe8H12/+J25pQnARZ4g3xy7jXuitXr+DjxnoK543zr84VF9l9nr9QSwMEFAAAAAgAe5RwXa8qqq1mAAAAhwAAABsAAABleHRlbnNpb24vdGhlbWVzL25pZ2h0Lmpzb25NyssOQDAQheFXkbEVcdk0lt5kOi2a0pFRCxHvTsXC8pzvPyHgYqHLILhxilBkEI/1PQyKT5t4Ztme5wRrXGQpNZIfhfdgUpfXqqkaldLPBxb7c/UEqk0+MO1bz2KsvIKoNRFc1w1QSwMEFAAAAAgAe5RwXd3x3qdlAAAAhgAAABkAAABleHRlbnNpb24vdGhlbWVzL2RheS5qc29uTcrLDkAwEIXhV5GxFQk2jaU3mU47iMvIqIWId6eNheX5v3PBiouHNgOHJxQZhHNLcx77IcRAMovub7rAuzGIlhZp6lWO1cVjzhXX3MTr5yzqf24qU5vkLHTsnajzmgTRWiK47wdQSwECFAMUAAAACAB7lHBd0kwdK7sAAABWAQAAFgAAAAAAAAAAAAAAgAEAAAAAZXh0ZW5zaW9uL3BhY2thZ2UuanNvblBLAQIUAxQAAAAIAHuUcF2vKqqtZgAAAIcAAAAbAAAAAAAAAAAAAACAAe8AAABleHRlbnNpb24vdGhlbWVzL25pZ2h0Lmpzb25QSwECFAMUAAAACAB7lHBd3fHep2UAAACGAAAAGQAAAAAAAAAAAAAAgAGOAQAAZXh0ZW5zaW9uL3RoZW1lcy9kYXkuanNvblBLBQYAAAAAAwADANQAAAAqAgAAAAA=",
+  "sha256": "977e71c21cbaa5055b5f166d98b4c89b753e590405c9faa75073fbf3452c003c"
+}
