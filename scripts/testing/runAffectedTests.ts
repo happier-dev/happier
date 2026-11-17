@@ -146,15 +146,16 @@ export async function selectAffectedTests(rootDir: string, changedFiles: readonl
   // The matrix starts a server and CLI/daemon processes; these shared owners are
   // loaded in those children, not imported by the test process.
   const runtimeChanges = changedFiles.filter(file => !/\.(test|spec)\.[cm]?[jt]sx?$/u.test(file));
-  const sharedAcp = runtimeChanges.some(file => [
-    'apps/cli/src/agent/acp/', 'apps/cli/src/daemon/', 'apps/cli/src/session/',
+  // cliLaunchSpec starts src/index.ts, which dynamically loads cli/bootstrap.
+  const sharedProcesses = runtimeChanges.some(file => file === 'apps/cli/src/index.ts' || [
+    'apps/cli/src/cli/', 'apps/cli/src/agent/acp/', 'apps/cli/src/daemon/', 'apps/cli/src/session/',
     'apps/server/sources/',
   ].some(prefix => file.startsWith(prefix)));
   for (const preset of STUB_PROVIDER_PRESET_IDS) {
     const fixture = `${TESTS_DIR}/fixtures/cli-backends/${preset}/`;
     const spec = JSON.parse(readFileSync(resolve(rootDir, fixture, 'e2e/providerSpec.json'), 'utf8')) as { traceProvider: string };
     const plugin = `packages/plugins/${spec.traceProvider}/src/agent/`;
-    const boundaryReached = sharedAcp || (preset === 'codex_acp_stub' && changedFiles.some(file => file.startsWith(`${TESTS_DIR}/fixtures/acp-stub-provider/`))) || runtimeChanges.some(file => file.startsWith(plugin) || file.startsWith(fixture));
+    const boundaryReached = sharedProcesses || (preset === 'codex_acp_stub' && changedFiles.some(file => file.startsWith(`${TESTS_DIR}/fixtures/acp-stub-provider/`))) || runtimeChanges.some(file => file.startsWith(plugin) || file.startsWith(fixture));
     if (!boundaryReached && !agentRelated.includes(MATRIX_FILE)) continue;
     const registry = JSON.parse(readFileSync(resolve(rootDir, fixture, 'e2e/providerScenarios.json'), 'utf8')) as { tiers: Record<'smoke' | 'extended', string[]> };
     for (const tier of ['smoke', 'extended'] as const) {

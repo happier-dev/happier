@@ -51,6 +51,10 @@ test('Cursor plugin change selects its stub scenarios and unrelated docs select 
     assert.deepEqual(selected.providerMatrix, [{ preset: 'cursor_acp_stub', tier: 'extended', scenarios: ['cursor_acp_stub_captured_lifecycle_replay'] }]);
     const removed = await selectAffectedTests(root, ['packages/plugins/cursor/src/agent/deleted-module.ts'], { journeysOnly: true });
     assert.deepEqual(removed.providerMatrix, selected.providerMatrix);
+    const dispatch = await selectAffectedTests(root, ['apps/cli/src/index.ts'], { journeysOnly: true });
+    assert.equal(dispatch.providerMatrix.length, 2);
+    const removedDispatch = await selectAffectedTests(root, ['apps/cli/src/cli/deleted-dispatch.ts'], { journeysOnly: true });
+    assert.deepEqual(removedDispatch.providerMatrix, dispatch.providerMatrix);
     const graph = await selectAffectedTests(root, ['packages/tests/src/catalog.ts'], { journeysOnly: true });
     assert.deepEqual(graph.agentFiles, ['packages/tests/suites/agents/agent.test.ts']);
     assert.equal(graph.providerMatrix.length, 2);
