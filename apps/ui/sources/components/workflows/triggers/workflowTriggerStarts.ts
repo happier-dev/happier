@@ -2,6 +2,7 @@ import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclaratio
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
 import type { AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -12,26 +13,21 @@ import { TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
 /**
- * What a saved trigger reads as. A run event is created from the run it follows and a Session's
- * pull-request trigger from that Session; the card lists them but does not author them.
+ * What a saved trigger reads as. A run event is created from the run it follows;
+ * pull-request triggers are authored with their Session context.
  */
 export type WorkflowTriggerStart = 'schedule' | 'pluginEvent' | 'sessionEvent' | 'runEvent' | 'sessionPullRequest' | 'action';
 
-/** A session that already exists cannot start again, so "A session starts" is not offered for a chosen Session. */
-export const WORKFLOW_SESSION_EVENT_KINDS = ['turnEnds', 'needsYou', 'sessionArchived'] as const;
-type SessionEventKind = (typeof WORKFLOW_SESSION_EVENT_KINDS)[number] | 'sessionStarts';
+type SessionEventKind = keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
+export const WORKFLOW_SESSION_EVENT_KINDS = Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1) as SessionEventKind[];
 
 export function readWorkflowTriggerStart(when: TriggerWhenValue): WorkflowTriggerStart {
+    if (isSessionLifecycleWhen(when)) return 'sessionEvent';
     switch (when.kind) {
         case 'schedule':
         case 'pluginEvent':
         case 'action':
             return when.kind;
-        case 'turnEnds':
-        case 'needsYou':
-        case 'sessionArchived':
-        case 'sessionStarts':
-            return 'sessionEvent';
         case 'prComment':
         case 'ciFailed':
             return 'sessionPullRequest';
@@ -131,6 +127,7 @@ const eventId = (eventRef: Readonly<{ pluginId: string; localId: string }>) => `
 
 /** The start a When reads as in the When select; `null` for the kinds the card lists but does not author. */
 export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | null {
+    if (isSessionLifecycleWhen(when)) return sessionId(when.kind);
     switch (when.kind) {
         case 'schedule':
             return SCHEDULE_ID;
@@ -138,11 +135,6 @@ export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | nul
             const eventRef = when.value?.eventRef ?? when.eventRef;
             return eventRef ? eventId(eventRef) : null;
         }
-        case 'turnEnds':
-        case 'needsYou':
-        case 'sessionArchived':
-        case 'sessionStarts':
-            return sessionId(when.kind);
         case 'action':
             return actionStartId(when.phase);
         default:
@@ -163,8 +155,6 @@ export function buildWorkflowTriggerStartOptions(
     current?: Readonly<{ when: TriggerWhenValue; title: string }>,
     context?: WorkflowTriggerStartContext,
 ): readonly WorkflowTriggerStartOption[] {
-    const sessionKinds: readonly SessionEventKind[] = current?.when.kind === 'sessionStarts'
-        ? [...WORKFLOW_SESSION_EVENT_KINDS, 'sessionStarts'] : WORKFLOW_SESSION_EVENT_KINDS;
     const options: WorkflowTriggerStartOption[] = [
         { id: SCHEDULE_ID, group: t('workflows.triggers.card.groupTime'), section: 'builtin', title: t('workflows.triggers.card.schedule'), glyph: 'clock' },
         // Before and after an Action (PROGRAM D1–D3): the Action and its subject are chosen on the trigger's own rows.
@@ -172,7 +162,7 @@ export function buildWorkflowTriggerStartOptions(
             title: t('workflows.triggers.card.actionBefore'), glyph: ACTION_PHASE_GLYPHS.before },
         { id: actionStartId('after'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
             title: t('workflows.triggers.card.actionAfter'), glyph: ACTION_PHASE_GLYPHS.after },
-        ...sessionKinds.map((kind): WorkflowTriggerStartOption => ({
+        ...WORKFLOW_SESSION_EVENT_KINDS.map((kind): WorkflowTriggerStartOption => ({
             id: sessionId(kind), group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
             title: t(`workflows.triggers.card.sessionStart.${kind}`), glyph: TRIGGER_LIFECYCLE_GLYPHS[kind],
         })),
@@ -221,12 +211,12 @@ export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhe
             ...(phase === 'before' ? { mode: 'wait' as const } : {}),
         };
     }
-    if (id.startsWith('session:')) {
-        const kind = id.slice('session:'.length);
-        if (!(WORKFLOW_SESSION_EVENT_KINDS as readonly string[]).includes(kind) && kind !== 'sessionStarts') return null;
+    const kind = WORKFLOW_SESSION_EVENT_KINDS.find(candidate => id === sessionId(candidate));
+    if (kind !== undefined) {
         const kept = previous && isSessionLifecycleWhen(previous) ? previous : null;
+        if (kept?.kind === kind) return kept;
         return {
-            kind: kind as SessionEventKind,
+            kind,
             ...(kept?.subject === undefined ? {} : { subject: kept.subject }),
             ...(kept?.nextTimeOnly === undefined ? {} : { nextTimeOnly: kept.nextTimeOnly }),
             ...(kept?.policy === undefined ? {} : { policy: kept.policy }),
@@ -266,11 +256,12 @@ export function commitWorkflowTriggerWhen(params: Readonly<{
     row: WorkflowTriggerRowRef;
     when: TriggerWhenValue;
     enabled: boolean;
+    sessionId?: string | null;
 }>): WorkflowTriggerDraft | null {
     const { when, enabled } = params;
     const start = readWorkflowTriggerStart(when);
-    if (start === 'runEvent' || start === 'sessionPullRequest') return null;
-    const trigger = buildTriggerDefinition({ when, enabled, sessionId: null });
+    if (start === 'runEvent') return null;
+    const trigger = buildTriggerDefinition({ when, enabled, sessionId: params.sessionId ?? null });
     if (trigger === null) return null;
     const declaration = when.kind === 'pluginEvent' && when.payloadSchema !== undefined ? { payloadSchema: when.payloadSchema } : {};
     if (params.row.kind === 'new') {

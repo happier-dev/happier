@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 import {
   EMPTY_WORKFLOW_TRIGGER_DRAFT,
@@ -24,6 +25,7 @@ const start = (id: string, previous?: TriggerWhenValue): TriggerWhenValue => {
 };
 
 const savedId = AutomationTriggerIdSchema.parse('trigger-saved');
+const lifecycleKinds = Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1);
 
 describe('workflow trigger starts (the "When it runs" card)', () => {
   it('lists Time, then Sessions, then each plugin\'s declared Events grouped by plugin, and reads every start back', () => {
@@ -36,9 +38,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       ['schedule', t('workflows.triggers.card.groupTime')],
       ['action:before', t('workflows.triggers.card.groupActions')],
       ['action:after', t('workflows.triggers.card.groupActions')],
-      ['session:turnEnds', t('workflows.triggers.card.groupSessions')],
-      ['session:needsYou', t('workflows.triggers.card.groupSessions')],
-      ['session:sessionArchived', t('workflows.triggers.card.groupSessions')],
+      ...lifecycleKinds.map(kind => [`session:${kind}`, t('workflows.triggers.card.groupSessions')]),
       ['event:happier.github/pr-opened', 'GitHub'],
       ['event:happier.github/issue-opened', 'GitHub'],
       ['event:happier.sentry/issue', 'Sentry'],
@@ -59,9 +59,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:before'],
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:after'],
-      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:turnEnds'],
-      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:needsYou'],
-      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:sessionArchived'],
+      ...lifecycleKinds.map(kind => ['builtin', t('workflows.triggers.card.groupSessions'), `session:${kind}`]),
       ['plugins', 'GitHub', 'event:happier.github/pr-opened'],
       ['plugins', 'GitHub', 'event:happier.github/pr-merged'],
       ['plugins', 'GitLab', 'event:happier.gitlab/push'],
@@ -80,8 +78,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:before'],
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:after'],
-      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:turnEnds'],
-      ['builtin', t('workflows.triggers.card.groupSessions'), 'session:sessionArchived'],
+      ...lifecycleKinds.filter(kind => kind !== 'needsYou').map(kind => ['builtin', t('workflows.triggers.card.groupSessions'), `session:${kind}`]),
       ['plugins', 'GitHub', 'event:happier.github/pr-opened'],
     ]);
   });
@@ -103,7 +100,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
   });
 
   it('joins the triggers into one sentence: every summary after the first starts lowercase, a name keeps its capitals', () => {
-    const turnEnds = { kind: 'sessionLifecycle' as const, sourceSessionId: 's', events: ['parentTurnCompleted' as const, 'parentTurnFailed' as const,
+    const turnEnds = { kind: 'sessionLifecycle' as const, subject: { kind: 'session' as const, serverId: 'home', sessionId: 's' }, events: ['parentTurnCompleted' as const, 'parentTurnFailed' as const,
       'parentTurnCancelled' as const], policy: { kind: 'everyMatch' as const } };
     const daily = { kind: 'schedule' as const, schedule: { kind: 'cron' as const, scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } };
     const sentence = formatTriggerSetSentence([turnEnds, daily]);
@@ -130,12 +127,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     expect(readWorkflowTriggerStart({ kind: 'pluginEvent', value: null })).toBe(
       'pluginEvent',
     );
-    for (const kind of [
-      'turnEnds',
-      'needsYou',
-      'sessionArchived',
-      'sessionStarts',
-    ] as const) {
+    for (const kind of Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1) as Array<keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1>) {
       expect(readWorkflowTriggerStart({ kind })).toBe('sessionEvent');
     }
     expect(
@@ -170,7 +162,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     ]);
   });
 
-  it('a session event waits for its Session, then writes an Account lifecycle trigger on that Session', () => {
+  it('a Session event can watch any Session or an explicit Session without gaining a lifetime', () => {
     const pending = start('session:turnEnds');
     expect(
       commitWorkflowTriggerWhen({
@@ -179,11 +171,11 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
         when: pending,
         enabled: true,
       }),
-    ).toBeNull();
+    ).toMatchObject({ adds: [{ trigger: { kind: 'sessionLifecycle', events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'] } }] });
     const draft = commitWorkflowTriggerWhen({
       draft: EMPTY_WORKFLOW_TRIGGER_DRAFT,
       row: { kind: 'new', clientId: 'c1' },
-      when: { kind: 'needsYou', sourceSessionId: 'session-a' },
+      when: { kind: 'needsYou', subject: { kind: 'session', serverId: 'home', sessionId: 'session-a' } },
       enabled: true,
     });
     expect(draft?.adds).toEqual([
@@ -192,7 +184,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
         trigger: {
           kind: 'sessionLifecycle',
           enabled: true,
-          sourceSessionId: 'session-a',
+          subject: { kind: 'session', serverId: 'home', sessionId: 'session-a' },
           events: ['userActionRequired'],
           policy: { kind: 'everyMatch' },
         },
@@ -224,13 +216,20 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       events: ['userActionRequired'], policy: { kind: 'nextMatches', count: 2 } });
   });
 
+  it('keeps an unchanged Event group bound to its exact turn and saved event membership', () => {
+    const previous = { kind: 'turnEnds', sourceTurnId: 'turn-a', events: ['parentTurnCancelled'],
+      subject: { kind: 'session', serverId: 'home', sessionId: 'session-a' } } as const;
+    expect(start('session:turnEnds', previous)).toEqual(previous);
+  });
+
   it('How often "Next time" writes the first-match policy and reads back as it was written', () => {
-    const trigger = buildTriggerDefinition({ when: { kind: 'turnEnds', sourceSessionId: 'session-a', nextTimeOnly: true },
+    const subject = { kind: 'session' as const, serverId: 'home', sessionId: 'session-a' };
+    const trigger = buildTriggerDefinition({ when: { kind: 'turnEnds', subject, nextTimeOnly: true },
       enabled: true, sessionId: null });
     expect(trigger).toMatchObject({ kind: 'sessionLifecycle', policy: { kind: 'firstMatch' } });
     expect(readTriggerWhen({ id: 'saved', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, ...trigger } as never))
-      .toEqual({ kind: 'turnEnds', sourceSessionId: 'session-a', nextTimeOnly: true });
-    expect(buildTriggerDefinition({ when: { kind: 'turnEnds', sourceSessionId: 'session-a' }, enabled: true, sessionId: null }))
+      .toEqual({ kind: 'turnEnds', subject, nextTimeOnly: true });
+    expect(buildTriggerDefinition({ when: { kind: 'turnEnds', subject }, enabled: true, sessionId: null }))
       .toMatchObject({ policy: { kind: 'everyMatch' } });
   });
 
@@ -255,7 +254,17 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     });
   });
 
-  it('an incomplete or listed-only When leaves the draft untouched (a Session PR trigger, an unset Event)', () => {
+  it.each(['prComment', 'ciFailed'] as const)('authors %s through the shared draft when its Session context is supplied', kind => {
+    const pullRequest = { repository: 'acme/widgets', number: 7 };
+    const draft = commitWorkflowTriggerWhen({
+      draft: EMPTY_WORKFLOW_TRIGGER_DRAFT,
+      row: { kind: 'new', clientId: 'session-pr' },
+      when: { kind, pullRequest }, enabled: true, sessionId: 'lifetime-session',
+    });
+    expect(draft?.adds).toEqual([{ clientId: 'session-pr', trigger: { kind, pullRequest, enabled: true } }]);
+  });
+
+  it('an incomplete When leaves the draft untouched (a PR without Session context, an unset Event)', () => {
     for (const when of [
       { kind: 'ciFailed' as const, pullRequest: { repository: 'acme/widgets', number: 7 } },
       start('event:acme.github/issue-opened'),

@@ -306,6 +306,7 @@ export type WorkflowTriggerSaveResult =
 export async function saveWorkflowTriggerDraft(params: Readonly<{
     workflow: string;
     project: WorkflowProjectTargetV1 | null;
+    lifetimeSession?: Extract<WorkflowTriggerAddRequestV1, { observationOnly?: never }>['lifetimeSession'];
     set: WorkflowTriggerSetV1 | null;
     draft: WorkflowTriggerDraft;
     writer: WorkflowTriggerWriter;
@@ -362,12 +363,13 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
             if (params.isCurrent?.() === false) return { kind: 'stale', set };
             // The first trigger creates the set on its Runs on (the editor's Where unless changed).
             const project = set?.project ?? context?.project ?? params.project;
-            if (project === null || project === undefined) {
+            if ((project === null || project === undefined) && params.lifetimeSession === undefined) {
                 throw Object.assign(new Error('trigger_project_required'), { code: 'trigger_project_required' });
             }
             const result = await params.writer.add({
                 workflow: params.workflow,
-                project,
+                ...(project === null || project === undefined ? {} : { project }),
+                ...(params.lifetimeSession === undefined ? {} : { lifetimeSession: params.lifetimeSession }),
                 trigger: add.trigger,
                 ...(set === null && context?.inputs !== undefined ? { inputs: { ...context.inputs } } : {}),
                 ...(set === null && context?.roleOverrides !== undefined ? { roleOverrides: [...context.roleOverrides] } : {}),
