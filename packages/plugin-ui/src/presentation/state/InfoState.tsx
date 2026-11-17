@@ -68,6 +68,13 @@ export function HappierSurfaceStateFrame(props: Readonly<{
  * reason on one or two lines.
  */
 const LINE_TEXT_BASIS_PX = 180;
+/**
+ * The room a state line's sentence keeps beside its recoveries. On a phone a lone "Retry" still fits beside a
+ * readable sentence, while a pair ("Retry · Details") would squeeze it to three lines, so the pair moves beneath,
+ * on the sentence's edge (phones recompose: only a short value stays right of its words). A menu's line keeps the
+ * shorter room: its rows are narrow by design and its recovery stays on the row.
+ */
+const STATE_LINE_TEXT_BASIS_PX = 260;
 
 /**
  * The one in-list state line (lab 0 "N"): one compact sentence, glyph and inline recovery; diagnostic
@@ -158,7 +165,7 @@ export function HappierStateLine(props: Readonly<{
         minWidth: 0,
         // The sentence takes the room the recovery leaves and wraps there; it moves the recovery beneath only
         // when that room is narrower than a readable sentence.
-        ...(props.action ? actionsBelow ? { flexBasis: '100%' } : { flexGrow: 1, flexBasis: LINE_TEXT_BASIS_PX } : {}),
+        ...(props.action ? actionsBelow ? { flexBasis: '100%' } : { flexGrow: 1, flexBasis: menu ? LINE_TEXT_BASIS_PX : STATE_LINE_TEXT_BASIS_PX } : {}),
       }}>
         {props.icon ? <View style={{ flexShrink: 0, width: glyphColumn.boxPx, height: props.textLineHeightPx ?? metrics.text.lineHeight, alignItems: 'center', justifyContent: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
         <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
