@@ -1866,6 +1866,12 @@ mirror lag and fails as capture drift into the existing trailing pass;
 untracked authored paths are dropped; overlay paths must equal their declared
 digest. `sourceCapture` records `revision` and `overlayDigest`.
 
+For revision-tree reloads in 0.3 development, a described ancestor is a cache
+candidate, not a required build target. If that ancestor fails preparation,
+`source_revision_tree.mjs` prepares the requested commit directly through the
+same preparation owner, then applies the declared checkout overlay. The reload
+logs this fallback; failure of the requested commit still refuses preparation.
+
 Selection is by revision. The exact revision (+overlay) has its own candidate
 locator; otherwise the producer captures the revision first and adopts any
 completed capture whose consumed-input digests equal the revision's bytes (the

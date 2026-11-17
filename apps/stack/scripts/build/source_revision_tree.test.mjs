@@ -614,6 +614,41 @@ for (const id of readdirSync('packages/plugins')) {
 }
 `;
 
+test('an incoherent described base cannot refuse a coherent requested revision', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await mkdir(join(repoDir, 'apps/cli/scripts/build-owned'), { recursive: true });
+  await mkdir(join(repoDir, 'packages/plugins'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'),
+    "import '../../../../packages/shared/src/preparation.mjs';\n" + FIXTURE_DAEMON_GENERATOR.split('for (const id')[0]);
+  const dependency = join(repoDir, 'packages/shared/src/preparation.mjs');
+  await writeFile(dependency, 'export const broken = ;');
+  await gitIn('add', 'apps/cli/scripts', 'packages/shared/src/preparation.mjs');
+  await gitIn('commit', '--quiet', '-m', 'incoherent intermediate revision');
+  const treesRoot = fixture.path('trees');
+  const bad = await resolveSourceTreeRevision({ repoDir, treesRoot, outputDir: fixture.path('bad') });
+  await writeFile(dependency, 'export const repaired = true;');
+  await gitIn('add', 'packages/shared/src/preparation.mjs');
+  await gitIn('commit', '--quiet', '-m', 'repair preparation dependency');
+  const requested = await resolveSourceTreeRevision({ repoDir, treesRoot, outputDir: fixture.path('requested') });
+  assert.equal(requested.base, bad.revision, 'the cold cache base is the incoherent ancestor');
+  const prepare = (descriptorPath, name, extra = {}) => prepareStackSourceRevisionTree({ repoDir, treesRoot,
+    treeDir: fixture.path(name), descriptorPath, ...extra });
+  // Control: the requested commit itself prepares successfully through the real subprocess.
+  const direct = await resolveSourceRevision({ repoDir, rev: requested.revision, overlay: [],
+    outputDir: fixture.path('direct'), fullTree: true });
+  await prepare(direct.descriptorPath, 'control', { treesRoot: fixture.path('control-trees') });
+  const tree = await prepare(requested.descriptorPath, 'recovered');
+  assert.equal(tree.revision, requested.revision);
+  assert.equal(tree.base, requested.revision, 'the fallback cache contains the requested commit');
+  assert.equal(await readFile(join(tree.treeDir, 'packages/shared/src/preparation.mjs'), 'utf8'),
+    'export const repaired = true;');
+  assert.equal(await readFile(join(tree.treeDir, 'apps/server/sources/main.light.ts'), 'utf8'), COMMITTED_MAIN,
+    'fallback never captures the checkout\'s unrelated dirty source');
+  await assert.rejects(prepare(bad.descriptorPath, 'still-invalid'), /SyntaxError|Unexpected token/,
+    'an actually invalid requested revision still fails');
+});
+
 test('a revision tree derives its ignored package manifests from the revision; a plugin change re-derives only its clone', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);

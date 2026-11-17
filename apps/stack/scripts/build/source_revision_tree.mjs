@@ -522,8 +522,24 @@ async function cloneTree(from, to, roots = { base: from, clone: to }) {
 export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeDir, descriptorPath, preparePluginUi = false, env = process.env, signal, requestBaseArchive }) {
   repoDir = resolve(repoDir);
   treeDir = resolve(treeDir);
-  const descriptor = await readTreeDescriptor(descriptorPath);
-  const base = await prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi, env, signal, requestBaseArchive });
+  let descriptor = await readTreeDescriptor(descriptorPath);
+  let base;
+  try {
+    base = await prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi, env, signal, requestBaseArchive });
+  } catch (error) {
+    // A described ancestor is only a cache candidate: it may be an intermediate
+    // commit whose generation or import graph the requested revision repairs.
+    // Build the requested commit directly; never retry an invalid requested tree.
+    if (!descriptor.commit || signal?.aborted) throw error;
+    console.error(`[source-tree] base=${descriptor.revision} preparation failed; preparing requested revision=${descriptor.commit.revision} directly`);
+    const tree = { ...descriptor.tree };
+    for (const [path, entry] of Object.entries(descriptor.commit.paths)) {
+      if (entry) tree[path] = entry;
+      else delete tree[path];
+    }
+    descriptor = { ...descriptor, revision: descriptor.commit.revision, tree, commit: undefined };
+    base = await prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi, env, signal, requestBaseArchive });
+  }
   const staging = `${treeDir}.tmp-${randomUUID()}`;
   let overlaid = 0;
   try {
