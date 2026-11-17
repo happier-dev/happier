@@ -18,6 +18,7 @@ import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { createDeploymentTemplateInstantiationForHost } from './instantiate';
 import { createAdmittedCheckoutRepositoryFiles } from '../admittedCheckoutRepositoryFiles';
+import { createDeploymentRepositoryRemovalFixture } from '../deploymentRepositoryRemoval.testkit';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -39,6 +40,8 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
     try {
         const credentials = await fixture.deps.readCredentialsFn?.();
         if (!credentials) throw new Error('Fixture credentials unavailable');
+        const removal = await createDeploymentRepositoryRemovalFixture({ serverId: 'home', serverHttpBaseUrl: fixture.origin,
+            machineId: 'checkout-machine', accountId: 'account-cli-fixture', credentials });
         const document = 'services:\n  app:\n    image: nginx:1\n';
         await writeFile(join(git.rootPath, git.trackedPath), document);
         runScmExecutable(git.rootPath, 'git', ['add', git.trackedPath]);
@@ -114,7 +117,7 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
             sharedRepositoryWorkspace: { readWorkspaceRows: async selection => fixture.inHome(() => readProjectAccountRows({ credentials, serverId: 'home', selection })),
                 readSource: sources.projectSourcesRead! },
             // The installed daemon's one checkout scope; the forge and OS Git remote are the boundaries.
-            repositoryFiles: (cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: cwd, context, registry: nativeRegistry }),
+            repositoryFiles: (cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: cwd, context, registry: nativeRegistry, resolveRemovalRuntime: removal.resolveRemovalRuntime }),
             createContent: async () => { throw new Error('Bindings Action must prepare its own content'); },
             storage: async () => { throw new Error('Repository definition must use SCM'); },
         });
@@ -148,7 +151,8 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
         expect(preview, JSON.stringify(preview)).toMatchObject({ ok: true, result: { kind: 'preview', review: { repositoryChange: { baseCommit,
             files: [expect.objectContaining({ path: git.trackedPath, before: document })] } } } });
         expect(fixture.writes).toHaveLength(0);
-        const executed = await fixture.inHome(() => executor.execute('deployments.templates.instantiate', input, context));
+        const executed = await fixture.inHome(() => removal.run('deployments.templates.instantiate', input, context,
+            operation => executor.execute('deployments.templates.instantiate', input, operation)));
         expect(executed, JSON.stringify({ executed, httpRequests: forge.httpRequests, tokenRequests: forge.tokenRequests() })).toMatchObject({ ok: false, details: { kind: 'partial', phase: failurePhase === 'bindings' ? 'bindings' : 'repository',
             errorCode: failurePhase === 'bindings' ? 'invalid_action_output' : 'COMMAND_FAILED',
             savedSecrets: [{ name: 'DB_PASSWORD' }], repositoryChange: failurePhase === 'bindings'

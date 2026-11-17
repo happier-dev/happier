@@ -13,9 +13,14 @@ import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup
 import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';
 import { createAdmittedCheckoutRepositoryFiles } from './admittedCheckoutRepositoryFiles';
 import { createDeploymentMoveToRepositoryForHost } from './moveToRepository';
+import { mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { createDeploymentRepositoryRemovalFixture } from './deploymentRepositoryRemoval.testkit';
 
 describe('Move definition post-effect continuation', () => {
   it.each(['source-refusal', 'merged-rest-null'] as const)('retains the opened PR and continues through %s', async scenario => {
+    mockProjectAccountRowsHttpBoundary([]);
+    const removal = await createDeploymentRepositoryRemovalFixture({ serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+      machineId: 'machine', accountId: 'owner', credentials: { token: 'requester', encryption: null } });
     const git = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'move-source-refusal-' });
     const remote = createBareGitRemoteFixture('move-source-refusal-remote-');
     const url = 'https://github.com/octocat/Hello-World.git';
@@ -54,14 +59,16 @@ describe('Move definition post-effect continuation', () => {
         readSource: async () => ({ ok: true, source, canManage: true }), updateSource: async () => refusal,
         acceptWorkspace: unexpected, readWorkspaceRows: async () => ({ source: 'network', workspaceRefs: [workspace],
           relationships: [], organizations: [], rows: [], graphRevision: 'absent', loadedAtMs: 0, scopeKey: 'home:owner' }),
-        repositoryFiles: () => createAdmittedCheckoutRepositoryFiles({ root: git.rootPath, context: {}, registry }),
+        repositoryFiles: (_cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: git.rootPath, context, registry,
+          resolveRemovalRuntime: removal.resolveRemovalRuntime }),
         createContent: unexpected,
       });
       const input = DeploymentMoveToRepositoryInputV1Schema.parse({ mode: 'apply', serverId: 'home',
         environmentId: base.environment.id, definition: { contentRevision: definition.contentRevision, composeDigest: definition.composeDigest },
         path: 'deploy/compose.yaml', workspace: { kind: 'workspace-ref', serverId: 'home', id: workspace.id },
         repository, sourceRepository, baseCommit: git.headCommit, baseBranch: git.branchName });
-      const result = DeploymentMoveToRepositoryResultV1Schema.parse(await move(input, {}, unexpected));
+      const result = DeploymentMoveToRepositoryResultV1Schema.parse(await removal.run('deployments.environments.moveToRepository', input, {},
+        context => move(input, context, unexpected)));
       if (scenario === 'merged-rest-null') {
         expect(result.kind).toBe('pullRequest');
         if (result.kind !== 'pullRequest') throw new Error('Move must open its PR before merge');

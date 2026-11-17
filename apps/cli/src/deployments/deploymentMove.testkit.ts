@@ -23,9 +23,14 @@ import { createDeploymentMoveToRepositoryForHost } from './moveToRepository';
 import { createAdmittedCheckoutRepositoryFiles } from './admittedCheckoutRepositoryFiles';
 import { assertDeploymentContentAuthorityForHost, resolveDeploymentDefinitionRoleForHost } from './deploymentDefinitionAdmission';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { createDeploymentRepositoryRemovalFixture } from './deploymentRepositoryRemoval.testkit';
 
 
 export async function createDeploymentMoveFixture({ attach, create, existingCheckout = false }: Readonly<{ attach: boolean; create: boolean; existingCheckout?: boolean }>) {
+  mockProjectAccountRowsHttpBoundary([]);
+  const removal = await createDeploymentRepositoryRemovalFixture({ serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+    machineId: 'workspace-machine', accountId: 'account', credentials: { token: 'requester', encryption: null } });
   const git = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'deployment-move-' });
   const remote = createBareGitRemoteFixture('deployment-move-remote-');
   runScmExecutable(remote.remotePath, 'git', ['symbolic-ref', 'HEAD', `refs/heads/${create ? 'main' : git.branchName}`]);
@@ -87,7 +92,7 @@ export async function createDeploymentMoveFixture({ attach, create, existingChec
     readWorkspaceRows: async () => ({ workspaceRefs: [workspace], relationships: [], source: 'network',
       organizations: [], rows: [], graphRevision: 'absent', loadedAtMs: 1, scopeKey: 'home:account' }), scmRegistry: registry,
     // The installed daemon's one checkout scope, with the forge and OS Git remote as boundaries.
-    repositoryFiles: (cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: cwd, context, registry }),
+    repositoryFiles: (cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: cwd, context, registry, resolveRemovalRuntime: removal.resolveRemovalRuntime }),
     createContent: async content => { const id = `candidate-${candidates.size}`; candidates.set(id, content);
       return { contentArtifactId: id, contentHeaderVersion: 1, contentBodyVersion: 1 }; },
   });
@@ -102,10 +107,10 @@ export async function createDeploymentMoveFixture({ attach, create, existingChec
     machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: workspace.machineId,
       installationId: 'fixture-installation', role: 'manage', encryptionMode: 'plain' },
     verifyMachineAdmissionCurrent: async () => true } satisfies RpcActionExecutorContext;
-  const executeMove = (input: DeploymentMoveToRepositoryInputV1) => executor.execute('deployments.environments.moveToRepository', input,
-    { ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces:
+  const executeMove = (input: DeploymentMoveToRepositoryInputV1) => removal.run('deployments.environments.moveToRepository', input, context,
+    operation => executor.execute('deployments.environments.moveToRepository', input, { ...operation, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces:
       { 'deployments.environments.moveToRepository': ['cli'],
-        ...Object.fromEntries(deploymentMoveToRepositoryReviewedChildrenV1(input).children.map(child => [child.action, ['cli']])) } }) });
+        ...Object.fromEntries(deploymentMoveToRepositoryReviewedChildrenV1(input).children.map(child => [child.action, ['cli']])) } }) }));
   const initial = detail.content.definition;
   if (initial.kind !== 'stored') throw new Error('Expected stored input');
   const input: DeploymentMoveToRepositoryInputV1 = { mode: 'preview', serverId: 'home', environmentId: 'environment',
