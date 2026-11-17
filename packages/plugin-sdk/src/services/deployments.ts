@@ -1,6 +1,6 @@
 /** @moduleRealm daemon */
 import type {
-    DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
+    DatabaseAccessSummaryV1, DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
 } from '@happier-dev/database-protocol';
 import type { DeploymentDatabaseResolutionV1 } from '../deploymentTargets.js';
 import type { DeploymentTelemetryAssignmentsV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
@@ -51,4 +51,10 @@ export interface DeploymentTelemetryServiceV1 {
 export interface DeploymentDatabasesServiceV1 {
     listTargets(input: DatabaseTargetsListInputV1): Promise<DatabaseTargetsListResultV1>;
     resolve(input: DatabaseOperationInputV1, access: DatabaseOperationClassV1): Promise<DeploymentDatabaseResolutionV1>;
+    /** This request's access through the server's current Environment authorization, without a credential or
+     * connection; the same decision `resolve` makes. Refusals throw their typed code. */
+    admit(input: DatabaseOperationInputV1, access: DatabaseOperationClassV1): Promise<Readonly<{
+        access: DatabaseAccessSummaryV1;
+        environment: Readonly<{ serverId: string; environmentId: string; revision: number }>;
+    }>>;
 }
