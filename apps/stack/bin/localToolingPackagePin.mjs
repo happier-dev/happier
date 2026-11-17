@@ -14,8 +14,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
  * Module URLs stay the checkout's paths, so resolution, node_modules and
  * import.meta.url are unchanged; only the bytes of a pinned module that differ
  * from HEAD are replaced by HEAD's. When HEAD moves, the controller (it has Git)
- * writes HEAD's bytes of every pinned module the checkout changed, then the
- * manifest of HEAD blob ids, into `.happier-tooling-pin/`; it also records a
+ * writes HEAD's bytes of every pinned module the checkout changed, then that
+ * revision's manifest of blob ids (`manifests/<revision>.json`, written once),
+ * then the small `manifest.json` pointer naming it, into `.happier-tooling-pin/`.
+ * Only the pointer changes per HEAD move: a large file rewritten at every commit
+ * was the most frequent Mutagen transition problem refusing worker dispatch
+ * (P03-INFRA-SWEEP 2026-11-17). It also records a
  * module edited after that as it serves it. The source mirror synchronizes the
  * directory to execution hosts, whose tooling reads it without Git.
  *
@@ -24,7 +28,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
  * uncommitted package edit before committing the producer).
  */
 export const TOOLING_PIN_DIR = '.happier-tooling-pin';
-const MANIFEST_VERSION = 1;
+const MANIFEST_VERSION = 2;
 const MODULE_EXTENSION = /\.(?:ts|tsx|mts|cts|mjs|js|cjs|json)$/u;
 const NOT_TOOLING_INPUT = /\.(?:test|spec|bench)\.|\/__tests__\/|\/fixtures\/|\/\.happier-plugin\/|^apps\/(?:ui\/sources|docs|website|desktop)\//u;
 // Blobs a running process may still need after HEAD moved; Git re-supplies them on the controller.
@@ -61,6 +65,7 @@ export function registerStackToolingPackagePin({ repoDir }) {
 }
 
 function writeAtomic(path, bytes) {
+  try { if (readFileSync(path).equals(Buffer.from(bytes))) return; } catch { /* absent */ }
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   writeFileSync(temporary, bytes);
@@ -78,13 +83,20 @@ function git(repoDir, args, options = {}) {
   return result.stdout;
 }
 
-/** HEAD's blob ids for every pinned module; rewritten by the controller only when HEAD moves. */
+/** HEAD's blob ids for every pinned module. The controller writes each revision's manifest once and moves the pointer. */
 export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoDir, '.git')), refreshChanged = false }) {
   const pinDir = join(repoDir, TOOLING_PIN_DIR);
-  const manifestPath = join(pinDir, 'manifest.json');
-  let recorded = null;
-  try { recorded = JSON.parse(readFileSync(manifestPath, 'utf8')); } catch { recorded = null; }
-  if (recorded?.version !== MANIFEST_VERSION) recorded = null;
+  const pointerPath = join(pinDir, 'manifest.json');
+  const revisionPath = revision => join(pinDir, 'manifests', `${revision}.json`);
+  const readRecorded = () => {
+    try {
+      const pointer = JSON.parse(readFileSync(pointerPath, 'utf8'));
+      if (pointer?.version !== MANIFEST_VERSION || !/^[a-f0-9]{40,64}$/u.test(pointer.revision)) return null;
+      const recorded = JSON.parse(readFileSync(revisionPath(pointer.revision), 'utf8'));
+      return recorded?.revision === pointer.revision ? recorded : null;
+    } catch { return null; }
+  };
+  const recorded = readRecorded();
   if (!hasGit) return recorded ? { ...recorded, hasGit } : null;
   const revision = String(git(repoDir, ['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8' })).trim();
   if (recorded?.revision === revision) {
@@ -101,11 +113,13 @@ export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoD
     if (type === 'blob' && mode !== '120000' && isPinnedToolingModule(path)) blobs[path] = id;
   }
   const manifest = { version: MANIFEST_VERSION, revision, blobs };
-  // HEAD bytes of every pinned module the checkout changed go up front, before
-  // the manifest names this revision, so the mirror carries both together.
+  // HEAD bytes of every pinned module the checkout changed go up front, then the
+  // revision's manifest, then the pointer, so the mirror carries them together.
   writeChangedModuleBlobs({ repoDir, pinDir, blobs });
-  writeAtomic(manifestPath, JSON.stringify(manifest));
+  writeAtomic(revisionPath(revision), JSON.stringify(manifest));
+  writeAtomic(pointerPath, JSON.stringify({ version: MANIFEST_VERSION, revision }));
   pruneToolingPinBlobs({ pinDir, blobs });
+  pruneToolingPinManifests({ pinDir, revision });
   return { ...manifest, hasGit };
 }
 
@@ -142,6 +156,17 @@ function pruneToolingPinBlobs({ pinDir, blobs, now = Date.now() }) {
   for (const name of entries) {
     if (referenced.has(name) || !/^[a-f0-9]{40,64}$/u.test(name)) continue;
     const path = join(blobDir, name);
+    try { if (now - statSync(path).mtimeMs > RETAINED_BLOB_MS) unlinkSync(path); } catch { /* another writer's prune */ }
+  }
+}
+
+function pruneToolingPinManifests({ pinDir, revision, now = Date.now() }) {
+  const manifestDir = join(pinDir, 'manifests');
+  let entries = [];
+  try { entries = readdirSync(manifestDir); } catch { return; }
+  for (const name of entries) {
+    if (name === `${revision}.json` || !/^[a-f0-9]{40,64}\.json$/u.test(name)) continue;
+    const path = join(manifestDir, name);
     try { if (now - statSync(path).mtimeMs > RETAINED_BLOB_MS) unlinkSync(path); } catch { /* another writer's prune */ }
   }
 }

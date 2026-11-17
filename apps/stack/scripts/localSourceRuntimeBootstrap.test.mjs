@@ -1,7 +1,7 @@
 // @happier-test-preparation source
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -171,4 +171,33 @@ test('checkout tooling loads product packages at the committed revision, on the 
   const afterFlush = probe(flushed);
   assert.equal(afterFlush.status, 0, afterFlush.stderr);
   assert.equal(afterFlush.stdout, 'committed+helper');
+  // Mirror churn (P03-INFRA-SWEEP 2026-11-17): a 1.9 MB manifest.json rewritten
+  // at every HEAD move was the most frequent Mutagen transition problem behind
+  // worker dispatch refusals. A revision's manifest is written once; only a
+  // small pointer moves with HEAD, and an unchanged HEAD rewrites nothing.
+  const pinDir = join(controller, '.happier-tooling-pin');
+  const pinFiles = async () => Object.fromEntries((await Promise.all((await readdir(pinDir, { recursive: true }))
+    .map(async path => [path, await stat(join(pinDir, path))]))).filter(([, info]) => info.isFile()).map(([path, info]) => [path, info.mtimeMs]));
+  const refreshPin = () => {
+    const result = spawnSync(process.execPath, [join(controller, 'apps/stack/bin/localToolingPackagePin.mjs'), '--refresh', controller],
+      { cwd: controller, encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '' } });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  const beforeMove = await pinFiles();
+  await write('packages/protocol/src/extra.ts', 'export const extra = 1;\n');
+  git(['add', 'packages/protocol/src/extra.ts']);
+  git(['commit', '-q', '-m', 'next']);
+  refreshPin();
+  refreshPin();
+  const afterMove = await pinFiles();
+  const rewritten = Object.keys(beforeMove).filter(path => path in afterMove && afterMove[path] !== beforeMove[path]);
+  assert.deepEqual(rewritten, ['manifest.json'], 'only the pointer moves with HEAD');
+  assert.ok((await stat(join(pinDir, 'manifest.json'))).size < 200, 'the moving pointer stays small');
+  refreshPin();
+  assert.deepEqual(await pinFiles(), afterMove, 'an unchanged HEAD rewrites nothing');
+  const moved = join(root, 'mirror-after-move');
+  await cp(controller, moved, { recursive: true, verbatimSymlinks: true, filter: source => source !== join(controller, '.git') });
+  const afterMoveProbe = probe(moved);
+  assert.equal(afterMoveProbe.status, 0, afterMoveProbe.stderr);
+  assert.equal(afterMoveProbe.stdout, 'committed+helper');
 });
