@@ -39,7 +39,7 @@ export function SessionDefaultsSpecimen(props: Readonly<{ state: string | null; 
           onScopeChange={setScope}
           status={status}
           data={populated ? POPULATED : null}
-          onRetry={() => {}}
+          onRetry={async () => {}}
           defaults={{}}
           editable={populated}
           busy={false}

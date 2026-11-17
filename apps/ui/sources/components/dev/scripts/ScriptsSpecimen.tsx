@@ -198,7 +198,9 @@ function sharedUpdateSnapshot(state: string): ProjectSharedSetupReviewSnapshot |
 
 /** The phone's pushed setup review on the layered definition (lab L6 reviewp): each line names its layer. */
 function PhoneReviewFrame() {
-  const [scope, setScope] = React.useState<ProjectSetupScope>('thisTime');
+  // The review owner holds "no choice yet" as null; the page shows its default until one is made.
+  const [chosen, setScope] = React.useState<ProjectSetupScope | null>(null);
+  const scope = chosen ?? 'thisTime';
   const layers = React.useMemo(() => readProjectSetupLayers(LAYERED_DEFINITION, 'Acme web setup'), []);
   const review: React.ComponentProps<typeof ProjectSetupReviewPage>['review'] = {
     reviewing: true,

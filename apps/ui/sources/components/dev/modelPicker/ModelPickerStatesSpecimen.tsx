@@ -7,6 +7,7 @@ import { SessionModelSourceUsage } from '@/components/sessions/modelPicker/Sessi
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/selection/schemas';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 
 const noop = () => {};
@@ -123,7 +124,8 @@ function frameProps(frame: string): SessionModelPickerProps {
         case 'team': return { ...BASE, ...TEAM_PROPS, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop } };
         // Lab L11 nsPop: the selected model came from the project's Team default and says so on its row only.
         case 'inherited': return { ...BASE, ...TEAM_PROPS, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop },
-            selected: { agentTargetKey: BASE.agentTargetKey, modelId: 'opus-5-5' }, selectedAttribution: 'Acme · acme/web' };
+            selected: ProviderBoundModelRefSchema.parse({ agentTargetKey: BASE.agentTargetKey, modelId: 'opus-5-5' }),
+            selectedAttribution: 'Acme · acme/web' };
         default: return { ...BASE, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop } };
     }
 }
