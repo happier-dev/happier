@@ -31,7 +31,7 @@ export const AutomationRunLifecycleOccurrenceEvidenceV1Schema = lazyZodSchema(()
   originRunId: z.optional(Id),
 })));
 export type AutomationRunLifecycleOccurrenceEvidenceV1 = z.infer<typeof AutomationRunLifecycleOccurrenceEvidenceV1Schema>;
-export const AutomationExecutionRunLifecycleSourceSchema = AutomationRunLifecycleSourceSchema._zod.def.options[0];
+export const AutomationExecutionRunLifecycleSourceSchema = lazyZodSchema(() => AutomationRunLifecycleSourceSchema._zod.def.options[0]);
 export const AutomationExecutionRunLifecycleReportRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: Id, occurrence: AutomationRunLifecycleOccurrenceEvidenceV1Schema,
 }));
