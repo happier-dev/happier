@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+// The publication fixture imports fs; load it before replacing that OS boundary.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+    import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
 import { ExternalSessionsCandidatesListResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -55,7 +60,6 @@ vi.mock('@/session/transport/http/sessionsHttp', async (original) => ({
 }));
 vi.mock('node:fs', async (original) => {
     const actual = await original<typeof import('node:fs')>();
-    const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
     return createBundledPluginPublicationFsFixture(actual);
 });
 

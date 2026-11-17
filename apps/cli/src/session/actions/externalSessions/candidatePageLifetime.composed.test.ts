@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { Server } from 'socket.io';
 import { io } from 'socket.io-client';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+
+// The publication fixture imports fs; load it before replacing that OS boundary.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+    import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { ExternalSessionsCandidatesListRequestSchema, ExternalSessionsCandidatesListResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -101,7 +106,6 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
 }));
 vi.mock('node:fs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs')>();
-    const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
     return createBundledPluginPublicationFsFixture(actual);
 });
 
