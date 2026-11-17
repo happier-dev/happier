@@ -899,6 +899,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: 'Seus temas',
     yourThemesDescription: 'Temas que você criou ou importou. Abra um para mudar as cores.',
     addTheme: 'Adicionar tema',
+    fromStore: 'Da loja',
     newTheme: 'Novo tema',
     newThemeDescription: 'Comece de qualquer tema e mude as cores.',
     importThemeDescription: 'Cole JSON ou escolha um arquivo.',

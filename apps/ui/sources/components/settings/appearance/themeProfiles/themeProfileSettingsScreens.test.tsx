@@ -516,7 +516,7 @@ describe('Theme profile settings screen', () => {
         }
     });
 
-    it('adds a theme from the section menu: a new one or an import', async () => {
+    it('adds a theme from the section menu through creation, import or Store Themes', async () => {
         setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderProfilesScreen();
         const addMenu = await findAddThemeMenu(screen);
@@ -533,6 +533,11 @@ describe('Theme profile settings screen', () => {
             addMenu!.props.onSelect('import');
         });
         expect(shared.routerPush).toHaveBeenLastCalledWith('/settings/appearance/themes/import');
+        expect(addMenu!.props.items.some((item: { id: string }) => item.id === 'store')).toBe(true);
+        await act(async () => {
+            addMenu!.props.onSelect('store');
+        });
+        expect(shared.routerPush).toHaveBeenLastCalledWith('/plugins?view=kind&kind=theme');
     });
 
     it('offers a new theme beyond the former 50-profile limit', async () => {
@@ -658,29 +663,35 @@ describe('Theme profile editor', () => {
         expect(saved().seeds).toEqual({ futureTone: 0.4 });
         expect(saved().futurePresentation).toEqual(raw.futurePresentation);
     });
-    it('saves its addressed draft without animating its live preview or replacing unrelated arrivals', async () => {
+    it('saves its addressed draft without another reveal or replacing unrelated arrivals', async () => {
         const edited = baseProfile('ocean', { light: {}, dark: { 'background.canvas': '#123456' } });
         setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [edited] });
-        const screen = await renderEditorScreen('ocean');
         shared.setRootViewBackgroundColor.mockClear();
         shared.setStatusBarStyle.mockClear();
         const { JSDOM } = await import('jsdom');
         const dom = new JSDOM('', { pretendToBeVisual: true });
-        const transition = vi.fn();
+        const transition = vi.fn((update: () => void | Promise<void>) => {
+            const updateCallbackDone = Promise.resolve(update());
+            return { ready: updateCallbackDone, updateCallbackDone, finished: updateCallbackDone, skipTransition: vi.fn() };
+        });
         Object.assign(dom.window.document.documentElement, { animate: vi.fn() });
         Object.assign(dom.window.document, { startViewTransition: transition });
         vi.stubGlobal('document', dom.window.document);
         onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
+        const screen = await renderEditorScreen('ocean');
         await act(async () => {
             storage.getState().applyLocalSettings({ themePreference: 'dark', uiFontScale: 1.2 });
             setThemeProfiles({ activeProfileIds: getThemeProfiles().activeProfileIds,
                 profiles: [{ ...edited, overrides: { light: {}, dark: { 'background.canvas': '#654321' } } }, baseProfile('arrived-during-transition')] });
         });
         await vi.waitFor(() => expect(getThemeTryOnOwner().read()).not.toBeNull());
+        await act(async () => { await Promise.all(transition.mock.results.map(result => result.value.finished)); });
+        expect(transition).toHaveBeenCalled();
+        const previewTransitionCount = transition.mock.calls.length;
 
         await saveEditor(screen);
 
-        expect(transition).not.toHaveBeenCalled();
+        expect(transition).toHaveBeenCalledTimes(previewTransitionCount);
         expect(getThemeProfiles().profiles.map(profile => profile.id)).toEqual(['ocean', 'arrived-during-transition']);
         expect(storage.getState().localSettings).toMatchObject({ themePreference: 'dark', uiFontScale: 1.2 });
         expect(shared.setTheme).toHaveBeenLastCalledWith('dark');

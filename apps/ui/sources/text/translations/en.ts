@@ -977,6 +977,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemesDescription:
       'Themes you made or imported. Open one to change its colors.',
     addTheme: 'Add theme',
+    fromStore: 'From the Store',
     newTheme: 'New theme',
     newThemeDescription: 'Start from any theme and change its colors.',
     importThemeDescription: 'Paste JSON or choose a file.',

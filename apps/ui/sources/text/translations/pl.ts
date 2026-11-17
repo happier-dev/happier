@@ -864,6 +864,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: 'Twoje motywy',
     yourThemesDescription: 'Motywy utworzone lub zaimportowane przez Ciebie. Otwórz jeden, aby zmienić jego kolory.',
     addTheme: 'Dodaj motyw',
+    fromStore: 'Ze sklepu',
     newTheme: 'Nowy motyw',
     newThemeDescription: 'Zacznij od dowolnego motywu i zmień jego kolory.',
     importThemeDescription: 'Wklej JSON lub wybierz plik.',

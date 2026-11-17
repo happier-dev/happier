@@ -864,6 +864,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: 'Els teus temes',
     yourThemesDescription: 'Temes que has creat o importat. Obre\'n un per canviar-ne els colors.',
     addTheme: 'Afegeix un tema',
+    fromStore: 'Des de la botiga',
     newTheme: 'Tema nou',
     newThemeDescription: 'Comença des de qualsevol tema i canvia\'n els colors.',
     importThemeDescription: 'Enganxa JSON o tria un fitxer.',

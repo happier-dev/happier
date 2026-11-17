@@ -102,7 +102,8 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
             subtitle: t('settingsAppearance.themeProfiles.newThemeDescription'), onSelect: openCreate },
         { id: 'import', title: t('settingsAppearance.themeProfiles.importProfile'),
             subtitle: t('settingsAppearance.themeProfiles.importThemeDescription'), onSelect: input.onImport },
-    ], [openCreate, input.onImport]);
+        ...(input.onOpenStore ? [{ id: 'store', title: t('settingsAppearance.themeProfiles.fromStore'), onSelect: input.onOpenStore }] : []),
+    ], [openCreate, input.onImport, input.onOpenStore]);
     const tiles = React.useMemo((): readonly ThemeLibraryTile[] => input.options.map(option => {
         const menu: ThemeLibraryMenuItem[] = [];
         if (option.entry?.editable) menu.push({ id: 'edit', title: input.labels.editTheme, onSelect: () => input.onEdit(option.id) });

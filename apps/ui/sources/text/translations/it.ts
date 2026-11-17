@@ -865,6 +865,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: 'I tuoi temi',
     yourThemesDescription: 'Temi che hai creato o importato. Aprine uno per cambiarne i colori.',
     addTheme: 'Aggiungi tema',
+    fromStore: 'Dallo Store',
     newTheme: 'Nuovo tema',
     newThemeDescription: 'Parti da qualsiasi tema e cambiane i colori.',
     importThemeDescription: 'Incolla JSON o scegli un file.',

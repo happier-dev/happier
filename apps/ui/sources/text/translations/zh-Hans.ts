@@ -871,6 +871,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: '我的主题',
     yourThemesDescription: '你创建或导入的主题。打开一个即可更改其颜色。',
     addTheme: '添加主题',
+    fromStore: '来自商店',
     newTheme: '新建主题',
     newThemeDescription: '从任意主题开始并更改其颜色。',
     importThemeDescription: '粘贴 JSON 或选择文件。',

@@ -869,6 +869,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: '我的主題',
     yourThemesDescription: '你建立或匯入的主題。開啟一個即可變更其顏色。',
     addTheme: '新增主題',
+    fromStore: '來自商店',
     newTheme: '新主題',
     newThemeDescription: '從任何主題開始並變更其顏色。',
     importThemeDescription: '貼上 JSON 或選擇檔案。',

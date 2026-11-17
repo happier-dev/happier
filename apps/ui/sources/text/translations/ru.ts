@@ -865,6 +865,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: 'Ваши темы',
     yourThemesDescription: 'Темы, которые вы создали или импортировали. Откройте тему, чтобы изменить её цвета.',
     addTheme: 'Добавить тему',
+    fromStore: 'Из магазина',
     newTheme: 'Новая тема',
     newThemeDescription: 'Начните с любой темы и измените её цвета.',
     importThemeDescription: 'Вставьте JSON или выберите файл.',

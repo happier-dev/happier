@@ -871,6 +871,7 @@ const settingsAppearanceTranslationExtension = {
     yourThemes: 'マイテーマ',
     yourThemesDescription: '作成またはインポートしたテーマです。開いて配色を変更できます。',
     addTheme: 'テーマを追加',
+    fromStore: 'ストアから',
     newTheme: '新しいテーマ',
     newThemeDescription: '任意のテーマから始めて配色を変更します。',
     importThemeDescription: 'JSON を貼り付けるか、ファイルを選択します。',

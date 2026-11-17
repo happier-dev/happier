@@ -388,7 +388,7 @@ function TileMenu(props: Readonly<{ tile: ThemeLibraryTile }>) {
   );
 }
 
-/** The header's one way to add: New theme · Import theme ("+" in a phone's navigation bar). */
+/** The header's add menu ("+" in a phone's navigation bar). */
 function ThemeAddMenu(
   props: Readonly<{ items: readonly ThemeLibraryMenuItem[]; compact: boolean }>,
 ) {
