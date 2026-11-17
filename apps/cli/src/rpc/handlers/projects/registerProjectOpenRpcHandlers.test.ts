@@ -1479,7 +1479,7 @@ describe('Project Open RPC', () => {
     await seedTestServerProfile({ id: homeId, homeId, serverUrl: 'https://home.example' });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const observation = { nativeResourceId: 'native-child', user: 'coder', workspaceFolder: root,
-      storage: { kind: 'bind' as const, hostPath: '/host/project', childPath: root } };
+      storage: { kind: 'child' as const, childPath: root } };
     const projection = { relation: { managedMachineId: 'managed-child', managedMachineKind: 'devcontainer' as const,
       parentMachineId: 'parent' }, observation };
     const machine = { id: 'managed-child', homeId, custodianAccountId: 'account',
@@ -1497,23 +1497,21 @@ describe('Project Open RPC', () => {
         { machine: { ...machine, observation: { availability: 'present', observedAt: 1 } } }, decoded.callId) };
     } }));
     const parentKey = { kind: 'workspace-ref' as const, serverId: homeId, id: 'parent-workspace' };
-    const rows: ProjectAccountRowV1[] = [{ key: parentKey, revision: 0, content: { t: 'plain', v: { key: parentKey,
-      value: { id: 'parent-workspace', serverId: homeId, machineId: 'parent', rootPath: '/host/project', projectKey: 'parent-project', createdAtMs: 1 } } } }];
-    let parentOnline = false;
-    // Physical bind observation now verifies the Home through its real feature
-    // reader. Supply that HTTP boundary, not a mock of the authority owner.
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async request => {
-      if (String(request) !== 'https://home.example/v1/features') throw new Error('Unexpected Home discovery request');
-      return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId } } });
+    const { materializeWorkspaceRefForMachineRoot } = await import('@/workspaces/workspaceRefsV1');
+    const parentRef = { id: 'parent-workspace', serverId: homeId, machineId: 'parent', rootPath: '/host/project',
+      projectKey: 'parent-project', createdAtMs: 1 };
+    // Project files materialization establishes the association; no host bind alias supplies it at Open.
+    const enrolled = materializeWorkspaceRefForMachineRoot([parentRef], {
+      serverId: homeId, machineId: 'machine', rootPath: root,
+      parentWorkspace: { serverId: homeId, workspaceId: parentRef.id, machineId: 'parent', rootPath: parentRef.rootPath },
+      nowMs: 1, createId: () => 'enrolled-child-workspace',
+    });
+    const rows: ProjectAccountRowV1[] = enrolled.workspaceRefs.map(value => {
+      const key = { kind: 'workspace-ref' as const, serverId: homeId, id: value.id };
+      return { key, revision: 0, content: { t: 'plain', v: { key, value } } };
     });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
-      if (url.endsWith('/parent')) {
-        if (!parentOnline) throw new Error('Physical controller offline');
-        const response = await plainMachineRead(url);
-        if ('machine' in response.data && response.data.machine) response.data.machine.installationId = 'parent-installation';
-        return response;
-      }
       return { status: 200, data: { machine: { id: 'machine', active: true, installationId: 'installation',
         devcontainerChild: projection,
         metadataVersion: 1, daemonStateVersion: 0, daemonState: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
@@ -1547,7 +1545,7 @@ describe('Project Open RPC', () => {
         machineId: 'machine', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) })({
         serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: root }, materialization: { kind: 'attach' },
       }, context);
-      expect(result).toMatchObject({ kind: 'opened', directory: root, workspace: { serverId: homeId, machineId: 'machine', rootPath: root },
+      expect(result).toMatchObject({ kind: 'opened', directory: root, workspace: { serverId: homeId, workspaceId: enrolled.workspaceRef.id, machineId: 'machine', rootPath: root },
         facts: { projectKey: 'parent-project' } });
       expect(post.mock.calls.some(([url]) => url.includes('/acquire') || url.includes('/admit'))).toBe(false);
       const opened = OpenProjectResultV1Schema.parse(result);
@@ -1568,38 +1566,6 @@ describe('Project Open RPC', () => {
       if (!separateOpened.facts) throw new Error('Separate guest Project facts were not returned');
       expect(separateOpened.facts.projectKey).not.toBe('parent-project');
       rows.push(parentRow!);
-      parentOnline = true;
-      const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-      const snapshot = await readProjectAccountRows({ serverId: homeId, credentials: { token, encryption: null },
-        selection: { kinds: ['workspace-ref'], serverId: homeId } });
-      const noEffect = async (): Promise<never> => { throw new Error('A bind mapping to the same bytes must not copy or launch a process'); };
-      const sync = new WorkspaceSyncController({ localServerId: homeId, localMachineId: 'machine',
-        resolveWorkspaceRef: id => { const resolved = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: homeId, id });
-          return resolved.kind === 'resolved' ? resolved.ref : null; },
-        rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(root, 'locks') }),
-        lifecycle: { start: noEffect, stop: noEffect }, adapter: { discoverCopyOnceRecoveries: noEffect, rehydrate: noEffect,
-          ensure: noEffect, copyOnce: noEffect, get: noEffect, waitForChange: noEffect, list: noEffect, flush: noEffect, pause: noEffect,
-          resume: noEffect, terminate: noEffect, listConflicts: noEffect, diagnoseSelection: noEffect } });
-      const copiedOpen = await register(RPC_METHODS.PROJECTS_OPEN, { serverId: homeId,
-        serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account',
-        readCredentials: async () => ({ token, encryption: null }),
-        workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync, bootstrap: noEffect }) })({
-        serverId: homeId, machineId: 'machine', source: { kind: 'workspace', workspaceId: 'parent-workspace',
-          checkout: { serverId: homeId, workspaceId: 'parent-workspace', machineId: 'parent', rootPath: '/host/project' } },
-        materialization: { kind: 'sync', targetPath: root, workspaceAction: { kind: 'copy_once',
-          contentPolicy: { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) } } },
-      }, context);
-      expect(copiedOpen).toMatchObject({ kind: 'opened', directory: root, workspace: opened.workspace,
-        facts: { projectKey: 'parent-project' } });
-      const copy = await register(RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, { serverId: homeId,
-        serverHttpBaseUrl: 'https://home.example', machineId: 'parent', accountId: 'account',
-        readCredentials: async () => ({ token, encryption: null }) })({
-        serverId: homeId, machineId: 'parent', source: { kind: 'workspace', workspaceId: opened.workspace.workspaceId,
-          checkout: opened.workspace }, materialization: { kind: 'sync', targetPath: '/host/project', workspaceAction: {
-            kind: 'copy_once', contentPolicy: { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) } } },
-      }, { ...context, machineAdmission: { ...context.machineAdmission!, machineId: 'parent', installationId: 'parent-installation' } });
-      // The admitted child and parent name the same bytes, so no engine or duplicate writer is needed.
-      expect(copy).toEqual({ kind: 'materialized' });
       const acceptedRows = structuredClone(rows);
       await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1, devcontainer: { configPath: '.devcontainer/b/devcontainer.json' } }));
       const changedSelection = await register(RPC_METHODS.PROJECTS_OPEN, { serverId: homeId, serverHttpBaseUrl: 'https://home.example',
@@ -1609,6 +1575,16 @@ describe('Project Open RPC', () => {
       expect(changedSelection).toMatchObject({ kind: 'opened', directory: root,
         workspace: opened.workspace, facts: { projectKey: 'parent-project' } });
       expect(rows).toEqual(acceptedRows);
+      // A replaced managed target retires the old enrolled alias, even while its Machine metadata remains published.
+      machine.enrolledMachineId = 'replacement-machine';
+      const retiredAlias = await register(RPC_METHODS.PROJECTS_OPEN, { serverId: homeId, serverHttpBaseUrl: 'https://home.example',
+        machineId: 'machine', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) })({
+        serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: root }, materialization: { kind: 'attach' },
+      }, context);
+      expect(retiredAlias).toMatchObject({ kind: 'refused', code: 'workspace_sync_child_unavailable', effectAttempted: false });
+      expect(rows).toEqual(acceptedRows);
+      expect(post.mock.calls.some(([url]) => url.includes('/acquire') || url.includes('/admit'))).toBe(false);
+
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
