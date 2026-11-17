@@ -35,7 +35,9 @@ export function redactPluginInvocationResultData(
         if (issue) candidate = { path: [...issue.path], code: issue.code, message: issue.message };
         if (typeof candidate === 'string') return redact(candidate);
         if (candidate === null || typeof candidate !== 'object') return candidate;
-        const redactedLeaf = projectRedactedTypedLeaf(candidate, redact);
+        // A confidential details value stays with the whole-value rule above, reached by recursion.
+        const confidentialLeafValue = path[0] === 'details' && confidentialPaths.has([...path.slice(1), 'value'].join('.'));
+        const redactedLeaf = confidentialLeafValue ? undefined : projectRedactedTypedLeaf(candidate, redact);
         if (redactedLeaf) return redactedLeaf;
         const next: PendingRedaction = isJsonArray(candidate)
             ? { kind: 'array', source: candidate, destination: [], path }

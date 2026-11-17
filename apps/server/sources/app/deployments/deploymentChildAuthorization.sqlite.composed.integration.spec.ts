@@ -9013,14 +9013,16 @@ describe('deployment children retain their controller Action authority', () => {
         const archiveOrigin = { environmentId: f.environment.id, deploymentId: f.receipt.id,
             holderMachineId: holder.id, holderInstallationId: holder.installationId };
         const deploymentChildExecution = createDeploymentChildExecutionProofV1(packet, archiveOrigin);
-        const method = `${holder.id}:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`, requestId = crypto.randomUUID(), params = 'sealed-finite-request';
-        const externalActionExecution = { v: 1 as const, authorization: f.authorization, effectActionId: 'daemon.filesystem.download',
-            target: f.authorization.binding.target, installationId: f.member.installationId, deploymentChildExecution,
+        const method = `${holder.id}:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`, params = 'sealed-finite-request';
+        const signed = (requestId: string, privateKey: Uint8Array) => ({ v: 1 as const, authorization: f.authorization,
+            effectActionId: 'daemon.filesystem.download', target: f.authorization.binding.target,
+            installationId: f.member.installationId, deploymentChildExecution,
             machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: f.authorization.token,
                 effectActionId: 'daemon.filesystem.download', target: f.authorization.binding.target,
                 installationId: f.member.installationId, method, requestId, params, deploymentChildExecution: packet,
-                deploymentArchiveOrigin: archiveOrigin, privateKey: f.member.keys.secretKey }) };
-        expect(await verifyExternalActionMachineRpcExecution(externalActionExecution, { method, requestId, params }))
+                deploymentArchiveOrigin: archiveOrigin, privateKey }) });
+        const verifiedId = crypto.randomUUID();
+        expect(await verifyExternalActionMachineRpcExecution(signed(verifiedId, f.member.keys.secretKey), { method, requestId: verifiedId, params }))
             .toMatchObject({ deploymentChildSigner: { machineId: f.member.id, installationId: f.member.installationId } });
         const forwarded: unknown[] = [];
         const target = { id: 'archive-holder', data: { clientType: 'machine-scoped', machineId: holder.id,
@@ -9028,19 +9030,28 @@ describe('deployment children retain their controller Action authority', () => {
                 forwarded.push(payload); return { accepted: true };
             } }) };
         qualifyCurrentAccountStoredContentSocket(target);
-        const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${f.account.id}:${method}` || room === target.id ? [target] : []);
-        const token = await auth.createToken(f.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
-        const socket = Object.assign(createAuthenticatedFakeSocket({ id: 'archive-receiver', data: clientType === 'machine-scoped'
-            ? { userId: f.account.id, clientType, machineId: f.member.id, verifiedMachineInstallationId: f.member.installationId,
-                authTokenKind: 'terminal', authAuthority: 'account_automation' }
-            : { userId: f.account.id, clientType, authTokenKind: 'terminal', authAuthority: 'account_automation' } }),
-            { handshake: { auth: { token } } });
-        qualifyCurrentAccountStoredContentSocket(socket);
-        registerSocketRpcHandlers({ userId: f.account.id, socket: socket as unknown as Socket, io });
-        let response: unknown;
-        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, requestId, params, externalActionExecution },
-            (value: unknown) => { response = value; });
-        expect(response).toMatchObject({ ok: true, result: { accepted: true } });
+        const call = async (userId: string, privateKey: Uint8Array) => {
+            const requestId = crypto.randomUUID();
+            const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${userId}:${method}` || room === target.id ? [target] : []);
+            const token = await auth.createToken(userId, undefined, { kind: 'terminal', authority: 'account_automation' });
+            const socket = Object.assign(createAuthenticatedFakeSocket({ id: `archive-receiver-${requestId}`, data: clientType === 'machine-scoped'
+                ? { userId, clientType, machineId: f.member.id, verifiedMachineInstallationId: f.member.installationId,
+                    authTokenKind: 'terminal', authAuthority: 'account_automation' }
+                : { userId, clientType, authTokenKind: 'terminal', authAuthority: 'account_automation' } }),
+                { handshake: { auth: { token } } });
+            qualifyCurrentAccountStoredContentSocket(socket);
+            registerSocketRpcHandlers({ userId, socket: socket as unknown as Socket, io });
+            let response: unknown;
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, requestId, params,
+                externalActionExecution: signed(requestId, privateKey) }, (value: unknown) => { response = value; });
+            return response;
+        };
+        expect(await call(f.account.id, f.member.keys.secretKey)).toMatchObject({ ok: true, result: { accepted: true } });
+        expect(forwarded).toHaveLength(1);
+        // Another Account's socket, or another installation's signature, never stands in for the receiver.
+        const other = await db.account.create({ data: { encryptionMode: contentMode } });
+        expect(await call(other.id, f.member.keys.secretKey)).toMatchObject({ ok: false });
+        expect(await call(f.account.id, f.controller.keys.secretKey)).toMatchObject({ ok: false });
         expect(forwarded).toHaveLength(1);
     });
 
