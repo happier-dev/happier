@@ -5,6 +5,7 @@ import {
   buildAgentRequestSemanticSummary,
   classifyPermissionRequestRisk,
   extractFirstUserActionQuestion,
+  formatPermissionRequestHeadline,
   formatPermissionRequestSummary,
   summarizeToolInputForNotification,
 } from './agentRequestSummary.js';
@@ -132,6 +133,20 @@ describe('buildAgentRequestSemanticSummary', () => {
       allowCustom: true,
       choices: [],
     }]);
+  });
+});
+
+describe('formatPermissionRequestHeadline', () => {
+  it('names what is asked with its verb, and stays null when only the generic line applies', () => {
+    expect(formatPermissionRequestHeadline({ toolName: 'Edit', toolInput: { file_path: 'src/billing/webhooks.ts' } }))
+      .toBe('Edit: src/billing/webhooks.ts');
+    expect(formatPermissionRequestHeadline({ toolName: 'Bash', toolInput: { command: 'pnpm test' } })).toBe('Run: pnpm test');
+    expect(formatPermissionRequestHeadline({ toolName: 'Bash', toolInput: { command: 'ls', permission: { title: 'List files' } } }))
+      .toBe('List files');
+    expect(formatPermissionRequestHeadline({ toolName: 'WebFetch', toolInput: { url: 'https://docs.stripe.com' } })).toBeNull();
+    expect(formatPermissionRequestHeadline({ toolName: 'Edit', toolInput: {} })).toBeNull();
+    expect(formatPermissionRequestSummary({ toolName: 'WebFetch', toolInput: { url: 'https://docs.stripe.com' } }))
+      .toBe('Permission required: WebFetch');
   });
 });
 

@@ -335,7 +335,12 @@ export function classifyPermissionRequestRisk(
   return 'high';
 }
 
-export function formatPermissionRequestSummary(params: FormatPermissionRequestSummaryParams): string {
+/**
+ * What a permission request asks, as a verb and its subject ("Run: …", "Edit: <path>"), or the
+ * agent's own permission title. Null when only the generic "Permission required" line applies, so a
+ * host keeps its own name for the tool. The one decision behind the summary line and a card title.
+ */
+export function formatPermissionRequestHeadline(params: FormatPermissionRequestSummaryParams): string | null {
   const summary = buildAgentRequestSemanticSummary({
     kind: 'permission',
     toolName: params.toolName,
@@ -358,12 +363,21 @@ export function formatPermissionRequestSummary(params: FormatPermissionRequestSu
     return verb(summary.filePath);
   }
 
+  return null;
+}
+
+export function formatPermissionRequestSummary(params: FormatPermissionRequestSummaryParams): string {
+  const headline = formatPermissionRequestHeadline(params);
+  if (headline) return headline;
+
+  const labels = { ...defaultPermissionSummaryLabels, ...params.labels };
+  const toolLabel = params.toolLabel?.trim() || normalizeToolLabel(params.toolName);
   const obj = asRecord(params.toolInput);
   if (!obj || Object.keys(obj).length === 0) {
-    return labels.requiredWithoutDetails(summary.toolLabel);
+    return labels.requiredWithoutDetails(toolLabel);
   }
 
-  return labels.required(summary.toolLabel);
+  return labels.required(toolLabel);
 }
 
 export function extractFirstUserActionQuestion(toolName: string, toolInput: unknown): string | null {
