@@ -44,9 +44,11 @@ export async function* streamQualifiedProviderAccountUsageHistory(params: Readon
         // A continuation exists only when the admitted first page has entries.
         const payloadMode = params.firstPage.entries[0]!.record.payloadMode;
         const history = { ...params.history, cursor: page.nextCursor };
+        // Admission is already captured. This page is one atomic SELECT; an
+        // interactive transaction adds a commit deadline after stream headers.
         const captured = await inReadSnapshot(tx => readProviderAccountUsageHistoryPageRows({
             accountId: params.accountId, recordId: params.recordId, history,
-        }, tx));
+        }, tx), { singleStatementRead: true });
         if (params.isCancelled()) return;
         const entries = parseQualifiedProviderAccountUsageHistoryEntries(captured.entries, {
             accountId: params.accountId, recordId: params.recordId, payloadMode,

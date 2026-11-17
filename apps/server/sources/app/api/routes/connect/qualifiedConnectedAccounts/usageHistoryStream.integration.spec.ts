@@ -106,7 +106,7 @@ describe('qualified provider usage finite history stream', () => {
         });
     });
 
-    it('continues one admitted read after source removal and stops page reads when cancelled', async () => {
+    it('continues one admitted read in autocommit after source removal and stops page reads when cancelled', async () => {
         const fixture = await seed(false);
         const params = { accountId: fixture.account.id, recordId: fixture.recordId, history: fixture.history };
         const first = await readQualifiedProviderAccountUsageHistory(params);
@@ -130,6 +130,7 @@ describe('qualified provider usage finite history stream', () => {
             // Observe real database rows, preserving the internal parser and pager.
             reader.providerAccountUsageHistory.findMany = (async (args: Parameters<typeof find>[0]) => {
                 reads++;
+                expect(leased, 'one-statement history continuation must not acquire an interactive transaction').toBe(false);
                 const rows = await find(args);
                 for (const row of rows) {
                     const payload: unknown = row.payload;
