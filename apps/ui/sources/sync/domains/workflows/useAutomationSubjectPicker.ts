@@ -78,15 +78,16 @@ export function useAutomationSubjectPicker(input: AutomationSubjectPickerInput):
         const controller = new AbortController();
         session.request = controller;
         const cursor = more ? before.nextCursor ?? undefined : undefined;
+        const continuation = cursor === undefined ? {} : { cursor };
         publish({ ...before, status: more ? 'loading_more' : 'loading', error: null });
         try {
             const caller = { lifetime: current.lifetime, context: current.context, signal: controller.signal };
             const page = await ('subjectKinds' in current
                 ? readAutomationSubjectPickerActionPage({ ...caller, kind: current.kind,
-                    subjectKinds: current.subjectKinds, page: { ...current.page, cursor } })
+                    subjectKinds: current.subjectKinds, page: { ...current.page, ...continuation } })
                 : 'page' in current
-                    ? readAutomationSubjectPickerActionPage({ ...caller, kind: current.kind, page: { ...current.page, cursor } })
-                    : readAutomationSubjectPickerActionPage({ ...current, ...caller, cursor }));
+                    ? readAutomationSubjectPickerActionPage({ ...caller, kind: current.kind, page: { ...current.page, ...continuation } })
+                    : readAutomationSubjectPickerActionPage({ ...current, ...caller, ...continuation }));
             if (!session.active || controller.signal.aborted) return;
             session.request = null;
             publish({ items: more ? [...before.items, ...page.items] : page.items, status: 'ready',

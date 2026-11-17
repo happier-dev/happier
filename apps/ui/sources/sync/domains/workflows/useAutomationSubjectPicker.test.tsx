@@ -7,6 +7,21 @@ import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { useAutomationSubjectPicker } from './useAutomationSubjectPicker';
+import { PluginProjectedActionV2Schema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { projectPluginSubjectKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/subjectKinds';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import tweetnacl from 'tweetnacl';
+
+// The selected daemon's schema RPC is an external boundary; Action admission and dispatch stay real.
+const daemonRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: daemonRpc }));
 
 await initializeRealAppRuntimeForTests();
 afterEach(standardCleanup);
@@ -82,4 +97,97 @@ it('withdraws a retired borrowed Account and ignores its in-flight answer withou
         expect(reads).toEqual(['addressed']);
         await hook.unmount();
     } finally { account.dispose(); await home.dispose(); }
+});
+
+it.each([{ query: 'fix' }, { query: 'fix', limit: 3 }])('uses contributed page demand %j and the physical Action target while retaining plugin qualification', async (page) => {
+    const pluginId = 'acme.tickets';
+    const action = { pluginId, localId: 'list-tickets' };
+    const machineId = 'picker-machine';
+    const serverIdentityId = 'srv_picker';
+    const pages: unknown[] = [];
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+    const machine = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'author' }),
+        active: true, installationId: 'picker-installation', installationPublicKey: encodeBase64(installation.publicKey) };
+    const home = await serveActionHomes({ homes: [
+        { key: 'addressed', serverUrl: 'https://plugin-picker-contribution.test', accountId: 'author', serverIdentityId, currentAccount: true },
+        { key: 'focused', serverUrl: 'https://plugin-picker-contribution-other.test', accountId: 'other' },
+    ], route: async request => {
+        if (request.path === '/v1/machines') return Response.json([machine]);
+        if (request.path === `/v1/machines/${machineId}`) return Response.json({ machine });
+        if (request.path === '/v1/machines/read-batch') {
+            return createMachineReadBatchResponseFixture(request.body, id => id === machineId ? machine : null);
+        }
+        if (request.path === '/v1/actions/action.invoke/execution-authorization') {
+            const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+            return Response.json({ v: 1, token: 'picker-action-proof', binding: { serverIdentityId, accountId: 'author',
+                authentication: { kind: 'account', tokenEpoch: 0 }, actionId: 'action.invoke', requestId: envelope.requestId,
+                target: envelope.target, machineId, installationId: machine.installationId, custodianAccountId: 'author',
+                accountEncryptionMode: 'plain', machineRuntimeDemand: 'required',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+        }
+        if (request.path !== '/v1/actions/action.invoke') return undefined;
+        expect(request.home).toBe('addressed');
+        expect(request.accountId).toBe('author');
+        const forwarded = ExternalActionRequestEnvelopeV1Schema.safeParse(request.body);
+        const envelope = forwarded.success ? forwarded.data : ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body).envelope;
+        expect(envelope.target).toEqual({ kind: 'machine', machineId });
+        expect(envelope.input).toMatchObject({ action });
+        const input = Reflect.get(envelope.input as object, 'input');
+        pages.push(input);
+        const second = Reflect.get(input, 'cursor') !== undefined;
+        return Response.json({ v: 1, actionId: 'action.invoke', requestId: envelope.requestId, execution: { ok: true,
+            result: { items: [{ identity: { ticketId: second ? 'ticket-b' : 'ticket-a' }, label: second ? 'Second ticket' : 'First ticket' }],
+                nextCursor: second ? null : 'next-ticket' } } });
+    } });
+    const account = await captureLazyActionAccountContext(home.homes.addressed!.id);
+    const executionOrigin = { serverIdentityId, materializationRef: {
+        pluginId, machineId, materializationId: 'tickets-current' } };
+    const projected = PluginProjectedActionV2Schema.parse({ id: action.localId, pluginId, title: 'List tickets',
+        scopes: ['global', 'machine'], surfaces: ['ui'], execution: { target: 'daemon' },
+        dangerLevel: 'safe', readOnly: true, occurrenceId: 'tickets:current', available: true, executionOrigin });
+    const declaration = { pluginId, definition: { id: 'ticket', label: 'Ticket', listAction: action.localId,
+        identitySchema: { type: 'object' as const, additionalProperties: false, required: ['ticketId'],
+            properties: { ticketId: { type: 'string' as const } } } } };
+    const entry = projectPluginSubjectKindDeclarationV1({ ...declaration, pluginVersion: '1.0.0' });
+    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+        v: 2, generation: 1, installedPackagesById: {}, agentsById: {},
+        actionsById: { [`${pluginId}/${action.localId}`]: projected }, resourcesById: {}, settingsById: {},
+        familiesById: { subjectKinds: { family: 'subjectKinds', entriesById: { [entry.id]: entry } } }, diagnostics: [],
+    } });
+    daemonRpc.mockImplementation(async (request: { method: string }) => {
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return projection;
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true,
+            inputSchema: { type: 'object' }, outputSchema: { type: 'object' } };
+        throw new Error(`Unanswered picker RPC: ${request.method}`);
+    });
+    const union = unionPluginUiProjections([{ machineId, serverId: home.homes.addressed!.id, serverIdentityId,
+        selectableExecutionOrigins: [executionOrigin],
+        phase: 'current', interactionEnabled: true, projection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
+            actionsById: { [`${pluginId}/${action.localId}`]: projected } } }], new Map([[pluginId, executionOrigin]]));
+    const withdraw = publishCommittedAppShellPluginUiProjection(() => union.pluginUiProjection);
+    try {
+        const context = { externalActionTarget: { kind: 'machine' as const, machineId } };
+        const subjectKinds = [entry];
+        const hook = await renderHook((props: { demanded: boolean }) => useAutomationSubjectPicker({
+            kind: { kind: 'plugin', pluginId, subjectKindId: 'ticket' }, page, subjectKinds,
+            lifetime: account.accountLifetime, demanded: props.demanded, context,
+        }), { initialProps: { demanded: false } });
+        expect(hook.getCurrent().status).toBe('idle');
+        expect(pages).toHaveLength(0);
+        await hook.rerender({ demanded: true });
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', error: null }));
+        expect(hook.getCurrent()).toMatchObject({ hasMore: true, items: [
+            { label: 'First ticket', subject: { kind: 'plugin', serverId: home.homes.addressed!.id,
+                pluginId, subjectKindId: 'ticket', identity: { ticketId: 'ticket-a' } } },
+        ] });
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(hook.getCurrent()).toMatchObject({ status: 'ready', hasMore: false, items: [
+            { label: 'First ticket', subject: { kind: 'plugin', serverId: home.homes.addressed!.id,
+                pluginId, subjectKindId: 'ticket', identity: { ticketId: 'ticket-a' } } },
+            { label: 'Second ticket', subject: { kind: 'plugin', serverId: home.homes.addressed!.id,
+                pluginId, subjectKindId: 'ticket', identity: { ticketId: 'ticket-b' } } },
+        ] });
+        expect(pages).toEqual([page, { ...page, cursor: 'next-ticket' }]);
+        await hook.unmount();
+    } finally { withdraw(); account.dispose(); await home.dispose(); }
 });
