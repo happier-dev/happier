@@ -1,8 +1,12 @@
 import {
+  formatPermissionRequestHeadline,
   formatPermissionRequestSummary,
   type PermissionRequestSummaryLabels,
 } from '@happier-dev/protocol/activity/agentRequestSummary';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+import type { Metadata } from '@happier-dev/session-core/state';
+
+import { resolvePath } from '@/utils/path/pathUtils';
 
 import { formatMCPTitle } from '@/components/tools/renderers/system/MCPToolView';
 import { t } from '@/text';
@@ -58,5 +62,26 @@ export function formatPermissionRequestDisplaySummary(
         ? resolveRequestToolLabel(request)
         : request.toolLabel,
     labels: PERMISSION_SUMMARY_LABELS,
+  });
+}
+
+/**
+ * What a pending permission request asks, as a card title ("Edit: src/billing/webhooks.ts"), in the
+ * viewer's language and with a path shown from the Session's folder. Null when the request only has
+ * the generic "Permission required" line, so the card keeps the tool's own title.
+ */
+export function formatPermissionRequestDisplayHeadline(
+  request: Readonly<{ toolName: string; toolInput: unknown; metadata: Metadata | null }>,
+): string | null {
+  const path = (value: string) => resolvePath(value, request.metadata);
+  return formatPermissionRequestHeadline({
+    toolName: request.toolName,
+    toolInput: request.toolInput,
+    labels: {
+      ...PERMISSION_SUMMARY_LABELS,
+      read: (value) => PERMISSION_SUMMARY_LABELS.read(path(value)),
+      write: (value) => PERMISSION_SUMMARY_LABELS.write(path(value)),
+      edit: (value) => PERMISSION_SUMMARY_LABELS.edit(path(value)),
+    },
   });
 }

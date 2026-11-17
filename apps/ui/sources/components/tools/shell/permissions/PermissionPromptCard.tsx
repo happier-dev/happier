@@ -14,6 +14,7 @@ import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permiss
 import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { t } from '@/text';
 import { usePermissionPromptModel } from '@/components/tools/shell/permissions/presentation/usePermissionPromptModel';
+import { formatPermissionRequestDisplayHeadline } from '@/components/tools/shell/permissions/presentation/permissionRequestDisplaySummary';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ActionApprovalFieldsCard } from '@/components/approvals/ActionApprovalFieldsCard';
 import { McpToolDecisionBadges } from '@/components/settings/mcpServers/tools/McpToolDecisionBadges';
@@ -59,6 +60,11 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
         scope: scopeResolution.kind === 'bound' ? scopeResolution.scope : null });
     const headerText = model.headerText;
     const mcp = model.mcp ?? null;
+    // What is asked ("Edit: src/billing/webhooks.ts", "Run: …"), from the one request-summary owner; a
+    // request that only has the generic line keeps the tool's own title.
+    const headline = React.useMemo(() => formatPermissionRequestDisplayHeadline({
+        toolName: props.request.tool, toolInput: props.request.arguments, metadata: props.metadata }),
+    [props.metadata, props.request.arguments, props.request.tool]);
     const mcpFacts = React.useMemo(() => mcp ? { unrepresentable: null, rows: mcp.argumentFacts.map(fact => ({
         kind: 'value' as const, path: fact.key, title: fact.label, value: fact.value })) } : null, [mcp]);
     const mcpEffect = mcp?.badges.includes('destructive') ? 'destructive' as const : mcp?.badges.includes('read_only') ? 'read' as const : null;
@@ -154,7 +160,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
             testID="permission-prompt-card"
             // An agent's ask the person did not start: the shared needs-you edge, for whoever can answer it.
             tone={props.canApprovePermissions ? 'attention' : 'neutral'}
-            title={mcp ? mcp.title : headerText.title}
+            title={headline ?? (mcp ? mcp.title : headerText.title)}
             subtitle={effectiveSubtitle}
             titleNumberOfLines={1}
             subtitleNumberOfLines={2}

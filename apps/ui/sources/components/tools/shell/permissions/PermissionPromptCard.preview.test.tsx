@@ -219,6 +219,17 @@ describe('PermissionPromptCard (preview)', () => {
         expect(screen.tree.root.findAllByType(InlineBody)).toHaveLength(1);
     });
 
+    it('titles the ask by what it asks: a verb and its file, not the bare path', async () => {
+        toolDetailSetting = 'summary';
+        const request = { id: 'perm-title', tool: 'Edit', arguments: { file_path: 'src/billing/webhooks.ts',
+            old_string: 'a', new_string: 'b' } } as PendingPermissionRequest;
+        const screen = await renderWithSessionTranscriptSource(<PermissionPromptCard request={request} location={null}
+            sessionId="s1" metadata={null} canApprovePermissions={true} />);
+        const chrome = screen.tree.root.findAll(node => node.props.testID === 'permission-prompt-card' && Object.hasOwn(node.props, 'title'))[0];
+        const { t } = await import('@/text');
+        expect(chrome?.props.title).toBe(t('tools.common.permissionSummary.edit', { path: 'src/billing/webhooks.ts' }));
+    });
+
     it('does not render when the session is inactive', async () => {
         toolDetailSetting = 'summary';
 
