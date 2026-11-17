@@ -27,7 +27,7 @@ import { WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl'
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
-import { WidgetSetupFieldRow, type WidgetSetupFieldChange } from './WidgetSetupFieldRow';
+import { WidgetSetupFieldRow, WidgetSetupOptionsNotice, type WidgetSetupFieldChange } from './WidgetSetupFieldRow';
 import {
     describeWidgetSetupBlocker,
     describeWidgetSetupRow,
@@ -256,12 +256,19 @@ export function WidgetSetupStep(props: Readonly<{
         return label ? [label] : [];
     }) : [];
 
+    // The inputs share one choices read: a failure is said once, above them, with the one Retry.
+    const optionsFailed = fields.some(({ index }) => {
+        const request = requests[index]!;
+        return options.state(request.field, request).status === 'failed';
+    });
     const inputs = (
         <InputTypePickerHostProvider enabled={setup.fields.some(({ field }) => field.inputType !== undefined)}
             {...options.resolveOptions.pickerContext}
             contextKey={JSON.stringify([consumer, draft, options.snapshot])}>
         <CoreCollectionScope>
         <ListPresentationProvider value="page" {...(pane ? { pageInsets: 'contained' as const } : {})}>
+            {optionsFailed ? <WidgetSetupOptionsNotice label={setup.title} onRetry={options.retry} disabled={busy}
+                testID={`${props.testID}.optionsFailed`} /> : null}
             {/* In the Add pane the inputs' sheet shares the title's and the preview's edges (lab A2/A2p). */}
             <ItemGroup surface={pane ? 'sheet' : 'none'} density="compact" {...(pane ? { style: PANE_SHEET_FLUSH } : {})}>
                 {fields.map(({ entry, index, facts }) => {
@@ -284,7 +291,6 @@ export function WidgetSetupStep(props: Readonly<{
                             row={row}
                             options={values}
                             optionsStatus={state.status}
-                            onRetryOptions={options.retry}
                             plainValue={binding?.kind === 'value' ? binding.value : undefined}
                             phone={props.phone}
                             autoOpen={props.focusPath === entry.field.path}

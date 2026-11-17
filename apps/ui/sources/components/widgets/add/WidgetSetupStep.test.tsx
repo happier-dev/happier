@@ -34,7 +34,7 @@ vi.mock('socket.io-client', async importOriginal =>
 // Only network transports are replaced: Account admission, the catalog, executor,
 // draft binding and options demand all remain real.
 const discovery = vi.hoisted(() => ({ requests: [] as PublicActionInputById['action.options.resolve'][], wait: null as (() => Promise<void>) | null,
-    unrelatedMachine: false }));
+    unrelatedMachine: false, fail: false }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: async (args: { method: string; machineId?: string; payload: unknown }) => {
         if (args.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
@@ -81,6 +81,7 @@ beforeEach(async () => {
             const input = (await import('@happier-dev/protocol/actions')).PUBLIC_ACTION_INPUT_SCHEMAS['action.options.resolve'].parse(payload);
             discovery.requests.push(input);
             await discovery.wait?.();
+            if (discovery.fail) throw new Error('options read failed');
             const selected = input.consumer?.kind === 'widget' ? input.consumer.selectedSession?.sessionId : undefined;
             return { actionId: 'widgets.item.add', fieldPath: input.fieldPath ?? null, optionsSourceId: null,
                 options: [{ value: 'choice', label: `${selected ?? 'ambient'}:${input.draftInput?.filter ?? 'none'}` }] };
@@ -133,7 +134,7 @@ beforeEach(async () => {
     releaseLoader = await installRealActionExecutorModuleLoader();
 });
 afterEach(async () => {
-    standardCleanup(); discovery.requests = []; discovery.wait = null; discovery.unrelatedMachine = false; pickerProjections.clear(); releaseLoader?.(); releaseLoader = undefined;
+    standardCleanup(); discovery.requests = []; discovery.wait = null; discovery.unrelatedMachine = false; discovery.fail = false; pickerProjections.clear(); releaseLoader?.(); releaseLoader = undefined;
     clearDaemonMergedProjectionCacheForTests(); await connection?.dispose(); connection = undefined;
 });
 function renderScreen(element: React.ReactElement, union = false) {
@@ -382,6 +383,26 @@ describe('WidgetSetupStep discovery', () => {
             expect(screen.findAllByType(WidgetSetupFieldRow).some(row => row.props.entry.field.path === 'session')).toBe(expected);
             expect(setup.initial.bindings.session).toEqual({ kind: 'value', value: ['retained-pin'] });
         });
+    it('says a failed choices read once for the whole form, and its one Retry reads every input again', async () => {
+        discovery.fail = true;
+        const first: WidgetCandidate = { ...candidate, target: 'app', sessionInputPath: undefined,
+            surface: { pluginId: 'acme.options', localId: 'first' },
+            inputs: { fields: [{ path: 'period', title: 'Period', widget: 'select', inputType: { pluginId: 'acme.options', localId: 'choice' } },
+                { path: 'result', title: 'Owned result', widget: 'select', inputType: { pluginId: 'acme.options', localId: 'choice' } }] } };
+        const setup = buildWidgetCandidateSetup({ candidate: first, scope: { ...scope, owner: { kind: 'home' } }, audience: 'personal', context: {},
+            mode: { kind: 'add', submitLabel: 'Add' }, submit: async () => ({ ok: true }) });
+        const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} serverId={scope.serverId}
+            onDone={() => {}} testID="choices-failed" />);
+        const rows = () => screen.findAllByType(WidgetSetupFieldRow);
+        const notices = () => screen.findAllByType(SurfaceStateCard).filter(card => card.props.kind === 'error');
+        await vi.waitFor(() => expect(rows().map(row => row.props.optionsStatus)).toEqual(['failed', 'failed']));
+        expect(notices()).toHaveLength(1);
+        discovery.fail = false;
+        await act(async () => { await notices()[0]!.props.action.onPress(); });
+        await vi.waitFor(() => expect(rows().map(row => row.props.optionsStatus)).toEqual(['ready', 'ready']));
+        expect(notices()).toHaveLength(0);
+        await screen.unmount();
+    });
     it('sends a group field read with its own declaring child identity', async () => {
         const first: WidgetCandidate = { ...candidate, target: 'app', sessionInputPath: undefined,
             surface: { pluginId: 'acme.options', localId: 'first' },

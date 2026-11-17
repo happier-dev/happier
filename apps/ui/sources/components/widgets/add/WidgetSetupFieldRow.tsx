@@ -53,9 +53,8 @@ export function WidgetSetupFieldRow(props: Readonly<{
     row: WidgetSetupRow;
     /** Pinnable values from the one options resolver (static or dynamic). */
     options: readonly WidgetSetupValue[];
+    /** The choices read's state; a failure is said once for the whole form (`WidgetSetupOptionsNotice`). */
     optionsStatus: 'loading' | 'ready' | 'failed';
-    /** Reads the choices again after a failed read (the one options resolver's retry). */
-    onRetryOptions?: (callerContext?: ActionExecutorContext) => void;
     /** A primitive value currently pinned (text, number, boolean) for the plain controls. */
     plainValue: JsonValue | undefined;
     phone: boolean;
@@ -226,9 +225,6 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const { entry, row } = props;
-    const commands = useCurrentUiContextLocalCommands(props.optionsStatus === 'failed' && props.onRetryOptions && !props.disabled
-        ? [{ key: 'retry', title: `${t('common.retry')}: ${entry.field.prompt ?? entry.field.title}`,
-            invoke: (_input, callerContext) => props.onRetryOptions?.(callerContext) }] : [], { unbound: 'local' });
     // A list input that declares no placeholder would draw as a blank block: say what to type in it.
     const field = React.useMemo(() => (entry.field.widget === 'text_list' && entry.field.placeholder === undefined
         ? { ...entry.field, placeholder: t(entry.field.listSeparator === 'newline' ? 'widgetAdd.listOnePerLine' : 'widgetAdd.listCommaSeparated') }
@@ -291,6 +287,8 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
             // Only a switch stays beside its label; every wider control (a choice, a field) moves beneath
             // it when the row is narrow (a pane column), never squeezing the label into a stack of lines.
             accessoryLayout={stacked ? 'stacked' : presentation.kind === 'toggle' ? 'inline' : 'adaptive'}
+            // The label stands at the top of its row beside a control that grows taller (a segmented choice, a field).
+            contentAlign="start"
             rightElement={(
                 <View ref={controlHost} collapsable={false}>
                 <HappierInputField<JsonValue>
@@ -306,10 +304,6 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                     // A repair, or ↵ with this input still needed, opens its choices where the request lands.
                     openRequest={(props.focusRequest ?? 0) + (props.autoOpen ? 1 : 0)}
                     optionsStatus={props.optionsStatus}
-                    optionsNotice={props.optionsStatus === 'failed' ? (
-                        <SurfaceStateCard kind="error" size="line" title={t('widgetAdd.optionsFailed')} testID={`${props.testID}.optionsFailed`}
-                            {...(props.onRetryOptions ? { action: { label: t('common.retry'), onPress: () => { void commands.invoke('retry'); } } } : {})} />
-                    ) : null}
                     disabled={props.disabled === true}
                     isEqual={sameStrictJsonValue}
                     keyForOption={(_option, index) => String(index)}
@@ -322,6 +316,27 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                 </View>
             )}
         />
+    );
+}
+
+/**
+ * A failed choices read, said once for the whole form: the inputs share one options resolver, so one line and one
+ * Retry read every input again, instead of the same line under each row.
+ */
+export function WidgetSetupOptionsNotice(props: Readonly<{
+    /** What the form sets up, naming the Retry command. */
+    label: string;
+    onRetry?: (callerContext?: ActionExecutorContext) => void;
+    disabled?: boolean;
+    testID: string;
+}>): React.ReactElement {
+    const { onRetry } = props;
+    const commands = useCurrentUiContextLocalCommands(onRetry && !props.disabled
+        ? [{ key: 'retry', title: `${t('common.retry')}: ${props.label}`, invoke: (_input, callerContext) => onRetry(callerContext) }] : [],
+        { unbound: 'local' });
+    return (
+        <SurfaceStateCard kind="error" size="line" title={t('widgetAdd.optionsFailed')} testID={props.testID}
+            {...(onRetry ? { action: { label: t('common.retry'), onPress: () => { void commands.invoke('retry'); } } } : {})} />
     );
 }
 

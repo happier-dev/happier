@@ -38,7 +38,7 @@ const { readWidgetDescriptor, describeAuthoredWidgetDefinitionV1 } = await impor
 const { t } = await import('@/text');
 const { buildWidgetCandidateSetup } = await import('../surface/widgetSurfaceSetup');
 const { WidgetSetupStep } = await import('../add/WidgetSetupStep');
-const { WidgetSetupFieldRow } = await import('../add/WidgetSetupFieldRow');
+const { WidgetSetupFieldRow, WidgetSetupOptionsNotice } = await import('../add/WidgetSetupFieldRow');
 const { WidgetSizeControl } = await import('../frame/WidgetSizeControl');
 const { useWidgetDefinitionFlows } = await import('../definitions/useWidgetDefinitionFlows');
 const { useWidgetInstanceNetworkEditor } = await import('../surface/useWidgetInstanceNetworkEditor');
@@ -307,8 +307,11 @@ it('retries setup options through the existing resolver with the command caller 
         current = useInputFieldOptions({ serverId, enabled: true, requests: [{ field,
             consumer: { kind: 'widget', surface: { ...account, owner: { kind: 'home' } }, definition: { kind: 'builtin', id: 'usage_flow' } }, draftInput: {} }] });
         const state = current.state(field);
-        return <WidgetSetupFieldRow entry={{ field }} row={{ kind: 'needed' }} options={state.options.map(option => ({ ...option, value: option.value as import('@happier-dev/protocol/json/strictJsonValue').JsonValue }))}
-            optionsStatus={state.status} onRetryOptions={current.retry} plainValue={undefined} phone={false} onChange={() => {}} testID="retry" />;
+        return <>
+            {state.status === 'failed' ? <WidgetSetupOptionsNotice label="Period" onRetry={current.retry} testID="retry.optionsFailed" /> : null}
+            <WidgetSetupFieldRow entry={{ field }} row={{ kind: 'needed' }} options={state.options.map(option => ({ ...option, value: option.value as import('@happier-dev/protocol/json/strictJsonValue').JsonValue }))}
+                optionsStatus={state.status} plainValue={undefined} phone={false} onChange={() => {}} testID="retry" />
+        </>;
     }
     const screen = await renderMountedCurrentUiContext(<Page><Options /></Page>);
     await act(async () => { await vi.waitFor(() => expect(current!.state(field).status).toBe('failed')); });
