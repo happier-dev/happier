@@ -12,6 +12,24 @@ export type ManagedGitHubUserOAuthConfig = Readonly<{
     networkPolicy: OutboundIdentityNetworkPolicy;
 }>;
 
+/**
+ * The OAuth callback route segment every managed GitHub App user authorization
+ * returns to. The manifest registers its URL as the App's only `callback_urls`
+ * entry, and GitHub refuses any other `redirect_uri`, so sign-in and
+ * installation verification both present exactly this callback.
+ */
+export const MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID = "github-app";
+
+/**
+ * The user-authorization callback registered on a managed GitHub App. The
+ * identity runtime presents exactly this value as `redirect_uri`, and the
+ * administration projection shows exactly this value to copy, so the two can
+ * never disagree.
+ */
+export function managedGitHubAppUserAuthorizationCallbackUrl(publicServerUrl: string): string {
+    return `${publicServerUrl.replace(/\/$/u, "")}/v1/oauth/${MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID}/callback`;
+}
+
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return typeof value === "object" && value !== null && !Array.isArray(value)
         ? value as Readonly<Record<string, unknown>>

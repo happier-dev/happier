@@ -41,7 +41,11 @@ import {
     readGitHubAppInstallationEvidence,
     verifyGitHubOrganizationAdministrator,
 } from "./githubAppInstallationClient";
-import { createManagedGitHubUserOAuthProvider } from "./githubManagedUserOAuth";
+import {
+    MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID,
+    createManagedGitHubUserOAuthProvider,
+    managedGitHubAppUserAuthorizationCallbackUrl,
+} from "./githubManagedUserOAuth";
 import type { OAuthFlowProvider } from "@/app/oauth/providers/types";
 import { createExternalAuthorizeAttempt } from "@/app/api/routes/connect/oauthExternal/createExternalAuthorizeUrl";
 import { resolveConfiguredPublicServerUrl } from "@/app/serverUrls/effectiveServerUrls";
@@ -826,11 +830,6 @@ function parsePositiveDecimalBigInt(value: string): bigint | null {
     return /^[1-9][0-9]*$/.test(value) ? BigInt(value) : null;
 }
 
-// Reuse the built-in reserved GitHub callback namespace. The signed attempt's
-// closed purpose dispatches this flow before ordinary provider resolution, so
-// no newly reserved provider ID or deployment-provider collision is introduced.
-const GITHUB_APP_INSTALLATION_OAUTH_PROVIDER_ID = "github";
-
 export async function resolveGitHubAppInstallationVerificationOAuth(
     params: Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
@@ -874,11 +873,11 @@ export async function resolveGitHubAppInstallationVerificationOAuth(
     return {
         status: "ready",
         provider: createManagedGitHubUserOAuthProvider({
-            providerId: GITHUB_APP_INSTALLATION_OAUTH_PROVIDER_ID,
+            providerId: MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID,
             githubHost: prepared.registration.githubHost,
             clientId: prepared.registration.githubClientId,
             clientSecret: prepared.secrets.clientSecret!,
-            redirectUrl: `${publicServerUrl}/v1/oauth/${GITHUB_APP_INSTALLATION_OAUTH_PROVIDER_ID}/callback`,
+            redirectUrl: managedGitHubAppUserAuthorizationCallbackUrl(publicServerUrl),
             networkPolicy: prepared.network.policy,
         }),
     };
@@ -925,20 +924,21 @@ export async function beginGitHubAppInstallationVerification(params: GitHubAppMa
     });
     if (prepared.status !== "ready") return prepared;
 
-    const redirectUrl = `${publicServerUrl}/v1/oauth/${GITHUB_APP_INSTALLATION_OAUTH_PROVIDER_ID}/callback`;
+    // The signed attempt's closed purpose dispatches this flow on the App's
+    // registered callback before ordinary provider resolution.
     const provider = createManagedGitHubUserOAuthProvider({
-        providerId: GITHUB_APP_INSTALLATION_OAUTH_PROVIDER_ID,
+        providerId: MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID,
         githubHost: prepared.registration.githubHost,
         clientId: prepared.registration.githubClientId,
         clientSecret: prepared.secrets.clientSecret!,
-        redirectUrl,
+        redirectUrl: managedGitHubAppUserAuthorizationCallbackUrl(publicServerUrl),
         networkPolicy: prepared.network.policy,
     });
     const authentication = projectGitHubAppManagementAuthenticationV1(params);
     const attempt = await createExternalAuthorizeAttempt({
         flow: "connect",
         purpose: "github_app_installation_verification",
-        providerId: GITHUB_APP_INSTALLATION_OAUTH_PROVIDER_ID,
+        providerId: MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID,
         provider,
         env: params.env,
         userId: params.actorAccountId,

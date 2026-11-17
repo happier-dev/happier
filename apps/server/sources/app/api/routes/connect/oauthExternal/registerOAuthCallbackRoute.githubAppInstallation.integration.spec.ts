@@ -30,7 +30,10 @@ import {
 import { registerOAuthCallbackRoute } from "./registerOAuthCallbackRoute";
 import { createExternalAuthorizeUrl } from "./createExternalAuthorizeUrl";
 import { resolveOAuthRuntimeById } from "@/app/auth/providers/identityProviderCatalog";
-import { beginGitHubAppManifestSetup } from "@/app/integrations/github/githubManagedAppManifest";
+import {
+    beginGitHubAppManifestSetup,
+    managedGitHubAppUserAuthorizationCallbackUrl,
+} from "@/app/integrations/github/githubManagedAppManifest";
 import { registerManagedGitHubAppRoutes } from "@/app/integrations/github/githubManagedAppRoutes";
 import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
 
@@ -128,6 +131,10 @@ describe("OAuth callback GitHub App installation verification", () => {
         const authorize = new URL(started.authorizeUrl);
         const state = authorize.searchParams.get("state");
         expect(state).toBeTruthy();
+        // GitHub accepts only a redirect_uri registered on the App. The manifest
+        // registers exactly this callback, so verification must present it.
+        const registeredCallback = managedGitHubAppUserAuthorizationCallbackUrl("https://home.example.test");
+        expect(authorize.searchParams.get("redirect_uri")).toBe(registeredCallback);
 
         const app = Fastify({ logger: false });
         app.setValidatorCompiler(validatorCompiler);
@@ -135,11 +142,13 @@ describe("OAuth callback GitHub App installation verification", () => {
         registerOAuthCallbackRoute(app.withTypeProvider<ZodTypeProvider>());
         const response = await app.inject({
             method: "GET",
-            url: `/v1/oauth/github/callback?state=${encodeURIComponent(state!)}&code=one-time-code`,
+            url: `${new URL(registeredCallback).pathname}?state=${encodeURIComponent(state!)}&code=one-time-code`,
         });
         await app.close();
 
         expect(response.statusCode).toBe(302);
+        const exchange = transport.fetch.mock.calls[0];
+        expect(JSON.parse(String(exchange?.[1]?.body)).redirect_uri).toBe(registeredCallback);
         const redirect = new URL(response.headers.location as string);
         expect(redirect.searchParams.get("verified")).toBe("1");
         expect(redirect.searchParams.get("error")).toBeNull();
@@ -411,7 +420,7 @@ describe("OAuth callback GitHub App installation verification", () => {
         registerOAuthCallbackRoute(verifyApp.withTypeProvider<ZodTypeProvider>());
         const verified = await verifyApp.inject({
             method: "GET",
-            url: `/v1/oauth/github/callback?state=${encodeURIComponent(
+            url: `/v1/oauth/github-app/callback?state=${encodeURIComponent(
                 new URL(started.authorizeUrl).searchParams.get("state")!,
             )}&code=one-time-code`,
         });

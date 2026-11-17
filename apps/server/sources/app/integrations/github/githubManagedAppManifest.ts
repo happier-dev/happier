@@ -11,6 +11,7 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { readGitHubAppInstallationEvidence } from "./githubAppInstallationClient";
+import { managedGitHubAppUserAuthorizationCallbackUrl } from "./githubManagedUserOAuth";
 import {
     authorizeGitHubAppManagementInTx,
     type GitHubAppManagementRefusal,
@@ -447,12 +448,4 @@ export async function completeGitHubAppManifestSetup(
     return { status: "github_app_already_registered" };
 }
 
-/**
- * The user-authorization callback registered on a managed GitHub App. The
- * identity runtime presents exactly this value as `redirect_uri`, and the
- * administration projection shows exactly this value to copy, so the two can
- * never disagree.
- */
-export function managedGitHubAppUserAuthorizationCallbackUrl(publicServerUrl: string): string {
-    return `${publicServerUrl.replace(/\/$/u, "")}/v1/oauth/github-app/callback`;
-}
+export { managedGitHubAppUserAuthorizationCallbackUrl };

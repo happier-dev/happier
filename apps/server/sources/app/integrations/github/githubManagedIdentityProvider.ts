@@ -1,4 +1,3 @@
-import { managedGitHubAppUserAuthorizationCallbackUrl } from "./githubManagedAppManifest";
 import type {
     TeamIdentityConnectionExternalReferenceV1,
     TeamIdentityConnectionSettingsV1,
@@ -21,7 +20,9 @@ import { resolveManagedIdentityNetworkPolicy } from "@/app/auth/providers/manage
 import { bindDirectoryProvisionedIdentitiesInTx, type DirectoryProvisionedIdentityMatch } from "@/app/teams/directory/provisionedIdentityBinding";
 
 import {
+    MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID,
     createManagedGitHubUserOAuthProvider,
+    managedGitHubAppUserAuthorizationCallbackUrl,
     parseManagedGitHubUserProfile,
 } from "./githubManagedUserOAuth";
 import {
@@ -528,7 +529,7 @@ export async function resolveManagedGitHubIdentityProviderRuntimeFactsInTx(
         results.set(candidate.key, {
             module: createManagedGitHubIdentityProviderModule({
                 providerId: candidate.provider.id,
-                callbackProviderId: "github-app",
+                callbackProviderId: MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID,
                 displayName: candidate.provider.displayName,
                 context: candidate.context,
                 connectionId: candidate.connectionId,
