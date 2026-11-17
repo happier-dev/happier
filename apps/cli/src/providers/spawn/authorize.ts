@@ -556,7 +556,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     { connectionId: readSessionModelSelectionProviderConnectionId(input.selection) ?? undefined, machineId: input.machineId },
   ) };
   const definitive = resolveProviderSpawnDefinitiveRejection({
-    selection: { ...input.selection.ref, providerConnectionId: readSessionModelSelectionProviderConnectionId(input.selection) },
+    selection: input.selection.ref,
     agentTargetKey: input.agentTargetKey,
     agentId: input.agentId,
     providerSettings: readProviderSettingsForCli(initialSnapshot).settings,

@@ -4,7 +4,7 @@ import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.j
 import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
-import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
+import { ProviderBoundModelRefSchema, SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
 import { TeamCredentialProviderModelSelectionV1Schema, TeamCredentialRouteV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
 import { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialBindingIntentV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
 
@@ -75,6 +75,12 @@ export const SessionModelRefV2Schema = lazyZodSchema(() => z.discriminatedUnion(
 ]));
 export type SessionModelRefV2 = z.infer<typeof SessionModelRefV2Schema>;
 
+/** Ref-only consumers accept the same source variants as the Session launch carrier. */
+export const SessionModelRefSchema = lazyZodSchema(() => z.union([
+  SessionModelRefV2Schema, ProviderBoundModelRefSchema,
+]));
+export type SessionModelRef = z.infer<typeof SessionModelRefSchema>;
+
 const SessionModelSelectionV2BaseShape = {
   v: z.literal(2),
   updatedAt: z.number().check(z.nonnegative()),
@@ -130,8 +136,11 @@ export function deserializeSessionModelSelection(value: string): SessionModelSel
 
 /** Account Provider binding is a distinct source from native and Team-resource binding. */
 export function readSessionModelSelectionProviderConnectionId(selection: SessionModelSelection): SessionModelSelectionV1['ref']['providerConnectionId'] {
-  return selection.v === 1 ? selection.ref.providerConnectionId
-    : selection.ref.source === 'account_provider_connection' ? selection.ref.providerConnectionId : null;
+  return readSessionModelRefProviderConnectionId(selection.ref);
+}
+
+export function readSessionModelRefProviderConnectionId(ref: SessionModelRef): SessionModelSelectionV1['ref']['providerConnectionId'] {
+  return 'providerConnectionId' in ref ? ref.providerConnectionId : null;
 }
 
 /** Older readers may consume only the two sources they can represent. */

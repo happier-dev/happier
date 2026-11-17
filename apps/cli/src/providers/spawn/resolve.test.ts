@@ -932,6 +932,27 @@ describe('provider spawn authorization resolver', () => {
 
   describe('definitive pre-launch rejection', () => {
     it.each([
+      { source: 'native', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'native/model' },
+      { source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team/model',
+        resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 7, deliveryMode: 'brokered' },
+    ])('leaves $source admission with its source owner', selection => {
+      expect(resolveProviderSpawnDefinitiveRejection({ selection,
+        agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+        providerSettings: ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1 }),
+        registry: staticPreflightRegistry(),
+      })).toEqual({ ok: true });
+    });
+
+    it('checks a source-aware Account ref against its Account catalog', () => {
+      expect(resolveProviderSpawnDefinitiveRejection({
+        selection: { ...definitiveSelection(), source: 'account_provider_connection' },
+        agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+        providerSettings: ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1 }),
+        registry: staticPreflightRegistry(),
+      })).toMatchObject({ ok: false, error: { code: 'provider_connection_not_found' } });
+    });
+
+    it.each([
       ['missing', ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1 })],
       ['deleted', ProviderSettingsV1Schema.parse({
         ...DEFAULT_PROVIDER_SETTINGS_V1,

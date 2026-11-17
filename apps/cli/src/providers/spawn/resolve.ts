@@ -1,4 +1,4 @@
-import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelRefSchema, readSessionModelRefProviderConnectionId, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createProviderBindingSecurityFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderUsageRequestFingerprintV1, createProviderEndpointSetFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
@@ -10,7 +10,6 @@ import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings
 import type { AssessedProviderEndpoint } from '@happier-dev/protocol';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderModelDescriptorV1Schema, resolveModelDisplayName } from '@happier-dev/protocol/models/descriptor';
 import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { ProviderCredentialTransportAmbiguityErrorV1, resolveProviderBindingDeclarationCompatibilityV1, selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
@@ -864,14 +863,14 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
     'agentDefinitionsById' | 'providersByContributionKey'
   >;
 }>): ProviderSpawnDefinitiveRejectionResult {
-  const selection = ProviderBoundModelRefSchema.safeParse(input.selection);
+  const selection = SessionModelRefSchema.safeParse(input.selection);
   if (!selection.success) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent') };
   }
   if (selection.data.agentTargetKey !== input.agentTargetKey) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent') };
   }
-  const connectionId = selection.data.providerConnectionId;
+  const connectionId = readSessionModelRefProviderConnectionId(selection.data);
   if (connectionId === null) return { ok: true };
 
   const providerSettings = input.providerSettings;
