@@ -9997,6 +9997,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     streamPlayer: {
+        frameAccessibilityLabel: '即時畫面',
         status: {
             opening: '正在開啟串流…',
             playing: '即時',

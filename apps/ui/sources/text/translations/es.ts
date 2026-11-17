@@ -12215,6 +12215,7 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: 'Pantalla en directo',
     status: {
       opening: 'Abriendo stream…',
       playing: 'En vivo',

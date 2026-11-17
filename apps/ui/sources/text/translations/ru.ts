@@ -12066,6 +12066,7 @@ deleteWarning: "Сохранённые входы и данные сайтов �
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: 'Экран в реальном времени',
     status: {
       opening: 'Открытие потока…',
       playing: 'В эфире',

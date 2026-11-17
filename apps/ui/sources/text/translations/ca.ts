@@ -11398,6 +11398,7 @@ deleteWarning: "Això elimina els inicis de sessió i les dades dels llocs desat
     },
 
     streamPlayer: {
+        frameAccessibilityLabel: 'Pantalla en directe',
         status: {
             opening: 'Obrint el flux…',
             playing: 'En directe',

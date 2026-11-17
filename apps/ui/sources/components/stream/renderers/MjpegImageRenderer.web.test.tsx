@@ -53,3 +53,13 @@ describe('MjpegImageRenderer web', () => {
         }
     });
 });
+
+describe('MjpegImageRenderer accessible name', () => {
+    it('names the live frame it draws, so the picture is not an unnamed image (C77 role-img-alt)', async () => {
+        const { t } = await import('@/text');
+        const { MjpegImageRenderer } = await import('./MjpegImageRenderer.shared');
+        const screen = await renderScreen(<MjpegImageRenderer frameUrl="data:image/jpeg;base64,AQID" testID="mjpeg-frame" />);
+        expect(screen.findByTestId('mjpeg-frame')?.props.accessibilityLabel).toBe(t('streamPlayer.frameAccessibilityLabel'));
+        await screen.unmount();
+    });
+});

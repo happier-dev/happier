@@ -11849,6 +11849,7 @@ deleteWarning: "这会删除配置文件中保存的登录信息和网站数据�
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: '实时画面',
     status: {
       opening: '正在打开流…',
       playing: '实时',

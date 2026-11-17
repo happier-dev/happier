@@ -12053,6 +12053,7 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: 'Écran en direct',
     status: {
       opening: 'Ouverture du flux…',
       playing: 'En direct',

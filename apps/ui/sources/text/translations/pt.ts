@@ -12332,6 +12332,7 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: 'Tela ao vivo',
     status: {
       opening: 'Abrindo stream…',
       playing: 'Ao vivo',

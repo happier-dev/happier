@@ -12512,6 +12512,7 @@ deleteWarning: "このプロファイルに保存されたログイン情報と�
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: 'ライブ画面',
     status: {
       opening: 'ストリームを開始中…',
       playing: 'ライブ',

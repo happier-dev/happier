@@ -12044,6 +12044,7 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: 'Ekran na żywo',
     status: {
       opening: 'Otwieranie strumienia…',
       playing: 'Na żywo',

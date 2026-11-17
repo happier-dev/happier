@@ -12088,6 +12088,7 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
     },
 
     streamPlayer: {
+        frameAccessibilityLabel: 'Live-Bildschirm',
         status: {
             opening: 'Stream wird geöffnet…',
             playing: 'Live',

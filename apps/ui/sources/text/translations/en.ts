@@ -14009,6 +14009,7 @@ deleteWarning: "This deletes the profile’s saved sign-ins and site data, and c
 };
 
 const enStreamPlayer = {
+  frameAccessibilityLabel: 'Live screen',
   status: {
     opening: 'Opening stream…',
     playing: 'Live',

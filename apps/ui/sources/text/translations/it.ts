@@ -12436,6 +12436,7 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
   },
 
   streamPlayer: {
+    frameAccessibilityLabel: 'Schermo in diretta',
     status: {
       opening: 'Apertura stream…',
       playing: 'In diretta',
