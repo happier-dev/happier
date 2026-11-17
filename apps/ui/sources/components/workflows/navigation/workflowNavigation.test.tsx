@@ -79,11 +79,10 @@ it.each(['workflowEditor', 'workflowRun'] as const)('detail-navigation.%s resolv
     const read = await invokeScopeAction('shell.column.get', { column: 'main' });
     expect(read).toMatchObject({ activeTab: activeId, items: expect.arrayContaining([{ id: 'steps', label: expect.any(String), available: true, pageKind, placement: pageKind === 'workflowEditor' ? 'pinned' : 'overflow' }]) });
     await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: activeId });
-    // Selecting the retained page also returns from its companion (34ec23a793c).
-    expect(selectPage).toHaveBeenCalledExactlyOnceWith(activeId);
+    // The canonical main-column owner preserves nested route state when its active page is reselected.
+    expect(selectPage).not.toHaveBeenCalled();
     await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: activeId === 'steps' ? 'flow' : 'steps' });
-    expect(selectPage).toHaveBeenCalledTimes(2);
-    expect(selectPage).toHaveBeenLastCalledWith(activeId === 'steps' ? 'flow' : 'steps');
+    expect(selectPage).toHaveBeenCalledExactlyOnceWith(activeId === 'steps' ? 'flow' : 'steps');
     expect(selectCompanion).not.toHaveBeenCalled();
     expect(closeCompanion).not.toHaveBeenCalled();
     expect(resolve).toHaveBeenCalledTimes(1);
@@ -202,4 +201,71 @@ it('reports the page navigation as shown exactly when it draws something, so its
     expect(shown).toBe(true);
     expect(drawn(wide)).toBe(true);
     await wide.unmount();
+});
+
+it('lets an agent invoke the mounted editor pages and companion through opaque current-context commands', async () => {
+    const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+    const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol');
+    const home = await serveActionHomes({ homes: [{ key: 'author', serverUrl: 'https://workflow-navigation.test', accountId: 'author' }],
+        route: () => undefined });
+    const server = home.homes.author!;
+    const scope = { serverId: server.id, accountId: 'author' };
+    const selectPage = vi.fn();
+    const selectCompanion = vi.fn();
+    let setPresented: (value: boolean) => void = () => {};
+    let model: ReturnType<typeof useWorkflowNavigation>['model'] | undefined;
+    function Fixture() {
+        const [presented, changePresented] = React.useState(true);
+        const [activeId, changePage] = React.useState('steps');
+        setPresented = changePresented;
+        ({ model } = useWorkflowNavigation({ pageKind: 'workflowEditor', identity: 'opaque-editor', scope,
+            phone: false, presented, activeId, agentAvailable: true,
+            selectPage: id => { selectPage(id); changePage(id); },
+            companion: { activeId: null, select: selectCompanion, close: () => {} } }));
+        return null;
+    }
+    try {
+        const screen = await renderMountedCurrentUiContext(<PresentedDetailNavigationProvider><Fixture /></PresentedDetailNavigationProvider>);
+        const executor = createDefaultActionExecutor();
+        const commands = () => readCurrentUiContextActionReader({ surface: 'agent' })!.readCurrentUiContext()!.commands;
+        const settings = storage.getState().settings;
+        await act(async () => {
+            storage.getState().applySettingsForScope(scope, { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+                v: 1, actions: { 'shell.column.set': { disabledSurfaces: ['agent'] } },
+            }) }, 2);
+        });
+        const sentence = commands().find(candidate => candidate.title === model!.items.find(item => item.id === 'sentence')!.title)!;
+        await act(async () => {
+            expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                { commandId: sentence.id }, { surface: 'agent' })).toMatchObject({ ok: false });
+        });
+        expect(selectPage).not.toHaveBeenCalled();
+        await act(async () => storage.getState().applySettingsForScope(scope, settings, 3));
+        for (const id of ['sentence', 'steps', 'agent']) {
+            const item = model!.items.find(candidate => candidate.id === id)!;
+            const command = commands().find(candidate => candidate.title === item.title);
+            expect(command, `Mounted navigation choice ${id}`).toBeDefined();
+            await act(async () => {
+                expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                    { commandId: command!.id }, { surface: 'agent' })).toMatchObject({ ok: true });
+            });
+        }
+        expect(selectPage.mock.calls.map(call => call[0])).toEqual(['sentence', 'steps']);
+        expect(selectCompanion).toHaveBeenCalledExactlyOnceWith('agent');
+        const retired = commands().find(candidate => candidate.title === model!.items.find(item => item.id === 'sentence')!.title)!;
+        await act(async () => setPresented(false));
+        expect(commands().some(command => command.id === retired.id)).toBe(false);
+        await act(async () => {
+            expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                { commandId: retired.id }, { surface: 'agent' })).toMatchObject({ ok: false });
+        });
+        expect(selectPage).toHaveBeenCalledTimes(2);
+        await screen.unmount();
+    } finally {
+        await home.dispose();
+    }
 });

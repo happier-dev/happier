@@ -6,6 +6,8 @@ import type { ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamil
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { WorkflowCockpitTabBar } from './WorkflowNavigationViews';
 
 export type WorkflowPageKind = 'workflowEditor' | 'workflowRun';
@@ -46,6 +48,20 @@ export function useWorkflowNavigation(input: Readonly<{
         registerSide: Boolean(input.companion) });
     const model = React.useMemo<WorkflowNavigationModel>(() => ({ ...navigation.model,
         pageKind: input.pageKind, sideId, sideIds }), [navigation.model, input.pageKind, sideId, sideIds]);
+    const { execute, executeForCaller, binding } = useMountedActionExecution(input.scope);
+    const execution = React.useMemo(() => ({ execute, executeForCaller, binding }), [execute, executeForCaller, binding]);
+    const commands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => !input.presented ? []
+        : ([['main', navigation.pages], ['side', input.companion ? navigation.companions : []]] as const)
+            .flatMap(([column, entries]) => entries.filter(item => !item.disabledReason).map(item => ({
+                key: `workflow.navigation:${column}:${item.id}`,
+                title: item.title,
+                invoke: async (_value, _context, invocation) => (await invocation.execute(execution,
+                    'shell.column.set', { column, visible: true, tab: item.id },
+                    { executorOptions: { scopeActionOwner: { kind: 'shell.column', column,
+                        read: () => model.readColumn(column) } } })).ok,
+            }))),
+    [input.presented, Boolean(input.companion), navigation.pages, navigation.companions, execution, model.readColumn]);
+    useCurrentUiContextLocalCommands(commands, { contextKey: input.identity });
     // Equal navigation facts keep one identity, so a page edit (a Workflow name keystroke) leaves its tabs still.
     return React.useMemo(() => ({ model, pages: navigation.pages, companions: navigation.companions,
         placements: navigation.placements, onMainColumnControlsChange }),
