@@ -15,6 +15,7 @@ import { createRpcCallError, RpcError, RPC_ERROR_CODES } from '@happier-dev/prot
 import { readOriginalActionEnvelopeMachineRpcKindV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
   type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncSeedRoutingV1 } from '@happier-dev/protocol/socketRpc';
+import { SocketRpcContinuationDeliveryV1Schema, type SocketRpcContinuationReturnV1 } from '@happier-dev/protocol/socketRpc';
 
 export type SocketRpcAckScope = Readonly<{
   emit?(event: string, ...args: unknown[]): unknown;
@@ -26,7 +27,71 @@ export type SocketRpcSocket = SocketRpcAckScope & Readonly<{
   timeout?(timeoutMs: number): SocketRpcAckScope;
   /** Retain a pooled transport independently of its logical caller until native ACK settlement. */
   retain?(): () => void;
+  on?(event: string, listener: (...args: unknown[]) => void): unknown;
+  off?(event: string, listener: (...args: unknown[]) => void): unknown;
 }>;
+
+export type SocketRpcContinuationCall = (params: unknown) => Promise<unknown>;
+export type SocketRpcContinuationHandler = ((params: unknown, call: SocketRpcContinuationCall) => Promise<unknown>) & { dispose?(): void };
+
+/** A live call's existing codec and relay-selected peer; no operation or credential is created. */
+export function createSocketRpcContinuation(input: Readonly<{
+  socket: SocketRpcSocket; requestId: string; method: string; content: SocketRpcContent;
+  returnTo?: SocketRpcContinuationReturnV1; signal?: AbortSignal; onRequest: SocketRpcContinuationHandler;
+}>) {
+  if (!input.socket.on || !input.socket.off) throw new Error('RPC continuation transport is unavailable');
+  let selectedSocketId = input.returnTo?.socketId;
+  let disposed = false;
+  const pending = new Map<string, { resolve(value: unknown): void; reject(error: unknown): void }>();
+  const send = (callId: string, params: unknown, reply?: true, notification?: true) => input.socket.emit(SOCKET_RPC_EVENTS.CONTINUATION, {
+    requestId: input.requestId, callId, params, ...(reply ? { reply } : {}), ...(notification ? { notification } : {}),
+    ...(input.returnTo ? { returnTo: input.returnTo } : {}),
+  });
+  const notify = async (value: unknown): Promise<void> => {
+    if (disposed || !selectedSocketId) throw createSocketRpcAbortError();
+    const callId = Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    const encoded = await socketRpcCodec.encodeParams(input.content, value, { method: input.method, callId });
+    if (!disposed) send(callId, encoded, undefined, true);
+  };
+  const call: SocketRpcContinuationCall = async value => {
+    if (disposed || !selectedSocketId) throw createSocketRpcAbortError();
+    const callId = Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    const encoded = await socketRpcCodec.encodeParams(input.content, value, { method: input.method, callId });
+    if (disposed) throw createSocketRpcAbortError();
+    const ack = await new Promise<unknown>((resolve, reject) => {
+      pending.set(callId, { resolve, reject });
+      try { send(callId, encoded); } catch (error) { pending.delete(callId); reject(error); }
+    });
+    return socketRpcCodec.decodeResult(input.content, ack, callId);
+  };
+  const listener = (value: unknown) => {
+    const delivery = SocketRpcContinuationDeliveryV1Schema.safeParse(value);
+    if (!delivery.success || delivery.data.requestId !== input.requestId || disposed) return;
+    if ('selectedSocketId' in delivery.data) {
+      // Only the relay emits selection deliveries; callers submit frame schema instead.
+      if (!input.returnTo && selectedSocketId === undefined) selectedSocketId = delivery.data.selectedSocketId;
+      return;
+    }
+    if (delivery.data.senderSocketId !== selectedSocketId) return;
+    const frame = delivery.data;
+    if (frame.reply) {
+      const waiter = pending.get(frame.callId);
+      if (waiter) { pending.delete(frame.callId); waiter.resolve(frame.params); }
+      return;
+    }
+    void (async () => {
+      const decoded = await socketRpcCodec.decodeRequestParams(input.content, frame.params, input.method);
+      if (decoded.callId !== null && decoded.callId !== frame.callId) throw new Error('RPC continuation correlation mismatch');
+      const result = await input.onRequest(decoded.params, call);
+      if (!disposed && !frame.notification) send(frame.callId, { ok: true, result: await socketRpcCodec.encodeResponse(input.content, result, decoded.callId) }, true);
+    })().catch(() => { if (!disposed && !frame.notification) send(frame.callId, { ok: false, error: 'RPC continuation failed', errorCode: RPC_ERROR_CODES.FORBIDDEN }, true); });
+  };
+  const cancel = () => { for (const waiter of pending.values()) waiter.reject(createSocketRpcAbortError()); pending.clear(); };
+  input.socket.on(SOCKET_RPC_EVENTS.CONTINUATION, listener);
+  input.signal?.addEventListener('abort', cancel, { once: true });
+  return { call, notify, dispose() { disposed = true; cancel(); input.signal?.removeEventListener('abort', cancel);
+    input.socket.off!(SOCKET_RPC_EVENTS.CONTINUATION, listener); } };
+}
 
 /** Local native observation, distinct from identically worded remote error ACKs. */
 class SocketRpcDisconnectedError extends RpcError {
@@ -150,8 +215,10 @@ export async function callSocketRpc<R>(params: Readonly<{
   randomBytes?: (length: number) => Uint8Array;
   transportResponseEnvelopeVersion?: SocketRpcRequestPayload['transportResponseEnvelopeVersion'];
   createExternalActionExecution?: (request: Readonly<{ method: string; requestId: string; params: unknown }>) => SocketRpcRequestPayload['externalActionExecution'];
+  onContinuation?: SocketRpcContinuationHandler;
 }>): Promise<R> {
   let acknowledged = false;
+  let continuation: ReturnType<typeof createSocketRpcContinuation> | undefined;
   try {
     if (params.signal?.aborted) throw createSocketRpcAbortError();
     const timeoutMs = SocketRpcTimeoutMsSchema.parse(params.timeoutMs);
@@ -195,7 +262,9 @@ export async function callSocketRpc<R>(params: Readonly<{
       ? readStructuredMessageActionRoutingV1(params.method, params.params) : null;
     const encoded = await socketRpcCodec.encodeParams(params.content, params.params, { method, callId });
     if (params.signal?.aborted) throw createSocketRpcAbortError();
-    const requestId = params.requestId ?? (params.signal || params.createExternalActionExecution ? createSocketRpcRequestId() : undefined);
+    const requestId = params.requestId ?? (params.signal || params.createExternalActionExecution || params.onContinuation ? createSocketRpcRequestId() : undefined);
+    if (params.onContinuation && requestId) continuation = createSocketRpcContinuation({ socket: params.socket,
+      requestId, method, content: params.content, onRequest: params.onContinuation, ...(params.signal ? { signal: params.signal } : {}) });
     const sessionBrowserCapability = params.target.kind === 'session'
       ? resolveSessionBrowserRpcCapabilityV1(params.method) : null;
     const authorization = sessionActionAuthorization ?? (params.target.kind === 'session'
@@ -228,6 +297,7 @@ export async function callSocketRpc<R>(params: Readonly<{
       // observational identity without changing their disconnect semantics.
       ...(requestId ? { requestId } : { traceId: createSocketRpcRequestId() }),
       ...(params.waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
+      ...(params.onContinuation ? { continuation: true } : {}),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(authorization ? { authorization } : {}),
       ...(externalActionExecution ? { externalActionExecution } : {}),
@@ -252,5 +322,5 @@ export async function callSocketRpc<R>(params: Readonly<{
       }), { cause: error }), 'outcomeUnknown');
     }
     throw readRpcRequestDisposition(error) === null ? markRpcRequestDisposition(error, acknowledged ? 'outcomeUnknown' : 'notSent') : error;
-  }
+  } finally { continuation?.dispose(); params.onContinuation?.dispose?.(); }
 }

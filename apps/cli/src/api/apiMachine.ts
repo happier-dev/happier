@@ -148,6 +148,7 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
     WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1,
     type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { createWorkspaceSyncTargetContent } from './rpc/workspaceSyncTargetContent';
+import { createWorkspaceSyncSourceOperationContinuation } from './rpc/workspaceSyncOperationContinuation';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSourcePhaseResultV1Schema,
     HandoffTargetReplacementPreflightResultV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema,
     WorkspaceSyncTargetBootstrapReleaseResultV1Schema,
@@ -4449,6 +4450,7 @@ export class ApiMachineClient {
             const result = admitted?.ok
                 ? await this.rpcHandlerManager.invokeLocal(input.method, input.request, {
                     ...(input.signal ?? input.context.signal ? { signal: input.signal ?? input.context.signal } : {}),
+                    ...(input.context.localActionContext ? { localActionContext: input.context.localActionContext } : {}),
                     admissionResult: { ok: true, ...(admitted.workspaceSyncPrivateExecution
                         ? { workspaceSyncPrivateExecution: admitted.workspaceSyncPrivateExecution } : {}) },
                     rpcContext: { machineAdmission: admitted.machineAdmission,
@@ -4793,6 +4795,8 @@ export class ApiMachineClient {
             const content = createWorkspaceSyncTargetContent({ destination, method: `${input.machineId}:${input.method}`, routing: writerTarget });
             const result = readMachineActionRpcResult(await callSocketRpc({ socket, target: { kind: 'machine', id: input.machineId }, method: input.method,
                 params: input.request, content, workspaceSyncSourceWriterTargetRouting: writerTarget,
+                ...(writerTarget.target.phase === 'remove' && input.context.localActionContext
+                    ? { onContinuation: createWorkspaceSyncSourceOperationContinuation(input.context.localActionContext), waitForResultOnCancel: true } : {}),
                 ...(projectSourceExecution ? { workspaceSyncSourceExecution: projectSourceExecution } : {}),
                 ...(jointTarget ? { workspaceSyncTargetRouting: targetRouting } : {}), timeoutMs: null,
                 ...((forwardWork || retainedWriterCopyPhase) && signedAuthorization ? { createExternalActionExecution: wire => {
@@ -4845,6 +4849,8 @@ export class ApiMachineClient {
         return readMachineActionRpcResult(await callSocketRpc({ socket,
             target: { kind: 'machine', id: input.machineId }, method: input.method,
             params: input.request, content, ...input.routing, timeoutMs: null,
+            ...(input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE && input.context.localActionContext
+                ? { onContinuation: createWorkspaceSyncSourceOperationContinuation(input.context.localActionContext), waitForResultOnCancel: true } : {}),
             // Forward work exercises the original signed credential. Cleanup releases retained custody
             // under the current installed child's socket and exact captured context, even after borrower revocation.
             ...(forwardWork && signedAuthorization ? { createExternalActionExecution: (wire) => {

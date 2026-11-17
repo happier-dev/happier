@@ -480,6 +480,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     credentials: StoredCredentials;
     /** The same exact Home credential lifetime consumed by finite execution. */
     isCurrent?: () => Promise<boolean>;
+    /** Exact current requester Project ports; never the installed Account's fallback. */
+    resolveProjectRuntime?: (context: RpcHandlerContext) => Promise<import('@/workspaces/projectSetup/projectFiniteAction').ProjectFiniteActionRuntime | null>;
     /** Actual target-child socket, preserving the original Home-admitted requester. */
     callWorkspaceTargetPhase?: (descriptor: WorkspaceSyncTargetPhaseDescriptor, context: RpcHandlerContext) => Promise<unknown>;
     /** The installed worker forwards its original root through the incumbent signed SOURCE transport. */
@@ -619,6 +621,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     localServerId: semanticServerId,
     localMachineId: input.localMachineId,
     localAccountId: readAccountIdFromToken(input.credentials.token) ?? undefined,
+    ...(input.resolveProjectRuntime ? { resolveProjectRuntime: input.resolveProjectRuntime } : {}),
     getProjectSnapshot: operationId => {
       const retained = operationId ? runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId })
         ?? runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: operationId }) : null;
@@ -875,6 +878,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       machineId: request.machineId,
       method: request.method,
       request: request.request,
+      ...(request.operationContext ? { operationContext: request.operationContext } : {}),
       // Target phases follow Workspace Sync custody and caller cancellation.
       timeoutMs: null,
       ...(request.signal ? { signal: request.signal } : {}),
@@ -1232,9 +1236,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
               ?? context.callerInputAuthorization?.binding.workspaceSyncAdmission?.source;
             return await input.callWorkspaceTargetPhase!({ ...descriptor, physicalEndpoint: preparedTargetEndpoint },
               { ...createInstalledTargetCleanupContext(source, sourceWriter, descriptor.routing),
+                ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}),
                 ...(descriptor.callerInputAuthorization ? { callerInputAuthorization: descriptor.callerInputAuthorization } : {}) });
           }
-          const result = await input.callWorkspaceTargetPhase!(descriptor, context);
+          const result = await input.callWorkspaceTargetPhase!(descriptor, { ...context,
+            ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}) });
           if (descriptor.routing.phase === 'prepare') {
             preparedTargetEndpoint = WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result).physicalEndpoint;
           }
@@ -1303,6 +1309,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       request, ...(retirementContext?.callerInputAuthorization ? {
         callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse(retirementContext.callerInputAuthorization),
       } : {}),
+      ...(retirementContext?.localActionContext ? { operationContext: retirementContext.localActionContext } : {}),
       routing: { v: 1, phase, operationId: retained.input.operationId, accountServerId: semanticServerId,
         targetMachineId: target.machineId, targetRootPath: workspace.rootPath }, ...(signal ? { signal } : {}) }) };
   };
@@ -1312,7 +1319,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     const retained = await callRetainedCopyPhase(relationship, phase, approval, signal, retirementContext);
     if (!retained) {
       await (phase === 'inspect' ? targetAuthority.inspectCommittedCopyAtTarget : targetAuthority.removeCommittedCopyAtTarget)({
-        ...approval, ...(signal ? { signal } : {}) });
+        ...approval, ...(signal ? { signal } : {}) }, retirementContext);
       return;
     }
     readMachineActionRpcResult(retained.result);
@@ -1903,7 +1910,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     ...(input.onStatusPublished ? { onStatusPublished: input.onStatusPublished } : {}),
   });
 
-  relationshipOwner = factories.createRelationshipOwner({
+  const createInstalledRelationshipOwner = (retirementContext?: RpcHandlerContext) => factories.createRelationshipOwner({
     localMachineId: input.localMachineId,
     observeRelationshipTarget: async (relationship, target) => {
       const result = await targetAuthority.previewCommittedCopyAtTarget({ kind: 'preview',
@@ -1955,9 +1962,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       });
     },
     readRelationshipDependencies: relationshipDependencyReader(input.credentials),
-    inspectCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'inspect', approval, signal),
-    removeCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'remove', approval, signal),
+    inspectCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'inspect', approval, signal, retirementContext),
+    removeCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'remove', approval, signal, retirementContext),
   });
+  relationshipOwner = createInstalledRelationshipOwner();
 
   let authorityTail = Promise.resolve();
   const reconcileAuthority = (): void => {
@@ -2177,10 +2185,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             return input.callWorkspaceTargetPhase!({ ...descriptor, physicalEndpoint: preparedTarget.endpoint },
               { ...createInstalledTargetCleanupContext(targetPhaseContext.workspaceSyncSourceRouting,
                 { machineId: input.localMachineId, installationId: admission.installationId }, descriptor.routing),
+                ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}),
                 ...(descriptor.callerInputAuthorization ? { callerInputAuthorization: descriptor.callerInputAuthorization } : {}) });
           }
           if (descriptor.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE) {
-            return input.callWorkspaceTargetPhase!(descriptor, targetPhaseContext);
+            return input.callWorkspaceTargetPhase!(descriptor, { ...targetPhaseContext,
+              ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}) });
           }
           const prepare = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(descriptor.request);
           const relationship = prepare.transientRelationship;
@@ -2390,7 +2400,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             const retained = runtime.handoffAdapter.resolvePrivateExecution?.({ relationshipId: id });
             return retained && requesterOwnsPrivateExecution(retained.execution, context)
               ? requesterRelationshipOwner(retained, context).stop(id, signal, retirement)
-              : workspaceSync.relationshipOwner.stop(id, signal, retirement);
+              : createInstalledRelationshipOwner(context).stop(id, signal, retirement);
           },
         },
       };

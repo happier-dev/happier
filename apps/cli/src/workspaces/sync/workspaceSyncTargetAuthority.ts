@@ -37,6 +37,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
   type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetup/projectCheckoutRemoval';
 import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { lstat, readdir, realpath, mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -120,6 +122,8 @@ export type WorkspaceSyncTargetPhaseDescriptor = Readonly<{
   physicalEndpoint?: MachineInstallationPublicIdentityV1;
   /** Current reviewed retirement continuation; never inherited from the native create. */
   callerInputAuthorization?: RpcHandlerContext['callerInputAuthorization'];
+  /** Live containing operation ports; transported only by the private request continuation. */
+  operationContext?: RpcHandlerContext['localActionContext'];
   signal?: AbortSignal;
 }>;
 /** Host-admitted personal retirement; approval and foreign requester ingress stay at their owners. */
@@ -205,8 +209,8 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   inspectCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   removeCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   assertRetainedCopyDependencyAdmission(request: ProjectWorkerDependencyQueryV1, context: RpcHandlerContext): Promise<void>;
-  inspectCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest): Promise<void>;
-  removeCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest): Promise<void>;
+  inspectCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
+  removeCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   /** Owner-local: lend retained spoke custody for a finite source read. */
   borrowSourceRootForCopy(request: Readonly<{ operationId: string; workspaceRefId: string }>): Promise<WorkspaceSyncSourceRootLoan | null>;
   preflightHandoffTargetReplacementHere(request: HandoffTargetReplacementPreflightV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<HandoffTargetReplacementPreflightResultV1>;
@@ -287,11 +291,15 @@ export type WorkspaceSyncTargetAuthorityDependencies = Readonly<{
     approval: import('@happier-dev/protocol').HandoffTargetReplacementApprovalV1,
   ): Promise<void>;
   assertCommittedCopyRemovalAuthorized?(actionReceiptId: string, actionInput: ProjectWorkerCopyRetireInputV1): Promise<void>;
+  /** Installed Project owner; the current retirement keeps its original operation. */
+  resolveProjectRuntime?(context: RpcHandlerContext): Promise<ProjectFiniteActionRuntime | null>;
   readCommittedCopyDependencies?(actionInput: ProjectWorkerCopyRetireInputV1): Promise<readonly ProjectWorkerDependencyV1[]>;
   callMachineRpc(input: Readonly<{
     machineId: string;
     method: string;
     request: unknown;
+    /** The Account transport retains the original removal operation's live ports. */
+    operationContext?: RpcHandlerContext['localActionContext'];
     signal?: AbortSignal;
   }>): Promise<unknown>;
   bootstrap?: WorkspaceSyncTargetBootstrapAuthorityDependencies;
@@ -1187,16 +1195,17 @@ export function createWorkspaceSyncTargetAuthority(
       ...(observed.sizeBytes === undefined ? {} : { sizeBytes: observed.sizeBytes }) } };
   };
 
-  const committedCopyAtTarget = async (request: WorkspaceSyncCommittedCopyRequest, phase: 'inspect' | 'remove') => {
+  const committedCopyAtTarget = async (request: WorkspaceSyncCommittedCopyRequest, phase: 'inspect' | 'remove', context?: RpcHandlerContext) => {
     const { parsed, removal } = parseCommittedCopy(request);
     const workspace = resolveWorkspaceRef(getSnapshot(), removal.workspaceRefId, localServerId);
     if (workspace.machineId.trim() === localMachineId) {
-      await (phase === 'inspect' ? authority.inspectCommittedCopyHere : authority.removeCommittedCopyHere)(request);
+      await (phase === 'inspect' ? authority.inspectCommittedCopyHere : authority.removeCommittedCopyHere)(request, context);
       return;
     }
     const result = await callMachineRpc({ machineId: workspace.machineId.trim(),
       method: phase === 'inspect' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT : RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
       request: parsed, ...(request.signal ? { signal: request.signal } : {}),
+      ...(phase === 'remove' && context?.localActionContext ? { operationContext: context.localActionContext } : {}),
     });
     const parsedResult = WorkspaceSyncCommittedCopyTargetResultV1Schema.safeParse(result);
     if (!parsedResult.success) {
@@ -2562,12 +2571,28 @@ export function createWorkspaceSyncTargetAuthority(
       ))) {
         throw authorityError('workspace_root_in_use', 'Workspace copy still belongs to a relationship');
       }
+      // Capture native identity and finish cleanup while its admitted requester
+      // and retained target custody still exist. Rows may already be retired.
+      const preparation = dependencies.resolveProjectRuntime ? await (async () => {
+        if (!context) throw authorityError('project_setup_operation_unavailable', 'The original retirement operation is unavailable');
+        const actionContext = buildActionExecutorContextForRpc(context);
+        const operation = requireProjectCheckoutRemovalOperation(actionContext);
+        const runtime = await dependencies.resolveProjectRuntime(context);
+        if (!runtime) throw authorityError('project_setup_operation_unavailable', 'Requester Project cleanup is unavailable');
+        return await prepareProjectCheckoutRemoval({ runtime, ingress: context, context: actionContext, operation,
+          worktreePath: resolved.workspace.rootPath,
+          ...(resolved.workspace.projectKey ? { association: { workspace: resolved.workspace,
+            project: { serverId: resolved.workspace.serverId, projectId: resolved.workspace.projectKey } } } : {}),
+          skipCleanup: request.actionInput.removeTargetCopy?.skipCleanup === true });
+      })() : undefined;
+      if (!native) await authority.reconcileRetainedBootstraps();
+      await removeWorkspaceSyncCommittedCopy({ ...resolved.copy, rootOwnershipManager: resolved.bootstrap.rootOwnershipManager,
+        ...(native ? { retainedOwnership: native.entry.handle } : {}) });
       if (native) await discardRetained(native.authorityKey, 'commit');
-      else await authority.reconcileRetainedBootstraps();
-      await removeWorkspaceSyncCommittedCopy({ ...resolved.copy, rootOwnershipManager: resolved.bootstrap.rootOwnershipManager });
+      preparation?.settle('deleted');
     },
-    inspectCommittedCopyAtTarget: async (request) => await committedCopyAtTarget(request, 'inspect'),
-    removeCommittedCopyAtTarget: async (request) => await committedCopyAtTarget(request, 'remove'),
+    inspectCommittedCopyAtTarget: async (request, context) => await committedCopyAtTarget(request, 'inspect', context),
+    removeCommittedCopyAtTarget: async (request, context) => await committedCopyAtTarget(request, 'remove', context),
     borrowSourceRootForCopy: async ({ operationId, workspaceRefId }) => {
       const snapshot = getSnapshot();
       const workspace = resolveWorkspaceRefById(snapshot?.workspaceRefs ?? [], workspaceRefId, localServerId);

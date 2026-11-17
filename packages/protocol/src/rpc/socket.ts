@@ -104,6 +104,7 @@ export const SOCKET_RPC_EVENTS = {
   CALL: 'rpc-call',
   REQUEST: 'rpc-request',
   CANCEL: 'rpc-cancel',
+  CONTINUATION: 'rpc-continuation',
   MACHINE_TRANSFER_ENVELOPE: 'machine-transfer-envelope',
 } as const;
 
@@ -130,6 +131,22 @@ export const SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1 = 1 as const;
  * caller's request at that target.
  */
 export const SocketRpcRequestIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(160)));
+
+/** Relay address only. The active call and its captured codec decide the receiver. */
+export const SocketRpcContinuationReturnV1Schema = lazyZodSchema(() => z.strictObject({
+  socketId: z.string().check(z.minLength(1)), requestId: SocketRpcRequestIdSchema,
+}));
+export type SocketRpcContinuationReturnV1 = z.infer<typeof SocketRpcContinuationReturnV1Schema>;
+export const SocketRpcContinuationFrameV1Schema = lazyZodSchema(() => z.strictObject({
+  requestId: SocketRpcRequestIdSchema, params: z.unknown(),
+  callId: z.string().check(z.regex(/^[0-9a-f]{32}$/u)), reply: z.optional(z.literal(true)), notification: z.optional(z.literal(true)),
+  returnTo: z.optional(SocketRpcContinuationReturnV1Schema),
+}));
+export const SocketRpcContinuationDeliveryV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ requestId: SocketRpcRequestIdSchema, selectedSocketId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ requestId: SocketRpcRequestIdSchema, senderSocketId: z.string().check(z.minLength(1)), params: z.unknown(),
+    callId: z.string().check(z.regex(/^[0-9a-f]{32}$/u)), reply: z.optional(z.literal(true)), notification: z.optional(z.literal(true)) }),
+]));
 
 /** Original host-admitted Action facts, distinct from relay request correlation. Every object is closed. */
 export const SessionActionRpcOriginV1Schema = lazyZodSchema(() => z.strictObject({
@@ -351,6 +368,10 @@ export type SocketRpcRequestPayload = Readonly<{
    * in-flight relay; the authenticated relay replaces it before target dispatch.
    */
   requestId?: string;
+  /** Opt-in finite bidirectional exchange during this call; never operation authority. */
+  continuation?: true;
+  /** Authenticated relay stamp; inbound caller fields are never forwarded here. */
+  continuationReturn?: SocketRpcContinuationReturnV1;
   /** Payload-free diagnostics only; never grants cancellation or execution custody. */
   traceId?: string;
   /** Cooperative cancel requests stop work but retain this call's own result ACK. */

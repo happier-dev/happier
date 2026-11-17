@@ -142,8 +142,10 @@ export async function inspectWorkspaceSyncCommittedCopy(input: Omit<WorkspaceSyn
 
 export async function removeWorkspaceSyncCommittedCopy(input: WorkspaceSyncCommittedCopyRemoval & Readonly<{
   rootOwnershipManager: WorkspaceRootOwnershipManager;
+  /** The native target already holds this exact root until removal settles. */
+  retainedOwnership?: WorkspaceRootOwnershipHandle;
 }>): Promise<void> {
-  const ownership = await input.rootOwnershipManager.tryAcquire({
+  const ownership = input.retainedOwnership ?? await input.rootOwnershipManager.tryAcquire({
     ownerId: input.relationshipId, canonicalRoot: input.rootPath, operation: 'bootstrap',
   });
   if ('kind' in ownership) throw bootstrapError('workspace_root_in_use', 'Workspace copy root overlaps active work');
@@ -156,7 +158,7 @@ export async function removeWorkspaceSyncCommittedCopy(input: WorkspaceSyncCommi
       ...(input.workerCopyCreation ? { workerCopyCreation: input.workerCopyCreation } : {}),
     });
   } finally {
-    await ownership.release();
+    if (!input.retainedOwnership) await ownership.release();
   }
 }
 

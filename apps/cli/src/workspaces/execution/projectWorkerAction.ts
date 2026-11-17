@@ -140,6 +140,7 @@ export function createProjectWorkerAction(options: Readonly<{
       // the retirement CAS; the adapter does not acquire a second row authority.
       const workspaceSync = options.workspaceSync.forRequester ? await options.workspaceSync.forRequester({
         signal: signal ?? new AbortController().signal, machineAdmission: context.machineAdmission,
+        callerAuthority: context.authority, localActionContext: { ...context },
         verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent,
         callerInputAuthorization: context.externalActionExecutionAuthorization,
         ...(context.originalActionEnvelope ? { originalActionEnvelope: context.originalActionEnvelope } : {}),

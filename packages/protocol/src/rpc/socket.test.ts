@@ -167,6 +167,7 @@ describe('SOCKET_RPC_EVENTS wire ABI', () => {
       CALL: 'rpc-call',
       REQUEST: 'rpc-request',
       CANCEL: 'rpc-cancel',
+      CONTINUATION: 'rpc-continuation',
       MACHINE_TRANSFER_ENVELOPE: 'machine-transfer-envelope',
     });
   });

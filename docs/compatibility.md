@@ -8203,6 +8203,16 @@ a group or rewrite valid beta-controlled two-way relationships. Direct Project c
 `workspace.sync.relationship.create` and the same relationship writer and destination approval
 owner as handoff; it cannot disguise existing-folder attachment as an older handoff request.
 
+Unreleased 0.3 committed-copy removal keeps its containing Action operation at the
+source host while cleanup and filesystem effects run at the admitted target. The
+existing Socket RPC call opts into `rpc-continuation` for progress, native-owner
+updates, setup review and Stop. Each endpoint uses that call's captured content
+codec and relay-selected socket; installed target content also binds subsequent
+frames to the initial reply key, method and route. The relay forwards opaque
+frames through socket rooms across cluster nodes. No operation record, credential
+or permission evaluation is created for a continuation. Cooperative cancellation
+retains the original terminal acknowledgement; final settlement remains at source.
+
 Current status replaces the unmeasured `changedFiles` field with no substitute count and names
 the process-local cycle observation `lastCycleObservedAtMs`. Endpoint scan/transition problem
 facts come from the matching engine producer. Missing endpoint evidence is unknown, not clean.

@@ -70,6 +70,7 @@ import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { createWorkspaceSyncSourceOperationContinuation } from '@/api/rpc/workspaceSyncOperationContinuation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
@@ -414,6 +415,7 @@ export async function verifyDeploymentArchiveOriginForHost(input: Readonly<{
 /** One exact account-scoped machine RPC; retry and target selection stay caller-owned. */
 export async function callExactMachineRpc(params: Readonly<{
   credentials: StoredCredentials;
+  operationContext?: RpcHandlerContext['localActionContext'];
   authorityCeiling?: 'account_automation';
   machineId: string;
   serverUrl?: string;
@@ -442,6 +444,8 @@ export async function callExactMachineRpc(params: Readonly<{
   | Readonly<{ request?: never; prepareRequest: () => unknown }>
 )): Promise<unknown> {
   let issued = false;
+  const removalContinuation = !!params.operationContext && params.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE;
+  const waitForResultOnCancel = params.waitForResultOnCancel || removalContinuation;
   const deadlineController = new AbortController();
   const signal = params.signal ? AbortSignal.any([params.signal, deadlineController.signal]) : deadlineController.signal;
   try {
@@ -681,11 +685,13 @@ export async function callExactMachineRpc(params: Readonly<{
             method: params.method,
             params: request,
             content,
+            ...(params.operationContext && removalContinuation
+              ? { onContinuation: createWorkspaceSyncSourceOperationContinuation(params.operationContext), waitForResultOnCancel: true } : {}),
             requestId: deploymentChildRequestId ?? params.requestId ?? randomUUID(),
             timeoutMs: remainingTimeoutMs(),
             onIssued: () => { issued = true; },
             signal: attemptSignal,
-            ...(params.waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
+            ...(waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
             authorization: params.authorization,
             ...(createExternalActionExecution ? { createExternalActionExecution } : {}),
             ...(!accountRpc && (params.method === RPC_METHODS.PROJECTS_OPEN || params.method === RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN
@@ -697,7 +703,7 @@ export async function callExactMachineRpc(params: Readonly<{
         },
       });
     });
-    return await raceSocketIoAckTimeout(operation, timeoutMs ?? undefined, params.waitForResultOnCancel ? undefined : signal);
+    return await raceSocketIoAckTimeout(operation, timeoutMs ?? undefined, waitForResultOnCancel ? undefined : signal);
   } catch (error) {
     if (error instanceof MachineRpcTargetNotCurrentError) logger.debug('[MachineRPC] exact target refused', {
       code: error.code, reason: error.reason, machineId: error.machineId, method: params.method,

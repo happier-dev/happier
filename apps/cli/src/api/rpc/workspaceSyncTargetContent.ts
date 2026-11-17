@@ -81,7 +81,20 @@ export function openWorkspaceSyncTargetContent(input: Readonly<{
     const replyPublicKey = decodeBase64(inner.replyPublicKey, 'base64url');
     if (!isValidBoxBundlePublicKey(replyPublicKey)) return null;
     return { mode: 'e2ee', cipher: {
-      decryptRaw: async ciphertext => ciphertext === input.ciphertext ? inner.rpc : null,
+      decryptRaw: async ciphertext => {
+        if (ciphertext === input.ciphertext) return inner.rpc;
+        try {
+          const frame = requestEnvelope.parse(JSON.parse(ciphertext));
+          if (frame.machineId !== outer.machineId || frame.installationId !== outer.installationId) return null;
+          const bytes = openBoxBundleWithSecretKey({ bundle: decodeBase64(frame.ciphertext, 'base64url'),
+            recipientSecretKey: deriveBoxSecretKeyFromSeed(decodeBase64(input.installation.privateKey, 'base64url').subarray(0, 32)) });
+          if (!bytes) return null;
+          const continued = requestContent.parse(JSON.parse(new TextDecoder().decode(bytes)));
+          return continued.machineId === outer.machineId && continued.installationId === outer.installationId
+            && continued.method === input.method && isDeepStrictEqual(continued.routing, input.routing)
+            && continued.replyPublicKey === inner.replyPublicKey ? continued.rpc : null;
+        } catch { return null; }
+      },
       encryptRaw: async rpc => JSON.stringify({ v: 1, kind: 'workspace_sync_target_response_v1',
         machineId: outer.machineId, installationId: outer.installationId,
         ciphertext: encodeBase64(sealBoxBundle({ recipientPublicKey: replyPublicKey, randomBytes: entropy,

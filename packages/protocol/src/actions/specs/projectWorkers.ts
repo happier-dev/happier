@@ -74,6 +74,7 @@ export const ProjectWorkerCopyRetireInputV1Schema = lazyZodSchema(() => z.strict
   removeTargetCopy: z.optional(z.strictObject({
     workspaceRefId: WorkspaceSyncTargetBootstrapPrepareResultV1Schema.shape.targetWorkspaceRefId,
     rootFingerprint: WorkspaceSyncTargetBootstrapPrepareResultV1Schema.shape.rootFingerprint,
+    skipCleanup: z.optional(z.boolean()),
   })),
 }).check(z.superRefine((input, context) => {
   if (input.removeTargetCopy && input.removeTargetCopy.workspaceRefId !== input.expectedRelationship.alphaWorkspaceRefId
@@ -204,6 +205,8 @@ export const PROJECT_WORKER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
       : read ? 'Read current worker settings or advisory status without waking a Machine or starting work.'
       : 'Change future Project work preferences or admission without cancelling or retargeting accepted work.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
+    ...(id === 'projects.worker.copy.retire' ? { operation: { version: 1 as const, visibility: 'activity' as const,
+      progress: 'reported' as const, presentation: { onStart: 'current' as const } } } : {}),
     // Policy writes are Account-side key-holder operations; an offline guest is not their authority.
     executionPlacement: machine ? 'machine' : 'account', placements: [],
     ...(id === 'projects.worker.copy.retire' || isProjectWorkerCopyInspectActionIdV1(id) ? {

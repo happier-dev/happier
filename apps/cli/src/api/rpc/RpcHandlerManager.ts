@@ -1,5 +1,8 @@
 import { readFiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/finiteCommandFailureV1';
 import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
+import { createSocketRpcContinuation, type SocketRpcContinuationHandler } from '@happier-dev/sync-client';
+import { SocketRpcContinuationReturnV1Schema } from '@happier-dev/protocol/socketRpc';
+import { openWorkspaceSyncTargetOperationContinuation } from './workspaceSyncOperationContinuation';
 import { isScmRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
@@ -495,6 +498,8 @@ export class RpcHandlerManager {
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY;
         let callId: string | null = null;
+        let operationContinuation: ReturnType<typeof createSocketRpcContinuation> | undefined;
+        let remoteOperation: Awaited<ReturnType<typeof openWorkspaceSyncTargetOperationContinuation>> | undefined;
         const respond = (request: RpcRequest, result: unknown, acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null) => {
             diagnostic.outcomeCode = readOutcomeCode(result, false, diagnostic.method);
             diagnostic.modelProbe = readModelProbeDiagnostic(diagnostic.method, result);
@@ -1242,6 +1247,19 @@ export class RpcHandlerManager {
             handlerExecutionId = this.beginHandlerExecution(
                 this.readUnprefixedMethod(request.method),
             );
+            if (request.continuation === true && privateMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE) {
+                const returnTo = SocketRpcContinuationReturnV1Schema.safeParse(request.continuationReturn);
+                const socket = this.socket;
+                if (!returnTo.success || !socket || !requestId) throw Object.assign(new Error('Original removal operation transport is unavailable'),
+                    { code: 'project_setup_operation_unavailable' });
+                let onRequest: SocketRpcContinuationHandler = async () => { throw new Error('Operation continuation is not ready'); };
+                operationContinuation = createSocketRpcContinuation({ socket, requestId, method: request.method,
+                    content: rpcContent, returnTo: returnTo.data, signal: controller.signal,
+                    onRequest: (value, call) => onRequest(value, call) });
+                remoteOperation = await openWorkspaceSyncTargetOperationContinuation(operationContinuation, controller.signal,
+                    handler => { onRequest = handler; }, () => controller.abort(new Error('RPC operation Stop requested')));
+                localActionContext = { ...localActionContext, ...remoteOperation };
+            }
             const handlerContext: RpcHandlerContext = Object.freeze({
                 ...(localActionContext ? { localActionContext } : {}),
                 ...(workspaceSyncPrivateExecution ? { workspaceSyncPrivateExecution } : {}),
@@ -1289,6 +1307,7 @@ export class RpcHandlerManager {
                 ? await invokeReviewedServiceMoveChild({ method: targetMethod, params: decryptedParams, context: handlerContext,
                     execute: context => Promise.resolve(handler(decryptedParams, context)) })
                 : await handler(decryptedParams, handlerContext);
+            await remoteOperation?.flushOperationUpdates();
 
             // Encrypt and return the response
             nextPhase('response');
@@ -1345,6 +1364,7 @@ export class RpcHandlerManager {
             diagnostic.outcomeCode = outcomeCode;
             return response;
         } finally {
+            operationContinuation?.dispose();
             nextPhase('requester_cleanup');
             await timeWebLatencyPhase('machineRpc.requesterCleanup', () => disposeRequesterAccountContext?.());
             nextPhase('complete');

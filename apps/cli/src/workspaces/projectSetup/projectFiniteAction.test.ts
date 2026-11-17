@@ -91,6 +91,14 @@ import { authorizeMachineRpcRequest, readMachineRpcAdmissionCurrent } from '@/ap
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 
+import { createWorkspaceSyncTargetAuthority } from '@/workspaces/sync/workspaceSyncTargetAuthority';
+import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspaceSyncRootOwnership';
+import { workspaceSyncMaterializationReceiptPath } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
+import { beginWorkspaceTargetMaterialization } from '@/scm/workspace/workspaceExportMaterialization';
+import { computeWorkspaceSyncRootFingerprint, readWorkspaceSyncRootObjectIdentity } from '@/workspaces/sync/workspaceSyncRootIdentity';
+import { createWorkspaceSyncSourceOperationContinuation, openWorkspaceSyncTargetOperationContinuation } from '@/api/rpc/workspaceSyncOperationContinuation';
+import type { SocketRpcContinuationCall, SocketRpcContinuationHandler } from '@happier-dev/sync-client';
+
 /** Direct owner tests supply the same captured identity as installed runtime composition. */
 // Native controller responses are the network boundary; preparation and selection remain real.
 function observedSyncStatuses(relationships: readonly WorkspaceSyncRelationshipV1[]): WorkspaceSyncStatusV1[] {
@@ -2228,6 +2236,126 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.operationRuntime.store.list({ accountId: 'owner', machineId: 'machine' }).items).toEqual([]);
     });
 
+    it.each([
+        { exitCode: 0, transport: 'local', stop: false }, { exitCode: 7, transport: 'local', stop: false },
+        { exitCode: 0, transport: 'remote', stop: false }, { exitCode: 7, transport: 'remote', stop: false },
+        { exitCode: 0, transport: 'remote', stop: true },
+    ] as const)('runs $transport Sync-copy cleanup in its original retirement operation before removing bytes (exit $exitCode, stop $stop)', async ({ exitCode, transport, stop }) => {
+        const h = await harness({ version: 1, workspace: { teardown: [{ kind: 'command', command: 'true' }] } });
+        const plugin = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
+        releaseRequesterContexts.push(() => plugin.dispose());
+        const facts: HostEventEnvelopeV1[] = [];
+        const subscription = plugin.registry.stableEventsBroker!.subscribeHost({
+            target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
+            isCurrent: () => true, listener: event => { facts.push(event); },
+        });
+        releaseRequesterContexts.push(async () => { await subscription.dispose(); });
+        h.waiveSetupApproval();
+        const stateRoot = await mkdtemp(join(tmpdir(), 'project-sync-removal-'));
+        roots.push(stateRoot);
+        const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(stateRoot, 'locks') });
+        const copyRelationshipId = 'cleanup-copy';
+        const workerCopyCreation = { serverId: 'home', relationshipId: copyRelationshipId,
+            sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'accepted' };
+        const materialization = await beginWorkspaceTargetMaterialization({ targetPath: h.root,
+            backupDirectoryPrefix: '.happier-sync-backup',
+            receiptPath: workspaceSyncMaterializationReceiptPath(stateRoot, copyRelationshipId, 'beta'),
+            targetFence: { state: 'nonempty', identity: await readWorkspaceSyncRootObjectIdentity(h.root), workerCopyCreation } });
+        if (!materialization.previousTargetPath) throw new Error('Expected the real materialization source');
+        await cp(materialization.previousTargetPath, h.root, { recursive: true });
+        await materialization.custody.bindPromotedTarget();
+        await materialization.custody.commit();
+        const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const expectedRelationship: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: copyRelationshipId,
+            controllerMachineId: 'machine', alphaWorkspaceRefId: 'source', betaWorkspaceRefId: 'accepted',
+            mode: 'keep_synced', enabled: true, createdAtMs: 1, updatedAtMs: 1,
+            contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+            provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'accepted' } };
+        const authority = createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: 'machine',
+            getProjectSnapshot: () => ({ source: 'network', scopeKey: 'owner', graphRevision: 1, loadedAtMs: 1,
+                rows: [], organizations: [], relationships: [], workspaceRefs: [...h.workspaceRefs,
+                    { id: 'source', serverId: 'home', machineId: 'source-machine', rootPath: '/source', createdAtMs: 1 }] }),
+            callMachineRpc: async () => { throw new Error('No remote Machine is part of this local-copy journey'); },
+            // Home approval and OS process exit are the external boundaries.
+            assertCommittedCopyRemovalAuthorized: async () => {}, readCommittedCopyDependencies: async () => [],
+            resolveProjectRuntime: async ingress => ({ ...h.runtime, requesterIdentity: selectHostRequesterExecutionIdentity({
+                rpcContext: ingress, hostHomeServerIdentityId: 'home' }) }),
+            bootstrap: { rootOwnershipManager, materializationDirectory: stateRoot } });
+        const actionInput = { workspace: { serverId: 'home', refId: 'source' }, machineId: 'machine', expectedRelationship,
+            removeTargetCopy: { workspaceRefId: 'accepted', rootFingerprint: await computeWorkspaceSyncRootFingerprint(h.root) } };
+        const pending = h.operationRuntime.observeExecution({ actionId: 'projects.worker.copy.retire', input: actionInput,
+            actionRequestId: 'retire-copy', execute: async operation => {
+                const source = createWorkspaceSyncSourceOperationContinuation(operation);
+                let target: SocketRpcContinuationHandler = async () => null;
+                // The network is the boundary. Both original-operation and target
+                // continuation owners execute unchanged across asynchronous delivery.
+                const callSource: SocketRpcContinuationCall = async value => source(value, callTarget);
+                const callTarget: SocketRpcContinuationCall = async value => target(value, callSource);
+                const targetController = new AbortController();
+                operation.signal.addEventListener('abort', () => targetController.abort(), { once: true });
+                const targetOperation = transport === 'remote'
+                    ? await openWorkspaceSyncTargetOperationContinuation({ call: callSource,
+                        notify: async value => { await callSource(value); } }, targetController.signal,
+                        handler => { target = handler; }, () => targetController.abort()) : operation;
+                try {
+                    await authority.removeCommittedCopyHere({ actionReceiptId: 'retire-copy', actionInput }, {
+                        ...h.context, signal: operation.signal,
+                        localActionContext: { ...targetOperation, surface: 'rpc', authority: 'present_user',
+                            actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {},
+                                approvalWaivedSurfaces: { 'projects.prepare': ['rpc'] } }) } });
+                } finally {
+                    if ('flushOperationUpdates' in targetOperation) await targetOperation.flushOperationUpdates();
+                    source.dispose?.();
+                }
+                return { ok: true, result: { status: 'retired' } };
+            } });
+        let completed: unknown;
+        void pending.then(result => { completed = result; }, error => { completed = error; });
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.setupReview?.code)
+            .toBe('project_setup_consent_required');
+        expect(completed).toBeUndefined();
+        expect(h.spawned).toEqual([]);
+        await expect(access(join(h.root, '.happier/project.json'))).resolves.toBeUndefined();
+        expect(facts).toEqual([]);
+        if (stop) {
+            expect(await h.operationRuntime.handlers.cancel({ operationId: 'operation' })).toEqual({ kind: 'requested' });
+            await pending.catch(() => undefined);
+            expect(await h.operationRuntime.runner.waitForTerminal(scope, 'operation')).toMatchObject({ state: 'cancelled' });
+            expect(await readFile(join(h.root, '.happier/project.json'), 'utf8')).toContain('teardown');
+            expect(facts).toEqual([]);
+            expect(h.spawned).toEqual([]);
+            expect(h.operationRuntime.store.list(scope).items).toHaveLength(1);
+            await authority.releaseAllRetainedBootstraps();
+            return;
+        }
+        await h.rememberSetup(h.operationRuntime.store.get(scope, 'operation')!.setupReview!.reviewedEffectDigest);
+        await h.operationRuntime.handlers.getV2({ operationId: 'operation' });
+        await expect.poll(() => h.spawned.length).toBe(1);
+        await expect(access(join(h.root, '.happier/project.json'))).resolves.toBeUndefined();
+        h.spawned[0]!.pty.exit(exitCode);
+        if (exitCode === 0) {
+            expect(await pending).toMatchObject({ ok: true });
+            await expect.poll(() => facts.length).toBe(1);
+            expect(facts[0]).toMatchObject({ payload: { kind: 'worktreeRemoved', removal: {
+                operationId: 'operation', workspace: h.address, project: { serverId: 'home', projectId: 'project' },
+                outcome: 'removed', removalKind: 'deleted',
+            } } });
+        } else {
+            await expect(pending).rejects.toMatchObject({ rpcErrorCode: 'project_setup_step_failed', details: {
+                kind: 'finiteCommand', phase: 'teardown', step: 0, exitCode: 7, signal: null,
+            } });
+            expect(h.operationRuntime.store.get(scope, 'operation')).toMatchObject({ state: 'failed',
+                error: { errorCode: 'project_setup_step_failed' } });
+            expect(facts).toEqual([]);
+        }
+        if (exitCode === 0) await expect(access(h.root)).rejects.toMatchObject({ code: 'ENOENT' });
+        else await expect(access(join(h.root, '.happier/project.json'))).resolves.toBeUndefined();
+        expect(h.operationRuntime.store.list({ accountId: 'owner', machineId: 'machine' }).items).toHaveLength(1);
+        await authority.releaseAllRetainedBootstraps();
+    });
+
     it('retains the second teardown failure and original redacted review on the removal operation', async () => {
         const h = await harness({ version: 1, environmentVariables: [{ name: 'PRIVATE_URL', kind: 'config', required: true }],
             workspace: { teardown: [{ kind: 'command', command: 'echo first' }, { kind: 'command', command: 'echo second' }] } });
@@ -3180,45 +3308,5 @@ describe('authenticated finite Project Action owner', () => {
         await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('succeeded');
     });
 
-    it('retains the second teardown failure and original redacted review on the removal operation', async () => {
-        const h = await harness({ version: 1, environmentVariables: [{ name: 'PRIVATE_URL', kind: 'config', required: true }],
-            workspace: { teardown: [{ kind: 'command', command: 'echo first' }, { kind: 'command', command: 'echo second' }] } });
-        await writeFile(join(h.root, '.env'), 'PRIVATE_URL=private-cleanup-sentinel\n');
-        const scope = { accountId: 'owner', machineId: 'machine' };
-        const accepted = h.operationRuntime.observeExecution({ actionId: 'scm.worktree.remove',
-            input: { cwd: h.root, worktreePath: h.root, confirmed: true }, actionRequestId: 'remove', response: 'admission',
-            execute: async operation => {
-                const nested = await createFiniteActionWithCapturedRequester(h.runtime, h.context, { operation })({
-                    actionId: 'projects.prepare', input: { workspace: h.address, phase: 'teardown' },
-                    context: { authority: 'present_user', surface: 'rpc', serverId: 'home' },
-                });
-                const failure = ActionExecuteFailureSchema.safeParse(nested);
-                return failure.success ? failure.data : { ok: true, result: nested };
-            } });
-        expect(await accepted).toMatchObject({ ok: true });
-        await expect.poll(() => {
-            const operation = h.operationRuntime.store.get(scope, 'operation');
-            return { code: operation?.setupReview?.code, state: operation?.state, error: operation?.error };
-        }).toEqual({ code: 'project_setup_consent_required', state: 'running', error: undefined });
-        const reviewed = h.operationRuntime.store.get(scope, 'operation')!.setupReview!;
-        expect(h.operationRuntime.store.get(scope, 'operation')).toMatchObject({ actionId: 'scm.worktree.remove',
-            setupReview: { reviewedEffectDigest: expect.any(String), reviewedEffect: expect.anything() } });
-        expect(JSON.stringify(reviewed)).not.toContain('private-cleanup-sentinel');
-        expect(h.spawned).toEqual([]);
-        await h.rememberSetup(reviewed.reviewedEffectDigest);
-        await h.operationRuntime.handlers.getV2({ operationId: 'operation' });
-        await expect.poll(() => h.spawned.length).toBe(1);
-        h.spawned[0]!.pty.exit(0);
-        await expect.poll(() => h.spawned.length).toBe(2);
-        expect(h.spawned[1]!.params.options.env?.PRIVATE_URL).toBe('private-cleanup-sentinel');
-        h.spawned[1]!.pty.exit(7);
-        await h.operationRuntime.runner.waitForTerminal(scope, 'operation');
-        const failed = h.operationRuntime.store.get(scope, 'operation');
-        expect(failed?.error?.errorCode).toBe('project_setup_step_failed');
-        expect(failed?.error?.details).toEqual({ kind: 'finiteCommand', phase: 'teardown', step: 1, exitCode: 7, signal: null });
-        expect(failed?.state).toBe('failed');
-        expect(JSON.stringify(failed)).not.toContain('private-cleanup-sentinel');
-        expect(h.operationRuntime.store.list(scope).items).toHaveLength(1);
-        expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
-    });
+
 });

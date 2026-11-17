@@ -2,6 +2,7 @@ import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredConten
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { cancelRpcTarget } from './cancelRpcTarget';
+import { SocketRpcContinuationFrameV1Schema } from '@happier-dev/protocol/socketRpc';
 import { projectRpcFailureDiagnostic } from './rpcFailureDiagnostic';
 import { createProtectedRawSessionTargetGuard } from './protectedRawSessionTargetGuard';
 import { forwardManagedInstallationResponse } from './forwardManagedInstallationResponse';
@@ -890,6 +891,24 @@ export function registerSocketRpcHandlers(params: Readonly<{
         const active = activeCancellations.get(parsed.data.requestId);
         if (!active) return;
         cancelActiveSocketRpcCall({ io: params.io, active });
+    });
+
+    params.socket.on(SOCKET_RPC_EVENTS.CONTINUATION, (value: unknown) => {
+        if (params.ephemeralRunnerAdmission?.kind === 'api-token-session-viewer') return;
+        const parsed = SocketRpcContinuationFrameV1Schema.safeParse(value);
+        if (!parsed.success) return;
+        const frame = parsed.data;
+        const active = frame.returnTo ? undefined : activeCancellations.get(frame.requestId);
+        const destination = frame.returnTo ?? (active?.targetSocketId
+            ? { socketId: active.targetSocketId, requestId: active.targetRequestId } : null);
+        if (!destination) return;
+        // Socket rooms route across cluster nodes. Return addresses carry no authority:
+        // the endpoint admits only its live call, relay-selected peer and captured codec.
+        params.io.to(destination.socketId).emit(SOCKET_RPC_EVENTS.CONTINUATION, {
+            requestId: destination.requestId, senderSocketId: params.socket.id, params: frame.params,
+            callId: frame.callId, ...(frame.reply ? { reply: true } : {}),
+            ...(frame.notification ? { notification: true } : {}),
+        });
     });
 
     params.socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: unknown) => {
@@ -2297,6 +2316,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 method,
                 ...(diagnosticOnly && targetTraceId ? { traceId: targetTraceId } : {}),
                 callParams,
+                ...((data as { continuation?: unknown })?.continuation === true && callerRequestId
+                    ? { continuationReturn: { socketId: params.socket.id, requestId: callerRequestId } } : {}),
                 ...(sessionAuthorization?.routeToSessionOwnerDaemon && !requesterApprovalMachine ? {
                     isTargetUnavailable: async () => !await resolveCurrentSessionMachineFromServer({
                         io: params.io, presence: params.sessionPublisherPresence, accountId: targetUserId,
@@ -2381,6 +2402,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                             ...(cancellation.ackController ? { ackSignal: cancellation.ackController.signal } : {}),
                             onTargetSelected: (target) => {
                                 cancellation!.targetSocketId = target.id;
+                                if ((data as { continuation?: unknown })?.continuation === true) params.socket.emit(SOCKET_RPC_EVENTS.CONTINUATION,
+                                    { requestId: callerRequestId, selectedSocketId: target.id });
                             },
                         },
                     }

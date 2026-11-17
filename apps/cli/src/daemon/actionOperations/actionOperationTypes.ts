@@ -1,13 +1,15 @@
 import type {
   ActionOperationDeclarationV1,
   ActionExecuteResult,
-  ActionOperationDomainRefV1,
   ActionOperationSnapshotV1,
 } from '@happier-dev/protocol/actions';
-import type { ActionOperationObservationV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { z } from 'zod/mini';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionActorV1Schema } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { ActionOperationDomainRefV1Schema, ActionOperationObservationV1Schema,
+  ActionOperationProgressPhaseV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
 
@@ -72,23 +74,17 @@ export type ResolvedTrackedAction = Readonly<{
   operationReentry?: import('@happier-dev/protocol/actions/operations/v1').ActionOperationReentryPolicyV1;
 }>;
 
-export type ActionOperationProgressUpdate = Readonly<{
-  label?: string;
-  phase?: string;
-  queueAhead?: number;
-  current?: number;
-  total?: number;
-  approval?: ActionApprovalRequestCreatedResult;
-}>;
+/** Exact existing host-sink updates; private remote continuations consume this owner. */
+export const ActionOperationProgressUpdateSchema = z.strictObject({ label: z.optional(z.string()),
+  phase: z.optional(ActionOperationProgressPhaseV1Schema), queueAhead: z.optional(z.number()),
+  current: z.optional(z.number()), total: z.optional(z.number()), approval: z.optional(ActionApprovalRequestCreatedResultSchema) });
+export type ActionOperationProgressUpdate = Readonly<z.infer<typeof ActionOperationProgressUpdateSchema>>;
 
-export type ActionOperationOwnerUpdate = Readonly<{
-  state?: 'running';
-  cancellation?: 'supported' | 'unsupported';
-  outcome?: ActionExecuteResult;
-  progress?: ActionOperationProgressUpdate;
-  domainRef?: ActionOperationDomainRefV1;
-  observation?: ActionOperationObservationV1 | null;
-}>;
+export const ActionOperationOwnerUpdateSchema = z.strictObject({ actor: z.optional(z.nullable(ActionActorV1Schema)),
+  state: z.optional(z.literal('running')), cancellation: z.optional(z.enum(['supported', 'unsupported'])),
+  outcome: z.optional(ActionExecuteResultSchema), progress: z.optional(ActionOperationProgressUpdateSchema),
+  domainRef: z.optional(ActionOperationDomainRefV1Schema), observation: z.optional(z.nullable(ActionOperationObservationV1Schema)) });
+export type ActionOperationOwnerUpdate = Readonly<z.infer<typeof ActionOperationOwnerUpdateSchema>>;
 
 /** A projection of a lifecycle already owned by another domain. No runner or AbortController is created. */
 export interface ActionOperationDomainOwner {

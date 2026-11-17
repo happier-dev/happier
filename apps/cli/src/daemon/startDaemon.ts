@@ -4140,6 +4140,7 @@ export async function startDaemon(
               : undefined;
             const runtime = await createProductionDaemonWorkspaceSyncRuntime({
               homeTarget,
+              resolveProjectRuntime: async ingress => await apiMachineForSessions?.resolveProjectFiniteRuntime(ingress) ?? null,
               agentIsolation,
               happyHomeDir: configuration.happyHomeDir,
               activeServerDir: configuration.activeServerDir,
