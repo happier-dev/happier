@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -251,6 +252,75 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const es: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: 'Telemetría',
+  empty: {
+    title: ({ name }) => `Mira qué hace ${name}`,
+    body: 'Endpoints lentos, las consultas de cada petición, errores y llamadas a modelos, guardados en una Máquina que eliges. Los agentes pueden leerlos para arreglar lo que encuentren.',
+    action: 'Configurar telemetría…',
+    note: 'Tu app envía OpenTelemetry; Happier define las variables en el próximo despliegue.',
+  },
+  recording: {
+    title: 'Registro',
+    keptOn: ({ machine }) => `Se guarda en ${machine}.`,
+    nextDeploy: 'Los cambios se aplican en el próximo despliegue.',
+  },
+  state: { on: 'Activado', off: 'Desactivado' },
+  sheet: {
+    title: ({ name }) => `Telemetría de ${name}`,
+    purpose: 'Qué registra Happier de esta app y dónde lo guarda.',
+    collector: 'Colector',
+    collectorDescription:
+      'La Máquina que recibe y guarda lo que registra este Entorno.',
+    machine: 'Máquina',
+    noCollector:
+      'Ninguna Máquina tiene aún el rol de Telemetría activado. Actívalo en una Máquina que esté siempre encendida, en sus Roles.',
+    team: 'Tus compañeros leen la telemetría desde la misma Máquina, según los permisos de este Entorno. Los ordenadores personales se suspenden; elige una que esté siempre encendida.',
+    record: 'Registrar',
+    requests: 'Peticiones y consultas',
+    requestsDescription:
+      'Endpoints, trazas, registros y las consultas de cada petición.',
+    exceptions: 'Excepciones',
+    exceptionsDescription:
+      'Los errores del servidor se convierten en incidencias en PRs e incidencias. Los errores del navegador necesitan un pequeño añadido en tu app.',
+    llm: 'Llamadas LLM de la app',
+    llmDescription:
+      'Modelo, tokens y tiempo de cada llamada de tu app. Nunca se guardan las instrucciones ni las respuestas.',
+    metrics: 'Métricas de ejecución',
+    metricsDescription:
+      'Memoria, recolección de basura, duración de las peticiones y peticiones en curso.',
+    keptEncrypted: ({ machine }) =>
+      `Las peticiones, las pilas y los registros se quedan en ${machine}. Los títulos y recuentos de las incidencias se guardan en tu cuenta, cifrados.`,
+    keptPlain: ({ machine }) =>
+      `Las peticiones, las pilas y los registros se quedan en ${machine}. Los títulos y recuentos de las incidencias se guardan en tu cuenta.`,
+    save: 'Guardar',
+    confirmDeleteTitle: 'Esto borra la telemetría guardada hasta ahora',
+    confirmDelete: ({ machine }) =>
+      `${machine} borra lo que guardó para este Entorno. Vuelve a guardar para continuar.`,
+    deleteAndSave: 'Borrar y guardar',
+    noAccess:
+      'Solo quien puede cambiar las variables de este Entorno puede cambiar su telemetría.',
+    refused: {
+      collector_required:
+        'Elige una Máquina para guardar la telemetría de este Entorno.',
+      telemetry_role_inactive:
+        'El rol de Telemetría de esa Máquina está desactivado. Actívalo o elige otra Máquina.',
+      machine_unavailable: 'Esa Máquina ya no está en esta Home. Elige otra.',
+      other:
+        'No se pudo guardar la telemetría. Tus opciones se mantienen aquí.',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "es": es,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20647,7 +20717,39 @@ const workspaceTabTranslations = { es: en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: 'Mascota: {name}',
+    copyRowOn: 'Se une a tus mascotas y tu copia la lleva.',
+    copyRowOff: 'Tu copia mantiene su propia cara.',
+    copyRowUnavailable: 'Las mascotas no están activadas en este Home, así que tu copia mantiene su propia cara.',
+    copyCouldNotAdd:
+      'No se pudo añadir a {name} a tus mascotas, así que {bot} mantiene su propia cara.',
+    copyLibraryFull:
+      'Tus mascotas están completas, así que {bot} mantiene su propia cara.',
+    copySyncOff:
+      'La sincronización de mascotas está desactivada, así que {bot} mantiene su propia cara.',
+    offerLine: 'Su cara es una mascota que aún no tienes.',
+    offerAdd: 'Añadir a {name}',
+    offerCouldNotAdd: 'No se pudo añadir a {name}.',
+    offerLibraryFull:
+      'Tus mascotas están completas. Quita una en Ajustes › Mascotas.',
+    offerSyncOff: 'Para añadir mascotas hace falta su sincronización.',
+    offerUnreachable: 'No se pudo acceder al catálogo de {name}.',
+    chooserRegistryNote:
+      'Quienes comparten este Bot contigo ven a {name} cuando la añaden.',
+};
+
+const petShareTranslations = {
+  es: Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20866,4 +20968,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };

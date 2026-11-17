@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -251,6 +252,73 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const ja: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: 'テレメトリ',
+  empty: {
+    title: ({ name }) => `${name} の動きを見る`,
+    body: '遅いエンドポイント、各リクエストのクエリ、エラー、モデル呼び出しを、選んだマシンに保存します。エージェントはそれを読んで見つけた問題を直せます。',
+    action: 'テレメトリを設定…',
+    note: 'アプリが OpenTelemetry を送信し、Happier が次回のデプロイで変数を設定します。',
+  },
+  recording: {
+    title: '記録',
+    keptOn: ({ machine }) => `${machine} に保存されます。`,
+    nextDeploy: '変更は次回のデプロイで反映されます。',
+  },
+  state: { on: 'オン', off: 'オフ' },
+  sheet: {
+    title: ({ name }) => `${name} のテレメトリ`,
+    purpose: 'Happier がこのアプリから何を記録し、どこに保存するか。',
+    collector: 'コレクター',
+    collectorDescription: 'この環境が記録するものを受け取り、保存するマシン。',
+    machine: 'マシン',
+    noCollector:
+      'テレメトリの役割がオンのマシンはまだありません。常に起動しているマシンの「役割」でオンにしてください。',
+    team: 'チームメンバーは、この環境の権限の範囲で同じマシンからテレメトリを読みます。個人のコンピューターはスリープするので、常に起動しているマシンを選んでください。',
+    record: '記録する内容',
+    requests: 'リクエストとクエリ',
+    requestsDescription:
+      'エンドポイント、トレース、ログ、各リクエストのクエリ。',
+    exceptions: '例外',
+    exceptionsDescription:
+      'サーバーのエラーは PR と Issue の Issue になります。ブラウザーのエラーにはアプリへの小さな追加が必要です。',
+    llm: 'アプリの LLM 呼び出し',
+    llmDescription:
+      'アプリの各呼び出しのモデル、トークン、時間。プロンプトと応答は保存しません。',
+    metrics: 'ランタイムメトリクス',
+    metricsDescription:
+      'ヒープ、ガベージコレクション、リクエスト時間、処理中のリクエスト。',
+    keptEncrypted: ({ machine }) =>
+      `リクエスト、スタック、ログは ${machine} に残ります。Issue のタイトルと件数は暗号化してアカウントに保存されます。`,
+    keptPlain: ({ machine }) =>
+      `リクエスト、スタック、ログは ${machine} に残ります。Issue のタイトルと件数はアカウントに保存されます。`,
+    save: '保存',
+    confirmDeleteTitle: 'これまでに保存したテレメトリが削除されます',
+    confirmDelete: ({ machine }) =>
+      `${machine} はこの環境のために保存した内容を削除します。続けるにはもう一度保存してください。`,
+    deleteAndSave: '削除して保存',
+    noAccess: 'この環境の変数を変更できる人だけがテレメトリを変更できます。',
+    refused: {
+      collector_required:
+        'この環境のテレメトリを保存するマシンを選んでください。',
+      telemetry_role_inactive:
+        'そのマシンのテレメトリの役割はオフです。オンにするか、別のマシンを選んでください。',
+      machine_unavailable:
+        'そのマシンはもうこの Home にありません。別のマシンを選んでください。',
+      other: 'テレメトリを保存できませんでした。選択内容はここに残っています。',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "ja": ja,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20628,7 +20696,37 @@ const workspaceTabTranslations = { ja: en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: 'ペット：{name}',
+    copyRowOn: 'あなたのペットに加わり、コピーがこの顔になります。',
+    copyRowOff: 'コピーは自分の顔のままです。',
+    copyRowUnavailable: 'この Home ではペットがオンになっていないため、コピーは自分の顔のままです。',
+    copyCouldNotAdd:
+      '{name} をペットに追加できなかったため、{bot} は自分の顔のままです。',
+    copyLibraryFull: 'ペットがいっぱいのため、{bot} は自分の顔のままです。',
+    copySyncOff: 'ペットの同期がオフのため、{bot} は自分の顔のままです。',
+    offerLine: 'この顔は、まだ持っていないペットです。',
+    offerAdd: '{name} を追加',
+    offerCouldNotAdd: '{name} を追加できませんでした。',
+    offerLibraryFull:
+      'ペットがいっぱいです。設定 › ペット で1つ削除してください。',
+    offerSyncOff: 'ペットを追加するにはペットの同期が必要です。',
+    offerUnreachable: '{name} のカタログに接続できませんでした。',
+    chooserRegistryNote:
+      'この Bot を共有した相手は、{name} を追加すると見られるようになります。',
+};
+
+const petShareTranslations = {
+  ja: Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20847,4 +20945,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };

@@ -1,4 +1,5 @@
-import { petShareTranslations } from './petShareTranslations';
+import { petShareTranslations as feature_petShareTranslations_locale } from './features/ca';
+const { petShareTranslations } = feature_petShareTranslations_locale;
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
 import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
@@ -9,7 +10,6 @@ import { deploymentPreparationTranslations } from './deploymentPreparationTransl
 import { deploymentReceiptTranslations } from './deploymentReceiptTranslations';
 import { ca as actionTitlesCa } from './actionTitles/ca';
 import { newAppTranslations } from './newAppTranslations.shared';
-import { deploymentTelemetryTranslations } from './deploymentTelemetryTranslations.shared';
 
 import { workspaceTabKeyboardTranslations } from './workspaceTabTranslations.shared';
 import { mediaKeyboardTranslations } from './mediaKeyboardTranslations';
@@ -361,6 +361,8 @@ import { llmTaskRunnerTranslations as feature_llmTaskRunnerTranslations_locale }
 import { actionSettingsResourcesTranslations as feature_actionSettingsResourcesTranslations_locale } from './features/ca';
 import { resourceProposalTranslations as feature_resourceProposalTranslations_locale } from './features/ca';
 import { machineResourceUiTranslations as feature_machineResourceUiTranslations_locale } from './features/ca';
+import { deploymentTelemetryTranslations as feature_deploymentTelemetryTranslations_locale } from './features/ca';
+const { deploymentTelemetryTranslations } = feature_deploymentTelemetryTranslations_locale;
 const { machineResourceUiTranslations } = feature_machineResourceUiTranslations_locale;
 const { resourceProposalTranslations } = feature_resourceProposalTranslations_locale;
 const { actionSettingsResourcesTranslations } = feature_actionSettingsResourcesTranslations_locale;

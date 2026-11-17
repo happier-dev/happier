@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -245,6 +246,78 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const de: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: 'Telemetrie',
+  empty: {
+    title: ({ name }) => `Sieh, was ${name} tut`,
+    body: 'Langsame Endpunkte, die Abfragen jeder Anfrage, Fehler und Modellaufrufe, gespeichert auf einer Maschine deiner Wahl. Agenten können sie lesen, um zu beheben, was sie finden.',
+    action: 'Telemetrie einrichten…',
+    note: 'Deine App sendet OpenTelemetry; Happier setzt die Variablen beim nächsten Deployment.',
+  },
+  recording: {
+    title: 'Aufzeichnung',
+    keptOn: ({ machine }) => `Gespeichert auf ${machine}.`,
+    nextDeploy: 'Änderungen gelten ab dem nächsten Deployment.',
+  },
+  state: { on: 'An', off: 'Aus' },
+  sheet: {
+    title: ({ name }) => `Telemetrie für ${name}`,
+    purpose:
+      'Was Happier von dieser App aufzeichnet und wo es gespeichert wird.',
+    collector: 'Collector',
+    collectorDescription:
+      'Die Maschine, die empfängt und speichert, was diese Umgebung aufzeichnet.',
+    machine: 'Maschine',
+    noCollector:
+      'Noch keine Maschine hat die Telemetrie-Rolle aktiviert. Aktiviere sie für eine Maschine, die immer läuft, in deren Rollen.',
+    team: 'Deine Teammitglieder lesen die Telemetrie von derselben Maschine, soweit die Berechtigungen dieser Umgebung es erlauben. Persönliche Computer schlafen, wähle also eine, die immer läuft.',
+    record: 'Aufzeichnen',
+    requests: 'Anfragen und Abfragen',
+    requestsDescription:
+      'Endpunkte, Traces, Logs und die Abfragen jeder Anfrage.',
+    exceptions: 'Ausnahmen',
+    exceptionsDescription:
+      'Serverfehler werden zu Issues in PRs & Issues. Browserfehler brauchen eine kleine Ergänzung in deiner App.',
+    llm: 'LLM-Aufrufe der App',
+    llmDescription:
+      'Modell, Tokens und Dauer jedes Aufrufs deiner App. Prompts und Antworten werden nie gespeichert.',
+    metrics: 'Laufzeitmetriken',
+    metricsDescription:
+      'Heap, Garbage Collection, Anfragedauer und laufende Anfragen.',
+    keptEncrypted: ({ machine }) =>
+      `Anfragen, Stacks und Logs bleiben auf ${machine}. Titel und Zahlen der Issues werden verschlüsselt in deinem Konto gespeichert.`,
+    keptPlain: ({ machine }) =>
+      `Anfragen, Stacks und Logs bleiben auf ${machine}. Titel und Zahlen der Issues werden in deinem Konto gespeichert.`,
+    save: 'Speichern',
+    confirmDeleteTitle:
+      'Damit wird die bisher gespeicherte Telemetrie gelöscht',
+    confirmDelete: ({ machine }) =>
+      `${machine} löscht, was es für diese Umgebung gespeichert hat. Speichere erneut, um fortzufahren.`,
+    deleteAndSave: 'Löschen und speichern',
+    noAccess:
+      'Nur wer die Variablen dieser Umgebung ändern darf, kann ihre Telemetrie ändern.',
+    refused: {
+      collector_required:
+        'Wähle eine Maschine, die die Telemetrie dieser Umgebung speichert.',
+      telemetry_role_inactive:
+        'Die Telemetrie-Rolle dieser Maschine ist aus. Aktiviere sie oder wähle eine andere Maschine.',
+      machine_unavailable:
+        'Diese Maschine ist nicht mehr in diesem Home. Wähle eine andere.',
+      other:
+        'Die Telemetrie konnte nicht gespeichert werden. Deine Auswahl bleibt hier erhalten.',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "de": de,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20202,7 +20275,39 @@ const workspaceTabTranslations = { de: en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: 'Haustier: {name}',
+    copyRowOn: 'Kommt zu deinen Haustieren, und deine Kopie trägt es.',
+    copyRowOff: 'Deine Kopie behält ihr eigenes Gesicht.',
+    copyRowUnavailable: 'Haustiere sind auf diesem Home nicht aktiv, daher behält deine Kopie ihr eigenes Gesicht.',
+    copyCouldNotAdd:
+      '{name} konnte nicht zu deinen Haustieren hinzugefügt werden, daher behält {bot} sein eigenes Gesicht.',
+    copyLibraryFull:
+      'Deine Haustiere sind voll, daher behält {bot} sein eigenes Gesicht.',
+    copySyncOff:
+      'Haustier-Sync ist aus, daher behält {bot} sein eigenes Gesicht.',
+    offerLine: 'Sein Gesicht ist ein Haustier, das du noch nicht hast.',
+    offerAdd: '{name} hinzufügen',
+    offerCouldNotAdd: '{name} konnte nicht hinzugefügt werden.',
+    offerLibraryFull:
+      'Deine Haustiere sind voll. Entferne eines unter Einstellungen › Haustiere.',
+    offerSyncOff: 'Zum Hinzufügen von Haustieren braucht es Haustier-Sync.',
+    offerUnreachable: 'Der Katalog von {name} war nicht erreichbar.',
+    chooserRegistryNote:
+      'Wer diesen Bot mit dir teilt, sieht {name}, sobald er es hinzufügt.',
+};
+
+const petShareTranslations = {
+  de: Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20414,4 +20519,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };

@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -251,6 +252,76 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const pt: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: 'Telemetria',
+  empty: {
+    title: ({ name }) => `Veja o que ${name} faz`,
+    body: 'Endpoints lentos, as consultas de cada requisição, erros e chamadas a modelos, guardados numa Máquina que você escolhe. Os agentes podem lê-los para corrigir o que encontrarem.',
+    action: 'Configurar telemetria…',
+    note: 'Seu app envia OpenTelemetry; o Happier define as variáveis no próximo deploy.',
+  },
+  recording: {
+    title: 'Registro',
+    keptOn: ({ machine }) => `Guardado em ${machine}.`,
+    nextDeploy: 'As mudanças valem a partir do próximo deploy.',
+  },
+  state: { on: 'Ativado', off: 'Desativado' },
+  sheet: {
+    title: ({ name }) => `Telemetria de ${name}`,
+    purpose: 'O que o Happier registra deste app e onde guarda.',
+    collector: 'Coletor',
+    collectorDescription:
+      'A Máquina que recebe e guarda o que este Ambiente registra.',
+    machine: 'Máquina',
+    noCollector:
+      'Nenhuma Máquina tem ainda o papel Telemetria ativado. Ative-o numa Máquina sempre ligada, nos Papéis dela.',
+    team: 'Seus colegas leem a telemetria da mesma Máquina, conforme as permissões deste Ambiente. Computadores pessoais dormem; escolha uma sempre ligada.',
+    record: 'Registrar',
+    requests: 'Requisições e consultas',
+    requestsDescription:
+      'Endpoints, traces, logs e as consultas de cada requisição.',
+    exceptions: 'Exceções',
+    exceptionsDescription:
+      'Erros do servidor viram issues em PRs e issues. Erros do navegador precisam de um pequeno acréscimo no seu app.',
+    llm: 'Chamadas LLM do app',
+    llmDescription:
+      'Modelo, tokens e tempo de cada chamada do seu app. Prompts e respostas nunca são guardados.',
+    metrics: 'Métricas de execução',
+    metricsDescription:
+      'Heap, coleta de lixo, duração das requisições e requisições em andamento.',
+    keptEncrypted: ({ machine }) =>
+      `Requisições, pilhas e logs ficam em ${machine}. Títulos e contagens das issues são salvos na sua conta, criptografados.`,
+    keptPlain: ({ machine }) =>
+      `Requisições, pilhas e logs ficam em ${machine}. Títulos e contagens das issues são salvos na sua conta.`,
+    save: 'Salvar',
+    confirmDeleteTitle: 'Isso apaga a telemetria guardada até agora',
+    confirmDelete: ({ machine }) =>
+      `${machine} apaga o que guardou para este Ambiente. Salve de novo para continuar.`,
+    deleteAndSave: 'Apagar e salvar',
+    noAccess:
+      'Só quem pode alterar as variáveis deste Ambiente pode alterar a telemetria dele.',
+    refused: {
+      collector_required:
+        'Escolha uma Máquina para guardar a telemetria deste Ambiente.',
+      telemetry_role_inactive:
+        'O papel Telemetria dessa Máquina está desativado. Ative-o ou escolha outra Máquina.',
+      machine_unavailable:
+        'Essa Máquina não está mais neste Home. Escolha outra.',
+      other:
+        'Não foi possível salvar a telemetria. Suas escolhas continuam aqui.',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "pt": pt,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20696,7 +20767,39 @@ const workspaceTabTranslations = { pt: en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: 'Mascote: {name}',
+    copyRowOn: 'Entra nos seus mascotes e a sua cópia usa-o.',
+    copyRowOff: 'A sua cópia mantém o próprio rosto.',
+    copyRowUnavailable: 'Os mascotes não estão ativos neste Home, por isso a sua cópia mantém o próprio rosto.',
+    copyCouldNotAdd:
+      'Não foi possível adicionar {name} aos seus mascotes, por isso {bot} mantém o próprio rosto.',
+    copyLibraryFull:
+      'Os seus mascotes estão cheios, por isso {bot} mantém o próprio rosto.',
+    copySyncOff:
+      'A sincronização de mascotes está desligada, por isso {bot} mantém o próprio rosto.',
+    offerLine: 'O rosto dele é um mascote que você ainda não tem.',
+    offerAdd: 'Adicionar {name}',
+    offerCouldNotAdd: 'Não foi possível adicionar {name}.',
+    offerLibraryFull:
+      'Os seus mascotes estão cheios. Remova um em Configurações › Mascotes.',
+    offerSyncOff: 'Adicionar mascotes requer a sincronização de mascotes.',
+    offerUnreachable: 'Não foi possível aceder ao catálogo de {name}.',
+    chooserRegistryNote:
+      'Quem compartilha este Bot com você vê {name} depois de o adicionar.',
+};
+
+const petShareTranslations = {
+  pt: Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20915,4 +21018,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };

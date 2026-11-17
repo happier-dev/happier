@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -251,6 +252,76 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const ca: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: 'Telemetria',
+  empty: {
+    title: ({ name }) => `Mira què fa ${name}`,
+    body: 'Endpoints lents, les consultes de cada petició, errors i crides a models, guardats en una Màquina que tries. Els agents els poden llegir per arreglar el que trobin.',
+    action: 'Configura la telemetria…',
+    note: 'La teva app envia OpenTelemetry; Happier defineix les variables al proper desplegament.',
+  },
+  recording: {
+    title: 'Registre',
+    keptOn: ({ machine }) => `Es guarda a ${machine}.`,
+    nextDeploy: 'Els canvis s’apliquen al proper desplegament.',
+  },
+  state: { on: 'Activat', off: 'Desactivat' },
+  sheet: {
+    title: ({ name }) => `Telemetria de ${name}`,
+    purpose: 'Què registra Happier d’aquesta app i on ho guarda.',
+    collector: 'Col·lector',
+    collectorDescription:
+      'La Màquina que rep i guarda el que registra aquest Entorn.',
+    machine: 'Màquina',
+    noCollector:
+      'Encara cap Màquina té el rol de Telemetria activat. Activa’l en una Màquina que estigui sempre encesa, als seus Rols.',
+    team: 'Els teus companys llegeixen la telemetria de la mateixa Màquina, segons els permisos d’aquest Entorn. Els ordinadors personals s’adormen; tria’n una que estigui sempre encesa.',
+    record: 'Registra',
+    requests: 'Peticions i consultes',
+    requestsDescription:
+      'Endpoints, traces, registres i les consultes de cada petició.',
+    exceptions: 'Excepcions',
+    exceptionsDescription:
+      'Els errors del servidor es converteixen en incidències a PRs i incidències. Els errors del navegador necessiten un petit afegit a la teva app.',
+    llm: 'Crides LLM de l’app',
+    llmDescription:
+      'Model, tokens i temps de cada crida que fa la teva app. Mai es guarden les instruccions ni les respostes.',
+    metrics: 'Mètriques d’execució',
+    metricsDescription:
+      'Memòria, recollida d’escombraries, durada de les peticions i peticions en curs.',
+    keptEncrypted: ({ machine }) =>
+      `Les peticions, les piles i els registres es queden a ${machine}. Els títols i recomptes de les incidències es desen al teu compte, xifrats.`,
+    keptPlain: ({ machine }) =>
+      `Les peticions, les piles i els registres es queden a ${machine}. Els títols i recomptes de les incidències es desen al teu compte.`,
+    save: 'Desa',
+    confirmDeleteTitle: 'Això esborra la telemetria guardada fins ara',
+    confirmDelete: ({ machine }) =>
+      `${machine} esborra el que va guardar per a aquest Entorn. Torna a desar per continuar.`,
+    deleteAndSave: 'Esborra i desa',
+    noAccess:
+      'Només qui pot canviar les variables d’aquest Entorn en pot canviar la telemetria.',
+    refused: {
+      collector_required:
+        'Tria una Màquina per guardar la telemetria d’aquest Entorn.',
+      telemetry_role_inactive:
+        'El rol de Telemetria d’aquesta Màquina està desactivat. Activa’l o tria una altra Màquina.',
+      machine_unavailable:
+        'Aquesta Màquina ja no és en aquesta Home. Tria’n una altra.',
+      other:
+        'No s’ha pogut desar la telemetria. Les teves opcions es mantenen aquí.',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "ca": ca,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20724,7 +20795,39 @@ const workspaceTabTranslations = { ca: en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: 'Mascota: {name}',
+    copyRowOn: 'S’afegeix a les teves mascotes i la teva còpia la porta.',
+    copyRowOff: 'La teva còpia conserva la seva pròpia cara.',
+    copyRowUnavailable: 'Les mascotes no estan activades en aquest Home, així que la teva còpia conserva la seva pròpia cara.',
+    copyCouldNotAdd:
+      'No s’ha pogut afegir {name} a les teves mascotes, així que {bot} conserva la seva pròpia cara.',
+    copyLibraryFull:
+      'Les teves mascotes són plenes, així que {bot} conserva la seva pròpia cara.',
+    copySyncOff:
+      'La sincronització de mascotes està desactivada, així que {bot} conserva la seva pròpia cara.',
+    offerLine: 'La seva cara és una mascota que encara no tens.',
+    offerAdd: 'Afegeix {name}',
+    offerCouldNotAdd: 'No s’ha pogut afegir {name}.',
+    offerLibraryFull:
+      'Les teves mascotes són plenes. Treu-ne una a Configuració › Mascotes.',
+    offerSyncOff: 'Per afegir mascotes cal la seva sincronització.',
+    offerUnreachable: 'No s’ha pogut accedir al catàleg de {name}.',
+    chooserRegistryNote:
+      'Les persones amb qui comparteixes aquest Bot veuen {name} quan l’afegeixen.',
+};
+
+const petShareTranslations = {
+  ca: Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20943,4 +21046,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };

@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -251,6 +252,75 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const ru: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: 'Телеметрия',
+  empty: {
+    title: ({ name }) => `Посмотрите, что делает ${name}`,
+    body: 'Медленные эндпоинты, запросы к базе каждого запроса, ошибки и вызовы моделей хранятся на выбранной вами Машине. Агенты могут читать их, чтобы исправлять найденное.',
+    action: 'Настроить телеметрию…',
+    note: 'Ваше приложение отправляет OpenTelemetry; Happier задаёт переменные при следующем развёртывании.',
+  },
+  recording: {
+    title: 'Запись',
+    keptOn: ({ machine }) => `Хранится на ${machine}.`,
+    nextDeploy: 'Изменения вступят в силу при следующем развёртывании.',
+  },
+  state: { on: 'Вкл.', off: 'Выкл.' },
+  sheet: {
+    title: ({ name }) => `Телеметрия: ${name}`,
+    purpose: 'Что Happier записывает из этого приложения и где хранит.',
+    collector: 'Сборщик',
+    collectorDescription:
+      'Машина, которая получает и хранит то, что записывает это Окружение.',
+    machine: 'Машина',
+    noCollector:
+      'Ни у одной Машины ещё не включена роль «Телеметрия». Включите её для всегда работающей Машины в её Ролях.',
+    team: 'Ваши коллеги читают телеметрию с той же Машины в пределах прав этого Окружения. Личные компьютеры засыпают, поэтому выберите всегда работающую.',
+    record: 'Записывать',
+    requests: 'Запросы и обращения к базе',
+    requestsDescription:
+      'Эндпоинты, трассировки, журналы и обращения к базе каждого запроса.',
+    exceptions: 'Исключения',
+    exceptionsDescription:
+      'Ошибки сервера становятся задачами в «PR и задачах». Ошибкам браузера нужно небольшое дополнение в приложении.',
+    llm: 'Вызовы LLM приложения',
+    llmDescription:
+      'Модель, токены и время каждого вызова вашего приложения. Промпты и ответы никогда не сохраняются.',
+    metrics: 'Метрики выполнения',
+    metricsDescription:
+      'Куча, сборка мусора, длительность запросов и запросы в работе.',
+    keptEncrypted: ({ machine }) =>
+      `Запросы, стеки и журналы остаются на ${machine}. Названия и счётчики задач сохраняются в вашем аккаунте в зашифрованном виде.`,
+    keptPlain: ({ machine }) =>
+      `Запросы, стеки и журналы остаются на ${machine}. Названия и счётчики задач сохраняются в вашем аккаунте.`,
+    save: 'Сохранить',
+    confirmDeleteTitle: 'Это удалит сохранённую до сих пор телеметрию',
+    confirmDelete: ({ machine }) =>
+      `${machine} удалит то, что хранила для этого Окружения. Сохраните ещё раз, чтобы продолжить.`,
+    deleteAndSave: 'Удалить и сохранить',
+    noAccess:
+      'Изменять телеметрию могут только те, кто может менять переменные этого Окружения.',
+    refused: {
+      collector_required:
+        'Выберите Машину для хранения телеметрии этого Окружения.',
+      telemetry_role_inactive:
+        'Роль «Телеметрия» у этой Машины выключена. Включите её или выберите другую Машину.',
+      machine_unavailable:
+        'Этой Машины больше нет в этом Home. Выберите другую.',
+      other: 'Не удалось сохранить телеметрию. Ваш выбор сохранён здесь.',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "ru": ru,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20739,7 +20809,37 @@ const workspaceTabTranslations = { ru: en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: 'Питомец: {name}',
+    copyRowOn: 'Появится среди ваших питомцев, и копия будет с ним.',
+    copyRowOff: 'Копия сохранит своё лицо.',
+    copyRowUnavailable: 'Питомцы на этом Home выключены, поэтому копия сохранит своё лицо.',
+    copyCouldNotAdd:
+      'Не удалось добавить {name} к вашим питомцам, поэтому у {bot} своё лицо.',
+    copyLibraryFull: 'Питомцев уже максимум, поэтому у {bot} своё лицо.',
+    copySyncOff: 'Синхронизация питомцев выключена, поэтому у {bot} своё лицо.',
+    offerLine: 'Его лицо — питомец, которого у вас ещё нет.',
+    offerAdd: 'Добавить {name}',
+    offerCouldNotAdd: 'Не удалось добавить {name}.',
+    offerLibraryFull:
+      'Питомцев уже максимум. Удалите одного в Настройки › Питомцы.',
+    offerSyncOff: 'Чтобы добавлять питомцев, нужна их синхронизация.',
+    offerUnreachable: 'Не удалось связаться с каталогом {name}.',
+    chooserRegistryNote:
+      'Те, с кем вы делитесь этим ботом, увидят {name}, когда добавят его.',
+};
+
+const petShareTranslations = {
+  ru: Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20958,4 +21058,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };

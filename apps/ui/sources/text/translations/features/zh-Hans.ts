@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -251,6 +252,68 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: '遥测',
+  empty: {
+    title: ({ name }) => `看看 ${name} 在做什么`,
+    body: '缓慢的端点、每个请求运行的查询、错误和模型调用，保存在你选择的机器上。代理可以读取它们来修复发现的问题。',
+    action: '设置遥测…',
+    note: '你的应用发送 OpenTelemetry；Happier 会在下次部署时设置变量。',
+  },
+  recording: {
+    title: '记录',
+    keptOn: ({ machine }) => `保存在 ${machine}。`,
+    nextDeploy: '更改将在下次部署时生效。',
+  },
+  state: { on: '开', off: '关' },
+  sheet: {
+    title: ({ name }) => `${name} 的遥测`,
+    purpose: 'Happier 从这个应用记录什么，以及保存在哪里。',
+    collector: '收集器',
+    collectorDescription: '接收并保存此环境所记录内容的机器。',
+    machine: '机器',
+    noCollector:
+      '还没有机器开启遥测角色。请在一台始终在线的机器的“角色”中开启它。',
+    team: '队友会在此环境权限允许的范围内，从同一台机器读取遥测。个人电脑会休眠，请选择一台始终在线的机器。',
+    record: '记录内容',
+    requests: '请求和查询',
+    requestsDescription: '端点、链路追踪、日志以及每个请求运行的查询。',
+    exceptions: '异常',
+    exceptionsDescription:
+      '服务器错误会成为“PR 和问题”中的问题。浏览器错误需要在应用中添加一小段代码。',
+    llm: '应用的 LLM 调用',
+    llmDescription: '应用每次调用的模型、令牌和耗时。从不保存提示词和回复。',
+    metrics: '运行时指标',
+    metricsDescription: '堆内存、垃圾回收、请求耗时和进行中的请求。',
+    keptEncrypted: ({ machine }) =>
+      `请求、堆栈和日志保留在 ${machine}。问题的标题和计数会加密保存到你的账户。`,
+    keptPlain: ({ machine }) =>
+      `请求、堆栈和日志保留在 ${machine}。问题的标题和计数会保存到你的账户。`,
+    save: '保存',
+    confirmDeleteTitle: '这会删除目前保存的遥测',
+    confirmDelete: ({ machine }) =>
+      `${machine} 会删除它为此环境保存的内容。再次保存以继续。`,
+    deleteAndSave: '删除并保存',
+    noAccess: '只有可以更改此环境变量的人才能更改它的遥测。',
+    refused: {
+      collector_required: '请选择一台机器来保存此环境的遥测。',
+      telemetry_role_inactive:
+        '那台机器的遥测角色已关闭。请开启它，或选择另一台机器。',
+      machine_unavailable: '那台机器已不在此 Home 中。请选择另一台。',
+      other: '无法保存遥测。你的选择保留在这里。',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "zh-Hans": zhHans,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20554,7 +20617,35 @@ const workspaceTabTranslations = { 'zh-Hans': en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: '宠物：{name}',
+    copyRowOn: '加入你的宠物，你的副本会用它作面孔。',
+    copyRowOff: '你的副本保留它自己的面孔。',
+    copyRowUnavailable: '此 Home 未开启宠物，所以你的副本保留它自己的面孔。',
+    copyCouldNotAdd:
+      '无法将 {name} 添加到你的宠物，所以 {bot} 保留自己的面孔。',
+    copyLibraryFull: '你的宠物已满，所以 {bot} 保留自己的面孔。',
+    copySyncOff: '宠物同步已关闭，所以 {bot} 保留自己的面孔。',
+    offerLine: '它的面孔是一只你还没有的宠物。',
+    offerAdd: '添加 {name}',
+    offerCouldNotAdd: '无法添加 {name}。',
+    offerLibraryFull: '你的宠物已满。请在 设置 › 宠物 中移除一只。',
+    offerSyncOff: '添加宠物需要开启宠物同步。',
+    offerUnreachable: '无法连接 {name} 的目录。',
+    chooserRegistryNote: '与你共享此 Bot 的人添加 {name} 后就能看到它。',
+};
+
+const petShareTranslations = {
+  'zh-Hans': Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20773,4 +20864,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };

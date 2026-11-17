@@ -1,4 +1,5 @@
 // Locale-owned feature copy; each domain retains its own initialization scope.
+import * as Shared_petShareTranslations from '../petShareTranslations';
 import { discussionQuoteCopy } from '../discussionQuoteTranslations.shared';
 import { discussionControlsCopy } from '../discussionControlsTranslations.shared';
 import { discussionAttributionCopy, sessionReadinessCopy } from '../sessionReadinessTranslations.shared';
@@ -251,6 +252,73 @@ import * as Shared_actionSettingsResourcesTranslations from '../actionSettingsRe
 import * as Shared_resourceProposalTranslations from '../resourceProposalTranslations.shared';
 import * as Shared_machineResourceUiTranslations from '../machineResourceUiTranslations.shared';
 import { machineWidgetBodyTranslations as machineResourceUiTranslations__machineWidgetBodyTranslations } from '../machineWidgetBodyTranslations.shared';
+import * as Shared_deploymentTelemetryTranslations from '../deploymentTelemetryTranslations.shared';
+
+const Domain_deploymentTelemetryTranslations = (() => {
+const pl: Shared_deploymentTelemetryTranslations.Copy = {
+  tab: 'Telemetria',
+  empty: {
+    title: ({ name }) => `Zobacz, co robi ${name}`,
+    body: 'Wolne endpointy, zapytania każdego żądania, błędy i wywołania modeli, przechowywane na wybranej Maszynie. Agenci mogą je czytać, aby naprawić to, co znajdą.',
+    action: 'Skonfiguruj telemetrię…',
+    note: 'Twoja aplikacja wysyła OpenTelemetry; Happier ustawia zmienne przy następnym wdrożeniu.',
+  },
+  recording: {
+    title: 'Zapisywanie',
+    keptOn: ({ machine }) => `Przechowywane na ${machine}.`,
+    nextDeploy: 'Zmiany zaczną działać przy następnym wdrożeniu.',
+  },
+  state: { on: 'Włączone', off: 'Wyłączone' },
+  sheet: {
+    title: ({ name }) => `Telemetria: ${name}`,
+    purpose: 'Co Happier zapisuje z tej aplikacji i gdzie to przechowuje.',
+    collector: 'Kolektor',
+    collectorDescription:
+      'Maszyna, która odbiera i przechowuje to, co zapisuje to Środowisko.',
+    machine: 'Maszyna',
+    noCollector:
+      'Żadna Maszyna nie ma jeszcze włączonej roli Telemetria. Włącz ją dla Maszyny, która jest zawsze włączona, w jej Rolach.',
+    team: 'Członkowie zespołu czytają telemetrię z tej samej Maszyny, na ile pozwalają uprawnienia tego Środowiska. Komputery osobiste usypiają, więc wybierz taką, która jest zawsze włączona.',
+    record: 'Zapisuj',
+    requests: 'Żądania i zapytania',
+    requestsDescription: 'Endpointy, ślady, logi i zapytania każdego żądania.',
+    exceptions: 'Wyjątki',
+    exceptionsDescription:
+      'Błędy serwera stają się zgłoszeniami w PR-ach i zgłoszeniach. Błędy przeglądarki wymagają małego dodatku w aplikacji.',
+    llm: 'Wywołania LLM aplikacji',
+    llmDescription:
+      'Model, tokeny i czas każdego wywołania aplikacji. Prompty i odpowiedzi nigdy nie są przechowywane.',
+    metrics: 'Metryki działania',
+    metricsDescription: 'Sterta, odśmiecanie, czas żądań i żądania w toku.',
+    keptEncrypted: ({ machine }) =>
+      `Żądania, stosy i logi zostają na ${machine}. Tytuły i liczby zgłoszeń są zapisywane na Twoim koncie, zaszyfrowane.`,
+    keptPlain: ({ machine }) =>
+      `Żądania, stosy i logi zostają na ${machine}. Tytuły i liczby zgłoszeń są zapisywane na Twoim koncie.`,
+    save: 'Zapisz',
+    confirmDeleteTitle: 'To usunie dotychczas zapisaną telemetrię',
+    confirmDelete: ({ machine }) =>
+      `${machine} usunie to, co przechowywał dla tego Środowiska. Zapisz ponownie, aby kontynuować.`,
+    deleteAndSave: 'Usuń i zapisz',
+    noAccess:
+      'Tylko osoby, które mogą zmieniać zmienne tego Środowiska, mogą zmieniać jego telemetrię.',
+    refused: {
+      collector_required:
+        'Wybierz Maszynę, która będzie przechowywać telemetrię tego Środowiska.',
+      telemetry_role_inactive:
+        'Rola Telemetria tej Maszyny jest wyłączona. Włącz ją lub wybierz inną Maszynę.',
+      machine_unavailable: 'Tej Maszyny nie ma już w tym Home. Wybierz inną.',
+      other:
+        'Nie udało się zapisać telemetrii. Twoje wybory zostały zachowane.',
+    },
+  },
+};
+
+const deploymentTelemetryTranslations = {
+  "pl": pl,
+} as const;
+
+return { deploymentTelemetryTranslations };
+})();
 
 const Domain_simulatorDeviceToolsTranslations = (() => {
 const simulatorDeviceToolsTranslations = {
@@ -20737,7 +20805,39 @@ const workspaceTabTranslations = { pl: en };
 return { workspaceTabTranslations };
 })();
 
+
+const Domain_petShareTranslations = (() => {
+const words: Shared_petShareTranslations.PetShareWords = {
+    copyRow: 'Zwierzak: {name}',
+    copyRowOn: 'Dołącza do twoich zwierzaków, a twoja kopia go nosi.',
+    copyRowOff: 'Twoja kopia zachowuje własną twarz.',
+    copyRowUnavailable: 'Zwierzaki są wyłączone w tym Home, więc twoja kopia zachowuje własną twarz.',
+    copyCouldNotAdd:
+      'Nie udało się dodać {name} do twoich zwierzaków, więc {bot} zachowuje własną twarz.',
+    copyLibraryFull:
+      'Masz już komplet zwierzaków, więc {bot} zachowuje własną twarz.',
+    copySyncOff:
+      'Synchronizacja zwierzaków jest wyłączona, więc {bot} zachowuje własną twarz.',
+    offerLine: 'Jego twarz to zwierzak, którego jeszcze nie masz.',
+    offerAdd: 'Dodaj {name}',
+    offerCouldNotAdd: 'Nie udało się dodać {name}.',
+    offerLibraryFull:
+      'Masz już komplet zwierzaków. Usuń jednego w Ustawienia › Zwierzaki.',
+    offerSyncOff: 'Dodawanie zwierzaków wymaga ich synchronizacji.',
+    offerUnreachable: 'Nie udało się połączyć z katalogiem {name}.',
+    chooserRegistryNote:
+      'Osoby, którym udostępniasz tego Bota, zobaczą {name}, gdy go dodadzą.',
+};
+
+const petShareTranslations = {
+  pl: Shared_petShareTranslations.petShareCopy(words),
+} as const;
+
+return { petShareTranslations };
+})();
+
 export {
+    Domain_petShareTranslations as petShareTranslations,
     Domain_accountDisplayTranslations as accountDisplayTranslations,
     Domain_accountEncryptionRecoveryTranslations as accountEncryptionRecoveryTranslations,
     Domain_accountPopoverTranslations as accountPopoverTranslations,
@@ -20956,4 +21056,5 @@ export {
     Domain_actionSettingsResourcesTranslations as actionSettingsResourcesTranslations,
     Domain_resourceProposalTranslations as resourceProposalTranslations,
     Domain_machineResourceUiTranslations as machineResourceUiTranslations,
+    Domain_deploymentTelemetryTranslations as deploymentTelemetryTranslations,
 };
