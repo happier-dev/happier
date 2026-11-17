@@ -341,6 +341,13 @@ export const ProjectCommandAttachmentV1Schema = lazyZodSchema(() => z.strictObje
   lastCleanSyncAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)))),
   terminalId: z.optional(ActionOperationIdentifierV1Schema),
   sourceWorkspace: z.optional(WorkspaceAddressV1Schema),
+  steps: z.optional(z.array(z.strictObject({
+    index: z.number().check(z.int(), z.nonnegative()),
+    source: ProjectCommandSourceV1Schema,
+    state: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled', 'outcome_uncertain']),
+    terminalId: z.optional(ActionOperationIdentifierV1Schema),
+    exitCode: z.optional(z.number().check(z.int())),
+  }))),
   script: z.optional(z.strictObject({
     name: z.optional(z.string().check(z.minLength(1))),
     source: ProjectCommandSourceV1Schema,

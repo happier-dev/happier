@@ -6,6 +6,7 @@ import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 import { ensureProtectedLocalStateDirectorySync } from '@/utils/fs/protectedLocalState';
 
 export type ProjectSetupSuccessTarget = Readonly<{ serverId: string; machineId: string; workspaceRefId: string }>;
+export type ProjectSetupSuccessBasis = Omit<ProjectSetupSuccessV1, 'v' | 'workspaceRefId' | 'completedAtMs' | 'confirmedCommandCount'>;
 
 class ProjectSetupSuccessUnavailableError extends Error {
     readonly code = 'project_setup_success_unavailable';
@@ -29,13 +30,14 @@ export function createProjectSetupSuccessStore(input: Readonly<{ homeDir: string
             if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return null;
             throw new ProjectSetupSuccessUnavailableError();
         }
-        try {
-            const value = StoredProjectSetupSuccessV1Schema.parse(JSON.parse(bytes));
-            if (value.workspaceRefId !== target.workspaceRefId) throw new ProjectSetupSuccessUnavailableError();
-            return value;
-        } catch { throw new ProjectSetupSuccessUnavailableError(); }
+        let decoded: unknown;
+        try { decoded = JSON.parse(bytes); } catch { return null; }
+        const opened = StoredProjectSetupSuccessV1Schema.safeParse(decoded);
+        if (!opened.success) return null;
+        if (opened.data.workspaceRefId !== target.workspaceRefId) throw new ProjectSetupSuccessUnavailableError();
+        return opened.data;
     }
-    async function readMatching(target: ProjectSetupSuccessTarget, basis: Omit<ProjectSetupSuccessV1, 'v' | 'workspaceRefId' | 'completedAtMs'>): Promise<ProjectSetupSuccessV1 | null> {
+    async function readMatching(target: ProjectSetupSuccessTarget, basis: ProjectSetupSuccessBasis): Promise<ProjectSetupSuccessV1 | null> {
         const value = await read(target);
         return value !== null && value.cwd === basis.cwd
             && value.platform.os === basis.platform.os && value.platform.arch === basis.platform.arch
@@ -47,8 +49,8 @@ export function createProjectSetupSuccessStore(input: Readonly<{ homeDir: string
         pathFor,
         read,
         readMatching,
-        async matches(target: ProjectSetupSuccessTarget, basis: Omit<ProjectSetupSuccessV1, 'v' | 'workspaceRefId' | 'completedAtMs'>): Promise<boolean> {
-            return await readMatching(target, basis) !== null;
+        async matches(target: ProjectSetupSuccessTarget, basis: ProjectSetupSuccessBasis): Promise<boolean> {
+            return (await readMatching(target, basis))?.completedAtMs !== undefined;
         },
         async recordCompletion(target: ProjectSetupSuccessTarget, success: ProjectSetupSuccessV1): Promise<void> {
             const value = ProjectSetupSuccessV1Schema.parse(success);

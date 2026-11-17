@@ -10,6 +10,8 @@ import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 import { reviewProjectSetupEffect, type ProjectSetupPreparationInput } from './projectSetupPreparation';
 import { executeProjectSetup, type ProjectSetupExecutionInput } from './projectSetupExecution';
 import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { ProjectCommandAttachmentV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 // Entry callers cannot supply consent carried by an already admitted executor.
 expectTypeOf<ProjectSetupPreparationInput>().not.toHaveProperty('admittedConsent');
@@ -79,12 +81,13 @@ describe('finite Project setup execution', () => {
         const updates: ActionOperationOwnerUpdate[] = [];
         const store = createProjectSetupSuccessStore({ homeDir: preparation.successHomeDir! });
         const target = { serverId: 'home', machineId: 'machine', workspaceRefId: 'workspace' };
+        let invocation = 0;
         const start = (overrides: Partial<typeof preparation> & { skipForInvocation?: boolean } = {},
             executionOverrides: Partial<ProjectSetupExecutionInput> = {}) => {
             const controller = new AbortController();
             const execution = (async () => {
                 const outcome = await executeProjectSetup({ preparation: { ...preparation, ...overrides }, requesterAccountId: 'requester-account',
-                    operation: { actionRequestId: 'operation', signal: controller.signal, operationProgress: { update() {} },
+                    operation: { actionRequestId: `operation-${++invocation}`, signal: controller.signal, operationProgress: { update() {} },
                         operationOwnerUpdate: { update: update => updates.push(update) } },
                     terminalSessions: manager, platform: 'linux', hostEnvironment: { SHELL: '/bin/bash', PUBLIC: 'value' },
                     environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
@@ -111,12 +114,51 @@ describe('finite Project setup execution', () => {
 
     it('keeps invocation skip distinct from completion without any executable work', async () => {
         const f = await fixture(['echo setup']);
-        expect(await f.start({ skipForInvocation: true }).execution).toMatchObject({ kind: 'no_launch', result: {
+        const skipped = await f.start({ skipForInvocation: true }).execution;
+        expect(skipped).toMatchObject({ kind: 'no_launch', result: {
             ok: true, result: { kind: 'skippedForInvocation', reviewedEffectDigest: f.plan.reviewedEffectDigest },
         } });
+        expect(skipped).not.toHaveProperty('setupSettlement');
         expect(f.spawned).toEqual([]);
         expect(f.updates).toEqual([]);
         expect(await f.store.read(f.target)).toBeNull();
+    });
+
+    it('exposes one accepted setup settlement for confirmed processes and none for reused preparation', async () => {
+        const f = await fixture(['echo setup']);
+        const first = f.start();
+        await expect.poll(() => f.spawned.length).toBe(1);
+        f.spawned[0]!.pty.exit(3);
+        expect(await first.execution).toMatchObject({ kind: 'process_settled', setupSettlement: {
+            workspace: f.preparation.workspace, project: f.preparation.projectAssociation.project,
+            operationId: 'operation-1', outcome: 'failed', errorCode: 'project_setup_step_failed',
+        } });
+        const retry = f.start();
+        await expect.poll(() => f.spawned.length).toBe(2);
+        f.spawned[1]!.pty.exit(0);
+        expect(await retry.execution).toMatchObject({ kind: 'process_settled', setupSettlement: {
+            workspace: f.preparation.workspace, project: f.preparation.projectAssociation.project,
+            operationId: 'operation-2', outcome: 'finished',
+        } });
+        expect(await f.start().execution).not.toHaveProperty('setupSettlement');
+        expect(f.spawned).toHaveLength(2);
+    });
+
+    it('emits no setup settlement for no-launch setup under the 18:47Z owner ruling', async () => {
+        const f = await fixture([]);
+        expect(await f.start().execution).toMatchObject({ kind: 'no_launch', result: { ok: true } });
+        expect(await f.start().execution).not.toHaveProperty('setupSettlement');
+        expect(await f.store.read(f.target)).toBeNull();
+        expect(f.spawned).toEqual([]);
+    });
+
+    it('does not classify a settled teardown process as setup settlement', async () => {
+        const f = await fixture([], ['echo teardown']);
+        const run = f.start({ purpose: 'teardown' });
+        await expect.poll(() => f.spawned.length).toBe(1);
+        f.spawned[0]!.pty.exit(0);
+        expect(await run.execution).toMatchObject({ kind: 'process_settled', result: { ok: true } });
+        expect(await run.execution).not.toHaveProperty('setupSettlement');
     });
 
     it('publishes the qualified attachment before launch and records completion only after every ordered zero exit', async () => {
@@ -126,6 +168,10 @@ describe('finite Project setup execution', () => {
         const run = f.start({}, { sourceWorkspace, script });
         await expect.poll(() => f.spawned.length).toBe(1);
         expect(f.updates[0]).toMatchObject({ domainRef: { kind: 'projectCommand', sourceWorkspace, script } });
+        expect(f.updates[0]?.domainRef).toMatchObject({ steps: [
+            { index: 0, source: { kind: 'command', command: 'echo first' }, state: 'pending' },
+            { index: 1, source: { kind: 'command', command: 'echo second' }, state: 'pending' },
+        ] });
         expect(f.updates[0]?.state).toBeUndefined();
         expect(f.updates[0]?.domainRef).not.toHaveProperty('terminalId');
         expect(f.updates.at(-1)).toMatchObject({ state: 'running', domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home', machineId: 'machine', workspaceRefId: 'workspace', cwd: f.root, terminalId: expect.any(String) } });
@@ -134,7 +180,7 @@ describe('finite Project setup execution', () => {
         expect(await f.store.read(f.target)).toBeNull();
         f.spawned[0]!.pty.exit(0);
         await expect.poll(() => f.spawned.length).toBe(2);
-        expect(await f.store.read(f.target)).toBeNull();
+        expect(await f.store.read(f.target)).toMatchObject({ confirmedCommandCount: 1 });
         f.spawned[1]!.pty.exit(0);
         expect(await run.completion).toMatchObject({ ok: true, result: { kind: 'success', reviewedEffectDigest: f.plan.reviewedEffectDigest } });
         expect(await f.store.matches(f.target, f.plan.successBasis)).toBe(true);
@@ -145,19 +191,73 @@ describe('finite Project setup execution', () => {
             expect(update.domainRef).toMatchObject({ sourceWorkspace, script });
         }
         expect(f.updates.at(-1)).toMatchObject({ domainRef: { purpose: 'setup', sourceWorkspace, script, exitCode: 0 } });
+        expect(f.updates.at(-1)?.domainRef).toMatchObject({ steps: [
+            { index: 0, state: 'succeeded' }, { index: 1, state: 'succeeded' },
+        ] });
+        expect(ProjectCommandAttachmentV1Schema.parse(f.updates.at(-1)?.domainRef).steps).toMatchObject([
+            { index: 0, state: 'succeeded', terminalId: expect.any(String), exitCode: 0 },
+            { index: 1, state: 'succeeded', terminalId: expect.any(String), exitCode: 0 },
+        ]);
     });
 
     it.each([1, 3])('reads remembered consent once at admission for %i commands', async commandCount => {
         const f = await fixture(Array.from({ length: commandCount }, (_, step) => `echo step-${step}`));
-        const run = f.start();
+        const source = currentWorkspaceSource();
+        const reads: string[] = [];
+        const run = runWithWorkspaceSource({ ...source, readFile: path => {
+            reads.push(path);
+            return source.readFile(path);
+        } }, () => f.start());
+        const manifestReads = () => reads.filter(path => path === join(f.root, '.happier/project.json')).length;
+        let admissionManifestReads = 0;
         for (let step = 0; step < commandCount; step++) {
             await expect.poll(() => f.spawned.length).toBe(step + 1);
+            if (step === 0) admissionManifestReads = manifestReads();
             f.spawned[step]!.pty.exit(0);
         }
         expect(await run.completion).toMatchObject({ ok: true });
         expect(await f.store.matches(f.target, f.plan.successBasis)).toBe(true);
         const grantReads = vi.mocked(axios.post).mock.calls.filter(([url]) => url.endsWith('/read'));
         expect(grantReads).toHaveLength(1);
+        expect(admissionManifestReads).toBeGreaterThan(0);
+        expect(manifestReads()).toBe(admissionManifestReads);
+    });
+
+    it('retries only the confirmed suffix after a command fails', async () => {
+        const f = await fixture(['echo first', 'echo second']);
+        const run = f.start();
+        await expect.poll(() => f.spawned.length).toBe(1);
+        f.spawned[0]!.pty.exit(0);
+        await expect.poll(() => f.spawned.length).toBe(2);
+        f.spawned[1]!.pty.exit(7);
+        expect(await run.completion).toMatchObject({ ok: false, errorCode: 'project_setup_step_failed' });
+        expect(await f.store.matches(f.target, f.plan.successBasis)).toBe(false);
+
+        const retry = f.start();
+        await expect.poll(() => f.spawned.length).toBe(3);
+        const retriedCommand = f.spawned[2]!.launch.args;
+        retry.cancel();
+        f.spawned[2]!.pty.exit(0);
+        await retry.completion;
+        expect(retriedCommand).toEqual(['-c', 'echo second']);
+    });
+
+    it('reports checkpoint write failure as unconfirmed instead of silently replaying the effect', async () => {
+        const f = await fixture(['echo effect']);
+        const run = f.start();
+        const settled = run.execution.then(value => value, error => ({ error }));
+        await expect.poll(() => f.spawned.length).toBe(1);
+        await mkdir(f.preparation.successHomeDir!, { recursive: true });
+        await writeFile(join(f.preparation.successHomeDir!, 'project-setup'), 'blocked storage');
+        f.spawned[0]!.pty.exit(0);
+        expect(await settled).toMatchObject({ kind: 'outcome_uncertain', result: {
+            ok: false, errorCode: 'project_setup_success_unavailable',
+        } });
+        expect(await settled).not.toHaveProperty('setupSettlement');
+        expect(f.spawned).toHaveLength(1);
+        expect(f.updates.at(-1)).toMatchObject({ observation: {
+            kind: 'outcome_uncertain', code: 'project_setup_success_unavailable',
+        } });
     });
 
     it('finishes admitted commands after consent withdrawal and refuses the next invocation needing setup', async () => {
@@ -222,24 +322,28 @@ describe('finite Project setup execution', () => {
     });
 
     it('refuses changed inputs before the next command even with admitted consent', async () => {
-        const f = await fixture(['echo first', 'echo second']);
+        const f = await fixture(['echo first', 'node second.js']);
+        await writeFile(join(f.root, 'second.js'), 'console.log("reviewed")');
+        const review = await reviewProjectSetupEffect(f.preparation);
+        if (review.kind !== 'reviewed') throw new Error(review.code);
+        f.trust(review.plan.reviewedEffectDigest);
         const run = f.start();
         await expect.poll(() => f.spawned.length).toBe(1);
-        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
+        await writeFile(join(f.root, 'second.js'), 'console.log("changed")');
         f.spawned[0]!.pty.exit(0);
         expect(await run.completion).toMatchObject({ ok: false, errorCode: 'project_setup_effect_changed' });
         expect(f.spawned).toHaveLength(1);
-        expect(await f.store.read(f.target)).toBeNull();
+        expect(await f.store.read(f.target)).toMatchObject({ confirmedCommandCount: 1 });
     });
 
-    it('succeeds without recording completion when inputs change after the final command and re-runs new bytes next time', async () => {
+    it('records the admitted completion without a final review and requires review for new bytes next time', async () => {
         const f = await fixture(['echo setup']);
         const run = f.start();
         await expect.poll(() => f.spawned.length).toBe(1);
         await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
         f.spawned[0]!.pty.exit(0);
         expect(await run.completion).toMatchObject({ ok: true, result: { kind: 'success', reviewedEffectDigest: f.plan.reviewedEffectDigest } });
-        expect(await f.store.read(f.target)).toBeNull();
+        expect(await f.store.matches(f.target, f.plan.successBasis)).toBe(true);
         const pending = await executeProjectSetup({ preparation: f.preparation, requesterAccountId: 'requester-account',
             operation: { signal: new AbortController().signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } },
             terminalSessions: managers[0]!, environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) });
@@ -250,7 +354,7 @@ describe('finite Project setup execution', () => {
             operation: { signal: new AbortController().signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } },
             terminalSessions: managers[0]!, environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) }))
             .toMatchObject({ kind: 'no_launch', result: { ok: true, result: { kind: 'skippedForInvocation' } } });
-        expect(await f.store.read(f.target)).toBeNull();
+        expect(await f.store.matches(f.target, f.plan.successBasis)).toBe(true);
         const review = await reviewProjectSetupEffect(f.preparation);
         if (review.kind !== 'reviewed') throw new Error(review.code);
         f.trust(review.plan.reviewedEffectDigest);
@@ -268,6 +372,7 @@ describe('finite Project setup execution', () => {
         await expect.poll(() => f.spawned.length).toBe(1);
         f.manager.dispose();
         expect(await run.execution).toMatchObject({ kind: 'outcome_uncertain', result: { ok: false, errorCode: 'outcome_uncertain' } });
+        expect(await run.execution).not.toHaveProperty('setupSettlement');
         expect(await f.store.read(f.target)).toBeNull();
         expect(f.spawned.length).toBe(1);
     });
@@ -284,6 +389,7 @@ describe('finite Project setup execution', () => {
         expect(await f.store.read(f.target)).toBeNull();
         f.manager.dispose();
         expect(await run.execution).toMatchObject({ kind: 'outcome_uncertain', result: { ok: false, errorCode: 'stop_unconfirmed' } });
+        expect(await run.execution).not.toHaveProperty('setupSettlement');
     });
 
     it('consumes the real native resolver tuple without an interactive shell wrapper', async () => {

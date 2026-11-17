@@ -3,6 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { QualifiedProjectTrustProjectV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { createHash } from 'node:crypto';
 import { relative, resolve } from 'node:path';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -26,6 +27,7 @@ import { isProjectNativeProcessUncertain, type ProjectNativeAdapterProductionV1 
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { resolveProjectNativeCommand } from './projectNativeResolution';
+import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
 
 export type ProjectSetupOperationContext = Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0]
     & Pick<ActionExecutorContext, 'externalActionExecutionAuthorization' | 'externalActionTarget'>;
@@ -53,9 +55,17 @@ export type ProjectSetupExecutionInput = Readonly<{
     deferToolchainToLaunch?: boolean;
 }>;
 
+/** Settled setup effects for the owning Host Event consumer; never process content. */
+export type ProjectSetupSettlement = Readonly<{
+    workspace: WorkspaceRefV1;
+    project: QualifiedProjectTrustProjectV1;
+    operationId: string;
+} & ({ outcome: 'finished' } | { outcome: 'failed'; errorCode: string })>;
+
 export type ProjectSetupExecutionOutcome = Readonly<{
     kind: 'no_launch' | 'process_settled' | 'outcome_uncertain';
     result: ActionExecuteResult;
+    setupSettlement?: ProjectSetupSettlement;
 }>;
 
 /** Resource custody for selected callbacks under the original host operation. */
@@ -106,12 +116,28 @@ export async function executeProjectSetup(input: ProjectSetupExecutionInput): Pr
         outcome = await executePreparedProjectSetup({ ...input, preparation: { ...input.preparation,
             retainNativeInvocation: input.preparation.retainNativeInvocation ?? nativeCustody!.retain,
         } });
+        if (input.preparation.purpose === 'setup' && outcome.kind === 'process_settled') {
+            // Resolution reaches the caller only after the finally block has
+            // released this invocation's native custody. A containing invocation
+            // retains its own custody and consumes the result at its settlement.
+            return { ...outcome, setupSettlement: {
+                workspace: input.preparation.workspace,
+                project: input.preparation.projectAssociation.project,
+                operationId: input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId!,
+                ...(outcome.result.ok ? { outcome: 'finished' as const }
+                    : { outcome: 'failed' as const, errorCode: outcome.result.errorCode }),
+            } };
+        }
         return outcome;
     } catch (error) {
         uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
         throw error;
     } finally {
-        if (!uncertain && outcome?.kind !== 'outcome_uncertain') {
+        // Checkpoint uncertainty concerns the saved prefix after a confirmed
+        // effect, so it must not retain native process custody indefinitely.
+        const checkpointUncertain = outcome?.result.ok === false
+            && outcome.result.errorCode === 'project_setup_success_unavailable';
+        if (!uncertain && (outcome?.kind !== 'outcome_uncertain' || checkpointUncertain)) {
             await nativeCustody?.release();
             nativeCustody?.dispose();
         }
@@ -132,6 +158,7 @@ export type ProjectFiniteAdmissionInput = Readonly<{
     sourceWorkspace?: ProjectCommandAttachmentV1['sourceWorkspace'];
     script?: ProjectCommandAttachmentV1['script'];
     lastCleanSyncAtMs?: ProjectCommandAttachmentV1['lastCleanSyncAtMs'];
+    steps?: ProjectCommandAttachmentV1['steps'];
 }>;
 
 /** Qualified output association, before native preparation or an OS launch. */
@@ -143,6 +170,7 @@ export function publishProjectFiniteAdmission(input: ProjectFiniteAdmissionInput
         ...(input.originRun ? { originRun: input.originRun } : {}),
         ...(input.sourceWorkspace ? { sourceWorkspace: input.sourceWorkspace } : {}),
         ...(input.script ? { script: input.script } : {}),
+        ...(input.steps ? { steps: input.steps } : {}),
         ...(input.lastCleanSyncAtMs !== undefined ? { lastCleanSyncAtMs: input.lastCleanSyncAtMs } : {}),
     };
     input.operation.operationOwnerUpdate.update({ domainRef: attachment });
@@ -156,6 +184,7 @@ export type ProjectFiniteProcessInput = ProjectFiniteAdmissionInput & Readonly<{
     signal?: AbortSignal;
     step?: number;
     totalSteps?: number;
+    onObservation?: (observation: Readonly<{ terminalId: string; exitCode?: number }>) => ProjectCommandAttachmentV1['steps'];
 }>;
 
 /** Single finite process consumer of an already admitted final Exec tuple. */
@@ -175,7 +204,10 @@ export async function executeProjectFiniteProcess(input: ProjectFiniteProcessInp
         progress: { phase: input.purpose, label: 'Running project command',
             ...(input.totalSteps ? { current: input.step ?? 0, total: input.totalSteps } : {}) },
         failureCode: 'project_command_step_failed', failureStep: input.step ?? 0,
-        attachment: observation => ({ ...attachment, cwd: input.launch.cwd ?? attachment.cwd, ...observation }),
+        attachment: observation => {
+            const steps = input.onObservation?.(observation) ?? input.steps;
+            return { ...attachment, ...(steps ? { steps } : {}), cwd: input.launch.cwd ?? attachment.cwd, ...observation };
+        },
     });
 }
 
@@ -296,7 +328,28 @@ export function projectBaseEnvironment(input: Pick<ProjectSetupExecutionInput, '
     return Object.assign(env, plan.configEnvironment);
 }
 
+/** Only bytes consumed by this command/environment can change its admitted launch. */
+async function assertPreparedProjectInputsCurrent(plan: PreparedProjectSetupPlan, command?: PreparedProjectSetupCommand): Promise<void> {
+    const root = plan.workspace.rootPath;
+    const expected = [...(plan.toolchainInputFiles ?? []), ...plan.reviewedEffect.setupInputs,
+        ...(command?.inputFiles ?? []),
+        ...(command?.kind === 'pluginNativeReference' ? command.reviewInputs.map(fact => ({ file: fact.file,
+            digest: createHash('sha256').update(fact.content).digest('hex') })) : [])]
+        .map(fact => ({ ...fact, file: relative(root, resolve(root, fact.file.replaceAll('\\', '/'))).replaceAll('\\', '/') }));
+    const current = command?.kind === 'literal'
+        ? await readLiteralCommandExecutedFiles(root, command.cwd, command.source.command, { files: expected.map(fact => fact.file) })
+        : await readLiteralCommandExecutedFiles(root, root, '', { files: expected.map(fact => fact.file) });
+    if (current.kind === 'refused') throw Object.assign(new Error(current.code), { code: current.code });
+    const facts = new Map(current.files.map(fact => [fact.file, fact]));
+    const expectedFiles = new Set(expected.map(fact => fact.file));
+    if (expected.some(fact => JSON.stringify(facts.get(fact.file)) !== JSON.stringify(fact))
+        || command?.kind === 'literal' && current.files.some(fact => !expectedFiles.has(fact.file))) {
+        throw Object.assign(new Error('project_setup_effect_changed'), { code: 'project_setup_effect_changed' });
+    }
+}
+
 async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): Promise<ProjectSetupExecutionOutcome> {
+    const admittedInput = { ...input, hostEnvironment: { ...(input.hostEnvironment ?? process.env) } };
     let kind: ProjectSetupExecutionOutcome['kind'] = 'no_launch';
     const finish = (result: ActionExecuteResult): ProjectSetupExecutionOutcome => ({ kind, result });
     const failure = (errorCode: string, details?: unknown) => finish(actionFailure(errorCode, details));
@@ -342,81 +395,101 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
     }
     const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;
     if (!operationId || !input.requesterAccountId) return failure('project_setup_operation_unavailable');
-    const admittedPreparation = { ...preparation, expectedEffectDigest: plan.reviewedEffectDigest };
     const store = createProjectSetupSuccessStore({ homeDir: preparation.successHomeDir });
     const target = { serverId: plan.workspace.serverId, machineId: plan.workspace.machineId, workspaceRefId: plan.workspace.id };
-    await store.invalidate(target);
+    const confirmedCommandCount = plan.purpose === 'setup' ? prepared.confirmedCommandCount : 0;
+    if (confirmedCommandCount === 0) await store.invalidate(target);
+    let steps: NonNullable<ProjectCommandAttachmentV1['steps']> = plan.commands.map((command, index) => ({
+        index, source: command.source, state: index < confirmedCommandCount ? 'succeeded' : 'pending',
+    }));
     const admitted = { workspace: plan.workspace, purpose: plan.purpose, requesterAccountId: input.requesterAccountId,
         ...(input.terminalCustody ? { terminalCustody: input.terminalCustody } : {}),
         operation: input.operation, ...(input.originRun ? { originRun: input.originRun } : {}),
         ...(input.sourceWorkspace ? { sourceWorkspace: input.sourceWorkspace } : {}), ...(input.script ? { script: input.script } : {}),
-        ...(input.lastCleanSyncAtMs !== undefined ? { lastCleanSyncAtMs: input.lastCleanSyncAtMs } : {}) };
-    publishProjectFiniteAdmission(admitted);
+        ...(input.lastCleanSyncAtMs !== undefined ? { lastCleanSyncAtMs: input.lastCleanSyncAtMs } : {}), steps };
+    const attachment = publishProjectFiniteAdmission(admitted);
+    const checkpoint = async (count: number, completed = false) => {
+        if (plan.purpose !== 'setup') return true;
+        try {
+            await store.recordCompletion(target, { v: 1, workspaceRefId: plan.workspace.id, ...plan.successBasis,
+                confirmedCommandCount: count, ...(completed ? { completedAtMs: Date.now() } : {}) });
+            return true;
+        } catch {
+            kind = 'outcome_uncertain';
+            input.operation.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code: 'project_setup_success_unavailable' } });
+            return false;
+        }
+    };
 
     if (plan.commands.length === 0) {
-        const fresh = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
-        if (signal.aborted) return failure('cancelled');
-        if (fresh.kind !== 'prepared') return fresh.kind === 'refused' ? failure(fresh.code)
-            : failure(fresh.kind === 'pendingApproval' ? fresh.code : 'project_setup_effect_changed');
         try {
+            await assertPreparedProjectInputsCurrent(plan);
             await input.beforeNativeEffect?.();
             await produceProjectLaunchEnvironmentForHost({
-                cwd: fresh.plan.workspace.rootPath, env: projectBaseEnvironment(input, fresh.plan),
-                projectLaunch: createProjectNativeLaunchAdmission(input, fresh.plan), signal,
+                cwd: plan.workspace.rootPath, env: projectBaseEnvironment(admittedInput, plan),
+                projectLaunch: createProjectNativeLaunchAdmission(admittedInput, plan), signal,
                 assertCurrent() {
                     if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-                    if (fresh.plan.toolchainAdapterLease && !fresh.plan.toolchainAdapterLease.isCurrent()) {
+                    if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()) {
                         throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
                     }
                 },
             });
+            await assertPreparedProjectInputsCurrent(plan);
         } catch (error) {
             return launchFailure(error);
         }
+        if (!await checkpoint(0, true)) return failure('project_setup_success_unavailable');
     }
     for (const step of plan.commands.keys()) {
-        const fresh = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
+        if (step < confirmedCommandCount) continue;
         if (signal.aborted) return failure('cancelled');
-        if (fresh.kind !== 'prepared') return fresh.kind === 'refused' ? failure(fresh.code)
-            : failure(fresh.kind === 'pendingApproval' ? fresh.code : 'project_setup_effect_changed');
-        const command = fresh.plan.commands[step];
-        if (!command) return failure('project_setup_effect_changed');
+        const command = plan.commands[step]!;
         let launch: HostAuthorizedPluginExecLaunch;
-        try { launch = await authorizePreparedProjectCommand(input, fresh.plan, command, signal); }
+        try {
+            await assertPreparedProjectInputsCurrent(plan, command);
+            launch = await authorizePreparedProjectCommand(admittedInput, plan, command, signal);
+        }
         catch (error) {
             return launchFailure(error);
         }
+        let processOutcomeUncertain = false;
         try {
             if (signal.aborted) return failure('cancelled');
-            // Native production may await tools. Re-read reviewed inputs after it,
-            // immediately before the OS launch; no stale command is admitted.
-            const current = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
+            // Native production may await tools; retain admission and remeasure
+            // only this command's inputs immediately before its OS effect.
+            await assertPreparedProjectInputsCurrent(plan, command);
             if (signal.aborted) return failure('cancelled');
-            if (current.kind !== 'prepared') return current.kind === 'refused' ? failure(current.code)
-                : failure(current.kind === 'pendingApproval' ? current.code : 'project_setup_effect_changed');
-            if (fresh.plan.toolchainAdapterLease && !fresh.plan.toolchainAdapterLease.isCurrent()
+            if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()
                 || (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent()) return failure('native_adapter_retired');
             await input.beforeNativeEffect?.();
-            const executed = await executeProjectFiniteProcess({ ...admitted, terminalSessions: input.terminalSessions,
+            let observation: Readonly<{ terminalId: string; exitCode?: number }> | undefined;
+            const executed = await executeProjectFiniteProcess({ ...admitted, steps, terminalSessions: input.terminalSessions,
                 launch, ...(input.nativeExecutionIdentity ? { nativeExecutionIdentity: input.nativeExecutionIdentity } : {}),
-                signal, step, totalSteps: plan.commands.length });
+                signal, step, totalSteps: plan.commands.length,
+                onObservation(value) {
+                    observation = value;
+                    steps = steps.map<(typeof steps)[number]>(row => row.index === step ? { ...row, state: 'running', ...value } : row);
+                    return steps;
+                },
+            });
             if (executed.kind !== 'no_launch') kind = executed.kind;
+            processOutcomeUncertain = executed.kind === 'outcome_uncertain';
+            steps = steps.map<(typeof steps)[number]>(row => row.index === step ? { ...row, ...observation,
+                state: executed.kind === 'outcome_uncertain' ? 'outcome_uncertain' : executed.result.ok ? 'succeeded'
+                    : executed.result.errorCode === 'cancelled' ? 'cancelled' : 'failed' } : row);
+            input.operation.operationOwnerUpdate.update({ domainRef: { ...attachment,
+                cwd: launch.cwd ?? plan.workspace.rootPath, ...observation, steps } });
             if (!executed.result.ok) return executed.result.errorCode === 'project_command_step_failed'
                 ? failure('project_setup_step_failed', executed.result.details) : finish(executed.result);
+            if (!await checkpoint(step + 1, step + 1 === plan.commands.length)) return failure('project_setup_success_unavailable');
         } catch (error) {
-            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) kind = 'outcome_uncertain';
-            throw error;
-        } finally { if (kind !== 'outcome_uncertain') launch.release(); }
+            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) {
+                processOutcomeUncertain = true;
+                kind = 'outcome_uncertain';
+            }
+            return launchFailure(error);
+        } finally { if (!processOutcomeUncertain) launch.release(); }
     }
-    const current = await prepareProjectSetup(admittedPreparation, plan.reviewedEffect.presentation, prepared.consent);
-    if (signal.aborted) return failure('cancelled');
-    if (current.kind !== 'prepared') {
-        // All commands succeeded. Changed bytes need a new run, not a false
-        // failure for this one; leave completion absent for the next invocation.
-        if (plan.commands.length === 0 || current.kind !== 'pendingApproval' || current.code !== 'project_setup_effect_changed') return current.kind === 'refused' ? failure(current.code)
-            : failure(current.kind === 'pendingApproval' ? current.code : 'project_setup_effect_changed');
-    } else if (plan.purpose === 'setup') await store.recordCompletion(target, {
-        v: 1, workspaceRefId: plan.workspace.id, completedAtMs: Date.now(), ...current.plan.successBasis,
-    });
     return finish({ ok: true, result: { kind: 'success', reviewedEffectDigest: plan.reviewedEffectDigest } });
 }

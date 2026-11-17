@@ -169,6 +169,18 @@ describe('Action operation v1 contract', () => {
       steps: [{ ...steps[0], scriptBody: 'PRIVATE_SCRIPT' }] } }).success).toBe(false);
   });
 
+  it('round trips reviewed Project command rows with their actual terminal and confirmed outcome', () => {
+    const steps = [
+      { index: 0, source: { kind: 'command', command: 'echo first' }, state: 'succeeded', terminalId: 'first-terminal', exitCode: 0 },
+      { index: 1, source: { kind: 'command', command: 'echo second' }, state: 'failed', terminalId: 'second-terminal', exitCode: 7 },
+    ];
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'projects.prepare',
+      domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home', machineId: 'machine-1',
+        workspaceRefId: 'workspace-1', cwd: '/repo', terminalId: 'second-terminal', exitCode: 7, steps } });
+    expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: snapshot }))))
+      .toMatchObject({ operation: { domainRef: { steps } } });
+  });
+
   it('retains a typed spawn refusal on a failed operation with the same cause', () => {
     const refusal = { type: 'error', code: 'spawn_failed', retryable: false,
       launchError: { kind: 'launch_error', code: 'agent_isolation_unavailable', message: 'agent_isolation_unavailable' } };

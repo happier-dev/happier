@@ -1925,11 +1925,15 @@ waiver. Scripts, Services setup and Session cards share this decision owner and
 the same This time (default), Until it changes and Skip control. A skipped Service
 setup declines the waiting Service intent; it does not report setup success.
 
-`projectSetupSuccess.ts` stores completion under the target's Happier home,
+`projectSetupSuccess.ts` stores confirmed setup progress under the target's Happier home,
 outside the checkout and Workspace Sync. Reuse requires the same qualified
 target, platform, reviewed effect, setup inputs and environment references.
-Execution invalidates that fact before a new attempt; only observed success of
-every applicable setup step can write it again. Consent is not completion.
+In development source, each observed zero exit checkpoints the confirmed command
+prefix; an explicit retry skips that prefix only after matching its reviewed basis
+at admission. Setup is complete after every declared command and required native
+environment finishes successfully. Changed bases
+and explicit teardown invalidate prior progress. A checkpoint write failure leaves
+the outcome uncertain and does not emit setup settlement. Consent is not completion.
 
 Development `projects.inspect` readiness uses `projectSetupPreparation.ts#inspectProjectSetupReadiness`
 to compare target completion with the current passive `successBasis`, using the

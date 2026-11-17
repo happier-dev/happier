@@ -7,7 +7,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 
-import { projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist } from './actionOperationDetailPresentation';
+import { projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist, projectProjectCommandStepChecklist } from './actionOperationDetailPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 
@@ -250,6 +250,31 @@ describe('action operation detail presentation', () => {
         expect(projectMachineSetupStepChecklist(attachment, String)?.items.every(item => !item.needsAttention)).toBe(true);
         expect(projectMachineSetupStepChecklist({ ...attachment, steps: attachment.steps.map(step => ({ ...step, state: 'pending' as const })) },
             String, question)?.items.every(item => !item.needsAttention)).toBe(true);
+    });
+
+    it('projects reviewed Project commands and confirmed retry rows without guessing terminal questions or success', () => {
+        const attachment = { kind: 'projectCommand' as const, purpose: 'setup' as const, serverId: 'home', machineId: 'worker',
+            workspaceRefId: 'workspace', cwd: '/repo', steps: [
+                { index: 0, source: { kind: 'command' as const, command: 'echo first' }, state: 'succeeded' as const },
+                { index: 1, source: { kind: 'native' as const, tool: 'make' as const, file: 'Makefile', target: 'setup' },
+                    state: 'failed' as const, terminalId: 'failed-output', exitCode: 7 },
+                { index: 2, source: { kind: 'command' as const, command: 'echo pending' }, state: 'pending' as const },
+                { index: 3, source: { kind: 'command' as const, command: 'echo uncertain' }, state: 'outcome_uncertain' as const },
+            ] };
+        const checklist = projectProjectCommandStepChecklist(attachment);
+        expect(checklist?.items).toMatchObject([
+            { id: '0', title: 'echo first', needsAttention: false, output: null },
+            { id: '1', title: 'setup', subtitle: t('localServices.actions.failure.exitCode', { code: '7' }),
+                output: { kind: 'open_output', serverId: 'home', machineId: 'worker', workspaceRefId: 'workspace',
+                    cwd: '/repo', terminalId: 'failed-output' } },
+            { id: '2', title: 'echo pending', needsAttention: false },
+            { id: '3', subtitle: t('projects.scripts.run.unknown'), needsAttention: true },
+        ]);
+        expect(checklist?.selectedIds).toEqual(['0', '1', '2', '3']);
+        expect(Object.fromEntries(Object.entries(checklist?.executionById ?? {}).map(([id, state]) => [id, state.status])))
+            .toEqual({ '0': 'done', '1': 'error', '2': 'queued', '3': 'error' });
+        expect(projectProjectCommandStepChecklist({ ...attachment, steps: undefined })).toBeNull();
+        expect(projectProjectCommandStepChecklist({ ...attachment, steps: [] })).toBeNull();
     });
 
     it('projects fork strategy, created child, and unavailable-status recovery from canonical references', () => {

@@ -19,6 +19,7 @@ import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityConfigur
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBackupRunResultV1Schema, type DeploymentBackupSourceV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
+import { describeProjectCommandSource } from '@/components/projects/projectSetup/projectScriptPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 export type MachineSetupOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineSetup' }>;
@@ -423,6 +424,7 @@ function projectMachineSetup(snapshot: ActionOperationSnapshot): Omit<ActionOper
 }
 
 type MachineSetupStep = NonNullable<MachineSetupOutputAttachment['steps']>[number];
+type ProjectCommandStep = NonNullable<ProjectCommandAttachmentV1['steps']>[number];
 
 export type MachineSetupStepChecklistItem = PlanChecklistItem & Readonly<{
     needsAttention: boolean;
@@ -436,8 +438,8 @@ export type MachineSetupStepChecklist = Readonly<{
 }>;
 
 const SETUP_STEP_STATUS = {
-    pending: 'queued', running: 'running', succeeded: 'done', failed: 'error', cancelled: 'idle',
-} as const satisfies Record<MachineSetupStep['state'], PlanChecklistItemStatus>;
+    pending: 'queued', running: 'running', succeeded: 'done', failed: 'error', cancelled: 'idle', outcome_uncertain: 'error',
+} as const satisfies Record<MachineSetupStep['state'] | ProjectCommandStep['state'], PlanChecklistItemStatus>;
 
 const NO_LOGS: readonly never[] = Object.freeze([]);
 
@@ -465,6 +467,27 @@ export function projectMachineSetupStepChecklist(
         executionById[id] = { status: SETUP_STEP_STATUS[step.state], logs: NO_LOGS };
     }
     return { items, selectedIds: items.map((item) => item.id), executionById };
+}
+
+/** The finite owner decides command outcomes; this projects its reviewed row and exact output target. */
+export function projectProjectCommandStepChecklist(attachment: ProjectCommandAttachmentV1): MachineSetupStepChecklist | null {
+    if (!attachment.steps?.length) return null;
+    const items: MachineSetupStepChecklistItem[] = [];
+    const executionById: Record<string, PlanChecklistExecutionState> = {};
+    for (const step of attachment.steps) {
+        const id = String(step.index);
+        const description = describeProjectCommandSource(step.source);
+        const subtitle = step.state === 'outcome_uncertain' ? t('projects.scripts.run.unknown')
+            : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled')
+                : step.state === 'failed' && step.exitCode !== undefined
+                    ? t('localServices.actions.failure.exitCode', { code: String(step.exitCode) }) : undefined;
+        items.push({ id, title: description.target, satisfied: false, disabled: true, ...(subtitle ? { subtitle } : {}),
+            needsAttention: step.state === 'outcome_uncertain',
+            output: step.terminalId ? { kind: 'open_output', serverId: attachment.serverId, machineId: attachment.machineId,
+                workspaceRefId: attachment.workspaceRefId, cwd: attachment.cwd, terminalId: step.terminalId } : null });
+        executionById[id] = { status: SETUP_STEP_STATUS[step.state], logs: NO_LOGS };
+    }
+    return { items, selectedIds: items.map(item => item.id), executionById };
 }
 
 function projectMachineReboot(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {

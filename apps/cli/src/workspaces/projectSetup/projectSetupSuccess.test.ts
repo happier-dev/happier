@@ -48,12 +48,26 @@ describe('target-local completed project setup', () => {
         expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(success);
     });
 
-    it('fails closed on invalid or transplanted stored records instead of reporting unprepared', async () => {
+    it('retains a confirmed prefix across restart without claiming setup is complete', async () => {
+        const { homeDir, owner } = await store();
+        const { completedAtMs: _completedAtMs, ...basis } = success;
+        await owner.recordCompletion(target, { ...basis, confirmedCommandCount: 1 });
+        const restarted = createProjectSetupSuccessStore({ homeDir });
+        expect(await restarted.readMatching(target, success)).toEqual({ ...basis, confirmedCommandCount: 1 });
+        expect(await restarted.matches(target, success)).toBe(false);
+        expect(await restarted.readMatching(target, { ...success, reviewedEffectDigest: 'changed-command' })).toBeNull();
+        expect(await restarted.readMatching(target, { ...success, environmentBindingReferences: ['binding@2'] })).toBeNull();
+    });
+
+    it('ignores malformed intermediate records while refusing transplanted workspace facts', async () => {
         const { owner } = await store();
         await owner.recordCompletion(target, success);
         await writeFile(owner.pathFor(target), JSON.stringify({ ...success, workspaceRefId: 'other-workspace' }));
         await expect(owner.read(target)).rejects.toMatchObject({ code: 'project_setup_success_unavailable' });
         await writeFile(owner.pathFor(target), '{invalid');
-        await expect(owner.read(target)).rejects.toMatchObject({ code: 'project_setup_success_unavailable' });
+        expect(await owner.read(target)).toBeNull();
+        const { completedAtMs: _completedAtMs, ...incomplete } = success;
+        await writeFile(owner.pathFor(target), JSON.stringify(incomplete));
+        expect(await owner.read(target)).toBeNull();
     });
 });

@@ -11,7 +11,10 @@ export const ProjectSetupSuccessV1Schema = lazyDefinition(() => z.strictObject({
     reviewedEffectDigest: z.string().check(z.minLength(1)),
     setupInputsDigest: z.string().check(z.minLength(1)),
     environmentBindingReferences: z.array(z.string().check(z.minLength(1))),
-    completedAtMs: z.number().check(z.int(), z.gte(0)),
-}));
+    confirmedCommandCount: z.optional(z.number().check(z.int(), z.gte(0))),
+    completedAtMs: z.optional(z.number().check(z.int(), z.gte(0))),
+}).check(z.refine(value => value.completedAtMs !== undefined || value.confirmedCommandCount !== undefined, {
+    message: 'Setup facts require a confirmed prefix or completed outcome.',
+})));
 export type ProjectSetupSuccessV1 = z.infer<typeof ProjectSetupSuccessV1Schema>;
 export const StoredProjectSetupSuccessV1Schema = createStoredReadSchema(ProjectSetupSuccessV1Schema);

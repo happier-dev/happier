@@ -7,7 +7,6 @@ import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol
 import type { ProjectCommandSourceV1, ProjectToolchainSelectionV1, ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ProjectManifestFileSnapshot } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { QualifiedProjectTrustProjectV1Schema, type QualifiedProjectTrustProjectV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
-import type { ProjectSetupSuccessV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupSuccessV1';
 import type { ProjectSetupReadinessV1, ProjectDefinitionInspectOutput } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { ProjectSetupReviewV1Schema, type ProjectSetupReviewV1 } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -26,13 +25,13 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { resolveProjectToolchainSelection, inspectProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
 import { readProjectManifest } from './projectManifestFile';
-import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
+import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from './literalCommandFiles';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readProjectDefinitionFile, readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { createProjectSetupTrustClient, type ProjectSetupTrustClientInput } from './projectSetupTrust';
-import { createProjectSetupSuccessStore } from './projectSetupSuccess';
+import { createProjectSetupSuccessStore, type ProjectSetupSuccessBasis } from './projectSetupSuccess';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -40,12 +39,12 @@ import { performance } from 'node:perf_hooks';
 import { logger } from '@/utils/logger';
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
-export type PreparedProjectSetupCommand = Readonly<
+export type PreparedProjectSetupCommand = Readonly<(
     { kind: 'literal'; source: Extract<ProjectCommandSourceV1, { kind: 'command' }>; cwd: string }
     | { kind: 'native'; source: Extract<ProjectCommandSourceV1, { kind: 'native' }>; resolution: Extract<ProjectNativeCommandResult, { kind: 'resolved' }> }
     | { kind: 'pluginNative'; source: Extract<ProjectCommandSourceV1, { kind: 'pluginNative' }>; resolution: Extract<ProjectNativeCommandResult, { kind: 'pluginResolved' }>['command']; lease: ProjectNativeAdapterProductionV1 }
     | { kind: 'pluginNativeReference'; source: Extract<ProjectCommandSourceV1, { kind: 'pluginNative' }>; reviewInputs: readonly ProjectNativeFileFact[]; lease: ProjectNativeAdapterLeaseV1 }
->;
+) & { inputFiles?: readonly LiteralCommandFileFactV1[] }>;
 
 export type ProjectSetupPreparationInput = Readonly<{
     workspace: WorkspaceRefV1;
@@ -111,12 +110,13 @@ export type PreparedProjectSetupPlan = Readonly<{
     toolchainAdapterLease?: ProjectNativeAdapterLeaseV1;
     /** Host-private config facts consumed by the same selected adapter at final production. */
     toolchainReviewInputs: readonly ProjectNativeFileFact[];
+    toolchainInputFiles?: readonly LiteralCommandFileFactV1[];
     configEnvironment: Readonly<Record<string, string>>;
     /** Host-private execution baseline; excludes setup/teardown commands and explicit setupInputs. */
     executionEnvironmentEffectDigest: string;
     reviewedEffect: ProjectSetupReviewedEffect;
     reviewedEffectDigest: string;
-    successBasis: Omit<ProjectSetupSuccessV1, 'v' | 'workspaceRefId' | 'completedAtMs'>;
+    successBasis: ProjectSetupSuccessBasis;
 }>;
 
 export type ProjectSetupPreparationRefusal = Readonly<{ kind: 'refused'; code: string }>;
@@ -124,7 +124,7 @@ export type ProjectSetupPreparationOutcome = ProjectSetupPreparationRefusal
     | Readonly<{ kind: 'notRequired'; plan: PreparedProjectSetupPlan }>
     | Readonly<{ kind: 'skippedForInvocation'; plan: PreparedProjectSetupPlan }>
     | Readonly<{ kind: 'pendingApproval'; code: 'project_setup_consent_required' | 'project_setup_effect_changed'; plan: PreparedProjectSetupPlan }>
-    | Readonly<{ kind: 'prepared'; plan: PreparedProjectSetupPlan; consent: 'trusted' | 'thisTime' | 'completed'; previousSuccess: boolean }>;
+    | Readonly<{ kind: 'prepared'; plan: PreparedProjectSetupPlan; consent: 'trusted' | 'thisTime' | 'completed'; previousSuccess: boolean; confirmedCommandCount: number }>;
 
 const refuse = (code: string): ProjectSetupPreparationRefusal => ({ kind: 'refused', code });
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -365,7 +365,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 // The command text names the files it runs; their current bytes are the reviewed effect.
                 const executed = await readLiteralCommandExecutedFiles(root, cwd.resolvedPath, source.command);
                 if (executed.kind === 'refused') return refuse(executed.code);
-                commands.push({ kind: 'literal', source, cwd: cwd.resolvedPath });
+                commands.push({ kind: 'literal', source, cwd: cwd.resolvedPath, inputFiles: executed.files });
                 reviewedCommands.push({ kind: 'command', command: source.command, cwd: reviewPath(root, cwd.resolvedPath), os: input.platform.os,
                     ...(executed.files.length ? { files: executed.files } : {}) });
                 continue;
@@ -401,7 +401,12 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                     const result = await addFile(relative(root, resolved.command));
                     if (result) return result;
                 }
-                commands.push({ kind: 'native', source, resolution: resolved });
+                commands.push({ kind: 'native', source, resolution: resolved, inputFiles: [
+                    ...resolved.reviewInputs.map(fact => ({ file: fact.file, digest: hash(fact.content) })),
+                    ...(resolved.executedFiles ?? []),
+                    ...(projectExecutable !== resolved.command ? [{ file: relative(root, resolved.command).replaceAll('\\', '/'),
+                        digest: files.get(relative(root, resolved.command).replaceAll('\\', '/'))! }] : []),
+                ] });
                 // Installed tool identity/version are provenance; its target-local installation path is not the effect.
                 reviewedCommands.push({ source: provenance, ...(projectExecutable !== resolved.command ? { executable: projectExecutable } : {}), args: resolved.reviewInvocation.args.map(arg => reviewPath(root, arg)),
                     cwd: reviewPath(root, resolved.cwd), toolchain: resolved.toolchain,
@@ -436,7 +441,9 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const successBasis = { cwd: root, platform: input.platform, reviewedEffectDigest, setupInputsDigest,
             environmentBindingReferences: bindings.map(binding => createCanonicalJsonSigningInput(binding)) };
         return { kind: 'reviewed', plan: { workspace: input.workspace, project: input.projectAssociation.project, purpose: input.purpose, manifest,
-            fileBasis: snapshot.basis, commands, toolchain, toolchainReviewInputs, ...(toolchainAdapterLease ? { toolchainAdapterLease } : {}),
+            fileBasis: snapshot.basis, commands, toolchain, toolchainReviewInputs,
+            toolchainInputFiles: [...toolchainReviewInputs.map(fact => ({ file: fact.file, digest: hash(fact.content) })),
+                ...(selectedToolchain.executedFiles ?? [])], ...(toolchainAdapterLease ? { toolchainAdapterLease } : {}),
             configEnvironment: Object.freeze(configEnvironment), executionEnvironmentEffectDigest, reviewedEffect, reviewedEffectDigest, successBasis } };
     } catch (error) {
         preserveUnconfirmedNativeProcess(error);
@@ -487,7 +494,7 @@ async function readReviewedProjectSetupReadiness(input: ProjectSetupPreparationI
             || plan.commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) {
             return { kind: 'needsReview', code: 'native_adapter_retired' };
         }
-        return success ? { kind: 'current', reviewedEffectDigest: plan.reviewedEffectDigest, completedAtMs: success.completedAtMs }
+        return success?.completedAtMs !== undefined ? { kind: 'current', reviewedEffectDigest: plan.reviewedEffectDigest, completedAtMs: success.completedAtMs }
             : { kind: 'unprepared', reviewedEffectDigest: plan.reviewedEffectDigest };
     } catch {
         return { kind: 'unknown', code: 'project_setup_success_unavailable' };
@@ -531,7 +538,7 @@ export async function prepareProjectSetup(input: ProjectSetupPreparationInput & 
     return result;
 }
 
-/** Admit consent once per finite run while checking the reviewed effect at every checkpoint. */
+/** Admit consent and compare target-local completion once per finite run. */
 export async function admitReviewedProjectSetup(input: ProjectSetupPreparationInput & Readonly<{ expectedEffectDigest?: string; skipForInvocation?: boolean }>,
     plan: PreparedProjectSetupPlan,
     admittedConsent?: Extract<ProjectSetupPreparationOutcome, { kind: 'prepared' }>['consent']): Promise<ProjectSetupPreparationOutcome> {
@@ -550,10 +557,13 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
     if (input.skipForInvocation) return { kind: 'skippedForInvocation', plan };
     if (plan.commands.length === 0 && plan.toolchain.kind === 'host') return { kind: 'notRequired', plan };
     try {
-        const previousSuccess = input.purpose === 'setup' && input.successHomeDir !== undefined
-            ? await createProjectSetupSuccessStore({ homeDir: input.successHomeDir }).matches({
+        const checkpoint = input.purpose === 'setup' && input.successHomeDir !== undefined
+            ? await createProjectSetupSuccessStore({ homeDir: input.successHomeDir }).readMatching({
                 serverId: plan.workspace.serverId, machineId: plan.workspace.machineId, workspaceRefId: plan.workspace.id,
-            }, plan.successBasis) : false;
+            }, plan.successBasis) : null;
+        const previousSuccess = checkpoint?.completedAtMs !== undefined;
+        const confirmedCommandCount = checkpoint?.confirmedCommandCount !== undefined
+            && checkpoint.confirmedCommandCount <= plan.commands.length ? checkpoint.confirmedCommandCount : 0;
         let consent: 'trusted' | 'thisTime' | 'completed';
         if (admittedConsent !== undefined) {
             consent = admittedConsent;
@@ -586,7 +596,7 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
         if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()
             || plan.commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) return refuse('native_adapter_retired');
-        return { kind: 'prepared', plan, consent, previousSuccess };
+        return { kind: 'prepared', plan, consent, previousSuccess, confirmedCommandCount };
     } catch (error) {
         preserveUnconfirmedNativeProcess(error);
         return refuse(error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_setup_admission_unavailable');
