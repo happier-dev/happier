@@ -13,8 +13,8 @@ import { createRoleActionExecutor } from '@/session/actions/roleActions';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
-import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { createSessionReadBatchResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 describe('Session role RPC provenance', () => {
   it('uses one registered Role writer for a transported UI edit and CLI edit, with an idle-runtime refusal', async () => {
@@ -103,12 +103,17 @@ describe('Session role RPC provenance', () => {
         accountRoleOverrides: { status: 'ready', overrides: {} },
         roleSourceInventory: await createRoleSourceReaderV1({})(),
         callerPermissionMode: context.callerPermissionMode ?? null }),
-      sessionList: async () => ({ queryVersion: 1, sessions: inSubtree ? [{ id: 'child', createdAt: 1, updatedAt: 1,
-        active: true, activeAt: 1, encryption: null }] : [], nextCursor: null, hasNext: false,
-        attentionNextCursor: null, attentionHasNext: false }),
-    } satisfies Pick<ActionExecutorDeps, 'roleActionExecute' | 'resolveAgentStartContext' | 'sessionList'>;
+      sessionRead: async request => {
+        expect(request.underSessionId).toBe('lead');
+        return createSessionReadBatchResponseFixture({
+          request: { sessionIds: request.sessionIds, underSessionId: request.underSessionId, includeTurns: false },
+          sessions: inSubtree ? [createSessionRecordFixture({ id: 'child', encryptionMode: 'plain',
+            metadata: JSON.stringify(metadata) })] : [],
+        });
+      },
+    } satisfies Pick<ActionExecutorDeps, 'roleActionExecute' | 'resolveAgentStartContext' | 'sessionRead'>;
     registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: ['session.notes.set'],
-      actionExecutor: createActionExecutor({ ...createCliActionDeps({ token: 'token', sessionId: 'child', mode: 'plain', ctx: null }), ...deps }) });
+      actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps }) });
     const request = { method: 'child:session.notes.set', params: { sessionId: 'child', notes: 'Copied notes' },
       callerAuthority: 'account_automation' as const, sessionActionOrigin: { v: 1 as const,
         caller: { kind: 'session' as const, sessionId: 'lead', starterDepth: 2, turnDepth: 3 },
@@ -132,7 +137,7 @@ describe('Session role RPC provenance', () => {
     // real Action dispatcher, transport binding and mutation owner are retained.
     const deps = { roleActionExecute } satisfies Pick<ActionExecutorDeps, 'roleActionExecute'>;
     registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: ['session.notes.set'],
-      actionExecutor: createActionExecutor({ ...createCliActionDeps({ token: 'token', sessionId: 'child', mode: 'plain', ctx: null }), ...deps }) });
+      actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps }) });
     const request = { method: 'child:session.notes.set', params: { sessionId: 'child', notes: 'Copied notes' } };
     expect(await rpc.handleRequest(request)).toMatchObject({ ok: false, errorCode: 'role_rpc_origin_unavailable' });
     expect(metadata).not.toMatchObject({ work: { sessionRolesV1: { notes: 'Copied notes' } } });

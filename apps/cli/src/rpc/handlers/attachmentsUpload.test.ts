@@ -195,7 +195,7 @@ describe('attachments upload (chunked)', () => {
         vcsIgnoreWritesEnabled: false,
       });
 
-      expect(initRes).toEqual({ success: false, error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR });
+      expect(initRes).toEqual({ success: false, error: SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR, errorCode: 'attachment_too_large' });
       expect(readAllowedDirs.current).toEqual([]);
       expect(writeAllowedDirs.current).toEqual([]);
       await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toBe('# existing\n');
@@ -247,7 +247,7 @@ describe('attachments upload (chunked)', () => {
         vcsIgnoreWritesEnabled: false,
       });
 
-      expect(initRes).toEqual({ success: false, error: 'File exceeds upload size limit' });
+      expect(initRes).toEqual({ success: false, error: 'File exceeds upload size limit', errorCode: 'attachment_too_large' });
       expect(readAllowedDirs.current).toEqual([]);
       expect(writeAllowedDirs.current).toEqual([]);
       await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toBe('# existing\n');

@@ -489,6 +489,7 @@ describe('registerExternalActionRpcHandler', () => {
       actionInput: request.envelope.input,
       target: { kind: 'session', sessionId: 'session-1' },
       currentMachineId: 'machine-1',
+      context: { surface: 'api', actionCaller: undefined },
       signal,
     });
     expect(execute).toHaveBeenCalledWith(
