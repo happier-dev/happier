@@ -17,7 +17,7 @@ function descriptor(target: DatabaseDescriptorV1['target'], placement: DatabaseD
       { operation: 'relation.structure', available: true }, { operation: 'rows.read', available: true },
       { operation: 'cell.read', available: true }, { operation: 'statement.run', available: true },
       { operation: 'statement.explain', available: true },
-      { operation: 'edits.apply', available: false, code: 'database_operation_unavailable', reason: 'Neon HTTP queries are read-only' },
+      { operation: 'edits.apply', available: true },
       { operation: 'stats.read', available: false, code: 'database_operation_unavailable', reason: 'Statistics require the target statistics adapter' },
     ] };
 }
@@ -60,10 +60,18 @@ export const neonDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
     return { targets, completeness: { complete: true } };
   },
   async open({ preparation, target, placement, access }, context) {
-    // Capture the admitted read login while OPEN owns credential custody.
-    const selected = access === 'read'
-      ? await openNeonReadOnlyTransport({ ...preparation, database: target.database }, context) : undefined;
     const description = descriptor(target, placement);
+    if (access === 'write') {
+      const readDataRole = context.services.secrets.readDataRole;
+      if (!readDataRole) throw new PluginError({ code: 'write_connection_setup_required' });
+      const connectionString = await readDataRole({ role: 'write', signal: context.signal });
+      if (!context.services.databaseEngines) throw new PluginError({ code: 'plugin_service_unavailable' });
+      const connection = await context.services.databaseEngines.open('postgresql', {
+        connectionString, access, signal: context.signal });
+      return { descriptor: description, connection };
+    }
+    // Capture the admitted read login while OPEN owns credential custody.
+    const selected = await openNeonReadOnlyTransport({ ...preparation, database: target.database }, context);
     return { descriptor: description, connection: {
       engine: 'postgresql',
       async execute(input, signal) {
@@ -73,7 +81,6 @@ export const neonDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
         if (input.operation === 'edits.apply' || input.operation === 'stats.read'
           || input.operation === 'statement.run' && input.mode === 'write'
           || input.operation === 'statement.explain' && input.accessMode === 'write') return unsupported();
-        if (!selected) return unsupported();
         try {
           return await executePostgresqlOperation(input, async statement => {
             if (!selected.ok) throw new PostgresqlOperationError({ ok: false, status: 'unavailable', code: 'database_transport_unavailable',

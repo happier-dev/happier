@@ -2,18 +2,12 @@ import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import * as database from '@happier-dev/database-protocol';
 import { databaseActionMetadata } from '@happier-dev/database-protocol';
-import { pluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/plugin-sdk/actions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 
-export { databaseActionMetadata };
+export { databaseActionMetadata, databaseActionOperationClass } from '@happier-dev/database-protocol';
 
 function projectDescriptor(descriptor: database.DatabaseDescriptorV1): database.DatabaseDescriptorV1 {
     return { ...descriptor, automationSubject: database.readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
-}
-
-/** Admission and execution consume the declaration's canonical input predicate. */
-export function databaseActionOperationClass(actionId: database.DatabaseActionIdV1, input: unknown): database.DatabaseOperationClassV1 {
-    return pluginActionDeclarationIsReadOnlyForInput(databaseActionMetadata[actionId], input) ? 'read' : 'write';
 }
 
 export type DatabaseActionProducers = Readonly<{

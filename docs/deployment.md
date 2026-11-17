@@ -722,7 +722,8 @@ own-server query owner. The request names one service in the admitted serving
 Deployment. Its database name comes from that Deployment's retained input basis,
 not a newer Environment draft or a neighbouring database. SQL and parameter
 values stay in the protected Action input; the public admission carries only the
-exact Environment, Deployment, target, Machine and installation references.
+exact Environment, Deployment, target, Machine and installation references and
+the Action's canonical read/write access class.
 
 Own-server execution uses the database container's native client through the
 existing service Exec owner. PostgreSQL uses `psql -X`, named `:'name'` parameters
@@ -741,6 +742,18 @@ lowercase letters, digits or underscores. The `happier_` prefix is reserved.
 The native Action input reports `invalid_query_parameter` for other names;
 managed providers retain their own parameter syntax, including Supabase's
 numeric keys.
+
+Managed writes bind an existing PostgreSQL connection Saved Secret through the
+same `deployments.bindings.set` path, with `purpose: 'dataRole'`, the selected
+`targetLinkId`, and `role: 'write'`. A missing binding returns
+`write_connection_setup_required`; setup does not acquire an administrator login
+or create a new secret. The host captures the admitted Action access class, opens
+only that exact binding, and refuses a URL for a different engine or database.
+Read-class work cannot acquire this write credential and keeps the restricted
+provider read transport. The daemon's existing database engine service opens the
+shared PostgreSQL driver for managed edits and ordered write lists, preserving
+native fields and the shared transaction commit and rollback behavior.
+
 
 The canonical psql input admission API has explicit query and dump modes.
 Dump mode accepts multiple SQL statements and PostgreSQL plain-text COPY data

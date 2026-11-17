@@ -698,7 +698,7 @@ describe('whole external Action encryption', () => {
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding: readBinding, input, material, randomBytes });
     expect(request.deploymentReadAdmission).toEqual({ actionId: 'action.invoke', action,
-      environmentId: environment.environmentId, targetLinkId: target.targetLinkId, databaseTarget: target });
+      environmentId: environment.environmentId, targetLinkId: target.targetLinkId, databaseTarget: target, access: 'read' });
     expect(JSON.stringify(request)).not.toContain('private-sql-value');
     expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       envelope: request, binding: readBinding, material })).toEqual({ input });

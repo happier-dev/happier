@@ -52,7 +52,13 @@ describe('deployment current-health read admission', () => {
             statement: { sql: 'SELECT $1', parameters: [{ type: 'text', value: 'private-sentinel' }] } } };
         const admission = projectDeploymentReadAdmissionV1('action.invoke', input);
         expect(DeploymentReadAdmissionV1Schema.parse(admission)).toEqual({ actionId: 'action.invoke', action,
-            environmentId: environment.environmentId, targetLinkId: databaseTarget.targetLinkId, databaseTarget });
+            environmentId: environment.environmentId, targetLinkId: databaseTarget.targetLinkId, databaseTarget, access: 'read' });
+        expect(DeploymentReadAdmissionV1Schema.parse(projectDeploymentReadAdmissionV1('action.invoke', {
+            action, input: { operation: 'statement.run', mode: 'write', target: databaseTarget,
+                executionMode: 'transaction', statements: [{ sql: 'UPDATE selected SET value=$1',
+                    parameters: [{ type: 'text', value: 'private-sentinel' }] }] },
+        }))).toEqual({ actionId: 'action.invoke', action, environmentId: environment.environmentId,
+            targetLinkId: databaseTarget.targetLinkId, databaseTarget, access: 'write' });
         expect(JSON.stringify(admission)).not.toContain('private-sentinel');
         expect(projectDeploymentReadAdmissionV1('action.invoke', { ...input,
             action: { pluginId: 'foreign.plugin', localId: action.localId } })).toBeUndefined();

@@ -2797,6 +2797,8 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
         const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
         if (!secret.success || secret.data.materialization.kind !== 'dataRole') return false;
         const body = secret.data, materialization = secret.data.materialization;
+        if ('targetLinkId' in materialization && materialization.role === 'write'
+            && (!('databaseTarget' in admission) || admission.access !== 'write')) return false;
         if ('databaseTarget' in admission) {
             const target = admission.databaseTarget;
             if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId

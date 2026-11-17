@@ -13002,7 +13002,12 @@ The workbench selects contributed schemes through its shared connection owner
 and invokes them behind the semantic `database.*` Actions, preserving the admitted
 access class, cancellation signal, and existing connection lifetime. Missing or
 ambiguous engines settle as `plugin_service_unavailable`; built-in connections
-retain their existing adapters. Matching development Protocol, SDK, CLI-common,
+retain their existing adapters. The daemon engine service also opens the built-in
+PostgreSQL adapter when no contribution claims that engine, so portable managed
+providers can request a direct write connection without importing a Node driver
+into their account or browser module graph. Action policy metadata lives beside
+the canonical Action IDs in Protocol and is re-exported by database-protocol;
+execution and signed credential admission consume its one access classifier. Matching development Protocol, SDK, CLI-common,
 and daemon source must reload together under the direct-cut contract.
 
 Protocol's `deploymentTargetRolesV1` source owns the strict runtime and qualified

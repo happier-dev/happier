@@ -240,7 +240,7 @@ export type EnvironmentDataRoleAddressV1 = z.infer<typeof EnvironmentDataRoleAdd
 const serviceDataBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.literal('dataRole'),
     role: z.literal('readOnlyPassword'), ...serviceDataRoleAddress.shape }));
 const managedDataBindingIdentity = lazyZodSchema(() => z.strictObject({ purpose: z.literal('dataRole'),
-    role: z.literal('readOnlyPassword'), ...managedDataRoleAddress.shape }));
+    role: z.enum(['readOnlyPassword', 'write']), ...managedDataRoleAddress.shape }));
 export const EnvironmentSecretBindingIdentityV1Schema = lazyZodSchema(() => z.union([
     z.strictObject(variableIdentity()), registryBindingIdentity, backupBindingIdentity, domainBindingIdentity,
     serviceDataBindingIdentity, managedDataBindingIdentity,

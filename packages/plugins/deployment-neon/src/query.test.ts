@@ -4,14 +4,14 @@ import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions
 import { DatabaseReadStatementInputV1Schema, DatabaseOperationResultV1ProtocolSchema, type DatabaseOperationInputV1 } from '@happier-dev/database-protocol';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
-import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/plugin-sdk/actions';
+import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import * as entry from './index.js';
 import { accountExecution } from './data/actions.js';
 
 const credentialRef = { service: { pluginId: 'happier.deploy.neon', localId: 'neon' }, accountId: 'connected' };
 const input = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
     targetLinkId: 'data-link', expectedTargetLinkRevision: 1, credentialRef,
-    credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: credentialRef.service.pluginId, localId: 'query-read' }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
+    credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: credentialRef.service.pluginId, localId: 'database' }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
     providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' }, providerEnvironment: { kind: 'custom', id: 'br-main' } }),
     database: 'neondb', sql: 'select $1::text as value', params: { '1': 'hello' } };
 
@@ -35,7 +35,8 @@ async function host(options: { status?: number; body?: unknown; endpoint?: typeo
       body: new TextEncoder().encode(JSON.stringify(body)), headers: {} };
   } });
   const secrets = {
-    async readDataRole() {
+    async readDataRole(roleOptions?: Parameters<NonNullable<SecretsService['readDataRole']>>[0]) {
+      if (roleOptions?.role === 'write') throw new PluginError({ code: 'write_connection_setup_required' });
       if (options.missingRole || options.mayAcquireRole?.() === false) throw new PluginError({ code: 'secret_missing' });
       return 'fixture-role-password';
     },
@@ -74,6 +75,12 @@ async function invokeManaged(h: Awaited<ReturnType<typeof host>>, operand: Datab
   finally { await runner.dispose(); }
 }
 
+const target = { kind: 'managed_deployment' as const, environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+  targetLinkId: 'data-link', contribution: { pluginId: credentialRef.service.pluginId, contributionId: 'database' },
+  platformProjectId: 'project', branchId: 'br-main', database: 'neondb' };
+const read = DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'read', target,
+  statement: { sql: input.sql, parameters: [{ type: 'text', value: 'hello' }] } });
+
 describe('Neon qualified read-only SQL', () => {
   it('runs the registered selected transport through the shared dialect without losing native field types', async () => {
     const h = await host({ body: { results: [{ command: 'DO' }, { command: 'SELECT', rowCount: 1,
@@ -97,9 +104,9 @@ describe('Neon qualified read-only SQL', () => {
       const body = JSON.parse(new TextDecoder().decode(h.requests.find(request => new URL(request.url).pathname === '/sql')!.body));
       expect(body.queries[1].params).toEqual(['9007199254740993', '']);
       const requestsBeforeWrite = h.requests.length;
-      expect(await invokeManaged(h, { operation: 'statement.run', mode: 'write', target,
+      await expect(invokeManaged(h, { operation: 'statement.run', mode: 'write', target,
         executionMode: 'transaction', statements: [{ sql: 'UPDATE items SET value = 1', parameters: [] }] }, { access: 'write' }))
-        .toMatchObject({ ok: false, status: 'unavailable', code: 'database_operation_unavailable' });
+        .rejects.toMatchObject({ code: 'write_connection_setup_required' });
       expect(h.requests.length).toBe(requestsBeforeWrite);
     } finally { await h.kit.dispose(); }
   });
@@ -146,8 +153,8 @@ describe('Neon qualified read-only SQL', () => {
   it('executes for the exact branch/database using only the bound read-role login', async () => {
     const h = await host();
     try {
-      expect(await h.kit.invokeAction('query-read', input, { surface: 'ui' }))
-        .toEqual({ ok: true, columns: [{ name: 'value' }], rows: [['hello']], complete: true });
+      expect(await invokeManaged(h, read))
+        .toMatchObject({ ok: true, results: [{ columns: [{ name: 'value', semanticType: 'text' }], rows: [{ cells: [{ type: 'text', value: 'hello' }] }], completeness: { complete: true } }] });
       const sql = h.requests.filter(request => new URL(request.url).pathname === '/sql');
       expect(sql).toHaveLength(1);
       for (const request of sql) {
@@ -168,18 +175,10 @@ describe('Neon qualified read-only SQL', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('requires a role binding without acquiring a writable connection', async () => {
-    const h = await host({ missingRole: true });
-    try {
-      expect(await h.kit.invokeAction('query-read', input)).toMatchObject({ ok: false, error: 'deployment_unavailable', diagnostic: { code: 'secret_missing' } });
-      expect(h.requests).toHaveLength(0);
-    } finally { await h.kit.dispose(); }
-  });
-
   it('refuses foreign branch endpoints before sending a role password', async () => {
     const h = await host({ endpoint: { ...endpoint, branch_id: 'br-other' } });
     try {
-      await expect(h.kit.invokeAction('query-read', input)).rejects.toMatchObject({ code: 'provider_response_invalid' });
+      await expect(invokeManaged(h, read)).rejects.toMatchObject({ code: 'provider_response_invalid' });
       expect(h.requests.some(request => new URL(request.url).pathname === '/sql')).toBe(false);
     } finally { await h.kit.dispose(); }
   });
@@ -187,7 +186,10 @@ describe('Neon qualified read-only SQL', () => {
   it.each([400, 401, 403, 429, 500])('settles HTTP %s without replay or provider error echoes', async status => {
     const h = await host({ status, body: { message: 'fixture-role-password and private SQL' } });
     try {
-      await expect(h.kit.invokeAction('query-read', input)).rejects.toMatchObject({ code: 'query_failed' });
+      const outcome = await invokeManaged(h, read);
+      expect(outcome).toMatchObject({ ok: false, status: 'failed', code: 'database_transport_error', cause: { code: 'query_failed' } });
+      expect(JSON.stringify(outcome)).not.toContain('fixture-role-password');
+      expect(JSON.stringify(outcome)).not.toContain('private SQL');
       expect(h.requests.filter(request => new URL(request.url).pathname === '/sql')).toHaveLength(1);
     } finally { await h.kit.dispose(); }
   });
@@ -198,44 +200,26 @@ describe('Neon qualified read-only SQL', () => {
   ])('returns role setup unavailable when the database refuses the query login ($code)', async body => {
     const h = await host({ status: 400, body });
     try {
-      expect(await h.kit.invokeAction('query-read', input)).toEqual({ ok: false, error: 'deployment_unavailable',
-        diagnostic: { code: 'read_role_unavailable' } });
+      expect(await invokeManaged(h, read)).toMatchObject({ ok: false, status: 'unavailable', code: 'database_transport_unavailable', reason: 'read_role_unavailable' });
       expect(h.requests.filter(request => new URL(request.url).pathname === '/sql')).toHaveLength(1);
-    } finally { await h.kit.dispose(); }
-  });
-
-  it('refuses invalid positional parameters before custody or HTTP work', async () => {
-    const h = await host();
-    try {
-      await expect(h.kit.invokeAction('query-read', { ...input, params: { '2': 'gap' } })).rejects.toMatchObject({ code: 'query_parameters_invalid' });
-      expect(h.requests).toHaveLength(0);
     } finally { await h.kit.dispose(); }
   });
 
   it('preserves duplicate names, NULL, empty text and empty-result columns', async () => {
     for (const rows of [[['', null]], []]) {
       const h = await host({ body: { results: [{ command: 'DO' }, { command: 'SELECT',
-        fields: [{ name: 'duplicate' }, { name: 'duplicate' }], rows, rowCount: rows.length }] } });
+        fields: [{ name: 'duplicate', dataTypeID: 25 }, { name: 'duplicate', dataTypeID: 25 }], rows, rowCount: rows.length }] } });
       try {
-        expect(await h.kit.invokeAction('query-read', input)).toEqual({ ok: true,
-          columns: [{ name: 'duplicate' }, { name: 'duplicate' }], rows, complete: true });
+        expect(await invokeManaged(h, read)).toMatchObject({ ok: true, results: [{
+          columns: [{ name: 'duplicate' }, { name: 'duplicate' }], rows: rows.map(cells => ({ cells: cells.map(value => value === null ? { type: 'null' } : { type: 'text', value }) })), completeness: { complete: true } }] });
       } finally { await h.kit.dispose(); }
     }
-  });
-
-  it('reports a response that cannot fit the incumbent Action boundary explicitly', async () => {
-    const h = await host({ body: { results: [{ command: 'DO' },
-      { ...result, rows: [['x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES)]] }] } });
-    try {
-      expect(await h.kit.invokeAction('query-read', input)).toEqual({ ok: true, columns: [], rows: [], complete: false,
-        diagnostic: { code: 'action_result_size_limit' } });
-    } finally { await h.kit.dispose(); }
   });
 
   it('rejects an inconsistent provider row count rather than inventing completeness', async () => {
     const h = await host({ body: { results: [{ command: 'DO' }, { ...result, rowCount: 2 }] } });
     try {
-      await expect(h.kit.invokeAction('query-read', input)).rejects.toMatchObject({ code: 'provider_response_invalid' });
+      expect(await invokeManaged(h, read)).toMatchObject({ ok: false, status: 'failed', code: 'database_transport_error', cause: { code: 'provider_response_invalid' } });
     } finally { await h.kit.dispose(); }
   });
 });

@@ -84,7 +84,8 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         return { selected, contribution, target, providerIdentity: identity, providerEnvironment, principal };
     };
 
-    const bind = async (admission: Awaited<ReturnType<typeof readEnvironment>>, selected: ReturnType<typeof selectLink>) => {
+    const bind = async (admission: Awaited<ReturnType<typeof readEnvironment>>, selected: ReturnType<typeof selectLink>,
+        operation: DatabaseOperationClassV1 = 'read', database?: string) => {
         const { host, detail } = admission;
         const { contribution } = selected;
         await input.prepareTarget?.(contribution.pluginId, contribution.definition.id);
@@ -132,7 +133,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             contribution: { id: contribution.definition.id, qualifiedId: `${contribution.pluginId}/deploymentTargets/${contribution.definition.id}` },
             occurrenceId: registration.occurrenceId, sourceCustody: input.readCurrentSourceCustody?.(contribution.pluginId) ?? undefined,
             deploymentDatabases: undefined, actionInput: undefined, isOccurrenceCurrent: isCurrent,
-            readDataRole: createManagedDataRoleSecretReaderForHost({ host, environment: detail,
+            readDataRole: createManagedDataRoleSecretReaderForHost({ host, environment: detail, access: operation, database,
                 query: { targetLinkId: selected.target.targetLinkId, expectedRevision: detail.environment.revision }, context: admission.context }) };
         const diagnostic = { pluginId: contribution.pluginId, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId };
         const dispose = () => { lease.dispose(); input.completeDiagnosticScope?.(diagnostic); };
@@ -236,7 +237,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             }
             const { target, admission, summary } = admitted;
             const selected = admitted.selected ?? refuse('target_mismatch');
-            const bound = await bind(admission, selected, operation);
+            const bound = await bind(admission, selected, operation, target.database);
             try {
                 const resolved = await bound.runtime.open({ preparation: bound.preparation, target, access: operation,
                     placement: bound.placement }, bound.invocation);

@@ -59,12 +59,14 @@ export async function readEnvironmentSecretLaunchAdmissionForHost(input: OwnServ
 /** Query opens only its private service or exact managed-link binding; Home supplies installed custody. */
 export async function readEnvironmentDataRoleLaunchAdmissionForHost(input: Omit<HostSecretAdmissionRequest, 'materialization'> & Readonly<{
     expectedRevision: number;
-}> & (Readonly<{ deploymentId: string; service: string }> | Readonly<{ deploymentId?: never; service?: never }>)): Promise<OwnServerSecretLaunchAdmission> {
+}> & (Readonly<{ deploymentId: string; service: string; role?: never }>
+    | Readonly<{ deploymentId?: never; service?: never; role?: 'readOnlyPassword' | 'write' }>)): Promise<OwnServerSecretLaunchAdmission> {
     const native = input.deploymentId !== undefined && input.service !== undefined;
     if (!native && (input.deploymentId !== undefined || input.service !== undefined)) return refuse('invalid_action_output');
     const admitted = await readEnvironmentSecretAdmissionForHost({ ...input, materialization: native
         ? { kind: 'dataRole', expectedRevision: input.expectedRevision, deploymentId: input.deploymentId, service: input.service }
-        : { kind: 'dataRole', expectedRevision: input.expectedRevision, targetLinkId: input.targetLinkId } });
+        : { kind: 'dataRole', expectedRevision: input.expectedRevision, targetLinkId: input.targetLinkId,
+            ...(input.role ? { role: input.role } : {}) } });
     if (admitted.bindingPreparation || admitted.domainAdmission) { admitted.release(); return refuse('invalid_action_output'); }
     return admitted;
 }

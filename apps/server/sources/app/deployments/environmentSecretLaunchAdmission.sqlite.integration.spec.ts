@@ -517,22 +517,42 @@ describe('private installed Environment secret launch transport', () => {
             materialization: { kind: 'dataRole' as const, expectedRevision: row.revision, targetLinkId: link.id } };
         const url = `/v1/deployments/environments/${encodeURIComponent(body.environmentId)}/secret-launch-admission`;
         await withAuthenticatedTestApp(app => registerDeploymentRoutes(app), async app => {
-            const launch = async (current: EnvironmentSecretLaunchAdmissionBodyV1, privateKey = f.controller.keys.secretKey) => {
+            const launch = async (current: EnvironmentSecretLaunchAdmissionBodyV1, privateKey = f.controller.keys.secretKey,
+                authorizationToken = authorization.token, requestId = envelope.requestId) => {
                 const payload = { ...current, proof: signMachineInstallationProof({ payload: { version: 1, accountId: f.requester.id,
                     machineId: current.machineId, installationId: current.installationId,
                     deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(current) } }, privateKey }) };
                 return app.inject({ method: 'POST', url, payload, headers: {
-                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorizationToken,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'action.invoke',
                 [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
-                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
-                    effectActionId: 'action.invoke', target, installationId: current.installationId, requestId: envelope.requestId,
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken,
+                    effectActionId: 'action.invoke', target, installationId: current.installationId, requestId,
                     method: 'POST', path: url, body: payload, privateKey }),
                 } });
             };
             const result = await launch(body);
             expect(result.statusCode, result.body).toBe(200);
             expect(result.json()).toEqual({ ok: true, grants: [grant] });
+            if (semantic) {
+                const writeBody = { ...body, materialization: { ...body.materialization, role: 'write' as const } };
+                const refused = await launch(writeBody);
+                expect(refused.statusCode, refused.body).toBe(401);
+                const writeEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: { action: semanticAction,
+                    input: { operation: 'statement.run', mode: 'write', target: databaseTarget,
+                        executionMode: 'transaction', statements: [{ sql: 'UPDATE selected SET value=$1',
+                            parameters: [{ type: 'text', value: 'private-write-value' }] }] } } };
+                const writeAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id,
+                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+                    actionId: 'action.invoke', machineId: f.controller.machineId, target, requestId: writeEnvelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
+                    deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', writeEnvelope.input) });
+                const delivered = await launch(writeBody, f.controller.keys.secretKey, writeAuthorization.token, writeEnvelope.requestId);
+                expect(delivered.statusCode, delivered.body).toBe(200);
+                expect(delivered.json()).toEqual({ ok: true, grants: [grant] });
+                expect(JSON.stringify(projectDeploymentReadAdmissionV1('action.invoke', writeEnvelope.input)))
+                    .not.toContain('private-write-value');
+            }
             const crossArm = await launch({ ...body, materialization: { kind: 'dataRole', expectedRevision: row.revision,
                 deploymentId: f.receipt.deploymentId, service: 'neon' } });
             expect(crossArm.statusCode, crossArm.body).toBe(401);

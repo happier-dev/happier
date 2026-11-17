@@ -12,7 +12,7 @@ const unavailable = { ok: false, status: 'unavailable', code: 'database_operatio
 
 function descriptor(target: DatabaseManagedDeploymentTargetV1, placement: DatabaseDescriptorV1['placement']): DatabaseDescriptorV1 {
   return { target, label: target.database, engine: 'postgresql', origin: { label: 'Supabase' }, placement,
-    capabilities: DatabaseOperationNameV1Schema.options.map(operation => operation === 'describe' || operation === 'statement.run'
+    capabilities: DatabaseOperationNameV1Schema.options.map(operation => operation === 'describe' || operation === 'statement.run' || operation === 'edits.apply'
       ? { operation, available: true }
       : { operation, available: false, code: unavailable.code, reason: unavailable.reason }) };
 }
@@ -24,7 +24,16 @@ export const supabaseDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
     if (!transport.ok) return { targets: [], completeness: { complete: false, reason: 'transport_unproven' } };
     return { targets: [descriptor({ ...target, database: transport.database }, placement)], completeness: { complete: true } };
   },
-  async open({ preparation, target, placement }, context) {
+  async open({ preparation, target, placement, access }, context) {
+    if (access === 'write') {
+      const readDataRole = context.services.secrets.readDataRole;
+      if (!readDataRole) throw new PluginError({ code: 'write_connection_setup_required' });
+      const connectionString = await readDataRole({ role: 'write', signal: context.signal });
+      if (!context.services.databaseEngines) throw new PluginError({ code: 'plugin_service_unavailable' });
+      const connection = await context.services.databaseEngines.open('postgresql', {
+        connectionString, access, signal: context.signal });
+      return { descriptor: descriptor(target, placement), connection };
+    }
     const transport = await openSupabaseReadOnlyTransport({ ...preparation, database: target.database }, context);
     if (!transport.ok) throw new PluginError({ code: transport.diagnostic?.code ?? 'database_operation_unavailable' });
     const selected = descriptor(target, placement);

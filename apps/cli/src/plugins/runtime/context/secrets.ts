@@ -719,9 +719,10 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
     return Object.freeze({
         ...(readDataRole
             ? {
-                async readDataRole(options?: { signal?: AbortSignal }) {
+                async readDataRole(options?: Parameters<NonNullable<SecretsService['readDataRole']>>[0]) {
                     assertCurrent(options?.signal);
                     const value = await readDataRole({
+                        ...(options?.role ? { role: options.role } : {}),
                         signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
                     });
                     assertCurrent(options?.signal);
