@@ -16,7 +16,12 @@ function boundary() {
     let receive: ((data: Buffer, width: number, height: number, flags: number) => void) | undefined;
     const addon: IosSimulatorNativeAddon = {
         SimCapture: class {
-            constructor(...args: unknown[]) { events.push(['capture', ...args]); }
+            constructor(...args: unknown[]) {
+                // The N-API constructor requires numeric quality arguments even when grants omit caps.
+                if (typeof args[1] !== 'number' || !Number.isFinite(args[1])
+                    || typeof args[5] !== 'number' || !Number.isFinite(args[5])) throw new Error('Invalid native quality');
+                events.push(['capture', ...args]);
+            }
             async subscribe(_codec: 0 | 1, listener: NonNullable<typeof receive>) {
                 receive = listener;
                 return async () => { events.push('unsubscribe'); };
@@ -70,6 +75,20 @@ describe('iOS native session', () => {
         expect(frames).toHaveLength(afterStop);
         expect(native.events.slice(-2)).toEqual(['unsubscribe', 'stop']);
         await expect(owner.sendCommand({ ...controlBase, kind: 'tap', x: 0.4, y: 0.6 })).resolves.toMatchObject({ ok: false });
+    });
+
+    it('opens an uncapped viewer and applies quality without turning omitted limits into NaN', async () => {
+        const native = boundary();
+        const owner = createIosSimulatorNativeSession({ addon: native.addon });
+        const adapter = createSimulatorFrameProducerCaptureAdapter({ sourceId, sourceCodecs: ['h264.avcc'], producer: owner.createProducer('device-1') });
+        const input = captureInput(() => ({ ok: true }));
+        const result = await adapter.start({ ...input, caps: {} });
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error('Uncapped viewer failed to open');
+        expect(native.events).toContainEqual(['capture', 'device-1', 60, 0.7, 0, 60, 6_000_000, 0]);
+        expect(result.session.applySidebandControl?.({ ...controlBase, kind: 'set_quality', maxFramesPerSecond: 90, maxBitrateBps: 9_000_000 })).toEqual({ ok: true });
+        await vi.waitFor(() => expect(native.events).toContainEqual(['quality', 90, 0.7, 0, 90, 9_000_000]));
+        await owner.stop();
     });
 
     it.each(['🙂', 'İ'])('does not acknowledge Unicode %s the native keyboard refused', async (text) => {

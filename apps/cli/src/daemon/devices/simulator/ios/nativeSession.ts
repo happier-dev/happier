@@ -61,8 +61,9 @@ export function createIosSimulatorNativeSession(input: Readonly<{ addon: IosSimu
             if (codec !== 'image.mjpeg' && codec !== 'h264.avcc') {
                 throw Object.assign(new Error('Unsupported iOS codec'), { reasonCode: 'unsupported_codec' });
             }
-            let fps = startInput.caps.maxFramesPerSecond;
-            let bitrate = startInput.caps.maxBitrateBps;
+            // Match the bundled upstream producer defaults; omitted grant limits are not numeric N-API arguments.
+            let fps = startInput.caps.maxFramesPerSecond ?? 60;
+            let bitrate = startInput.caps.maxBitrateBps ?? 6_000_000;
             let maxDimension = 0;
             let active: ActiveCapture | null = null;
             let unsubscribe: (() => void | Promise<void>) | null = null;
@@ -124,8 +125,8 @@ export function createIosSimulatorNativeSession(input: Readonly<{ addon: IosSimu
                 },
                 requestKeyframe: () => enqueue(async () => { await detach(); await attach(); }),
                 setQuality: (control: Extract<MachineLiveStreamControlSidebandV1, { kind: 'set_quality' }>) => {
-                    fps = Math.min(control.maxFramesPerSecond ?? fps, startInput.caps.maxFramesPerSecond);
-                    bitrate = Math.min(control.maxBitrateBps ?? bitrate, startInput.caps.maxBitrateBps);
+                    fps = Math.min(control.maxFramesPerSecond ?? fps, startInput.caps.maxFramesPerSecond ?? Infinity);
+                    bitrate = Math.min(control.maxBitrateBps ?? bitrate, startInput.caps.maxBitrateBps ?? Infinity);
                     const dimensions = [control.maxWidth, control.maxHeight].filter((value): value is number => value !== undefined);
                     if (dimensions.length) maxDimension = Math.min(...dimensions);
                     return enqueue(async () => { await active?.capture.updateStreamSettings(fps, 0.7, maxDimension, fps, bitrate); });
