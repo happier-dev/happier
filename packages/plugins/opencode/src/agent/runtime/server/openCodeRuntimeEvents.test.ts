@@ -10,7 +10,7 @@ describe('projectOpenCodeTurnCancellationCause', () => {
       } }) } } });
     expect(issue).toMatchObject(code === 'invalid_api_key'
       ? { source: 'auth_error', failureCause: { failureReason: 'authentication_required', providerErrorCode: code } }
-      : { source: 'agent_session_error', failureCause: { failureReason: 'unknown' } });
+      : { source: 'agent_session_error', failureCause: { failureReason: 'unknown', providerErrorCode: code } });
   });
 
   it('decodes the Google SDK nested HTTP 400 body through the shared owner', () => {

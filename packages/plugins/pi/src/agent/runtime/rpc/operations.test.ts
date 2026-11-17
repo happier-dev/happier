@@ -3116,10 +3116,9 @@ describe('createPiRuntimeOperations', () => {
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'pi', error: failure.diagnostic });
       expect(issue).toMatchObject({ source, failureCause: {
         phase: source === 'auth_error' ? 'authentication' : 'turn', failureReason,
-        ...(knownCause ? { providerErrorCode: 'known_denial' } : source === 'auth_error' ? { providerErrorCode: providerCode } : {}),
+        providerErrorCode: knownCause ? 'known_denial' : providerCode,
         ...(knownCause ? {} : { httpStatus: 400 }),
       } });
-      if (source !== 'auth_error' && !knownCause) expect(issue.failureCause).not.toHaveProperty('providerErrorCode');
       expect(JSON.stringify(issue.failureCause)).not.toContain(privateText);
       expect(JSON.stringify(capture.warnings)).not.toContain(privateText);
       expect(events.some(event => event.kind === 'turn-complete')).toBe(false);
@@ -3240,8 +3239,9 @@ describe('createPiRuntimeOperations', () => {
           code: 'rate_limit_exceeded',
           severity: 'error',
           message: 'Service temporarily unavailable. Please retry.',
-          // The canonical Session cause owner omits arbitrary raw exception codes.
+          // Decoded vendor codes survive alongside the raw Action diagnostic.
           details: { failureCause: { phase: 'turn', failureReason: 'unknown', httpStatus: 429,
+            providerErrorCode: 'rate_limit_exceeded', retryable: true,
             actionCause: { phase: 'agent.turn', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: 429 },
           } },
         },

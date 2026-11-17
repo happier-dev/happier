@@ -4,6 +4,7 @@ import {
   SessionRuntimeIssueV1Schema,
   readSessionRuntimeFailureCause,
   projectSessionRuntimeFailureCause,
+  projectProviderSessionFailureCause,
   SessionRuntimeTemporaryThrottleDetailsV1Schema,
   SessionRuntimeUsageLimitDetailsV1Schema,
   sanitizeSessionRuntimeIssueV1,
@@ -13,6 +14,15 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it('retains decoded native vendor facts without inventing an absent cause or overriding a known refusal', () => {
+    expect(projectProviderSessionFailureCause({}, 'turn', { code: 'overloaded_error', httpStatus: 503 }))
+      .toMatchObject({ phase: 'turn', failureReason: 'unknown', providerErrorCode: 'overloaded_error', httpStatus: 503 });
+    expect(projectProviderSessionFailureCause({}, 'turn_start', {})).toBeUndefined();
+    expect(projectProviderSessionFailureCause({}, 'turn', { diagnosticCode: 'pi_provider_session_error' })).toBeUndefined();
+    const failureCause = { phase: 'turn' as const, failureReason: 'permission_denied' as const, providerErrorCode: 'known_denial' };
+    expect(projectProviderSessionFailureCause({ failureCause }, 'turn', { code: 'overloaded_error', httpStatus: 503 }))
+      .toEqual(failureCause);
+  });
   it.each(['session_launch_material_missing', 'managed_binary_missing', 'session_mcp_context_missing'] as const)(
     'retains only closed native launch operands (%s) at the runtime cause owner', code => {
       const source = { code: 'agent_isolation_unavailable', details: { cause: code, phase: 'native_execution_preparation',

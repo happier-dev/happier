@@ -16,6 +16,7 @@ export default defineConfig({
       '.project/**',
       'src/agent/tools/mcpToolPolicy.contract.test.ts',
       'src/agent/runtime/rpc/operations.test.ts',
+      'src/agent/runtime/rpc/gatewayFailure.native.test.ts',
     ],
   },
 });

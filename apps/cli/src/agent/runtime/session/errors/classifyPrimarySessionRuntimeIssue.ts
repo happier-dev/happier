@@ -551,7 +551,7 @@ export function classifyPrimarySessionRuntimeIssue(
   const diagnosticDetails = readRecord(typedDiagnostic?.details);
   const structuredInputFailure = readStructuredInputPreparationFailure(input.error);
   const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse((typedDiagnostic
-    ? projectProviderSessionFailureCause(typedDiagnostic, input.startupPhase ?? 'turn', { code: typedDiagnostic.code })
+    ? projectProviderSessionFailureCause(typedDiagnostic, input.startupPhase ?? 'turn', { diagnosticCode: typedDiagnostic.code })
     : readSessionRuntimeFailureCause(input.error, input.startupPhase))
     ?? (structuredInputFailure?.preparationCause ? {
       phase: 'turn_start', failureReason: 'unknown', preparationCause: structuredInputFailure.preparationCause,

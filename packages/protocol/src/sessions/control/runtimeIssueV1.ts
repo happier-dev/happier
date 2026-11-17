@@ -538,21 +538,33 @@ export function readProviderErrorDiagnosticFacts(value: unknown): Readonly<{ cod
 export function projectProviderSessionFailureCause(
   error: unknown,
   phase: NonNullable<SessionRuntimeIssueV1['failureCause']>['phase'],
-  facts: Readonly<{ code?: string | null; httpStatus?: number | null; authenticationEvidence?: string }>,
+  facts: Readonly<{ code?: string | null; diagnosticCode?: string; httpStatus?: number | null; retryable?: boolean; authenticationEvidence?: string }>,
 ): SessionRuntimeIssueV1['failureCause'] {
-  const retained = readSessionRuntimeFailureCause(error, phase);
+  const retained = readSessionRuntimeFailureCause(error, phase)
+    ?? (facts.code || facts.httpStatus != null || facts.retryable !== undefined
+      ? projectSessionRuntimeFailureCause(error, phase, 'agent.turn') : undefined);
   if (retained && retained.failureReason !== 'unknown' && retained.failureReason !== 'unclassified_provider_error') return retained;
-  const attestationDenied = facts.code === 'client_attestation_denied';
-  const codeAuthenticationFailure = Boolean(facts.code && classifyProviderOutputFailure(facts.code).authenticationError);
+  // Native adapters already decoded these facts at their wire boundary. Keep
+  // them even when they do not establish a classified refusal.
+  const projected = facts.code || facts.httpStatus != null || facts.retryable !== undefined ? {
+    phase, failureReason: 'unknown' as const, ...retained,
+    ...(facts.code && retained?.providerErrorCode === undefined ? { providerErrorCode: facts.code } : {}),
+    ...(facts.httpStatus == null || retained?.httpStatus !== undefined ? {} : { httpStatus: facts.httpStatus }),
+    ...(facts.retryable === undefined || retained?.retryable !== undefined ? {} : { retryable: facts.retryable }),
+  } : retained;
+  // An outer runtime diagnostic code can classify a refusal, but is not a decoded vendor fact.
+  const classificationCode = facts.code ?? facts.diagnosticCode;
+  const attestationDenied = classificationCode === 'client_attestation_denied';
+  const codeAuthenticationFailure = Boolean(classificationCode && classifyProviderOutputFailure(classificationCode).authenticationError);
   if (attestationDenied || codeAuthenticationFailure || facts.httpStatus === 401 || facts.httpStatus === 403
     || classifyProviderOutputFailure(facts.authenticationEvidence ?? '').authenticationError) {
-    return { ...retained, phase: attestationDenied ? phase : 'authentication',
+    return { ...projected, phase: attestationDenied ? phase : 'authentication',
       failureReason: attestationDenied ? 'permission_denied' : 'authentication_required',
       ...(attestationDenied ? { code: 'client_attestation_denied' as const } : {}),
-      ...(codeAuthenticationFailure && facts.code ? { providerErrorCode: facts.code } : {}),
+      ...(codeAuthenticationFailure && classificationCode ? { providerErrorCode: classificationCode } : {}),
       ...(facts.httpStatus == null ? {} : { httpStatus: facts.httpStatus }) };
   }
-  return retained;
+  return projected;
 }
 
 /** The source distinguishes native Agent sign-in refusals from Provider endpoint credentials. */

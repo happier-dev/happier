@@ -206,6 +206,7 @@ function projectDecodedProviderFailureCause(
   record: Readonly<Record<string, unknown>>,
   fields: ReturnType<typeof readProviderFailureFields>,
   phase: 'turn' | 'turn_start',
+  retryable: boolean,
 ) {
   // Project the decoded code/status, never the provider body or prompt echo.
   const evidence = {
@@ -213,7 +214,7 @@ function projectDecodedProviderFailureCause(
     code: fields.code,
     ...(fields.httpStatus === null ? {} : { status: fields.httpStatus }),
   };
-  return projectProviderSessionFailureCause(evidence, phase, fields)
+  return projectProviderSessionFailureCause(evidence, phase, { ...fields, retryable })
     ?? projectSessionRuntimeFailureCause(evidence, phase, 'agent.turn');
 }
 
@@ -236,16 +237,13 @@ export function readPiProviderFailureDiagnostic(
   const retryEvidence = fields.parsed
     ? { ...record, ...fields.parsed, ...(fields.httpStatus === null ? {} : { status: fields.httpStatus }) }
     : record;
+  const piRetryable = isRetryablePiProviderFailure({ code, message: fields.message, evidence: retryEvidence });
   return Object.freeze({
     classification: 'pi_provider_failure',
     code,
     sanitizedPreview,
-    failureCause: projectDecodedProviderFailureCause(record, fields, 'turn'),
-    piRetryable: isRetryablePiProviderFailure({
-      code,
-      message: fields.message,
-      evidence: retryEvidence,
-    }),
+    failureCause: projectDecodedProviderFailureCause(record, fields, 'turn', piRetryable),
+    piRetryable,
   });
 }
 
@@ -264,13 +262,14 @@ export function readPiPromptRejectionDiagnostic(
   const retryEvidence = parsed
     ? { ...parsed, ...(httpStatus === null ? {} : { status: httpStatus }) }
     : { ...(httpStatus === null ? {} : { status: httpStatus }), message: raw };
+  const piRetryable = isRetryablePiProviderFailure({ code, message, evidence: retryEvidence });
   return Object.freeze({
     classification: 'pi_provider_failure',
     code,
-    failureCause: projectDecodedProviderFailureCause(isRecord(value) ? value : {}, fields, 'turn_start'),
+    failureCause: projectDecodedProviderFailureCause(isRecord(value) ? value : {}, fields, 'turn_start', piRetryable),
     sanitizedPreview: message
       ? `Pi provider rejected the prompt before acceptance: ${message}`
       : 'Pi provider rejected the prompt before acceptance without details',
-    piRetryable: isRetryablePiProviderFailure({ code, message, evidence: retryEvidence }),
+    piRetryable,
   });
 }
