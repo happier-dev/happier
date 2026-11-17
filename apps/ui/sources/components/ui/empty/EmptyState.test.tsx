@@ -49,6 +49,21 @@ describe('EmptyState', () => {
         expect(subtitle?.props.children).toBe('Connect an account to get started');
     });
 
+    it('names a page it stands alone on with a level-one heading, and stays a section heading under a page header', async () => {
+        // C77: /projects with no project drew only "No projects yet", and the page had no heading at all.
+        const state = <EmptyState layout="page" title="No projects yet" subtitle="Add one to start" titleTestID="empty-title" />;
+        const heading = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+            const title = screen.findHostByTestId('empty-title')!;
+            return [title.props.accessibilityRole, title.props['aria-level']];
+        };
+        const alone = await renderScreen(state);
+        expect(heading(alone)).toEqual(['header', 1]);
+        const underHeader = await renderScreen(<ListPresentationProvider value="page">{state}</ListPresentationProvider>);
+        expect(heading(underHeader)).toEqual(['header', 2]);
+        const centered = await renderScreen(<EmptyState title="Nothing here" titleTestID="empty-title" />);
+        expect(heading(centered)).toEqual([undefined, undefined]);
+    });
+
     it('renders the action when provided', async () => {
         const screen = await renderScreen(
             <EmptyState

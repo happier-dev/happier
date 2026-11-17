@@ -22,6 +22,8 @@ type CenteredInfoTileProps = Readonly<{
     size?: HappierStateSize;
     /** A wait's words: one quiet body line, the shared tile's `quietTitle`. */
     quietTitle?: boolean;
+    /** The title is a heading at this level: 1 when the state is the whole page, 2 under a page's own header. */
+    headingLevel?: 1 | 2;
 }>;
 
 /**
@@ -47,6 +49,8 @@ export const CenteredInfoTile = React.memo((props: CenteredInfoTileProps) => {
             title={
                 <Text
                     testID={props.titleTestID}
+                    accessibilityRole={props.headingLevel ? 'header' : undefined}
+                    aria-level={props.headingLevel}
                     style={{
                         fontSize: props.quietTitle ? metrics?.body.fontSize ?? 14 : metrics?.title.fontSize ?? 18,
                         ...(props.quietTitle ? { lineHeight: metrics?.body.lineHeight ?? 20 } : metrics ? { lineHeight: metrics.title.lineHeight } : null),

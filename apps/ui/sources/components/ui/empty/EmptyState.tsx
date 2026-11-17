@@ -311,6 +311,8 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
                 description={props.subtitle ?? null}
                 titleTestID={props.titleTestID}
                 descriptionTestID={props.subtitleTestID}
+                // A page state alone in its page names that page; under a page's own header it heads a section.
+                headingLevel={page ? inPageColumn || inSection ? 2 : 1 : undefined}
                 paddingHorizontal={props.paddingHorizontal}
                 paddingVertical={page ? HAPPIER_EMPTY_STATE_FRAME.pageTilePaddingVertical : undefined}
             />
