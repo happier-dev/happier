@@ -27,7 +27,7 @@ describe('Vercel AI Gateway Provider projection', () => {
     } finally { await kit.dispose(); }
   });
   it('projects the three documented protocol endpoints and API-key transport', () => {
-    expect(PLUGIN_MANIFEST).toHaveProperty('entrypoints.daemon', './.happier-plugin/daemon.js');
+    expect(PLUGIN_MANIFEST).toHaveProperty('entrypoints.daemon', './.happier-plugin-build/daemon.js');
     const provider = ProviderContributionV1Schema.parse(PLUGIN_MANIFEST.contributes.providers[0]);
     expect(assertBundledProviderVerificationV1({
       buildQualifiedContributionKey: buildQualifiedPluginContributionKey,
