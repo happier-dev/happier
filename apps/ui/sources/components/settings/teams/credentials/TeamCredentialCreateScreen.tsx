@@ -4,6 +4,8 @@ import type { TeamCredentialRouteV1, TeamCredentialSessionUsePolicyV1, TeamCrede
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     useTeamCredentialRequestPolicySupport,
@@ -334,7 +336,8 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
                 : undefined);
 
     return <>
-        <ItemGroup title={t('teams.credentials.create.title')} description={sources.supportedKinds.length < 3 ? t('teams.credentials.create.sourceUnsupported') : t('teams.credentials.subtitle')}>
+        {/* The page header already says "Share a credential"; the source group opens with what sharing does. */}
+        <ItemGroup description={sources.supportedKinds.length < 3 ? t('teams.credentials.create.sourceUnsupported') : t('teams.credentials.subtitle')}>
             <TeamCredentialSourcePicker candidates={sources.candidates} selected={selected} disabled={busy} unavailableReason={sourcePickerLoading ? t('common.loading') : sources.candidates.length === 0 ? t('teams.credentials.create.sourceEmpty') : null} onSelect={chooseSource} />
         </ItemGroup>
         {sources.error ? <ItemGroup description={credentialFailureMessage(sources.error)}><Item testID="team-credential-create-source-retry" title={t('teams.unavailable.retry')} onPress={() => void sources.reload()} showChevron={false} /></ItemGroup> : null}
@@ -419,23 +422,28 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
                 <Item testID="team-credential-create-review-models" title={t('teams.credentials.requestPolicy.modelsLabel')} detail={requestPolicy.allowedModelIds?.join(' · ') ?? t('teams.credentials.requestPolicy.modelsAny')} showChevron={false} />
             </> : null}
             {usageLimits.length === 0 ? <Item testID="team-credential-create-review-limits" title={t('teams.credentials.limits.title')} detail={t('teams.credentials.limits.empty')} showChevron={false} /> : usageLimits.map((limit, index) => <Item key={`review-limit:${limitIdentity(limit)}:${index}`} testID={`team-credential-create-review-limit:${index}`} title={`${limitSubjectKindLabel(limit.subjectKind)} · ${limitMetricLabel(limit.metric)}`} detail={`${limit.maximum} · ${limitPeriodLabel(limit.period)}`} showChevron={false} />)}</> : null}
-            <Item testID="team-credential-create-submit" title={t('teams.credentials.create.submit')} loading={busy} disabled={!ready} onPress={async () => {
-                // `ready` already excludes an unparseable request policy; restating it here
-                // keeps the submitted value the exact policy the review rows described.
-                if (!ready || !selected) return; const requestedTargetKey = targetKey; setSubmitting(true); setNotice(null);
-                try {
-                    if (selectedProviderOffer !== null) { const refreshedOffers = await providerConnections.refresh(); if (!isTeamCredentialProviderSourceOfferCurrent(selectedProviderOffer, refreshedOffers)) { setNotice(t('teams.credentials.directReadiness.state.sourceChanged')); return; } }
-                    const displayName = await createPrivateLabelClient(context.scope).seal({
-                        owner: { kind: 'team', teamId: context.address.teamId },
-                        binding: teamCredentialDisplayNameBinding(requestId.current),
-                        value: name.trim(),
-                    });
-                    if (displayName === null) { setNotice(t('teams.errors.generic')); return; }
-                    const outcome = await createTeamCredentialResource({ ...(resourceDraft.disclosureReviewCompleted ? { confirmedByPresentUser: true } : {}), scope: context.scope, address: context.address, resourceId: requestId.current, displayName, source: selected.candidate.source, deliveryPolicy: { preferredAllowedModes: [...deliveryPolicy.preferredAllowedModes] }, sessionUsePolicy: managesResources ? usePolicy : 'personal_allowed', brokerPlacement: managesResources ? placement : null, requestPolicy, allMembersAllowedRoutes: managesResources && allMembers ? [...allMembers] : null, groupGrants: managesResources ? [...groupGrants].map(([teamGroupId, allowedRoutes]) => ({ teamGroupId, allowedRoutes: [...allowedRoutes] })) : [], memberGrants: managesResources ? [...memberGrants].map(([teamMembershipId, allowedRoutes]) => ({ teamMembershipId, allowedRoutes: [...allowedRoutes] })) : [], usageLimits: managesResources ? usageLimits : [], handlers: { onApprovalSucceeded: summary => { if (currentTargetKey.current === requestedTargetKey) { allowSavedNavigation(); router.replace(teamCredentialDetailPath(context.address, summary.id)); } }, onApprovalFailed: code => { if (currentTargetKey.current === requestedTargetKey) setNotice(credentialApprovalFailureMessage(code)); } } });
-                    if (currentTargetKey.current !== requestedTargetKey) return; if (outcome.kind === 'succeeded') { allowSavedNavigation(); router.replace(teamCredentialDetailPath(context.address, outcome.value.id)); } else setNotice(credentialFailureMessage(outcome.failure));
-                } catch (cause) { if (currentTargetKey.current !== requestedTargetKey) return; if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.registration); else setNotice(t('teams.errors.generic')); } finally { if (currentTargetKey.current === requestedTargetKey) setSubmitting(false); }
-            }} showChevron={false} />
-            <Item testID="team-credential-create-cancel" title={t('common.cancel')} disabled={busy} onPress={() => router.back()} showChevron={false} />
+        </ItemGroup>
+        {/* One primary action closes the form, as every Team form does (TeamMemberAddScreen). */}
+        <ItemGroup surface="none">
+            <SectionButtonRow>
+                <RoundButton testID="team-credential-create-cancel" size="small" display="secondary" title={t('common.cancel')} disabled={busy} onPress={() => router.back()} />
+                <RoundButton testID="team-credential-create-submit" size="small" title={t('teams.credentials.create.submit')} loading={busy} disabled={!ready} onPress={async () => {
+                    // `ready` already excludes an unparseable request policy; restating it here
+                    // keeps the submitted value the exact policy the review rows described.
+                    if (!ready || !selected) return; const requestedTargetKey = targetKey; setSubmitting(true); setNotice(null);
+                    try {
+                        if (selectedProviderOffer !== null) { const refreshedOffers = await providerConnections.refresh(); if (!isTeamCredentialProviderSourceOfferCurrent(selectedProviderOffer, refreshedOffers)) { setNotice(t('teams.credentials.directReadiness.state.sourceChanged')); return; } }
+                        const displayName = await createPrivateLabelClient(context.scope).seal({
+                            owner: { kind: 'team', teamId: context.address.teamId },
+                            binding: teamCredentialDisplayNameBinding(requestId.current),
+                            value: name.trim(),
+                        });
+                        if (displayName === null) { setNotice(t('teams.errors.generic')); return; }
+                        const outcome = await createTeamCredentialResource({ ...(resourceDraft.disclosureReviewCompleted ? { confirmedByPresentUser: true } : {}), scope: context.scope, address: context.address, resourceId: requestId.current, displayName, source: selected.candidate.source, deliveryPolicy: { preferredAllowedModes: [...deliveryPolicy.preferredAllowedModes] }, sessionUsePolicy: managesResources ? usePolicy : 'personal_allowed', brokerPlacement: managesResources ? placement : null, requestPolicy, allMembersAllowedRoutes: managesResources && allMembers ? [...allMembers] : null, groupGrants: managesResources ? [...groupGrants].map(([teamGroupId, allowedRoutes]) => ({ teamGroupId, allowedRoutes: [...allowedRoutes] })) : [], memberGrants: managesResources ? [...memberGrants].map(([teamMembershipId, allowedRoutes]) => ({ teamMembershipId, allowedRoutes: [...allowedRoutes] })) : [], usageLimits: managesResources ? usageLimits : [], handlers: { onApprovalSucceeded: summary => { if (currentTargetKey.current === requestedTargetKey) { allowSavedNavigation(); router.replace(teamCredentialDetailPath(context.address, summary.id)); } }, onApprovalFailed: code => { if (currentTargetKey.current === requestedTargetKey) setNotice(credentialApprovalFailureMessage(code)); } } });
+                        if (currentTargetKey.current !== requestedTargetKey) return; if (outcome.kind === 'succeeded') { allowSavedNavigation(); router.replace(teamCredentialDetailPath(context.address, outcome.value.id)); } else setNotice(credentialFailureMessage(outcome.failure));
+                    } catch (cause) { if (currentTargetKey.current !== requestedTargetKey) return; if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.registration); else setNotice(t('teams.errors.generic')); } finally { if (currentTargetKey.current === requestedTargetKey) setSubmitting(false); }
+                }} />
+            </SectionButtonRow>
         </ItemGroup>
     </>;
 });

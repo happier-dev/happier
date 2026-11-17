@@ -564,17 +564,6 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
                 accessibilityRole="radiogroup"
                 accessibilityLabel={t('machinePools.myTitle')}
             >
-                {poolChoicesVisible ? (
-                    <Item
-                        testID={`${testIDPrefix}:machine-pools-caption`}
-                        title={<Eyebrow>{t('machinePools.myTitle')}</Eyebrow>}
-                        accessibilityLabel={t('machinePools.myTitle')}
-                        accessibilityRole="header"
-                        webRole="heading"
-                        mode="info"
-                        showChevron={false}
-                    />
-                ) : null}
                 {poolProjectionPending || poolProjectionFailed ? (
                     <Item
                         testID={poolProjectionFailed
