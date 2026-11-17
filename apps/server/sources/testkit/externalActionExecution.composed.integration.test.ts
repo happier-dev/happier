@@ -98,6 +98,34 @@ describe.each([
             expect(opened?.credentials.secret ?? opened?.credentials.encryption ?? null).toBeNull();
         });
 
+        it('admits the retained setup review read under prepare without admitting operation cancellation or inventory', async () => {
+            const headers = { authorization: `Bearer ${home.token}`, 'Content-Type': 'application/json' };
+            const prepareId = 'projects.prepare';
+            const workspace = { serverId: 'srv_external_action_home', machineId, workspaceId: 'checkout', rootPath: '/repo' };
+            const issued = await home.request('POST', bindExternalActionExecutionAuthorizationHttpPathV1(prepareId), {
+                v: 1, machineId, envelope: { v: 1, requestId: 'setup-consent-review',
+                    target: { kind: 'machine', machineId }, input: { workspace, phase: 'setup' } },
+            }, headers);
+            expect(issued.status).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.data);
+            const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(prepareId);
+            const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
+            const verifyEffect = (effectActionId: string) => home.request('POST', path, body, {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId, target: authorization.binding.target,
+                    installationId, requestId: authorization.binding.requestId, method: 'POST', path, body, privateKey: keys.secretKey,
+                }),
+            });
+            // The admitted root is the control; only its read child is added.
+            expect(await verifyEffect(prepareId)).toEqual({ status: 200, data: { ok: true } });
+            expect(await verifyEffect('action.operations.get')).toEqual({ status: 200, data: { ok: true } });
+            expect((await verifyEffect('action.operations.cancel')).status).toBe(401);
+            expect((await verifyEffect('action.operations.list')).status).toBe(401);
+        });
+
         if (_name === 'isolated process') {
             // Acquisition is the behavior under test, using the same SQLite
             // budget as the normal owner's beforeAll rather than fixture setup.
