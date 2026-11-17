@@ -206,14 +206,20 @@ it.each([{ phone: false, receiptPage: false, stored: false }, { phone: true, rec
 });
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
 
+async function answerDeploymentSource(detail: ReturnType<typeof environmentDetailForHome>) {
+  const { ProjectSourcesReadOutputV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+  const sourceId = detail.environment.projectSourceId;
+  homes.answer(scope.serverId, `GET /v1/projects/sources/${sourceId}?serverId=${encodeURIComponent(scope.serverId)}`, {
+    body: ProjectSourcesReadOutputV1Schema.parse({ ok: true, source: { id: sourceId, revision: 1, name: 'My app', audience: [], createdByAccountId: scope.accountId,
+      repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'owner/app' }, protocol: 'https' } }, canManage: true }) });
+}
+
 // These neighboring flows start with an existing checkout; only the fresh-deploy cases below need Open.
 async function answerExistingDeploymentCheckout(detail: ReturnType<typeof environmentDetailForHome>) {
   const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
   const sourceId = detail.environment.projectSourceId;
-  homes.answer(scope.serverId, `GET /v1/projects/sources/${sourceId}?serverId=${encodeURIComponent(scope.serverId)}`, {
-    body: { ok: true, source: { id: sourceId, revision: 1, name: 'My app', audience: [], createdByAccountId: scope.accountId,
-      repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
-        repository: { nameWithOwner: 'owner/app' }, protocol: 'https' } }, canManage: true } });
+  await answerDeploymentSource(detail);
   homes.answer(scope.serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture({
     workspaceRefs: [{ id: 'existing-checkout', serverId: scope.serverId, machineId: detail.environment.controllerMachineId,
       rootPath: '/workspace/app', label: null, createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId, revision: 1 } }],
@@ -1256,6 +1262,7 @@ describe('Project deployments page', () => {
       targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
     const deletionPath = `/v1/deployments/environments/${detail.environment.id}/delete`;
+    if (detach) await answerDeploymentSource(detail);
     if (neverDeployed || detach) homes.answer(scope.serverId, `POST ${deletionPath}`, { select: body => {
       expect(body).toMatchObject({ environmentId: detail.environment.id,
         expectedRevision: detail.environment.revision,
@@ -1357,8 +1364,6 @@ describe('Project deployments page', () => {
       const previousTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
       const previousDeletions = homes.requestsFor(deletionPath).length;
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
-      await waitForContent(screen, 'actions.confirmation-review.decision-approve');
-      await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
       await waitForHomeGovernance(() => {
         if (detach) expect(screen.findByTestId('project-deployments.environment') === null,
           'Deleted Environment detail closes while the collection refresh is pending').toBe(true);
@@ -2707,6 +2712,7 @@ describe('Deployment receipt header actions', () => {
     });
     const { controller } = controllerFor({ detail, receipt });
     const { createDeploymentActions } = await import('./deploymentActions');
+    await answerDeploymentSource(detail);
     homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
       ok: true, environment: { ...detail.environment, serverId: homeIdentity },
       targetLinks: detail.targetLinks.map(row => row.targetLink),
@@ -2729,8 +2735,6 @@ describe('Deployment receipt header actions', () => {
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.confirm).mockClear();
       await screen.pressByTestIdAsync('project-deployments.receipt.deployAgain');
-      await waitForContent(screen, 'actions.confirmation-review.decision-approve');
-      await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
       await waitForHomeGovernance(() => {
         const requests = homes.requestsFor('/v1/actions/deployments.teardown').length - beforeTeardowns
           + homes.requestsFor('/v1/actions/deployments.deploy').length - beforeDeploys;
