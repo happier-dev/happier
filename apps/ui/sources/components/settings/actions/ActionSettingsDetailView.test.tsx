@@ -14,8 +14,8 @@ vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary();
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
 import {
-    createMachineAdministrationTargetSelectionFixture,
     createMachineAdministrationTargetSelectionMock,
     installMachineAdministrationTargetSelectionBoundary,
 } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';

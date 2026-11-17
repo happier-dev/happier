@@ -7,7 +7,7 @@ import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeD
 import { useExactHomeDestination } from '@/components/account/auth/useExactHomeDestination';
 import { useRouter } from 'expo-router';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 import type {
@@ -42,8 +42,8 @@ import {
     presentTeamsDisabledOnHome,
 } from '@/components/teams/entry/teamAuthenticationFailure';
 import { resolveTeamJoinPresentation } from '@/components/teams/join/teamJoinOutcome';
-import { TeamInvitationFactsLine, TeamInvitationPreviewDetails } from '@/components/teams/join/TeamInvitationPreviewDetails';
-import { Icon } from '@/components/ui/icons/Icon';
+import { TeamInvitationPreviewDetails } from '@/components/teams/join/TeamInvitationPreviewDetails';
+import { TeamInvitationJoinActions, TeamInvitationOffer } from '@/components/teams/entry/TeamInvitationOffer';
 import { TeamJoinedCard } from '@/components/teams/join/TeamJoinedCard';
 import { useTeamInvitationPreview, type TeamInvitationPreviewState } from '@/hooks/teams/useTeamInvitationPreview';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
@@ -266,7 +266,6 @@ function approvalRefusalTitle(code: string): string {
 
 export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(props: TeamAuthEntrySurfaceProps) {
     const router = useRouter();
-    const { theme } = useUnistyles();
     const destination = useExactHomeDestination({
         refreshAuth: React.useCallback(async () => {
             await getCurrentAuth()?.refreshFromActiveServer();
@@ -699,27 +698,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
             && !completedAdmission
             && previewState.kind === 'ready'
             && previewState.preview.state === 'active'
-            ? previewState.preview
-            : null;
-        const offerHeading = offeredInvitation
-            ? offeredInvitation.inviterLabel !== null
-                ? t('teams.join.invitedYouTo', { name: offeredInvitation.inviterLabel, team: teamName })
-                : t('teams.join.invitedToTeam', { team: teamName })
-            : undefined;
-        const offerIdentityLine = offeredInvitation
-            ? accountScope && accountLabel
-                ? [
-                    t('teams.entry.signedInTo', { account: accountLabel }),
-                    offeredInvitation.recipientEmailMask !== null
-                        ? t('teams.join.sentToInline', { email: offeredInvitation.recipientEmailMask })
-                        : null,
-                ].filter((part): part is string => part !== null).join(' · ')
-                : [
-                    offeredInvitation.recipientEmailMask !== null
-                        ? t('teams.join.sentTo', { email: offeredInvitation.recipientEmailMask })
-                        : null,
-                    entryStatus,
-                ].filter((part): part is string => part !== null).join(' ')
+            ? previewState
             : null;
         const entryActionList = (
             <WelcomeActionList admission={admission}>
@@ -738,31 +717,17 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                     />
                 ) : invitation && accountScope ? (
                     invitationIsJoinable ? (
-                        <>
-                            <WelcomeActionCard
-                                testID="team-auth-entry-join"
-                                primary
-                                title={invitedMailboxVerificationRequired
-                                    ? t('teams.join.joinWithCurrentAccount')
-                                    : t('teams.join.joinAction', { team: teamName })}
-                                subtitle={invitedMailboxVerificationRequired && invitedMailboxMask
-                                    ? t('teams.join.addInvitedAddressNotice', { email: invitedMailboxMask })
-                                    : undefined}
-                                onPress={() => acceptInvitation(projection)}
-                            />
-                            {switchAccountOffered && props.onRecoverIdentity ? (
-                                <WelcomeActionCard
-                                    testID="team-auth-entry-use-another-account"
-                                    primary={false}
-                                    presentation={offeredInvitation ? 'link' : undefined}
-                                    title={t('teams.join.useAnotherAccount')}
-                                    subtitle={offeredInvitation
-                                        ? t('teams.join.useAnotherAccountKeeps')
-                                        : t('teams.join.useAnotherAccountHint')}
-                                    onPress={props.onRecoverIdentity}
-                                />
-                            ) : null}
-                        </>
+                        <TeamInvitationJoinActions
+                            joinTitle={invitedMailboxVerificationRequired
+                                ? t('teams.join.joinWithCurrentAccount')
+                                : t('teams.join.joinAction', { team: teamName })}
+                            joinSubtitle={invitedMailboxVerificationRequired && invitedMailboxMask
+                                ? t('teams.join.addInvitedAddressNotice', { email: invitedMailboxMask })
+                                : undefined}
+                            onJoin={() => acceptInvitation(projection)}
+                            offered={offeredInvitation !== null}
+                            onUseAnotherAccount={switchAccountOffered ? props.onRecoverIdentity : undefined}
+                        />
                     ) : null
                 ) : invitation && !invitationIsJoinable ? null : <>
                     {accountServiceHref && accountServiceDiscovery ? (
@@ -903,7 +868,101 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 </>}
             </WelcomeActionList>
         );
-        content = (
+        const signInServiceNotice = signInServiceName ? (
+            <Text
+                testID="team-auth-entry-sign-in-service-origin"
+                style={styles.guidance}
+            >
+                {t(accountServiceUnreachable
+                    ? 'teams.entry.signInServiceUnavailableOrigin'
+                    : 'teams.entry.signInServiceOrigin', { service: signInServiceName })}
+            </Text>
+        ) : null;
+        // An admission answer replaces the offer or the ready body; the identity header stays.
+        const admissionStateCard = admissionTerminal && admissionTerminalPresentation ? (
+            <SurfaceStateCard
+                testID={`team-auth-entry-admission-${admissionTerminal.outcome}`}
+                kind="warning"
+                title={admissionTerminalPresentation.title}
+                reason={admissionTerminalPresentation.body ?? undefined}
+                action={admissionTerminalPresentation.identityAction === 'sign_in_with_invited' && props.onRecoverIdentity ? {
+                    label: t('teams.join.signInWithInvited'),
+                    onPress: props.onRecoverIdentity,
+                } : undefined}
+                accessibilitySemantics="status"
+            />
+        ) : admissionState.kind === 'incompatible' ? (
+            <SurfaceStateCard
+                testID="team-auth-entry-admission-incompatible"
+                kind="warning"
+                title={t('teams.join.updateRequiredTitle')}
+                action={{ label: t('common.retry'), onPress: retry }}
+                accessibilitySemantics="status"
+            />
+        ) : admissionState.kind === 'failed' ? (
+            <SurfaceStateCard
+                testID={`team-auth-entry-admission-failure-${admissionState.failure.kind}`}
+                kind="error"
+                title={admissionFailureTitle(admissionState.failure)}
+                reason={admissionState.failure.kind === 'unreachable'
+                    ? t('teams.join.offlineBody')
+                    : undefined}
+                action={(admissionState.failure.retryable
+                    || admissionState.failure.kind === 'outcome_unknown') ? {
+                    label: t('teams.join.retry'),
+                    onPress: () => runAction(
+                        'team-auth-entry-admission-retry',
+                        () => acceptInvitation(projection),
+                    ),
+                } : undefined}
+                accessibilitySemantics="status"
+            />
+        ) : admissionState.kind === 'approval_refused' ? (
+            <SurfaceStateCard
+                testID="team-auth-entry-admission-approval-refused"
+                kind="warning"
+                title={approvalRefusalTitle(admissionState.code)}
+                // Nobody was admitted and the invitation is untouched,
+                // so the same offer stays retryable from here.
+                action={{
+                    label: t('teams.join.retry'),
+                    onPress: () => runAction(
+                        'team-auth-entry-admission-retry',
+                        () => acceptInvitation(projection),
+                    ),
+                }}
+                accessibilitySemantics="status"
+            />
+        ) : approvalPending ? (
+            <SurfaceStateCard
+                testID="team-auth-entry-admission-approval"
+                kind="loading"
+                title={t('approvals.title')}
+                reason={t('approvals.status.open')}
+                action={approvalId && accountScope ? {
+                    label: t('approvals.details'),
+                    onPress: () => router.push(buildApprovalHref(approvalId, accountScope.serverId)),
+                } : undefined}
+                accessibilitySemantics="status"
+            />
+        ) : null;
+        content = offeredInvitation ? (
+            <TeamInvitationOffer
+                testID="team-auth-entry-ready"
+                teamId={projection.team.teamId}
+                teamName={teamName}
+                logo={projection.team.logo ?? null}
+                previewState={offeredInvitation}
+                homeLabel={homeDisplayName}
+                headerNotice={signInServiceNotice}
+                status={admissionStateCard}
+                signedIn={Boolean(accountScope)}
+                accountLabel={accountLabel}
+                statusLine={entryStatus}
+                onRetryPreview={retry}
+                actions={entryActionList}
+            />
+        ) : (
             <View testID="team-auth-entry-ready" style={styles.content}>
                 <TeamEntryIdentity
                     testIDPrefix="team-auth-entry"
@@ -912,31 +971,17 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                     logo={projection.team.logo ?? null}
                     heading={completedAdmission
                         ? resolveTeamJoinPresentation(completedAdmission.result, teamName).title
-                        : offerHeading}
-                    inviterLabel={offeredInvitation?.inviterLabel ?? null}
+                        : undefined}
                 >
-                    {completedAdmission ? null : offeredInvitation ? (
-                        <View style={styles.offerFacts}>
-                            <TeamInvitationFactsLine preview={offeredInvitation} homeLabel={homeDisplayName} />
-                        </View>
-                    ) : (
+                    {completedAdmission ? null : (
                         <Text style={styles.subtitle}>
                             {t('teams.entry.onHome', {
                                 home: homeDisplayName,
                             })}
                         </Text>
                     )}
-                    {signInServiceName ? (
-                        <Text
-                            testID="team-auth-entry-sign-in-service-origin"
-                            style={styles.guidance}
-                        >
-                            {t(accountServiceUnreachable
-                                ? 'teams.entry.signInServiceUnavailableOrigin'
-                                : 'teams.entry.signInServiceOrigin', { service: signInServiceName })}
-                        </Text>
-                    ) : null}
-                    {accountLabel && !offeredInvitation && !completedAdmission ? (
+                    {signInServiceNotice}
+                    {accountLabel && !completedAdmission ? (
                         <Text
                             testID="team-auth-entry-account-label"
                             accessibilityRole="text"
@@ -960,112 +1005,22 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                             onContinue: () => props.onSetupTeam?.(completedAdmission.result),
                         } : undefined}
                     />
-                ) : admissionTerminal && admissionTerminalPresentation ? (
-                    <SurfaceStateCard
-                        testID={`team-auth-entry-admission-${admissionTerminal.outcome}`}
-                        kind="warning"
-                        title={admissionTerminalPresentation.title}
-                        reason={admissionTerminalPresentation.body ?? undefined}
-                        action={admissionTerminalPresentation.identityAction === 'sign_in_with_invited' && props.onRecoverIdentity ? {
-                            label: t('teams.join.signInWithInvited'),
-                            onPress: props.onRecoverIdentity,
-                        } : undefined}
-                        accessibilitySemantics="status"
-                    />
-                ) : admissionState.kind === 'incompatible' ? (
-                    <SurfaceStateCard
-                        testID="team-auth-entry-admission-incompatible"
-                        kind="warning"
-                        title={t('teams.join.updateRequiredTitle')}
-                        action={{ label: t('common.retry'), onPress: retry }}
-                        accessibilitySemantics="status"
-                    />
-                ) : admissionState.kind === 'failed' ? (
-                    <SurfaceStateCard
-                        testID={`team-auth-entry-admission-failure-${admissionState.failure.kind}`}
-                        kind="error"
-                        title={admissionFailureTitle(admissionState.failure)}
-                        reason={admissionState.failure.kind === 'unreachable'
-                            ? t('teams.join.offlineBody')
-                            : undefined}
-                        action={(admissionState.failure.retryable
-                            || admissionState.failure.kind === 'outcome_unknown') ? {
-                            label: t('teams.join.retry'),
-                            onPress: () => runAction(
-                                'team-auth-entry-admission-retry',
-                                () => acceptInvitation(projection),
-                            ),
-                        } : undefined}
-                        accessibilitySemantics="status"
-                    />
-                ) : admissionState.kind === 'approval_refused' ? (
-                    <SurfaceStateCard
-                        testID="team-auth-entry-admission-approval-refused"
-                        kind="warning"
-                        title={approvalRefusalTitle(admissionState.code)}
-                        // Nobody was admitted and the invitation is untouched,
-                        // so the same offer stays retryable from here.
-                        action={{
-                            label: t('teams.join.retry'),
-                            onPress: () => runAction(
-                                'team-auth-entry-admission-retry',
-                                () => acceptInvitation(projection),
-                            ),
-                        }}
-                        accessibilitySemantics="status"
-                    />
-                ) : approvalPending ? (
-                    <SurfaceStateCard
-                        testID="team-auth-entry-admission-approval"
-                        kind="loading"
-                        title={t('approvals.title')}
-                        reason={t('approvals.status.open')}
-                        action={approvalId && accountScope ? {
-                            label: t('approvals.details'),
-                            onPress: () => router.push(buildApprovalHref(approvalId, accountScope.serverId)),
-                        } : undefined}
-                        accessibilitySemantics="status"
-                    />
-                ) : (
+                ) : admissionStateCard ?? (
                     <>
-                        {offeredInvitation ? (
-                            <>
-                                <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
-                                <View testID="team-auth-entry-offer-foot" style={styles.offerFoot}>
-                                    {offerIdentityLine ? (
-                                        <View style={styles.offerIdentity}>
-                                            <Icon name="person" size={15} color={theme.colors.text.secondary} />
-                                            <Text
-                                                testID={accountScope ? 'team-auth-entry-account-label' : 'team-auth-entry-status'}
-                                                accessibilityRole="text"
-                                                variant="label"
-                                                style={styles.offerIdentityText}
-                                            >
-                                                {offerIdentityLine}
-                                            </Text>
-                                        </View>
-                                    ) : null}
-                                    {entryActionList}
-                                </View>
-                            </>
-                        ) : (
-                            <>
-                                {entryStatus ? <Text
-                                    testID="team-auth-entry-status"
-                                    accessibilityRole="text"
-                                    accessibilityLiveRegion="polite"
-                                    aria-live="polite"
-                                    role="status"
-                                    style={styles.guidance}
-                                >
-                                    {entryStatus}
-                                </Text> : null}
-                                {invitation ? (
-                                    <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
-                                ) : null}
-                                {entryActionList}
-                            </>
-                        )}
+                        {entryStatus ? <Text
+                            testID="team-auth-entry-status"
+                            accessibilityRole="text"
+                            accessibilityLiveRegion="polite"
+                            aria-live="polite"
+                            role="status"
+                            style={styles.guidance}
+                        >
+                            {entryStatus}
+                        </Text> : null}
+                        {invitation ? (
+                            <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
+                        ) : null}
+                        {entryActionList}
                     </>
                 )}
             </View>
@@ -1184,25 +1139,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.text.secondary,
-    },
-    offerFacts: {
-        marginTop: theme.space.s10,
-    },
-    offerFoot: {
-        marginTop: theme.space.s10,
-        paddingTop: theme.space.s20,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.default,
-        gap: theme.space.s16,
-    },
-    offerIdentity: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s8,
-    },
-    offerIdentityText: {
-        flex: 1,
         color: theme.colors.text.secondary,
     },
 }));

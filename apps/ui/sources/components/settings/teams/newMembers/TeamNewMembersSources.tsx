@@ -13,7 +13,7 @@ import { t } from '@/text';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { useTeamSetupAuthoringReferences } from './useTeamSetupAuthoringReferences';
 
-type SourceRows = ReturnType<typeof useTeamSetupAuthoringReferences>['rows'];
+export type TeamNewMembersSourceRows = ReturnType<typeof useTeamSetupAuthoringReferences>['rows'];
 
 /**
  * L5's Source-backed sections: the repositories shared with this Team and the first task attached
@@ -39,7 +39,7 @@ export function TeamNewMembersSources(
   const { rows, controller } = references;
   const status = references.state.status;
   const retry = React.useCallback(() => controller.load(), [controller]);
-  const settled = status === 'ready' || rows.length > 0;
+  const settled = references.state.hasLoaded || rows.length > 0;
   const loading =
     !settled &&
     (resolution.kind === 'resolving' ||
@@ -48,12 +48,38 @@ export function TeamNewMembersSources(
   const failed = !settled && !loading;
 
   return (
+    <TeamNewMembersSourcesView
+      teamName={team.name}
+      rows={rows}
+      loading={loading}
+      failed={failed}
+      onRetry={status === 'offline' ? retry : undefined}
+      homeServerId={scope.serverId}
+    />
+  );
+}
+
+/** The two sections as drawn from an already-read Source list; `TeamNewMembersSources` owns the read. */
+export function TeamNewMembersSourcesView(
+  props: Readonly<{
+    teamName: string;
+    rows: TeamNewMembersSourceRows;
+    loading: boolean;
+    failed: boolean;
+    /** Offered only when the Home was unreachable; a refusal has nothing to retry. */
+    onRetry?: () => void;
+    homeServerId: string;
+  }>,
+) {
+  const { rows, loading, failed, onRetry } = props;
+  const settled = !loading && !failed;
+  return (
     <>
       <ItemGroup
         testID="team-new-members-repositories"
         title={t('teams.newMembers.repositories.title')}
         description={t('teams.newMembers.repositories.description', {
-          team: team.name,
+          team: props.teamName,
         })}
       >
         {loading ? (
@@ -70,8 +96,8 @@ export function TeamNewMembersSources(
             state={{
               kind: 'failed',
               reason: t('teams.newMembers.repositories.loadFailed'),
-              ...(status === 'offline'
-                ? { onRetry: retry, homeServerIds: [scope.serverId] }
+              ...(onRetry
+                ? { onRetry, homeServerIds: [props.homeServerId] }
                 : {}),
             }}
           />
@@ -81,12 +107,9 @@ export function TeamNewMembersSources(
             testID="team-new-members-repositories-empty"
             kind="empty"
             size="line"
-            title={t('teams.newMembers.repositories.emptyTitle', {
-              team: team.name,
-            })}
-            reason={t('teams.newMembers.repositories.emptyBody', {
-              team: team.name,
-            })}
+            // The section description already names the Team; the empty state does not repeat it.
+            title={t('teams.newMembers.repositories.emptyTitle')}
+            reason={t('teams.newMembers.repositories.emptyBody')}
           />
         ) : null}
         {rows.map((row) => (
@@ -111,7 +134,7 @@ export function TeamNewMembersSources(
 }
 
 const RepositoryRow = React.memo(function RepositoryRow(
-  props: Readonly<{ row: SourceRows[number] }>,
+  props: Readonly<{ row: TeamNewMembersSourceRows[number] }>,
 ) {
   const { source, taskReference } = props.row;
   const address = source.repository ? describeProjectSourceRow(source) : null;
@@ -132,7 +155,7 @@ const RepositoryRow = React.memo(function RepositoryRow(
   );
 });
 
-function FirstTaskRows(props: Readonly<{ rows: SourceRows }>) {
+function FirstTaskRows(props: Readonly<{ rows: TeamNewMembersSourceRows }>) {
   const attached = props.rows.filter((row) => row.taskReference !== null);
   if (attached.length === 0) {
     return (

@@ -256,8 +256,8 @@ export const english = {
                 title: 'Repositories',
                 description: ({ team }: { team: string }) => `Sources shared with ${team}. A checkout someone already has is used as it is.`,
                 hasFirstTask: 'has a suggested first task',
-                emptyTitle: ({ team }: { team: string }) => `No sources shared with ${team} yet`,
-                emptyBody: ({ team }: { team: string }) => `Share a project’s source with ${team} to offer it here.`,
+                emptyTitle: 'No sources shared yet',
+                emptyBody: 'Share a project’s source with the Team to offer it here.',
                 loadFailed: 'Couldn’t read the sources shared with this Team',
             },
             firstTask: {

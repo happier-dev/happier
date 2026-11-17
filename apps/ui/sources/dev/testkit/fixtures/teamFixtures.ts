@@ -10,6 +10,7 @@ import {
     TeamIdentityConnectionV1Schema,
     TeamDirectorySourceSummaryV1Schema,
     TeamCredentialResourceSummaryV1Schema,
+    TeamCredentialResourceCatalogEntryV1Schema,
     TeamCredentialSourceResourceAdministrationV1Schema,
     TeamCredentialSourceCandidateV1Schema,
     TeamCredentialViewerCapabilitiesV1Schema,
@@ -19,6 +20,7 @@ import {
     resolveTeamAdmissionProjectionV1,
     type TeamCapabilitiesV1,
     type TeamCredentialResourceSummaryV1,
+    type TeamCredentialResourceCatalogEntryV1,
     type TeamCredentialSourceResourceAdministrationV1,
     type TeamCredentialSourceCandidateV1,
     type TeamCredentialViewerCapabilitiesV1,
@@ -33,6 +35,7 @@ import {
     type TeamSummaryV1,
 } from '@happier-dev/protocol/teams';
 import { PrivateLabelReadV1Schema, type PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { ProjectSourceListItemV1Schema, type ProjectSourceListItemV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
 import { accountDisplayProfileFixture } from './homeGovernanceFixtures';
 
@@ -351,5 +354,58 @@ export function teamDirectorySourceFixture(overrides?: Partial<TeamDirectorySour
             lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
         error: null,
         ...overrides,
+    });
+}
+
+/**
+ * A GitHub repository Source shared with a Team, as the Source list returns it. `firstTask` attaches an
+ * onboarding task reference, which is what makes it the Team's suggested first task.
+ */
+export function teamProjectSourceFixture(input: Readonly<{
+    id: string;
+    name: string;
+    nameWithOwner: string;
+    teamId?: string;
+    firstTask?: boolean;
+}>): ProjectSourceListItemV1 {
+    return ProjectSourceListItemV1Schema.parse({
+        id: input.id,
+        revision: 1,
+        name: input.name,
+        audience: [{ principal: { kind: 'team', teamId: input.teamId ?? 'team-1' }, level: 'view' }],
+        createdByAccountId: 'account-ada',
+        repository: {
+            provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+            repository: { nameWithOwner: input.nameWithOwner },
+            protocol: 'https',
+        },
+        ...(input.firstTask
+            ? { attachments: [{ purpose: 'onboarding_task', ref: { kind: 'doc', artifactId: `${input.id}-first-task` } }] }
+            : {}),
+    });
+}
+
+/** A key the Team shares with this member, as the recipient catalog lists it: brokered, available. */
+export function teamCredentialCatalogEntryFixture(input: Readonly<{
+    id: string;
+    teamId?: string;
+    displayName: string;
+}>): TeamCredentialResourceCatalogEntryV1 {
+    const resource = teamCredentialResourceFixture();
+    return TeamCredentialResourceCatalogEntryV1Schema.parse({
+        id: input.id,
+        teamId: input.teamId ?? 'team-1',
+        displayName: teamCredentialDisplayNameFixture(input.displayName),
+        resourceRevision: 1,
+        sourcePresentation: resource.sourcePresentation,
+        readiness: resource.readiness,
+        recoveryAction: null,
+        allowedRoutes: ['brokered'],
+        mayBroker: true,
+        mayReceiveDirect: false,
+        directMaterialState: 'never_delivered',
+        sessionUsePolicy: 'personal_allowed',
+        providerModels: [],
+        connectedServiceSelections: [],
     });
 }

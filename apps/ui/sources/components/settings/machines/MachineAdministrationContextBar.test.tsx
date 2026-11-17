@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
 
 import { installNewSessionComponentsCommonModuleMocks } from '../../sessions/new/components/newSessionComponentsTestHelpers';
 

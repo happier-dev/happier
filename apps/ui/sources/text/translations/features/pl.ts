@@ -16033,8 +16033,8 @@ const polish: TeamsTranslationRoot = {
                 title: 'Repozytoria',
                 description: ({ team }: { team: string }) => `Źródła udostępnione zespołowi ${team}. Istniejąca kopia robocza jest używana bez zmian.`,
                 hasFirstTask: 'ma sugerowane pierwsze zadanie',
-                emptyTitle: ({ team }: { team: string }) => `Brak źródeł udostępnionych ${team}`,
-                emptyBody: ({ team }: { team: string }) => `Udostępnij źródło projektu zespołowi ${team}, aby zaoferować je tutaj.`,
+                emptyTitle: 'Brak udostępnionych źródeł',
+                emptyBody: 'Udostępnij źródło projektu zespołowi, aby zaoferować je tutaj.',
                 loadFailed: 'Nie udało się odczytać źródeł udostępnionych temu Team',
             },
             firstTask: {

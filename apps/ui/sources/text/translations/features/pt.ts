@@ -15992,8 +15992,8 @@ const portuguese: TeamsTranslationRoot = {
                 title: 'Repositórios',
                 description: ({ team }: { team: string }) => `Fontes compartilhadas com ${team}. Uma cópia local que alguém já tem é usada como está.`,
                 hasFirstTask: 'tem uma primeira tarefa sugerida',
-                emptyTitle: ({ team }: { team: string }) => `Ainda não há fontes compartilhadas com ${team}`,
-                emptyBody: ({ team }: { team: string }) => `Compartilhe a fonte de um projeto com ${team} para oferecê-la aqui.`,
+                emptyTitle: 'Ainda não há fontes compartilhadas',
+                emptyBody: 'Compartilhe a fonte de um projeto com a equipe para oferecê-la aqui.',
                 loadFailed: 'Não foi possível ler as fontes compartilhadas com este Team',
             },
             firstTask: {

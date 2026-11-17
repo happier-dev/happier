@@ -15889,8 +15889,8 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 title: '代码仓库',
                 description: ({ team }: { team: string }) => `与 ${team} 共享的源。已有的检出会按原样使用。`,
                 hasFirstTask: '有建议的第一个任务',
-                emptyTitle: ({ team }: { team: string }) => `尚无与 ${team} 共享的源`,
-                emptyBody: ({ team }: { team: string }) => `将项目的源与 ${team} 共享即可在此提供。`,
+                emptyTitle: '尚无共享的源',
+                emptyBody: '将项目的源与团队共享即可在此提供。',
                 loadFailed: '无法读取与此 Team 共享的源',
             },
             firstTask: {

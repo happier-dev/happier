@@ -16020,8 +16020,8 @@ const catalan: TeamsTranslationRoot = {
                 title: 'Repositoris',
                 description: ({ team }: { team: string }) => `Fonts compartides amb ${team}. Una còpia local que algú ja té s’utilitza tal com és.`,
                 hasFirstTask: 'té una primera tasca suggerida',
-                emptyTitle: ({ team }: { team: string }) => `Encara no hi ha fonts compartides amb ${team}`,
-                emptyBody: ({ team }: { team: string }) => `Comparteix la font d’un projecte amb ${team} per oferir-la aquí.`,
+                emptyTitle: 'Encara no hi ha fonts compartides',
+                emptyBody: 'Comparteix la font d’un projecte amb l’equip per oferir-la aquí.',
                 loadFailed: 'No s’han pogut llegir les fonts compartides amb aquest Team',
             },
             firstTask: {

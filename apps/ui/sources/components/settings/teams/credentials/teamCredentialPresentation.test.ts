@@ -3,7 +3,7 @@ import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/conne
 
 import { teamCredentialDisplayNameFixture, teamCredentialResourceFixture } from '@/dev/testkit';
 import { t } from '@/text';
-import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInputV1Schema, resolveConnectedAccountNativeLoginConstraintsV1 } from '@happier-dev/protocol/teams';
 
 import {

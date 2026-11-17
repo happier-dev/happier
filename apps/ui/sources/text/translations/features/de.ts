@@ -15819,8 +15819,8 @@ const german: TeamsTranslationRoot = {
                 title: 'Repositorys',
                 description: ({ team }: { team: string }) => `Mit ${team} geteilte Quellen. Ein vorhandener Checkout wird so verwendet, wie er ist.`,
                 hasFirstTask: 'hat eine vorgeschlagene erste Aufgabe',
-                emptyTitle: ({ team }: { team: string }) => `Noch keine Quellen mit ${team} geteilt`,
-                emptyBody: ({ team }: { team: string }) => `Teile die Quelle eines Projekts mit ${team}, um sie hier anzubieten.`,
+                emptyTitle: 'Noch keine Quellen geteilt',
+                emptyBody: 'Teile die Quelle eines Projekts mit dem Team, um sie hier anzubieten.',
                 loadFailed: 'Die mit diesem Team geteilten Quellen konnten nicht gelesen werden',
             },
             firstTask: {

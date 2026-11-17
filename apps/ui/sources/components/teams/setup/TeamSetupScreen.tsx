@@ -21,7 +21,7 @@ import {
   resourceStateLabel,
 } from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { TeamSection } from '@/components/settings/teams/TeamSection';
-import type { TeamSectionContext } from '@/components/settings/teams/teamSectionContext';
+import { teamPageHeaderMeta, type TeamSectionContext } from '@/components/settings/teams/teamSectionContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -33,7 +33,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
+import {
+  useMachineAdministrationTargetSelection,
+  type MachineAdministrationTargetSelectionV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
 import {
   areServerAccountScopesEqual,
   type ServerAccountScopeLifetime,
@@ -58,7 +61,7 @@ import {
 
 const NO_KEYS: readonly never[] = Object.freeze([]);
 
-type RunState =
+export type TeamSetupRunState =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'running'; operationId: string | null }>
   | Readonly<{
@@ -68,7 +71,7 @@ type RunState =
     }>
   | Readonly<{ kind: 'done'; operationId: string | null }>;
 
-type PreparedMachine = Readonly<{
+export type TeamSetupPreparedMachine = Readonly<{
   key: string;
   plan: TeamSetupPlan | null;
   failure: ActionExecuteFailure | null;
@@ -137,16 +140,23 @@ export const TeamSetupScreen = React.memo(function TeamSetupScreen(
 });
 
 /** The Team's lockup and, only while there is something to review, the page's promise. */
-function TeamSetupHeader(props: Readonly<{ context: TeamSectionContext; lead: boolean }>) {
-  const { team, address } = props.context;
+export function TeamSetupHeader(props: Readonly<{
+  context: Pick<TeamSectionContext, 'team' | 'address' | 'homeName'>;
+  lead: boolean;
+}>) {
+  const { team, address, homeName } = props.context;
+  const title = t('teams.join.setUpForTeam', { team: team.name });
+  // The Team's identity line, as every Team page draws it (which Team, on which Home); "Suggested by"
+  // joins it only while there is a setup to suggest.
+  const facts = teamPageHeaderMeta({ pageTitle: title, teamName: team.name, homeName });
   return (
     <PageHeader
       testID="team-setup-header"
       alwaysShowTitle
-      title={t('teams.join.setUpForTeam', { team: team.name })}
+      title={title}
       description={props.lead ? t('teams.join.setupPage.lead', { team: team.name }) : undefined}
       leading={<TeamHeaderAvatar address={address} team={team} />}
-      meta={props.lead ? [{ key: 'suggested', text: t('teams.join.setupPage.suggestedBy', { team: team.name }) }] : undefined}
+      meta={props.lead ? [...facts, { key: 'suggested', text: t('teams.join.setupPage.suggestedBy', { team: team.name }) }] : facts}
     />
   );
 }
@@ -181,9 +191,7 @@ function TeamSetupPlanPage(
   }>,
 ) {
   const { context } = props;
-  const { theme } = useUnistyles();
   const router = useRouter();
-  const compact = useDeviceType() === 'phone';
   const teamName = context.team.name;
   const resources = useTeamSetupResources({
     scope: context.scope,
@@ -230,14 +238,14 @@ function TeamSetupPlanPage(
   const [excluded, setExcluded] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [run, setRun] = React.useState<RunState>({ kind: 'idle' });
+  const [run, setRun] = React.useState<TeamSetupRunState>({ kind: 'idle' });
 
   // The preset's own plan is read for the chosen Machine so each step shows before anything runs.
   const prepareKey =
     machineId && homeId && presetValue
       ? JSON.stringify([machineId, presetValue.id, presetValue.revision])
       : null;
-  const [prepared, setPrepared] = React.useState<PreparedMachine | null>(null);
+  const [prepared, setPrepared] = React.useState<TeamSetupPreparedMachine | null>(null);
   const prepareKeyRef = React.useRef(prepareKey);
   prepareKeyRef.current = prepareKey;
   // A refetch of the same preset revision is the same plan: the read is keyed by revision, not identity.
@@ -341,6 +349,17 @@ function TeamSetupPlanPage(
   // Keys the Team already shares: sessions on any of the member's Machines use them without the value
   // reaching the member, so they need no step here. Keys a repository asks each member for are owed.
   const sharedKeys = resources.credentialsEnabled ? resources.credentials.resources : NO_KEYS;
+  const openOperation = React.useCallback(
+    (operationId: string) => openActionOperationDetail({ serverId: context.scope.serverId, operationId }),
+    [context.scope.serverId],
+  );
+  const toggleRepository = React.useCallback((sourceId: string, next: boolean) =>
+    setExcluded((current) => {
+      const updated = new Set(current);
+      if (next) updated.delete(sourceId);
+      else updated.add(sourceId);
+      return updated;
+    }), []);
   if (resources.sharedResources.status === 'ready' && sourcesState.status === 'ready' && sourcesState.coverage.complete
     && !hasPreset && repositories.length === 0 && sharedKeys.length === 0) {
     return (
@@ -360,14 +379,82 @@ function TeamSetupPlanPage(
     );
   }
 
-  const machineLabel = machineName ?? null;
+  return (
+    <TeamSetupPageView
+      header={<TeamSetupHeader context={context} lead />}
+      conditions={props.conditions}
+      teamName={teamName}
+      selection={selection}
+      machineId={machineId}
+      machineLabel={machineName ?? null}
+      homeDir={homeDir}
+      run={run}
+      canRun={canRun}
+      onRun={() => { void start(); }}
+      onOpenOperation={openOperation}
+      sources={{
+        loading: sourcesLoading,
+        failure: sourcesFailed
+          ? { title: sourceIssue?.title ?? t('common.unavailable'), description: sourceIssue?.description }
+          : null,
+        onRetry: () => { void resources.sources.controller.load(); },
+      }}
+      hasPreset={hasPreset}
+      machinePlan={machinePlan}
+      repositories={repositories}
+      excluded={excluded}
+      onToggleRepository={toggleRepository}
+      batch={plan.batch}
+      sharedKeys={sharedKeys}
+      keyDisplayNames={resources.credentialDisplayNames}
+    />
+  );
+}
+
+/**
+ * The setup page as drawn from values its owner has already read: the Team's header, the Machine choice
+ * and run button, the preset's plan review for that Machine, the shared repositories to clone, and the
+ * keys the Team already shares. `TeamSetupPlanPage` owns every read and the run.
+ */
+export function TeamSetupPageView(
+  props: Readonly<{
+    header: React.ReactNode;
+    conditions?: React.ReactNode;
+    teamName: string;
+    selection: MachineAdministrationTargetSelectionV1;
+    machineId: string | null;
+    machineLabel: string | null;
+    homeDir: string | null;
+    run: TeamSetupRunState;
+    canRun: boolean;
+    onRun: () => void;
+    onOpenOperation: (operationId: string) => void;
+    sources: Readonly<{
+      loading: boolean;
+      failure: Readonly<{ title: string; description?: string }> | null;
+      onRetry: () => void;
+    }>;
+    hasPreset: boolean;
+    machinePlan: TeamSetupPreparedMachine | null;
+    repositories: readonly ProjectSourceV1[];
+    excluded: ReadonlySet<string>;
+    onToggleRepository: (sourceId: string, included: boolean) => void;
+    batch: TeamSetupBatch | null;
+    sharedKeys: TeamSetupResources['credentials']['resources'];
+    keyDisplayNames: Readonly<Record<string, string | null>>;
+  }>,
+) {
+  const { teamName, machineId, machineLabel, run, repositories } = props;
+  const { theme } = useUnistyles();
+  const compact = useDeviceType() === 'phone';
+  const running = run.kind === 'running';
   const aside = (
     <ItemGroup
       testID="team-setup-before"
       title={t('teams.join.setupPage.beforeYouStart')}
     >
       <MachineAdministrationTargetSelector
-        selection={selection}
+        selection={props.selection}
         presentation="context"
         testIDPrefix="team-setup-machine"
         unselectedTitle={t('teams.join.setupPage.machineUnselected', { team: teamName })}
@@ -383,10 +470,8 @@ function TeamSetupPlanPage(
               : t('teams.join.setUpForTeam', { team: teamName })
           }
           loading={running}
-          disabled={!canRun}
-          onPress={() => {
-            void start();
-          }}
+          disabled={!props.canRun}
+          onPress={props.onRun}
         />
       </BareSectionContent>
     </ItemGroup>
@@ -394,19 +479,19 @@ function TeamSetupPlanPage(
 
   return (
     <>
-    <TeamSetupHeader context={context} lead />
+    {props.header}
     {props.conditions}
     <PageAsideColumns compact={compact} compactAside="first" aside={aside}>
-      {sourcesLoading && repositories.length === 0 ? (
+      {props.sources.loading && repositories.length === 0 ? (
         <SurfaceStateCard testID="team-setup-sources-loading" kind="loading" size="line" title={t('projects.sources.loading')} />
-      ) : sourcesFailed ? (
+      ) : props.sources.failure ? (
         <SurfaceStateCard
           testID="team-setup-sources-failed"
           kind="error"
           size="line"
-          title={sourceIssue?.title ?? t('common.unavailable')}
-          reason={sourceIssue?.description}
-          action={{ label: t('common.retry'), onPress: () => { void resources.sources.controller.load(); } }}
+          title={props.sources.failure.title}
+          reason={props.sources.failure.description}
+          action={{ label: t('common.retry'), onPress: props.sources.onRetry }}
         />
       ) : null}
       {run.kind === 'stopped' ? (
@@ -422,22 +507,16 @@ function TeamSetupPlanPage(
             run.operationId
               ? {
                   label: t('teams.join.setupPage.seeWhatRan'),
-                  onPress: () =>
-                    openActionOperationDetail({
-                      serverId: context.scope.serverId,
-                      operationId: run.operationId!,
-                    }),
+                  onPress: () => props.onOpenOperation(run.operationId!),
                 }
               : {
                   label: t('common.retry'),
-                  onPress: () => {
-                    void start();
-                  },
+                  onPress: props.onRun,
                 }
           }
         />
       ) : null}
-      {hasPreset ? (
+      {props.hasPreset ? (
         <ItemGroup
           testID="team-setup-tools"
           title={
@@ -457,12 +536,7 @@ function TeamSetupPlanPage(
                     })
                   : t('teams.join.setupPage.seeWhatRan')
               }
-              onPress={() =>
-                openActionOperationDetail({
-                  serverId: context.scope.serverId,
-                  operationId: run.operationId!,
-                })
-              }
+              onPress={() => props.onOpenOperation(run.operationId!)}
             />
           ) : !machineId ? (
             <Item
@@ -470,7 +544,7 @@ function TeamSetupPlanPage(
               title={t('teams.join.setupPage.toolsChooseMachine')}
               showChevron={false}
             />
-          ) : machinePlan?.failure ? (
+          ) : props.machinePlan?.failure ? (
             <SurfaceStateCard
               testID="team-setup-tools-failed"
               kind="error"
@@ -478,12 +552,12 @@ function TeamSetupPlanPage(
               title={t('teams.join.setupPage.toolsFailed', {
                 machine: machineLabel ?? '',
               })}
-              reason={machinePlan.failure.error}
+              reason={props.machinePlan.failure.error}
             />
-          ) : machinePlan?.plan?.machine ? (
+          ) : props.machinePlan?.plan?.machine ? (
             <MachineSetupPlanReview
               testID="team-setup-tools-review"
-              prepared={machinePlan.plan.machine}
+              prepared={props.machinePlan.plan.machine}
               nameOf={() => machineLabel ?? ''}
               disabled={running}
             />
@@ -509,30 +583,23 @@ function TeamSetupPlanPage(
               key={source.id}
               source={source}
               machineId={machineId}
-              homeDir={homeDir}
-              included={!excluded.has(source.id)}
-              batch={plan.batch}
+              homeDir={props.homeDir}
+              included={!props.excluded.has(source.id)}
+              batch={props.batch}
               disabled={running || run.kind === 'done'}
               iconColor={theme.colors.text.secondary}
-              onToggle={(next) =>
-                setExcluded((current) => {
-                  const updated = new Set(current);
-                  if (next) updated.delete(source.id);
-                  else updated.add(source.id);
-                  return updated;
-                })
-              }
+              onToggle={(next) => props.onToggleRepository(source.id, next)}
             />
           ))}
         </ItemGroup>
       ) : null}
-      {sharedKeys.length > 0 ? (
+      {props.sharedKeys.length > 0 ? (
         <ItemGroup
           testID="team-setup-keys"
           title={t('teams.join.setupPage.keysTitle')}
           description={t('teams.join.setupPage.keysDescription', { team: teamName })}
         >
-          {sharedKeys.map((resource) => {
+          {props.sharedKeys.map((resource) => {
             const mode = recipientDeliveryMode(resource);
             const subtitle = [mode ? deliveryModeLabel(mode) : null, resourceStateLabel(resource.readiness)]
               .filter((part): part is string => Boolean(part)).join(' · ');
@@ -541,7 +608,7 @@ function TeamSetupPlanPage(
                 key={resource.id}
                 testID={`team-setup-key:${resource.id}`}
                 icon={<Icon name="key" size={20} color={theme.colors.text.secondary} />}
-                title={resources.credentialDisplayNames[resource.id] ?? t('teams.credentials.title')}
+                title={props.keyDisplayNames[resource.id] ?? t('teams.credentials.title')}
                 subtitle={subtitle || undefined}
                 detail={t('teams.join.setupPage.keyShared')}
                 showChevron={false}

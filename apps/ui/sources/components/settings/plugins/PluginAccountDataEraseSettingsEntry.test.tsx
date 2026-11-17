@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol/plugins/availability';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
 import {
     createActivePluginAccountAvailabilityProjectionHydrator,
 } from '@/sync/api/plugins/availability/pluginAvailabilityProjection';

@@ -131,7 +131,7 @@ describe('ConnectedServiceSetupPanel tools disclosure', () => {
     });
 
     it('names a machine only when the chosen method needs one, not for every catalog target (D21)', async () => {
-        const { createMachineAdministrationTargetSelectionFixture } = await import('@/dev/testkit/mocks/machineAdministrationTargetSelection');
+        const { createMachineAdministrationTargetSelectionFixture } = await import('@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures');
         const selection = createMachineAdministrationTargetSelectionFixture();
         const chips = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
             screen.root.findAll(node => typeof node.props.testIDPrefix === 'string' && node.props.testIDPrefix === 'connected-service-setup-target');

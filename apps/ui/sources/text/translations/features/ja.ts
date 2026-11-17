@@ -15944,8 +15944,8 @@ const japanese: TeamsTranslationRoot = {
                 title: 'リポジトリ',
                 description: ({ team }: { team: string }) => `${team} と共有しているソース。すでにあるチェックアウトはそのまま使われます。`,
                 hasFirstTask: '最初のタスクの提案あり',
-                emptyTitle: ({ team }: { team: string }) => `${team} と共有しているソースはまだありません`,
-                emptyBody: ({ team }: { team: string }) => `プロジェクトのソースを ${team} と共有すると、ここに表示されます。`,
+                emptyTitle: '共有しているソースはまだありません',
+                emptyBody: 'プロジェクトのソースをチームと共有すると、ここに表示されます。',
                 loadFailed: 'この Team と共有しているソースを読み込めませんでした',
             },
             firstTask: {

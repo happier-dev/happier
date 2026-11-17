@@ -15888,8 +15888,8 @@ const traditionalChinese: TeamsTranslationRoot = {
                 title: '程式碼存放庫',
                 description: ({ team }: { team: string }) => `與 ${team} 共享的來源。已有的檢出會依原樣使用。`,
                 hasFirstTask: '有建議的第一個任務',
-                emptyTitle: ({ team }: { team: string }) => `尚無與 ${team} 共享的來源`,
-                emptyBody: ({ team }: { team: string }) => `將專案的來源與 ${team} 共享即可在此提供。`,
+                emptyTitle: '尚無共享的來源',
+                emptyBody: '將專案的來源與團隊共享即可在此提供。',
                 loadFailed: '無法讀取與此 Team 共享的來源',
             },
             firstTask: {

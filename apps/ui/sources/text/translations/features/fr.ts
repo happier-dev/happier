@@ -16063,8 +16063,8 @@ const french: TeamsTranslationRoot = {
                 title: 'Dépôts',
                 description: ({ team }: { team: string }) => `Sources partagées avec ${team}. Une copie locale déjà présente est utilisée telle quelle.`,
                 hasFirstTask: 'a une première tâche suggérée',
-                emptyTitle: ({ team }: { team: string }) => `Aucune source partagée avec ${team} pour l’instant`,
-                emptyBody: ({ team }: { team: string }) => `Partagez la source d’un projet avec ${team} pour la proposer ici.`,
+                emptyTitle: 'Aucune source partagée pour l’instant',
+                emptyBody: 'Partagez la source d’un projet avec l’équipe pour la proposer ici.',
                 loadFailed: 'Impossible de lire les sources partagées avec ce Team',
             },
             firstTask: {

@@ -16008,8 +16008,8 @@ const italian: TeamsTranslationRoot = {
                 title: 'Repository',
                 description: ({ team }: { team: string }) => `Fonti condivise con ${team}. Una copia locale già presente viene usata così com’è.`,
                 hasFirstTask: 'ha un primo compito suggerito',
-                emptyTitle: ({ team }: { team: string }) => `Ancora nessuna fonte condivisa con ${team}`,
-                emptyBody: ({ team }: { team: string }) => `Condividi la fonte di un progetto con ${team} per offrirla qui.`,
+                emptyTitle: 'Ancora nessuna fonte condivisa',
+                emptyBody: 'Condividi la fonte di un progetto con il team per offrirla qui.',
                 loadFailed: 'Impossibile leggere le fonti condivise con questo Team',
             },
             firstTask: {

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
 import { Text } from '@/components/ui/text/Text';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { resolveMachineAdministrationTargetState } from '@/sync/domains/machines/administration/targetSelection';

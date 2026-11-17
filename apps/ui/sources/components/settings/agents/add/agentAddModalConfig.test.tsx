@@ -472,7 +472,7 @@ const pressable = (screen: Awaited<ReturnType<typeof renderScreen>>, testID: str
 describe('the alternate Add-an-agent branches', () => {
   it('a plugin listing shows what it adds, the trusted-code facts and the machine it installs on', async () => {
     const { AgentPluginDetail } = await import('./AgentRegistryDetail');
-    const { createMachineAdministrationTargetSelectionFixture } = await import('@/dev/testkit/mocks/machineAdministrationTargetSelection');
+    const { createMachineAdministrationTargetSelectionFixture } = await import('@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures');
     const item = await pluginItem();
     const screen = await renderScreen(
       <AgentPluginDetail
@@ -492,7 +492,7 @@ describe('the alternate Add-an-agent branches', () => {
 
   it('a built-in agent offers the registry’s version as a separate agent', async () => {
     const { AgentBuiltInDetail } = await import('./AgentRegistryDetail');
-    const { createMachineAdministrationTargetSelectionFixture } = await import('@/dev/testkit/mocks/machineAdministrationTargetSelection');
+    const { createMachineAdministrationTargetSelectionFixture } = await import('@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures');
     const onAddSeparate = vi.fn();
     const screen = await renderScreen(
       <AgentBuiltInDetail
