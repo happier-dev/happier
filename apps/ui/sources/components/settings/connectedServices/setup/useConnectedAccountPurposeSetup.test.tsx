@@ -1,5 +1,5 @@
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
-import { act, renderHook, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
     installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
@@ -43,6 +43,44 @@ afterEach(async () => {
     await account.reset();
     resetConnectedAccountCatalogEngineForTests();
     resetConnectedAccountCatalogSnapshotsForTests();
+});
+
+it('keeps an Account purpose loading until its declaration arrives and distinguishes an undeclared purpose', async () => {
+    const declaration = { pluginId: manifest.id, pluginVersion: manifest.version, packageName: '@happier-dev/plugins-scm-github',
+        displayName: 'GitHub', entriesById: {}, normalizedManifest: manifest };
+    const pending = createDeferred<typeof declaration>();
+    onTestFinished(installBundledPluginUiDeclarationsForTests([
+        { ...declaration, normalizedManifest: undefined, presentationManifest: manifest, loadDeclaration: () => pending.promise },
+        { pluginId: gitlab.id, pluginVersion: gitlab.version, packageName: '@happier-dev/plugins-scm-gitlab',
+            displayName: 'GitLab', entriesById: {}, normalizedManifest: gitlab },
+    ]));
+    const scope = await account.restore({ machines: [] });
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    expect(readPluginAccountAvailability(scope).readCurrentAccountExecution(manifest.id)).toMatchObject({
+        kind: 'unavailable', code: 'plugin_ui_declaration_pending',
+    });
+    let request: ConnectedAccountPurposeSetupRequest = { scope, purpose: {
+        consumer: { pluginId: manifest.id, localId: GITHUB_TRIAGE_ACTION_IDS_V1.listInstances }, purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE } };
+    const hook = await renderHook(() => useConnectedAccountPurposeSetup({ request, onSelected() {}, onClose() {} }));
+    try {
+        expect(hook.getCurrent().loading).toBe(true);
+        expect(hook.getCurrent().unavailableReason).toBeNull();
+        expect(hook.getCurrent().declaration).toBeNull();
+
+        await act(async () => { pending.resolve(declaration); });
+        await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().unavailableReason).toBeNull();
+        expect(hook.getCurrent().declaration).toMatchObject({ consumerKind: 'action', serviceRefs: [GITHUB_CONNECTED_ACCOUNT_SERVICE] });
+
+        request = { ...request, purpose: { ...request.purpose, purpose: 'undeclared-purpose' } };
+        await hook.rerender();
+        expect(hook.getCurrent().loading).toBe(false);
+        expect(hook.getCurrent().unavailableReason).toBe('purpose_unavailable');
+        expect(rpc.state.requests).toHaveLength(0);
+    } finally {
+        pending.resolve(declaration);
+        await hook.unmount();
+    }
 });
 
 it.each(['plain', 'e2ee'] as const)('admits the GitHub source purpose in its %s Account without a Machine and rejects foreign scope or undeclared purposes', async mode => {

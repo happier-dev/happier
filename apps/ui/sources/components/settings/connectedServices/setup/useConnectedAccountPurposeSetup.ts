@@ -133,9 +133,11 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
     };
     const filterCatalog = <Entry extends Readonly<{ service: PluginContributionIdentityV1 }>>(catalog: readonly Entry[]): Entry[] => catalog.filter(entry => !request ||
         declaration?.serviceRefs.some(service => service.pluginId === entry.service.pluginId && service.localId === entry.service.localId));
+    const loading = accountRequest ? accountSelection?.kind === 'unavailable' && accountSelection.code === 'plugin_ui_declaration_pending'
+        : machineRuntime.phase === 'establishing';
     const unavailableReason = !request ? null
         : profile?.id !== request.scope.accountId ? 'profile_account_mismatch' as const
-        : machineRuntime.phase === 'establishing' ? null
+        : loading ? null
         : !declaration ? 'purpose_unavailable' as const
         : declaration.consumerKind === 'machineProvisioner' && !input.onSelected ? 'purpose_requires_selection' as const
         : null;
@@ -143,8 +145,7 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
         registry, declaration, selected, reconnectAccounts,
         selectableServices: declaration?.serviceRefs.filter(hasTargetsToChoose) ?? [],
         unavailableReason,
-        loading: accountRequest ? accountSelection?.kind === 'unavailable' && accountSelection.code === 'plugin_ui_declaration_pending'
-            : machineRuntime.phase === 'establishing',
+        loading,
         selectionDisabled: !input.onSelected && (purposeCatalog.status !== 'ready' || purposeCatalog.stale),
         selectionDisabledReason: input.onSelected || purposeCatalog.status === 'ready' && !purposeCatalog.stale ? undefined
             : t(purposeCatalog.status === 'loading' ? 'common.loading' : 'common.unavailable'),
