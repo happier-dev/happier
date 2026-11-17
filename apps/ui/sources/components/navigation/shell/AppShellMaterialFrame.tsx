@@ -190,6 +190,11 @@ function ColumnReleaseToHide() {
     );
 }
 
+// The page sheet is the document's one main landmark and the title strip its banner, so screen-reader
+// landmark navigation reaches the page directly. The column names its own navigation landmark.
+const WEB_MAIN_LANDMARK = Platform.OS === 'web' ? { role: 'main' as const } : null;
+const WEB_BANNER_LANDMARK = Platform.OS === 'web' ? { role: 'banner' as const } : null;
+
 /** Paint and geometry for the real shell, independent of navigation/settings subscriptions. */
 export function AppShellMaterialFrame(props: Readonly<{
     showChrome: boolean;
@@ -266,7 +271,7 @@ export function AppShellMaterialFrame(props: Readonly<{
             resizing={props.columnResizeState?.dragging === true} />
         {props.titleStrip ? <AppShellMaterialPlane group="chrome" color={theme.colors.background.canvas} translucentColor={theme.colors.surface.selected} style={styles.chromePlane}>
             <RetainedPanelSurface isActive={props.showChrome}>
-                <View style={titlePadding}><AppShellTitleMoreHostProvider value={attachTitleMoreHost}>{props.titleStrip}</AppShellTitleMoreHostProvider></View>
+                <View style={titlePadding} {...WEB_BANNER_LANDMARK}><AppShellTitleMoreHostProvider value={attachTitleMoreHost}>{props.titleStrip}</AppShellTitleMoreHostProvider></View>
             </RetainedPanelSurface>
         </AppShellMaterialPlane> : null}
         <View key="shell-body" style={styles.body}>
@@ -296,7 +301,7 @@ export function AppShellMaterialFrame(props: Readonly<{
             }}>
                 <View key="sheet-column" style={[styles.sheetColumn, props.showChrome && styles.sheetColumnInset]}>
                     {props.showChrome ? <AppShellMaterialPlane group="chrome" color={theme.colors.background.canvas} translucentColor={theme.colors.surface.selected} pointerEvents="none" style={styles.bottomChrome} /> : null}
-                    <View key="sheet" testID={APP_SHELL_CONTENT_SHEET_TEST_ID} ref={contentSheet} onLayout={onSheetLayout} style={[styles.content, props.showChrome && styles.contentSheet]}>
+                    <View key="sheet" testID={APP_SHELL_CONTENT_SHEET_TEST_ID} ref={contentSheet} onLayout={onSheetLayout} style={[styles.content, props.showChrome && styles.contentSheet]} {...WEB_MAIN_LANDMARK}>
                         <AppShellMaterialPlane key="route-content" group="content" color={theme.colors.surface.base} translucentColor={theme.colors.surface.selected} style={[styles.content, styles.contentPlane]}>
                             <AppShellTailContext.Provider value={tail}>
                                 <AppShellContentPaneContext.Provider value={contentPane}>

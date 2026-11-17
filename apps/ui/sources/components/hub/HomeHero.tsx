@@ -261,7 +261,7 @@ export function HomeHero(
     >
       <View pointerEvents="box-none" style={[styles.column, props.phone && styles.phoneColumn]}>
         <View ref={frame.headlineRef} onLayout={frame.measure} style={props.titleAccessory ? styles.headlineRow : null}>
-          <Text accessibilityRole="header" style={styles.headline}>
+          <Text accessibilityRole="header" aria-level={1} style={styles.headline}>
             {props.title}
           </Text>
           {props.titleAccessory}

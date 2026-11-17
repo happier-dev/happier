@@ -53,3 +53,17 @@ it('without a large title the bar keeps the name and the page shows only its pur
   expect(screen.getTextContent()).not.toContain('Appearance');
   expect(chrome.setTitle).toHaveBeenCalledWith('Appearance');
 });
+
+it('the page title it draws is the page\'s level-one heading', async () => {
+  const chrome = publisher();
+  screen = await renderScreen(
+    <NavigationTitleChromeProvider showsTitle publisher={chrome}>
+      <NavigationLargeTitleProvider largeTitle>
+        <PageHeader testID="header" title="Appearance" description="Theme and text" />
+      </NavigationLargeTitleProvider>
+    </NavigationTitleChromeProvider>,
+  );
+
+  const headings = screen.root.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'header');
+  expect(headings.map(node => [node.props.children, node.props['aria-level']])).toEqual([['Appearance', 1]]);
+});

@@ -73,6 +73,22 @@ describe('real shell material planes', () => {
             await screen.unmount();
         }
     });
+    it('makes the page sheet the document main landmark and the title strip its banner, wide and on a phone', async () => {
+        const frame = (wide: boolean) => <AppShellMaterialFrame showChrome={wide} dragEnabled={false}
+            leftOffsetPx={0} sidebarWidth={320} titleStrip={<View testID="strip" />} rail={null} column={null} peek={null}>
+            <View testID="route" />
+        </AppShellMaterialFrame>;
+        const screen = await renderScreen(frame(true));
+        try {
+            const landmarks = () => screen.root.findAll(node => typeof node.type === 'string' && (node.props.role === 'main' || node.props.role === 'banner'))
+                .map(node => [node.props.role, node.findAll(child => child.props.testID === 'route' || child.props.testID === 'strip').map(child => child.props.testID)[0]]);
+            expect(landmarks()).toEqual([['banner', 'strip'], ['main', 'route']]);
+            await screen.update(frame(false));
+            expect(landmarks()).toEqual([['banner', 'strip'], ['main', 'route']]);
+        } finally {
+            await screen.unmount();
+        }
+    });
     it('lets a route presented over the whole window find the page sheet it must stay inside', async () => {
         const seen: { pane: ReturnType<typeof useAppShellContentPane> } = { pane: null };
         function Probe() {

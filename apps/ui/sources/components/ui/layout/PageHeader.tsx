@@ -357,7 +357,8 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
 function PageTitleText(props: Readonly<{ header: boolean; style: React.ComponentProps<typeof Text>['style']; children: React.ReactNode }>) {
     const maxLines = usePageTitleMaxLines();
     return (
-        <Text accessibilityRole={props.header ? 'header' : undefined}
+        // The page's own title is its level-one heading; react-native-web's bare `heading` role reads as level 2.
+        <Text accessibilityRole={props.header ? 'header' : undefined} aria-level={props.header ? 1 : undefined}
             numberOfLines={maxLines} style={props.style}>
             {props.children}
         </Text>

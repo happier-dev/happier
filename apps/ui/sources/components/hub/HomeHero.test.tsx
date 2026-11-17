@@ -11,6 +11,19 @@ import type { HomePlanetPlacement } from '@/components/atmosphere/homePlanetPlac
 import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
 import { atmosphereStageStore } from '@/components/atmosphere/atmosphereStage';
 
+it('names Home with its level-one heading', async () => {
+    function Home() {
+        const frame = useHomeHeroFrame({ active: true, focused: true, phone: false });
+        return <HomeHero title="Good evening" phone={false} paneHeight={frame.pane.height} rise={false}
+            suggestions="none" showComposer={false} frame={frame} />;
+    }
+    const screen = await renderScreen(<Home />);
+    try {
+        const headings = screen.root.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'header');
+        expect(headings.map(node => [node.props.children, node.props['aria-level']])).toEqual([['Good evening', 1]]);
+    } finally { await screen.unmount(); }
+});
+
 it('reports an excluded visible unfocused Home without a headline, and withdraws its backing when hidden', async () => {
     function Home() {
         const frame = useHomeHeroFrame({ active: false, focused: false, phone: false });
