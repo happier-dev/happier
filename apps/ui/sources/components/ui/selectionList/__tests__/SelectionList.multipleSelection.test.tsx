@@ -63,6 +63,23 @@ describe('SelectionList controlled multiple selection', () => {
         expect(screen.findByTestId('sl:root:option:home-a')?.props['aria-selected']).toBe(true);
     });
 
+    it('opens with focus on the first selected row, so only the selected row is tinted', async () => {
+        const screen = await renderScreen(
+            <SelectionList
+                rootStep={rootStep}
+                selection={{ kind: 'multiple', selectedIds: new Set(['home-b']) }}
+                onSelect={vi.fn()}
+                onRequestClose={vi.fn()}
+                disableTransitions
+                testID="sl"
+            />,
+        );
+
+        const active = screen.findByTestId('sl:header:input')?.props['aria-activedescendant'];
+        expect(typeof active).toBe('string');
+        expect(active).toBe(screen.findByTestId('sl:root:option:home-b')?.props.id);
+    });
+
     it('rejects expanded content in multiple mode', async () => {
         expect(() => SelectionList({
             rootStep: {

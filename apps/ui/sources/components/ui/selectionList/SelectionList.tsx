@@ -617,12 +617,14 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // Default keyboard focus. A step can compute it from the live input
     // (`resolveDefaultFocusedOptionId`) — e.g. the worktree name step focuses the
     // "Use suggested name" row while empty, then the live "Create …" row once the
-    // user types — falling back to the selected option, then the first row.
+    // user types — falling back to the selected option (the first selected row of a multiple selection),
+    // then the first row. Starting anywhere else would tint a second row beside the selected one.
     const preferredFocusedOptionId = React.useMemo(() => {
         const fromStep = currentStep.resolveDefaultFocusedOptionId?.(inputValue);
         if (fromStep !== undefined && fromStep !== null) return fromStep;
-        return selectedOptionId;
-    }, [currentStep, inputValue, selectedOptionId]);
+        if (multipleSelectedIds === null) return selectedOptionId;
+        return flatVisibleOptionIds.find((optionId) => multipleSelectedIds.has(optionId)) ?? null;
+    }, [currentStep, flatVisibleOptionIds, inputValue, multipleSelectedIds, selectedOptionId]);
 
     // Roving row focus, owned ONCE (see `useSelectionListRovingFocus`). It is
     // resolved HERE — before autocomplete — because the ghost suffix is a
