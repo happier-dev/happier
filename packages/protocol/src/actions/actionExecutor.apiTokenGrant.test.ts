@@ -10,6 +10,7 @@ import { SessionSurfaceItemV1Schema } from '../sessions/board/item.js';
 import { AutomationV3RunMutationResponseSchema } from '../automations/automationApiV3.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { executeActionOperationActionV1 } from './executor/actionOperationActions.js';
 import { ActionOperationGetV2RequestSchema } from './operations/v1.js';
 
@@ -62,19 +63,19 @@ describe('ActionExecutor API token grant admission', () => {
     const deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']> = async (actionId, input) => {
       if (!('environmentId' in input) || typeof input.environmentId !== 'string') throw new Error('Expected Environment');
       if (actionId === 'deployments.environments.get') return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-        environment: { v: 1, id: input.environmentId, serverId: 'home', projectSourceId: 'source', revision: 1,
+        environment: createDeploymentEnvironmentHeaderV1({ v: 1, id: input.environmentId, serverId: 'home', projectSourceId: 'source', revision: 1,
           owner: { kind: 'account', accountId: 'a1' }, protection: 'nonProduction', purpose: 'standard',
           deployerMode: 'managers', controllerMachineId: 'controller', createdByAccountId: 'a1',
           contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
-          capabilities: { role: 'manager', read: true, deploy: true, manage: true,
-            manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [] });
+          capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true,
+            manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }), targetLinks: [] });
       effects.push(input.environmentId);
       return { ok: false, error: 'deployment_conflict' };
     };
     // Only the HTTP storage boundary is substituted; scope and token policy stay real.
     const executor = createActionExecutor({ deploymentAction,
       resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deploymentAction) } as unknown as ActionExecutorDeps);
-    const ctx = context(['deployments.deploy'], []);
+    const ctx = { ...context(['deployments.deploy'], []), serverId: 'home' };
     const credential = ctx.externalActionCredential!;
     credential.grant.targets = { sessions: [], machines: [], environments: ['staging', 'production'] };
     const target = { kind: 'machine' as const, machineId: 'controller' };
