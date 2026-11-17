@@ -682,11 +682,8 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     };
     const initialVersion = storage.getState().settingsVersion;
     expect(await invoke('bind', null)).toMatchObject({ status: 'completed', value: { status: 'applied' } });
-    // The person's Action confirmation stays; linking an owned key adds no recipient review.
-    if (surface === 'ui') {
-      expect(confirmation).toHaveBeenCalledOnce();
-      expect(confirmation.mock.calls[0]?.[0]).toBe(t('settingsVoice.local.voiceCredential.useSavedSecretTitle'));
-    } else expect(confirmation).not.toHaveBeenCalled();
+    // The person's reversible selection needs no additional confirmation.
+    expect(confirmation).not.toHaveBeenCalled();
     confirmation.mockReset().mockResolvedValue(true);
     expect(binding()).toMatchObject({ credentialSource: { kind: 'savedSecret' }, credentialBindings: { account: { api_key: secretId } } });
     const writesAfterBinding = writes.length;
