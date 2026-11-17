@@ -30,7 +30,7 @@ import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
-import { buildProjectSourceOpenRoute } from '../activation/projectOpenRoute';
+import { buildProjectSourceOpenRoute } from '../activation/projectOpenRoute.mjs';
 import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
 import { useProjectSource } from '../sources/useProjectSources';
 import { createDeploymentActions } from './deploymentActions';

@@ -1,47 +1,59 @@
-import { OpenProjectInputV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import type { OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { z } from 'zod/mini';
 
 const sourceSeedSchema = z.strictObject({ serverId: OpenProjectInputV1Schema.shape.serverId,
     source: OpenProjectInputV1Schema.shape.source, ref: OpenProjectInputV1Schema.shape.ref,
     subdir: OpenProjectInputV1Schema.shape.subdir });
 
-/** An exact checkout seeds Open elsewhere; execution placement remains the person's choice. */
-export function buildProjectCheckoutOpenRoute(workspace: Pick<WorkspaceAddressV1, 'serverId' | 'workspaceId'>, ref?: string | null) {
+/** An exact checkout seeds Open elsewhere; execution placement remains the person's choice.
+ * @param {Pick<import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1, 'serverId' | 'workspaceId'>} workspace
+ * @param {string | null} [ref]
+ */
+export function buildProjectCheckoutOpenRoute(workspace, ref) {
     const seed = sourceSeedSchema.parse({ serverId: workspace.serverId,
         source: { kind: 'workspace', workspaceId: workspace.workspaceId }, ...(ref ? { ref } : {}) });
-    return { pathname: '/projects/open' as const, params: { openSource: JSON.stringify(seed) } };
+    return { pathname: /** @type {const} */ ('/projects/open'), params: { openSource: JSON.stringify(seed) } };
 }
 
-/** Route selection is a nonexecuting seed. Only the mounted Open draft may submit. */
-export function buildProjectOpenRoute(input: OpenProjectInputV1, requestedMode?: 'worktree' | 'clone') {
-    return { pathname: '/projects/open' as const, params: { openDraft: JSON.stringify(OpenProjectInputV1Schema.parse(input)),
+/** Route selection is a nonexecuting seed. Only the mounted Open draft may submit.
+ * @param {import('@happier-dev/protocol/projects/openProjectV1').OpenProjectInputV1} input
+ * @param {'worktree' | 'clone'} [requestedMode]
+ */
+export function buildProjectOpenRoute(input, requestedMode) {
+    return { pathname: /** @type {const} */ ('/projects/open'), params: { openDraft: JSON.stringify(OpenProjectInputV1Schema.parse(input)),
         ...(requestedMode ? { openMode: requestedMode } : {}) } };
 }
 
-/** A saved Source captures its effective selector now, but never selects a Machine for the person. */
-export function buildProjectSourceOpenRoute(serverId: string, source: ProjectSourceV1) {
+/** A saved Source captures its effective selector now, but never selects a Machine for the person.
+ * @param {string} serverId
+ * @param {import('@happier-dev/protocol/projects/sources/projectSourceV1').ProjectSourceV1} source
+ */
+export function buildProjectSourceOpenRoute(serverId, source) {
     if (!source.repository) return null;
     const seed = sourceSeedSchema.parse({ serverId, source: { kind: 'source', id: source.id, revision: source.revision,
         selector: source.repository, ...(source.defaultRef ? { defaultRef: source.defaultRef } : {}),
         ...(source.subdir ? { subdir: source.subdir } : {}) } });
-    return { pathname: '/projects/open' as const, params: { openSource: JSON.stringify(seed) } };
+    return { pathname: /** @type {const} */ ('/projects/open'), params: { openSource: JSON.stringify(seed) } };
 }
 
-export function readProjectOpenRouteDraft(params: Readonly<Record<string, string | string[] | undefined>>): OpenProjectDraftSelectionV1 | null {
+/**
+ * @param {Readonly<Record<string, string | string[] | undefined>>} params
+ * @returns {import('@happier-dev/protocol/projects/openProjectDraftV1').OpenProjectDraftSelectionV1 | null}
+ */
+export function readProjectOpenRouteDraft(params) {
     const raw = Array.isArray(params.openDraft) ? params.openDraft[0] : params.openDraft;
     if (!raw) {
         const rawSource = Array.isArray(params.openSource) ? params.openSource[0] : params.openSource;
         if (!rawSource) return null;
-        let seed: unknown;
+        /** @type {unknown} */
+        let seed;
         try { seed = JSON.parse(rawSource); } catch { return null; }
         const parsed = sourceSeedSchema.safeParse(seed);
         // No way to open is chosen here: the Open form starts on the choices owner's default once a Machine is chosen.
         return parsed.success ? { ...parsed.data, machineId: '' } : null;
     }
-    let candidate: unknown;
+    /** @type {unknown} */
+    let candidate;
     try { candidate = JSON.parse(raw); } catch { return null; }
     const input = OpenProjectInputV1Schema.safeParse(candidate);
     if (!input.success) return null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProjectCheckoutOpenRoute, buildProjectOpenRoute, buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from './projectOpenRoute';
+import { buildProjectCheckoutOpenRoute, buildProjectOpenRoute, buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from './projectOpenRoute.mjs';
 
 describe('Project Open entrance', () => {
     it('does not build a repository Open route for a Source without a repository', () => {

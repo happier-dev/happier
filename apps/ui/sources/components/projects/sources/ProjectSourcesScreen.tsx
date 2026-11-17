@@ -30,7 +30,7 @@ import { ProjectSourceDetail } from './ProjectSourceDetail';
 import { ProjectSourcesBackHeader } from './ProjectSourcesBackHeader';
 import { ProjectSourcesRail, groupProjectSources } from './ProjectSourcesRail';
 import { useProjectSources } from './useProjectSources';
-import { buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from '../activation/projectOpenRoute';
+import { buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from '../activation/projectOpenRoute.mjs';
 import { seedAndOpenProjectDraft } from '../activation/projectOpenDraftSeed';
 import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';

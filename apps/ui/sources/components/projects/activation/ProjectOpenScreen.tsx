@@ -82,7 +82,7 @@ import {
   type ProjectOpenSubject,
   type ProjectOpenUse,
 } from './projectOpenChoices';
-import { readProjectOpenRouteDraft } from './projectOpenRoute';
+import { readProjectOpenRouteDraft } from './projectOpenRoute.mjs';
 import { ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
 import { useProjectOpen } from './useProjectOpen';
 import { readProjectAttachedDashboardSelection } from '../detail/projectRouteState';

@@ -8,7 +8,7 @@ import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/w
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
-import { buildProjectCheckoutOpenRoute } from '@/components/projects/activation/projectOpenRoute';
+import { buildProjectCheckoutOpenRoute } from '@/components/projects/activation/projectOpenRoute.mjs';
 import { useNavigateToProjectOpen } from '@/components/projects/activation/projectOpenPresentation';
 import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
 import { buildProjectRouteHref, readProjectRouteStringParam } from '@/components/projects/detail/projectRouteState';

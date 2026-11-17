@@ -9,7 +9,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { seedAndOpenProjectDraft } from './activation/projectOpenDraftSeed';
 import { useNavigateToProjectOpen } from './activation/projectOpenPresentation';
-import { buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from './activation/projectOpenRoute';
+import { buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from './activation/projectOpenRoute.mjs';
 import type { ProjectsAddMenuSources } from './ProjectsAddMenu';
 import type { ProjectsTreeSavedItem } from './ProjectsTree';
 import { useProjectSources } from './sources/useProjectSources';
