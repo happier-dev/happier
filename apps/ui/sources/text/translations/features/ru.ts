@@ -16551,6 +16551,7 @@ const russian: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} настройка машины` : `${count} настроек машины`),
                 presetsDetail: 'Настройка машины, проверяемая до запуска',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} репозиторий` : `${count} репозиториев`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 источник проекта` : `${count} источников проекта`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} ключ` : `${count} ключей`),
                 keysDetail: ({ team }: { team: string }) => `Общие от ${team}`,
                 unavailable: 'Сейчас не удалось прочитать',

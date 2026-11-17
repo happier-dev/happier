@@ -96,7 +96,7 @@ it.each([
         await waitForHomeGovernance(() => expect(screen.findByTestId('joined-resources-projectSources'), screen.getTextContent()).not.toBeNull());
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Team application'));
         expect(screen.getTextContent()).toContain('Team tools');
-        expect(screen.getTextContent()).toContain(t('teams.overview.shared.kinds.projectSources'));
+        expect(screen.getTextContent()).toContain(t('teams.join.summary.projectSources', { count: 2 }));
         expect(screen.getTextContent()).toMatch(/\b2\b/);
         expect(screen.getTextContent()).not.toContain(t('teams.join.summary.repositories', { count: 2 }));
         expect(screen.findByTestId('joined-resources-credentials')).not.toBeNull();

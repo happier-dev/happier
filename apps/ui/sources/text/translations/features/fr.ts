@@ -16579,6 +16579,7 @@ const french: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} configuration de machine` : `${count} configurations de machine`),
                 presetsDetail: 'Une configuration de machine, vérifiée avant de s’exécuter',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} dépôt` : `${count} dépôts`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 source de projet` : `${count} sources de projet`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} clé` : `${count} clés`),
                 keysDetail: ({ team }: { team: string }) => `Partagées par ${team}`,
                 unavailable: 'Lecture impossible pour le moment',

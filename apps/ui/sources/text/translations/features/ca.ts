@@ -16536,6 +16536,7 @@ const catalan: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} configuració de màquina` : `${count} configuracions de màquina`),
                 presetsDetail: 'Una configuració de màquina, revisada abans d’executar-se',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repositori` : `${count} repositoris`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 font de projecte` : `${count} fonts de projecte`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} clau` : `${count} claus`),
                 keysDetail: ({ team }: { team: string }) => `Compartides per ${team}`,
                 unavailable: 'No s’ha pogut llegir ara',

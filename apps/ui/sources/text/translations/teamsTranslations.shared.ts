@@ -786,6 +786,7 @@ export const english = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} machine setup` : `${count} machine setups`),
                 presetsDetail: 'A machine setup, reviewed before it runs',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repository` : `${count} repositories`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 project source` : `${count} project sources`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} key` : `${count} keys`),
                 keysDetail: ({ team }: { team: string }) => `Shared by ${team}`,
                 unavailable: 'Couldn’t be read right now',

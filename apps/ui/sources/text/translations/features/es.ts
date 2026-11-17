@@ -16460,6 +16460,7 @@ const spanish: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} configuración de máquina` : `${count} configuraciones de máquina`),
                 presetsDetail: 'Una configuración de máquina, revisada antes de ejecutarse',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repositorio` : `${count} repositorios`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 fuente de proyecto` : `${count} fuentes de proyecto`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} clave` : `${count} claves`),
                 keysDetail: ({ team }: { team: string }) => `Compartidas por ${team}`,
                 unavailable: 'No se pudo leer ahora',

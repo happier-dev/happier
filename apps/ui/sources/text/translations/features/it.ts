@@ -16524,6 +16524,7 @@ const italian: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} configurazione macchina` : `${count} configurazioni macchina`),
                 presetsDetail: 'Una configurazione macchina, rivista prima di eseguirla',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repository` : `${count} repository`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 sorgente di progetto` : `${count} sorgenti di progetto`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} chiave` : `${count} chiavi`),
                 keysDetail: ({ team }: { team: string }) => `Condivise da ${team}`,
                 unavailable: 'Impossibile leggerle ora',

@@ -16335,6 +16335,7 @@ const german: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} Rechner-Setup` : `${count} Rechner-Setups`),
                 presetsDetail: 'Ein Rechner-Setup, vor dem Ausführen geprüft',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} Repository` : `${count} Repositories`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 Projektquelle` : `${count} Projektquellen`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} Schlüssel` : `${count} Schlüssel`),
                 keysDetail: ({ team }: { team: string }) => `Von ${team} geteilt`,
                 unavailable: 'Konnte gerade nicht gelesen werden',

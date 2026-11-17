@@ -16460,6 +16460,7 @@ const japanese: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => `マシン設定 ${count} 件`,
                 presetsDetail: '実行前に確認するマシン設定',
                 repositories: ({ count }: { count: number }) => `リポジトリ ${count} 件`,
+                projectSources: ({ count }: { count: number }) => `プロジェクトソース ${count} 件`,
                 keys: ({ count }: { count: number }) => `キー ${count} 件`,
                 keysDetail: ({ team }: { team: string }) => `${team} が共有`,
                 unavailable: '今は読み込めませんでした',

@@ -10,6 +10,7 @@ import { TEAM_SHARED_KIND_PRESENTATION } from '@/components/settings/teams/share
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
@@ -54,7 +55,7 @@ function findKind(
  * a kind its owner could not read says so in its row rather than disappearing. The Machine setup is
  * named once its own owner opens it, and the Project Sources by their names.
  */
-export type TeamJoinedSummaryRow = Readonly<{ kind: SummaryKind; title: string; detail: string | null; count?: number }>;
+export type TeamJoinedSummaryRow = Readonly<{ kind: SummaryKind; title: string; detail: string | null }>;
 
 /** What the Team already shares, as rows: a kind it shares nothing of is left out; one its owner could not read says so. */
 export function buildTeamJoinedSummaryRows(input: Readonly<{
@@ -78,7 +79,7 @@ export function buildTeamJoinedSummaryRows(input: Readonly<{
       case 'projectSources': {
         const named = input.sourceNames.join(', ');
         const detail = named && row.count > input.sourceNames.length ? `${named}, …` : named;
-        return [{ kind, title: t(TEAM_SHARED_KIND_PRESENTATION.projectSources.title), detail: detail || null, count: row.count }];
+        return [{ kind, title: t('teams.join.summary.projectSources', { count: row.count }), detail: detail || null }];
       }
       case 'credentials':
         return [{ kind, title: t('teams.join.summary.keys', { count: row.count }), detail: t('teams.join.summary.keysDetail', { team: input.teamName }) }];
@@ -94,7 +95,10 @@ export const TeamJoinedSummaryView = React.memo(function TeamJoinedSummaryView(p
   const { theme } = useUnistyles();
   if (props.rows.length === 0) return null;
   return (
-    <ItemGroup testID={props.testID} surface="none" title={t('teams.join.summary.title')}>
+    // The Joined column owns its padding: in a contained scope the section's title and its rows' marks keep
+    // that column's edge, the one the heading, hairline and primary stand on (lab L1-joinedP).
+    <ListPresentationProvider value="page" pageInsets="contained">
+    <ItemGroup testID={props.testID} surface="none" constrainToContentWidth={false} title={t('teams.join.summary.title')}>
       {props.rows.map((row) => (
         <Item
           key={row.kind}
@@ -102,11 +106,13 @@ export const TeamJoinedSummaryView = React.memo(function TeamJoinedSummaryView(p
           icon={<Icon name={ICONS[row.kind]} size={20} color={theme.colors.text.secondary} />}
           title={row.title}
           subtitle={row.detail ?? undefined}
-          detail={row.count === undefined ? undefined : String(row.count)}
           showChevron={false}
+          // A short list read at a glance (lab L1-joinedP): rows stand apart by rhythm, not hairlines.
+          showDivider={false}
         />
       ))}
     </ItemGroup>
+    </ListPresentationProvider>
   );
 });
 

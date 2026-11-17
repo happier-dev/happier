@@ -16549,6 +16549,7 @@ const polish: TeamsTranslationRoot = {
                 presets: ({ count }: { count: number }) => (count === 1 ? `${count} konfiguracja maszyny` : `${count} konfiguracji maszyny`),
                 presetsDetail: 'Konfiguracja maszyny, sprawdzana przed uruchomieniem',
                 repositories: ({ count }: { count: number }) => (count === 1 ? `${count} repozytorium` : `${count} repozytoriów`),
+                projectSources: ({ count }: { count: number }) => (count === 1 ? `1 źródło projektu` : `${count} źródeł projektu`),
                 keys: ({ count }: { count: number }) => (count === 1 ? `${count} klucz` : `${count} kluczy`),
                 keysDetail: ({ team }: { team: string }) => `Udostępnione przez ${team}`,
                 unavailable: 'Nie udało się teraz odczytać',
