@@ -2,7 +2,6 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import 'fake-indexeddb/auto';
-import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import {
@@ -12,7 +11,6 @@ import {
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
@@ -66,7 +64,7 @@ let account:
 let restoreExecutor: (() => void) | undefined;
 let replacement: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
-type Home = { nameRequests: unknown[]; failName: boolean; terminalWrite?: 'lost_ack' | 'uncommitted'; lostWrites?: number };
+type Home = { nameRequests: unknown[]; failName: boolean };
 type Events = string[];
 
 function installHome(home: Home, events: Events) {
@@ -78,20 +76,6 @@ function installHome(home: Home, events: Events) {
         return Response.json({});
       if (isFeaturesRequest(url))
         return Response.json(createAccountFeaturesResponse());
-      if (home.terminalWrite && path.startsWith('/v1/artifacts/') && init?.method === 'POST') {
-        const wire: unknown = JSON.parse(String(init.body));
-        const body = wire && typeof wire === 'object' && 'body' in wire && typeof wire.body === 'string'
-          ? decodePlainArtifactStoredContent(wire.body) : null;
-        const request: unknown = body && typeof body === 'object' && 'body' in body && typeof body.body === 'string'
-          ? JSON.parse(body.body) : null;
-        if (request && typeof request === 'object' && 'status' in request && request.status === 'executed') {
-          home.lostWrites = (home.lostWrites ?? 0) + 1;
-          // A genuine HTTP boundary failure after the real CAS either committed
-          // or did not commit; the approval/settlement owners remain real.
-          if (home.terminalWrite === 'lost_ack') await account!.request(input, init);
-          throw new TypeError('Failed to fetch');
-        }
-      }
       if (path === '/v1/account/profile' && init?.method === 'POST') {
         const body: unknown = JSON.parse(String(init.body));
         home.nameRequests.push(body);
@@ -121,6 +105,7 @@ async function renderJoined(
     username?: string | null;
     home: Home;
     askFirst?: boolean;
+    setupContinuation?: Readonly<{ label: string; onContinue: () => Promise<void> | void }>;
   }>,
 ) {
   const { settingsParse } = await import('@/sync/domains/settings/settings');
@@ -148,6 +133,7 @@ async function renderJoined(
   const renderCard = (credentials: AuthCredentials) => (
     <InjectedAuthProvider credentials={credentials}>
       <TeamJoinedCard
+        {...(params.setupContinuation ? { setupContinuation: params.setupContinuation } : {})}
         testID="joined"
         result={{ outcome: params.outcome, teamId: 'team-1' }}
         teamName="Product Reliability"
@@ -249,90 +235,65 @@ describe('TeamJoinedCard', () => {
     await vi.waitFor(() => expect(onOpenTeam).toHaveBeenCalledOnce());
   }, 40_000);
 
-  it.each(['approve', 'reject'] as const)('keeps Ask-first inline until %s settles the original name save', async decision => {
+  // docs/actions.md: saved Ask-on-UI uses the Action owner's native confirmation;
+  // the person's own name save never creates an Inbox approval Artifact.
+  it.each([
+    [true, false], [false, false], [true, true], [false, true],
+  ] as const)('keeps the name save pending for native confirmation (approved %s, setup %s)', async (approved, setup) => {
     const home: Home = { nameRequests: [], failName: false };
-    const { screen, onOpenTeam } = await renderJoined({ outcome: 'joined', name: null, home, askFirst: true });
+    const onSetup = vi.fn();
+    const { screen, onOpenTeam, events } = await renderJoined({ outcome: 'joined', name: null, home, askFirst: true,
+      ...(setup ? { setupContinuation: { label: 'Set up for Product Reliability', onContinue: onSetup } } : {}),
+    });
+    const { Modal } = await import('@/modal');
+    let decide!: (approved: boolean) => void;
+    vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise<boolean>(resolve => { decide = resolve; }));
     await act(async () => { screen.findByTestId('joined-name-field')!.props.onChangeText('Ada'); });
     await screen.pressByTestIdAsync('joined-action');
-    await vi.waitFor(() => expect(screen.findByTestId('joined-approval')).not.toBeNull());
+    await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
     expect(screen.findByTestId('joined-name-field.error')).toBeNull();
     expect(home.nameRequests).toEqual([]);
     expect(onOpenTeam).not.toHaveBeenCalled();
-    const artifactId = account!.artifacts.list()[0]?.id;
-    expect(artifactId).toBeTruthy();
-    await screen.pressByTestIdAsync('joined-approval');
-    expect((await import('expo-router')).router.push).toHaveBeenLastCalledWith(
-      `/inbox/approvals/${encodeURIComponent(artifactId!)}?serverId=${encodeURIComponent(account!.scope.serverId)}&completionHref=${encodeURIComponent(`/settings/teams/${encodeURIComponent(account!.scope.serverId)}/team-1`)}`,
-    );
-    expect(await decideApprovalAsInbox(account!.scope.serverId, artifactId!, decision)).toMatchObject({ ok: true });
-    if (decision === 'approve') {
-      await vi.waitFor(() => expect(onOpenTeam).toHaveBeenCalledOnce());
+    expect(onSetup).not.toHaveBeenCalled();
+    expect(account!.artifacts.list()).toEqual([]);
+    await act(async () => { decide(approved); });
+    if (approved) {
+      await vi.waitFor(() => expect(setup ? onSetup : onOpenTeam).toHaveBeenCalledOnce());
+      expect(setup ? onOpenTeam : onSetup).not.toHaveBeenCalled();
       expect(home.nameRequests).toEqual([{ name: 'Ada' }]);
       expect(storage.getState().profile.name).toBe('Ada');
+      expect(events).toEqual(setup ? ['save'] : ['save', 'open']);
     } else {
       await vi.waitFor(() => expect(screen.findByTestId('joined-name-field.error')).not.toBeNull());
       expect(home.nameRequests).toEqual([]);
       expect(onOpenTeam).not.toHaveBeenCalled();
+      expect(onSetup).not.toHaveBeenCalled();
       expect(screen.findByTestId('joined-name-field')?.props.value).toBe('Ada');
+      // Clearing the optional name skips its confirmation and keeps the same destination.
+      await act(async () => { screen.findByTestId('joined-name-field')!.props.onChangeText(''); });
+      await screen.pressByTestIdAsync('joined-action');
+      await vi.waitFor(() => expect(setup ? onSetup : onOpenTeam).toHaveBeenCalledOnce());
+      expect(home.nameRequests).toEqual([]);
+      expect(Modal.confirm).toHaveBeenCalledOnce();
     }
+    expect(account!.artifacts.list()).toEqual([]);
   }, 40_000);
 
-  it.each(['lost_ack', 'uncommitted', 'refused'] as const)('reviews and approves the joined name through the real detail page with %s settlement', async settlement => {
-    const home: Home = { nameRequests: [], failName: settlement === 'refused',
-      ...(settlement === 'refused' ? {} : { terminalWrite: settlement }) };
-    const { screen, onOpenTeam, events } = await renderJoined({ outcome: 'joined', name: null, home, askFirst: true });
+  it('does not save or continue when the joined card retires during native confirmation', async () => {
+    const home: Home = { nameRequests: [], failName: false };
+    const { screen, onOpenTeam } = await renderJoined({ outcome: 'joined', name: null, home, askFirst: true });
+    const { Modal } = await import('@/modal');
+    let decide!: (approved: boolean) => void;
+    vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise<boolean>(resolve => { decide = resolve; }));
     await act(async () => { screen.findByTestId('joined-name-field')!.props.onChangeText('Ada'); });
     await screen.pressByTestIdAsync('joined-action');
-    await vi.waitFor(() => expect(screen.findByTestId('joined-approval')).not.toBeNull());
-    await screen.pressByTestIdAsync('joined-approval');
-    const artifactId = account!.artifacts.list()[0]!.id;
-    const { teamDetailPath } = await import('@/components/settings/teams/teamsRoutes');
-    const expectedTeamHref = teamDetailPath({ serverId: account!.scope.serverId, teamId: 'team-1' });
-    const { router } = await import('expo-router');
-    const reviewHref: unknown = vi.mocked(router.push).mock.calls.at(-1)?.[0];
-    const completionHref = typeof reviewHref === 'string'
-      && new URL(reviewHref, 'https://app.example.test').searchParams.get('completionHref') === expectedTeamHref
-      ? expectedTeamHref : undefined;
-    expect(completionHref).toBe(expectedTeamHref);
-    // A deep-link entry is outside the workspace. Opening Inbox can retire its
-    // screen; durable approval completion must still reach the admitted Team.
+    await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
     await screen.unmount();
-    const { ApprovalDetailScreen } = await import('@/components/approvals/ApprovalDetailScreen');
-    // This Account-only HTTP fixture has no Machine inventory; its unrelated
-    // bootstrap 404 must not model an unreachable Home on the approval page.
-    storage.setState({ endpointStatus: 'online', socketStatus: 'connected', syncError: null, machineListStatusByServerId: {} });
-    const review = await renderScreen(<ApprovalDetailScreen artifactId={artifactId} serverId={account!.scope.serverId} completionHref={completionHref} />);
-    await vi.waitFor(() => expect(review.findByTestId('approvals.approve')?.props.disabled, review.getTextContent()).toBe(false));
-    await review.pressByTestIdAsync('approvals.approve');
-    expect(home.nameRequests).toEqual([{ name: 'Ada' }]);
-    if (settlement === 'uncommitted') {
-      expect(home.lostWrites).toBeGreaterThan(0);
-      expect(account!.artifacts.readPlainBody(artifactId)).toContain('"status":"executing"');
-      // The refusal names the outcome plainly; the returned Action code stays behind Technical details.
-      const { Modal } = await import('@/modal');
-      await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.arrayContaining([
-        expect.objectContaining({ onPress: expect.any(Function) }),
-      ])), { timeout: 20_000 });
-      const [, , buttons] = vi.mocked(Modal.alert).mock.calls[0]!;
-      buttons!.find((button) => typeof button.onPress === 'function')!.onPress!();
-      expect(Modal.alert).toHaveBeenLastCalledWith(expect.any(String), expect.stringContaining('approval_execution_outcome_unknown'));
-      expect(onOpenTeam).not.toHaveBeenCalled();
-      expect(router.dismissTo).not.toHaveBeenCalled();
-      return;
-    }
-    if (settlement === 'refused') {
-      await vi.waitFor(() => expect(review.findByTestId('approvals.execution-failure')).not.toBeNull());
-      expect(onOpenTeam).not.toHaveBeenCalled();
-      expect(router.dismissTo).not.toHaveBeenCalled();
-      expect(storage.getState().profile.name).toBeNull();
-      return;
-    }
-    await vi.waitFor(() => expect(router.dismissTo).toHaveBeenCalledWith(expectedTeamHref), { timeout: 20_000 });
+    await act(async () => { decide(true); });
+    expect(home.nameRequests).toEqual([]);
     expect(onOpenTeam).not.toHaveBeenCalled();
-    expect(events).toEqual(['save']);
-    expect(home.lostWrites).toBeGreaterThan(0);
-    expect(account!.artifacts.readPlainBody(artifactId)).toContain('"status":"executed"');
-    expect((await import('@/modal')).Modal.alert).not.toHaveBeenCalled();
+    expect(storage.getState().profile.name).toBeNull();
+    expect(account!.artifacts.list()).toEqual([]);
   }, 40_000);
 
   it('stays on the card with the failure under the field, retries on the next press, and opens unsaved once cleared', async () => {
@@ -341,7 +302,11 @@ describe('TeamJoinedCard', () => {
       outcome: 'joined',
       name: null,
       home,
+      askFirst: true,
     });
+
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.confirm).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
 
     await act(async () => {
       screen.findByTestId('joined-name-field')!.props.onChangeText('Ada');
