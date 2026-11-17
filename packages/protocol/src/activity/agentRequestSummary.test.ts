@@ -156,6 +156,44 @@ describe('formatPermissionRequestSummary', () => {
       }),
     ).toBe('Read: /srv/data.txt');
   });
+
+  it('names the tool by the host label and phrases it in the host language, classifying by the raw tool', () => {
+    const labels = {
+      required: (tool: string) => `Permiso necesario: ${tool}`,
+      run: (command: string) => `Ejecutar: ${command}`,
+    };
+    expect(formatPermissionRequestSummary({
+      toolName: 'mcp__happier__action_spec_get',
+      toolInput: { id: 'session.list' },
+      toolLabel: 'Get action spec',
+    })).toBe('Permission required: Get action spec');
+    expect(formatPermissionRequestSummary({
+      toolName: 'mcp__happier__action_spec_get',
+      toolInput: { id: 'session.list' },
+      toolLabel: 'Obtener especificación',
+      labels,
+    })).toBe('Permiso necesario: Obtener especificación');
+    expect(formatPermissionRequestSummary({
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      toolLabel: 'Terminal',
+      labels,
+    })).toBe('Ejecutar: ls');
+  });
+});
+
+describe('agent request tool label', () => {
+  it('carries the host label for display while classification keeps the normalized tool name', () => {
+    const labelled = buildAgentRequestSemanticSummary({
+      kind: 'permission',
+      toolName: 'mcp__happier__action_spec_get',
+      toolInput: { id: 'session.list' },
+      toolLabel: 'Get action spec',
+    });
+    expect(labelled).toMatchObject({ toolLabel: 'Get action spec', normalizedToolLabel: 'mcp__happier__action_spec_get' });
+    expect(buildAgentRequestSemanticSummary({ kind: 'permission', toolName: 'Bash', toolInput: {} }).toolLabel).toBe('Bash');
+    expect(buildAgentRequestSemanticSummary({ kind: 'permission', toolName: 'Bash', toolInput: {}, toolLabel: '  ' }).toolLabel).toBe('Bash');
+  });
 });
 
 describe('classifyPermissionRequestRisk', () => {

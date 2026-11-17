@@ -1,4 +1,5 @@
 import { buildAgentRequestSemanticSummary } from "@happier-dev/protocol/activity/agentRequestSummary";
+import { resolveRequestToolLabel } from '@/components/tools/shell/permissions/presentation/permissionRequestDisplaySummary';
 import { Session } from "@/sync/domains/state/storageTypes";
 import { prepareTranscriptMessageBody } from '@/components/sessions/transcript/messageDisplayText';
 import { Message } from "@happier-dev/session-core/messages";
@@ -184,11 +185,14 @@ export function summarizeAgentRequestForVoiceHuman(
         // Confirmation names what the person will approve. Ordinary context
         // announcements continue to follow argument-sharing preferences.
         const includeArguments = resolved.voiceShareToolArgs || permissionReadback !== undefined;
+        const sharedInput = !includeArguments ? null
+            : resolved.voiceShareFilePaths ? toolArgs : redactVoicePathLikeData(toolArgs ?? null);
         const semantic = buildAgentRequestSemanticSummary({
             kind: 'permission',
             toolName: sharedToolName,
-            toolInput: !includeArguments ? null
-                : resolved.voiceShareFilePaths ? toolArgs : redactVoicePathLikeData(toolArgs ?? null),
+            toolInput: sharedInput,
+            // Named as the request card names it, from the same shared operands.
+            ...(resolved.voiceShareToolNames ? { toolLabel: resolveRequestToolLabel({ toolName, toolInput: sharedInput }) } : {}),
         });
         const summary = !resolved.voiceShareToolNames ? t('voice.readiness.permissionContinueAction')
             : semantic.permissionAction === 'run_command' ? t('voice.readiness.permissionRunCommand')
@@ -202,7 +206,7 @@ export function summarizeAgentRequestForVoiceHuman(
             ?? semantic.permissionTitle;
         const sharedDetail = detail && (resolved.voiceShareFilePaths ? detail : redactVoicePathLikeString(detail));
         const describedSummary = resolved.voiceShareToolNames && includeArguments
-            ? `${summary} (${semantic.normalizedToolLabel}${sharedDetail ? `: ${sharedDetail}` : ''})`
+            ? `${summary} (${semantic.toolLabel}${sharedDetail ? `: ${sharedDetail}` : ''})`
             : summary;
         const sharedSessionLabel = resolved.voiceShareSessionSummary && sessionLabel?.trim();
         const session = sharedSessionLabel

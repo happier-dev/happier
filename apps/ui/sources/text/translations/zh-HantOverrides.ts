@@ -8471,6 +8471,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             more: ({ count }: { count: number }) => `+${count} 更多`,
             elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
             unknownToolTitle: '工具',
+            permissionSummary: {
+                required: ({ tool }: { tool: string }) => `需要權限：${tool}`,
+                requiredWithoutDetails: ({ tool }: { tool: string }) => `需要權限：${tool}（無法取得詳細資料）`,
+                run: ({ command }: { command: string }) => `執行：${command}`,
+                read: ({ path }: { path: string }) => `讀取：${path}`,
+                write: ({ path }: { path: string }) => `寫入：${path}`,
+                edit: ({ path }: { path: string }) => `編輯：${path}`,
+            },
         },
         bashView: {
             commandDiffTitle: '原始命令',

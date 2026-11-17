@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
+
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
 import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
@@ -95,6 +97,22 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(card?.actions?.find(action => action.id === 'mcp_always_allow')).toMatchObject({
             actionIdentifier: 'overlay-mcp-always-allow', data: { sessionId: 'mcp-session', requestId: 'mcp', serverId: 'server-1' },
         });
+    });
+    it('names a Happier Action ask by the title its card shows, never the raw tool id', () => {
+        const session = createSessionFixture({ id: 'action-session', serverId: 'server-1', active: true,
+            metadata: { path: '/tmp/action-ask', host: 'qa', flavor: 'claude' },
+            agentState: { requests: { spec: { tool: 'mcp__happier__action_spec_get', kind: 'permission',
+                arguments: { id: 'session.list' }, createdAt: 950 } } },
+        });
+        const snapshot = buildDesktopActivityOverlaySnapshot({ source: createOverlaySource({ sessions: [session] }),
+            sourceOverview: { candidates: [buildSessionActivityAttention({ session, nowMs: 1_000 })],
+                counts: { unread: 0, permissionRequired: 1, actionRequired: 0, thinking: 0, totalAttention: 1 } },
+            activityPolicy: resolveActivitySurfacePolicy({}), desktopPolicy: createDesktopPolicy(), nowMs: 1_000 });
+        const request = snapshot.permissionRequests[0];
+        const title = t('actionPresentation.titles.action_spec_get');
+        expect(request?.toolLabel).toBe(title);
+        expect(request?.summary).toBe(t('tools.common.permissionSummary.required', { tool: title }));
+        expect(request?.title).toBe(request?.summary);
     });
     it.each([
         { flavor: 'codex', ownerMetadata: false }, { flavor: 'claude', ownerMetadata: false },

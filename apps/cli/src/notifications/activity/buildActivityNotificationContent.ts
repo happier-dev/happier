@@ -1,4 +1,5 @@
 import { buildAgentRequestNotificationContent } from '@happier-dev/protocol/activity/agentRequestNotificationContent';
+import { resolveRequestToolLabel } from '@/agent/permissions/requestToolLabel';
 import { buildReadyNotificationContent } from '@happier-dev/protocol/push/readyNotificationContent';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { WorkflowRunUpdateNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
@@ -455,6 +456,7 @@ export function buildActivityNotificationContent(
       turnId: event.turnId,
       toolName: event.toolName,
       toolInput: event.toolInput,
+      toolLabel: resolveRequestToolLabel(event.toolName, event.toolInput),
       includeMessageText: includePreview && options.requestIncludeMessageText !== false,
       toolDetails: event.toolDetails,
     });

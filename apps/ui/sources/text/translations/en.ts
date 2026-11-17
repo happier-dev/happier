@@ -12214,6 +12214,14 @@ const enTools = {
     more: ({ count }: { count: number }) => `+${count} more`,
     elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
     unknownToolTitle: 'Tool',
+    permissionSummary: {
+      required: ({ tool }: { tool: string }) => `Permission required: ${tool}`,
+      requiredWithoutDetails: ({ tool }: { tool: string }) => `Permission required: ${tool} (details unavailable)`,
+      run: ({ command }: { command: string }) => `Run: ${command}`,
+      read: ({ path }: { path: string }) => `Read: ${path}`,
+      write: ({ path }: { path: string }) => `Write: ${path}`,
+      edit: ({ path }: { path: string }) => `Edit: ${path}`,
+    },
   },
   bashView: {
     commandDiffTitle: 'Raw command',

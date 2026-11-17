@@ -124,6 +124,18 @@ describe('buildAgentRequestNotificationContent', () => {
     });
   });
 
+  it('names the requested tool by the host label', () => {
+    expect(buildAgentRequestNotificationContent({
+      kind: 'permission',
+      sessionId: 'session-1',
+      agentDisplayName: 'Claude',
+      requestId: 'request-1',
+      toolName: 'mcp__happier__action_spec_get',
+      toolInput: { id: 'session.list' },
+      toolLabel: 'Get action spec',
+    }).body).toBe('Claude asks permission to use Get action spec');
+  });
+
   it('uses explicit tool details when provided and normalizes ask-user-question labels', () => {
     expect(
       buildAgentRequestNotificationContent({

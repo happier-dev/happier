@@ -46,6 +46,7 @@ import { StructuredQuestionAnswersV1Schema, StructuredQuestionResponseV1Schema, 
 import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import type { AccountSettings, SessionPermissionRemoteRespondInputV1, SessionPermissionRemoteRespondOutputV1, SessionPermissionRemotePendingListOutputV1, SessionUserActionRemoteAnswerInputV1, SessionUserActionRemoteAnswerOutputV1, SessionPermissionRemoteGrantRecordV1, SessionPermissionRemoteGrantsListOutputV1, SessionPermissionRemoteGrantRevokeOutputV1, SessionPermissionExternalHumanDecisionActorV1, SessionPermissionSourceAuthorityV1, AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 import { buildAgentRequestSemanticSummary, formatPermissionRequestSummary, requiresFullFormForRemoteUserAction, summarizeToolInputForNotification } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { resolveRequestToolLabel } from './requestToolLabel';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { SessionPermissionDecisionRequest } from '@happier-dev/plugin-sdk/sessions';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
@@ -407,17 +408,18 @@ function projectRemoteMediatedRequestSummary(params: Readonly<{
     toolInput: unknown;
     resolveFullFormUrl?: () => string;
 }>): MediatedPendingRequestSummary | null {
-    const semantic = buildAgentRequestSemanticSummary(params);
     if (params.kind === 'permission') {
+        const toolLabel = resolveRequestToolLabel(params.toolName, params.toolInput);
+        const semantic = buildAgentRequestSemanticSummary({ ...params, toolLabel });
         return {
             kind: 'permission',
             toolLabel: truncateRemoteMediationText(
-                semantic.normalizedToolLabel,
+                semantic.toolLabel,
                 'tool operation',
                 SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES,
             ),
             title: truncateRemoteMediationText(
-                formatPermissionRequestSummary({ toolName: params.toolName, toolInput: params.toolInput }),
+                formatPermissionRequestSummary({ toolName: params.toolName, toolInput: params.toolInput, toolLabel }),
                 'Permission required',
                 SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES,
             ),
@@ -429,6 +431,7 @@ function projectRemoteMediatedRequestSummary(params: Readonly<{
         };
     }
 
+    const semantic = buildAgentRequestSemanticSummary(params);
     if (semantic.questions.length === 0) return null;
     if (requiresFullFormForRemoteUserAction(semantic.questions)) {
         if (!params.resolveFullFormUrl) return null;

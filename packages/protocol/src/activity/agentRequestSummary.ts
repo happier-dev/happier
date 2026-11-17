@@ -75,7 +75,13 @@ export type AgentRequestQuestionSummary = Readonly<{
 export type AgentRequestSemanticSummary = Readonly<{
   kind: AgentRequestKind;
   rawToolName: string;
+  /** Normalized tool name: classification only, never shown. */
   normalizedToolLabel: string;
+  /**
+   * The name every surface shows for the tool: the host's resolved label (an Action's title,
+   * a readable MCP name) when it passed one, else the normalized name.
+   */
+  toolLabel: string;
   permissionTitle: string | null;
   permissionAction: 'run_command' | 'change_files' | 'access_file' | 'use_tool';
   shellCommand: string | null;
@@ -85,9 +91,31 @@ export type AgentRequestSemanticSummary = Readonly<{
   questions: readonly AgentRequestQuestionSummary[];
 }>;
 
+/** How a host phrases a permission request summary in its own language. */
+export type PermissionRequestSummaryLabels = Readonly<{
+  required: (tool: string) => string;
+  requiredWithoutDetails: (tool: string) => string;
+  run: (command: string) => string;
+  read: (path: string) => string;
+  write: (path: string) => string;
+  edit: (path: string) => string;
+}>;
+
+const defaultPermissionSummaryLabels: PermissionRequestSummaryLabels = {
+  required: tool => `Permission required: ${tool}`,
+  requiredWithoutDetails: tool => `Permission required: ${tool} (details unavailable)`,
+  run: command => `Run: ${command}`,
+  read: path => `Read: ${path}`,
+  write: path => `Write: ${path}`,
+  edit: path => `Edit: ${path}`,
+};
+
 type FormatPermissionRequestSummaryParams = Readonly<{
   toolName: string;
   toolInput: unknown;
+  /** The host's display name for the tool (see `AgentRequestSemanticSummary.toolLabel`). */
+  toolLabel?: string | null;
+  labels?: Partial<PermissionRequestSummaryLabels>;
 }>;
 
 type ClassifyPermissionRequestRiskParams = Readonly<{
@@ -253,6 +281,8 @@ export function buildAgentRequestSemanticSummary(params: Readonly<{
   kind: AgentRequestKind;
   toolName: string;
   toolInput: unknown;
+  /** The host's display name for the tool; this owner has no Action catalog or translations. */
+  toolLabel?: string | null;
 }>): AgentRequestSemanticSummary {
   const obj = asRecord(params.toolInput);
   const permission = asRecord(obj?.permission);
@@ -264,10 +294,12 @@ export function buildAgentRequestSemanticSummary(params: Readonly<{
     : mutation === 'patch' || mutation === 'single_path' || mutation === 'path_pair' ? 'change_files'
       : filePath ? 'access_file' : 'use_tool';
 
+  const normalizedToolLabel = normalizeToolLabel(params.toolName);
   return {
     kind: params.kind,
     rawToolName: params.toolName,
-    normalizedToolLabel: normalizeToolLabel(params.toolName),
+    normalizedToolLabel,
+    toolLabel: params.toolLabel?.trim() || normalizedToolLabel,
     permissionTitle: firstString(permission?.title) ?? firstString(obj?.title) ?? null,
     permissionAction,
     shellCommand,
@@ -308,7 +340,9 @@ export function formatPermissionRequestSummary(params: FormatPermissionRequestSu
     kind: 'permission',
     toolName: params.toolName,
     toolInput: params.toolInput,
+    toolLabel: params.toolLabel,
   });
+  const labels = { ...defaultPermissionSummaryLabels, ...params.labels };
   const lower = summary.normalizedToolLabel.toLowerCase();
 
   if (summary.permissionTitle) {
@@ -316,20 +350,20 @@ export function formatPermissionRequestSummary(params: FormatPermissionRequestSu
   }
 
   if (summary.shellCommand && (lower === 'bash' || lower === 'execute' || lower === 'shell')) {
-    return `Run: ${summary.shellCommand}`;
+    return labels.run(summary.shellCommand);
   }
 
   if (summary.filePath && (lower === 'read' || lower === 'write' || lower === 'edit' || lower === 'multiedit')) {
-    const verb = lower === 'read' ? 'Read' : lower === 'write' ? 'Write' : 'Edit';
-    return `${verb}: ${summary.filePath}`;
+    const verb = lower === 'read' ? labels.read : lower === 'write' ? labels.write : labels.edit;
+    return verb(summary.filePath);
   }
 
   const obj = asRecord(params.toolInput);
   if (!obj || Object.keys(obj).length === 0) {
-    return `Permission required: ${summary.normalizedToolLabel} (details unavailable)`;
+    return labels.requiredWithoutDetails(summary.toolLabel);
   }
 
-  return `Permission required: ${summary.normalizedToolLabel}`;
+  return labels.required(summary.toolLabel);
 }
 
 export function extractFirstUserActionQuestion(toolName: string, toolInput: unknown): string | null {

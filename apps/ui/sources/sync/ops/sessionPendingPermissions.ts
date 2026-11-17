@@ -1,11 +1,11 @@
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
-import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { listPendingPermissionRequests } from '@/utils/sessions/sessionUtils';
+import { formatPermissionRequestDisplaySummary } from '@/components/tools/shell/permissions/presentation/permissionRequestDisplaySummary';
 import type { SessionPendingRequest } from '@happier-dev/session-core/pending';
 import type { NativePermissionChoicesV1, NativePermissionChoiceAvailabilityV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
@@ -78,7 +78,7 @@ export function listSessionPendingPermissions(
             ...(request.nativeChoiceAvailability ? { nativeChoiceAvailability: request.nativeChoiceAvailability } : {}),
             ...(request.permissionOwnerLabel ? { permissionOwnerLabel: request.permissionOwnerLabel } : {}),
             canApprove,
-            summary: formatPermissionRequestSummary({ toolName: request.tool, toolInput: request.arguments }),
+            summary: formatPermissionRequestDisplaySummary({ toolName: request.tool, toolInput: request.arguments, mcpTool: request.mcpTool }),
             ...(command ? { command } : {}),
             ...(typeof request.createdAt === 'number' && request.createdAt >= 0
                 ? { createdAtMs: Math.trunc(request.createdAt) }

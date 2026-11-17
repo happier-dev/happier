@@ -10832,6 +10832,14 @@ localTailscale: {
       more: ({ count }: { count: number }) => `+${count} 件`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
       unknownToolTitle: "ツール",
+      permissionSummary: {
+        required: ({ tool }: { tool: string }) => `許可が必要です: ${tool}`,
+        requiredWithoutDetails: ({ tool }: { tool: string }) => `許可が必要です: ${tool}（詳細を取得できません）`,
+        run: ({ command }: { command: string }) => `実行: ${command}`,
+        read: ({ path }: { path: string }) => `読み取り: ${path}`,
+        write: ({ path }: { path: string }) => `書き込み: ${path}`,
+        edit: ({ path }: { path: string }) => `編集: ${path}`,
+      },
     },
     bashView: {
       commandDiffTitle: "生のコマンド",

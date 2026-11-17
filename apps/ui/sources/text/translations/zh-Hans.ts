@@ -10185,6 +10185,14 @@ export const zhHans: TranslationStructure = {
       more: ({ count }: { count: number }) => `+${count} 更多`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
       unknownToolTitle: "工具",
+      permissionSummary: {
+        required: ({ tool }: { tool: string }) => `需要权限：${tool}`,
+        requiredWithoutDetails: ({ tool }: { tool: string }) => `需要权限：${tool}（详情不可用）`,
+        run: ({ command }: { command: string }) => `运行：${command}`,
+        read: ({ path }: { path: string }) => `读取：${path}`,
+        write: ({ path }: { path: string }) => `写入：${path}`,
+        edit: ({ path }: { path: string }) => `编辑：${path}`,
+      },
     },
     bashView: {
       commandDiffTitle: "原始命令",

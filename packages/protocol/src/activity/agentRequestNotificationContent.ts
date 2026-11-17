@@ -15,6 +15,8 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
   turnId?: string;
   toolName: string;
   toolInput?: unknown;
+  /** The host's display name for the tool (see `AgentRequestSemanticSummary.toolLabel`). */
+  toolLabel?: string | null;
   toolDetails?: string | null;
   includeMessageText?: boolean;
 }>): Readonly<{
@@ -33,6 +35,7 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
     kind: params.kind,
     toolName: params.toolName,
     toolInput: params.toolInput,
+    toolLabel: params.toolLabel,
   });
   const fullFormRequired = params.kind === 'user_action' && requiresFullFormForRemoteUserAction(summary.questions);
   const question = params.includeMessageText !== false && params.turnId ? projectNotificationQuestion(summary) : null;
@@ -41,11 +44,11 @@ export function buildAgentRequestNotificationContent(params: Readonly<{
     : summarizeToolInputForNotification(params.toolName, params.toolInput);
   const body = question?.body ?? (params.kind === 'user_action'
     ? toolDetails
-      ? `${agentDisplayName} needs your input for ${summary.normalizedToolLabel}\n${toolDetails}`
-      : `${agentDisplayName} needs your input for ${summary.normalizedToolLabel}`
+      ? `${agentDisplayName} needs your input for ${summary.toolLabel}\n${toolDetails}`
+      : `${agentDisplayName} needs your input for ${summary.toolLabel}`
     : toolDetails
-      ? `${agentDisplayName} asks permission to use ${summary.normalizedToolLabel}\n${toolDetails}`
-      : `${agentDisplayName} asks permission to use ${summary.normalizedToolLabel}`);
+      ? `${agentDisplayName} asks permission to use ${summary.toolLabel}\n${toolDetails}`
+      : `${agentDisplayName} asks permission to use ${summary.toolLabel}`);
 
   return {
     title,

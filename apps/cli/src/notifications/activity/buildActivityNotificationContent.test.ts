@@ -18,3 +18,21 @@ describe('connected account notification presentation', () => {
     expect(content.data.serviceId).toBe('service-internal');
   });
 });
+
+describe('agent request notification presentation', () => {
+  it('names a Happier Action ask by its title, never the raw tool id', () => {
+    const content = buildActivityNotificationContent({
+      topic: 'permission_request', sessionId: 'session', agentDisplayName: 'Claude', requestId: 'request',
+      toolName: 'mcp__happier__action_spec_get', toolInput: { id: 'session.list' },
+    }, { readyIncludeMessageText: false, requestIncludeMessageText: false });
+    expect(content.body).toBe('Claude asks permission to use Get action spec');
+  });
+
+  it('names a third-party MCP ask readably', () => {
+    const content = buildActivityNotificationContent({
+      topic: 'permission_request', sessionId: 'session', agentDisplayName: 'Claude', requestId: 'request',
+      toolName: 'mcp__linear__search_issues', toolInput: {},
+    }, { readyIncludeMessageText: false, requestIncludeMessageText: false });
+    expect(content.body).not.toContain('mcp__');
+  });
+});

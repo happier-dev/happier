@@ -1,5 +1,6 @@
 import { t } from '@/text';
-import { buildAgentRequestSemanticSummary, classifyPermissionRequestRisk, formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { buildAgentRequestSemanticSummary, classifyPermissionRequestRisk } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { formatPermissionRequestDisplaySummary, resolveRequestToolLabel } from '@/components/tools/shell/permissions/presentation/permissionRequestDisplaySummary';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import type { ActivitySurfaceCandidatePrivacyModeResolver } from '@/activity/presentation/buildActivitySurfaceViewModel';
@@ -135,11 +136,14 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
 
         for (const request of candidate.presentationSource ? listSessionListPresentationPermissionRequests(candidate.presentationSource)
             : 'agentState' in candidate.session ? listPendingPermissionRequestsFromSession(candidate.session) : []) {
+            const toolLabel = resolveRequestToolLabel({ toolName: request.tool, toolInput: request.arguments, mcpTool: request.mcpTool });
             const semantic = buildAgentRequestSemanticSummary({
                 kind: 'permission',
                 toolName: request.tool,
                 toolInput: request.arguments,
+                toolLabel,
             });
+            const summary = formatPermissionRequestDisplaySummary({ toolName: request.tool, toolInput: request.arguments, toolLabel });
             const session = candidate.session;
             const metadata = candidate.presentationSource
                 ? readSessionListPresentationOwnerMetadata(candidate.presentationSource)
@@ -163,15 +167,9 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 ...(request.turnId ? { turnId: request.turnId } : {}),
                 sessionId,
                 serverId,
-                title: semantic.permissionTitle ?? formatPermissionRequestSummary({
-                    toolName: request.tool,
-                    toolInput: request.arguments,
-                }),
-                summary: formatPermissionRequestSummary({
-                    toolName: request.tool,
-                    toolInput: request.arguments,
-                }),
-                toolLabel: semantic.normalizedToolLabel,
+                title: summary,
+                summary,
+                toolLabel: semantic.toolLabel,
                 questionText: semantic.firstQuestionText,
                 count: 1,
                 openActionIdentifier: createActivitySurfaceSessionTarget(sessionId, serverId),
@@ -195,6 +193,7 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 kind: 'user_action',
                 toolName: request.tool,
                 toolInput: request.arguments,
+                toolLabel: resolveRequestToolLabel({ toolName: request.tool, toolInput: request.arguments }),
             });
 
             userQuestions.push({
@@ -208,11 +207,11 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 requestId: request.id,
                 sessionId,
                 serverId,
-                title: semantic.firstQuestionText ?? semantic.permissionTitle ?? semantic.normalizedToolLabel,
+                title: semantic.firstQuestionText ?? semantic.permissionTitle ?? semantic.toolLabel,
                 summary: semantic.questionCount > 1
                     ? t('tools.askUserQuestion.multipleQuestions', { count: semantic.questionCount })
                     : semantic.firstQuestionText,
-                toolLabel: semantic.normalizedToolLabel,
+                toolLabel: semantic.toolLabel,
                 questionText: semantic.firstQuestionText,
                 count: Math.max(semantic.questionCount, 1),
                 openActionIdentifier: createActivitySurfaceSessionTarget(sessionId, serverId),

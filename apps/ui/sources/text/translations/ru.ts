@@ -10382,6 +10382,14 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       more: ({ count }: { count: number }) => `+${count} ещё`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}с`,
       unknownToolTitle: "Инструмент",
+      permissionSummary: {
+        required: ({ tool }: { tool: string }) => `Требуется разрешение: ${tool}`,
+        requiredWithoutDetails: ({ tool }: { tool: string }) => `Требуется разрешение: ${tool} (подробности недоступны)`,
+        run: ({ command }: { command: string }) => `Выполнить: ${command}`,
+        read: ({ path }: { path: string }) => `Прочитать: ${path}`,
+        write: ({ path }: { path: string }) => `Записать: ${path}`,
+        edit: ({ path }: { path: string }) => `Изменить: ${path}`,
+      },
     },
     bashView: {
       commandDiffTitle: "Сырая команда",
