@@ -30,14 +30,14 @@ describe('production Iroh node addon custody', () => {
     return dir;
   }
 
-  it('requests the canonical ordinary-addon build through the repository yarn corridor', () => {
+  it('requests the canonical ordinary-addon build through the repository pnpm corridor', () => {
     const packageRoot = '/repo/packages/iroh-native';
     const build = resolveProductionIrohNodeAddonBuildSpec({ packageRoot });
     // The exact canonical script the real-integration runner invokes, routed
     // through the same binary-safe `pnpmCommand()` corridor every other
     // testkit child launch uses (never a direct cargo/npm/node spawn).
     expect(build.command).toBe(pnpmCommand());
-    expect(build.args).toEqual(['-s', 'build:native']);
+    expect(build.args).toEqual(['run', '--silent', 'build:native']);
     expect(build.cwd).toBe(packageRoot);
     expect(resolveProductionIrohNodeAddonBuildSpec().cwd).toMatch(/packages[\\/]iroh-native$/u);
   });
