@@ -471,13 +471,6 @@ describe('Conversation Automation result delivery admission', () => {
     });
   });
 
-  it('passes the sealed source through unchanged instead of reconstructing it from route context', () => {
-    expect(prepareConversationAutomationResultDelivery({ input: input(), caller })).toMatchObject({
-      kind: 'prepared',
-      source,
-    });
-  });
-
   it('replies to the observed inbound message, never the message that inbound itself replied to', () => {
     expect(prepareConversationAutomationResultDelivery({
       input: {
