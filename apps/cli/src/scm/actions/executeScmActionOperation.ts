@@ -1,5 +1,7 @@
 import type { ScmBackendContext } from '@/scm/types';
 import { runWithScmHostingActionExecutor } from '../hostingProviders/executionAuthority';
+import { discoverScmRepositories } from '../repositoryDiscovery';
+import type { ScmRepositoryDiscoverRequest } from '@happier-dev/protocol/scm/repositoryDiscovery';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { FileReviewNoteV1, FileReviewNoteOperationV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
@@ -1168,6 +1170,9 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                     : notRepositoryResponse<ScmPullRequestRunStackedResponse>(),
             }));
         }
+        case 'scm.repository.discover':
+            return discoverScmRepositories({ request: params.input as ScmRepositoryDiscoverRequest,
+                ...routeBase, hostingProviderRegistry: params.hostingProviderRegistry });
         case 'scm.repository.init':
             return runMutation(async () => await runScmRepositoryInitRoute({
                 request: params.input as ScmRepositoryInitRequest,

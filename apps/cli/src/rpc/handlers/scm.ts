@@ -8,6 +8,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createMemberWorkspaceReadSource } from '@/workspaces/activation/memberWorkspaceSource';
+import type { ScmRepositoryDiscoverRequest, ScmRepositoryDiscoverResponse } from '@happier-dev/protocol/scm/repositoryDiscovery';
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
@@ -955,6 +956,12 @@ export function registerScmHandlers(
             rpcCompatibility: true,
             runMutation: runWithStatusSnapshotCacheInvalidation,
         }) as ScmPullRequestRunStackedResponse,
+    );
+
+    scmRpcHandlerManager.registerHandler<ScmRepositoryDiscoverRequest, ScmRepositoryDiscoverResponse>(
+        RPC_METHODS.SCM_REPOSITORY_DISCOVER,
+        async request => await executeScmActionOperation({ actionId: 'scm.repository.discover',
+            input: request, ...routeBase }) as ScmRepositoryDiscoverResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmRepositoryInitRequest, ScmRepositoryInitResponse>(

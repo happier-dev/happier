@@ -4,6 +4,7 @@ import { normalizeProjectSourceSubdirV1, type ProjectSourceV1, type ProjectSourc
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { findWorkspaceProjectCandidatesV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import type { ScmRepositoryDiscoverMatch, ScmRepositoryDiscoverRequest } from '@happier-dev/protocol/scm/repositoryDiscovery';
 import { buildSessionHandoffWorkspaceAction } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -39,6 +40,29 @@ export type ProjectOpenUseOption = Readonly<{
   /** Multiple candidates require an explicit exact checkout selection. */
   candidates: readonly WorkspaceRefV1[];
 }>;
+
+/** Construct only an explicit Find request; rendering choices performs no filesystem work. */
+export function buildProjectOpenCloneDiscoveryRequest(input: Readonly<{
+  folderPath: string;
+  sources: readonly Pick<ProjectSourceV1, 'repository'>[];
+}>): ScmRepositoryDiscoverRequest {
+  const repositories = input.sources.flatMap(source => {
+    if (!source.repository) return [];
+    const identity = readScmHostingRepositoryIdentity({ ...source.repository.provider,
+      nameWithOwner: source.repository.repository.nameWithOwner });
+    return identity ? [identity] : [];
+  });
+  return { cwd: input.folderPath, repositories };
+}
+
+/** A discovered path is a Folder attach choice until the existing Open owner registers it. */
+export function selectProjectOpenDiscoveredClone(
+  state: ProjectOpenChoiceState,
+  clone: ScmRepositoryDiscoverMatch,
+): ProjectOpenChoiceState {
+  return { ...state, subject: { kind: 'folder', path: clone.rootPath }, folderPath: clone.rootPath,
+    use: 'existing', checkoutId: null, checkoutAddress: null, materialization: { kind: 'attach' } };
+}
 
 /**
  * A nonexecuting suggestion: `~/src/<name>`, or the first `<name>-N` no known checkout on that

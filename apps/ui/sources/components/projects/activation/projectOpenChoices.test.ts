@@ -12,6 +12,8 @@ import { resetServerProfilesRuntimeForTests, resolveServerProfileScopeIdForIdent
 import {
   buildProjectOpenDraft,
   buildProjectOpenInput,
+  buildProjectOpenCloneDiscoveryRequest,
+  selectProjectOpenDiscoveredClone,
   projectOpenChoiceStateFromDraft,
   resolveProjectOpenDefaults,
   resolveProjectOpenUseOptions,
@@ -74,6 +76,19 @@ const base: ProjectOpenChoiceState = {
 };
 
 describe('Project Open choices', () => {
+  it('opens an explicitly selected unregistered origin match through Folder attach without inventing a checkout', () => {
+    const request = buildProjectOpenCloneDiscoveryRequest({ folderPath: '/home/me/src', sources: [source] });
+    expect(request).toEqual({ cwd: '/home/me/src', repositories: [
+      { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/happier' },
+    ] });
+    const selected = selectProjectOpenDiscoveredClone(base, { rootPath: '/home/me/src/unfinished',
+      repositoryIdentity: request.repositories[0]! });
+    expect(buildProjectOpenInput(buildProjectOpenDraft(selected), [])).toMatchObject({
+      machineId: 'devbox', source: { kind: 'folder', path: '/home/me/src/unfinished' },
+      materialization: { kind: 'attach' },
+    });
+    expect(selected.checkouts).toEqual([]);
+  });
   it('leaves a cleared subfolder and ref out of the request, so the attempt can be retained as a draft (TL-A 11-08)', () => {
     const draft = OpenProjectDraftSelectionV1Schema.parse({ serverId: 'home', machineId: 'devbox',
       source: { kind: 'repository', selector: source.repository }, subdir: 'no-such-folder', ref: 'gone',
