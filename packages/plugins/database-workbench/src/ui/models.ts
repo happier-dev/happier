@@ -3,8 +3,9 @@ import type {
     DatabaseFilterV1, DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1,
     DatabaseRelationV1, DatabaseTargetV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
     DatabaseValueRangeV1, DatabaseWriteValueV1, DatabaseStatementRunInputV1, DatabaseStatementExplainInputV1, DatabaseEditsApplyInputV1, DatabaseCompletenessV1,
-    DatabaseStatsObservationV1,
+    DatabaseStatsObservationV1, DatabaseSelectedRowsExportInputV1,
 } from '@happier-dev/database-protocol';
+import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { SharePrincipalPresentation } from '@happier-dev/plugin-ui/components';
 import type { ConsoleDeviceStorage } from './consoleState.js';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
@@ -79,6 +80,8 @@ export interface WorkbenchClient {
     setUnsavedChanges(value: boolean): Promise<void>;
     /** Existing device-store failure presentation. */
     presentDeviceStorageError(error: unknown): void;
+    /** Save file (D27 #8): the host's download owner runs the export download Action and picks the destination. */
+    saveExport(input: DatabaseSelectedRowsExportInputV1, signal?: AbortSignal): Promise<FileDownloadResultV1>;
 }
 /** The host injects its canonical presented-demand owner; this is the resource, not a wrapper. */
 export type WorkbenchActivityResource<T> = HostDatabaseActivityResource<T>;

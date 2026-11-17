@@ -14,6 +14,24 @@ import { createWorkbenchInstance } from '../workbench.js';
 import { createDatabaseConnectionResourceRuntime } from '../../resources.js';
 import { openManualDatabaseConnection } from '../../connection.js';
 
+it('saves an export through the host download owner and the export download Action, with the rows and completeness it was given', async () => {
+  const downloadFile = vi.fn(async () => ({ success: true as const, status: 'completed' as const, transferId: 't1',
+    destinationId: 'd1', name: 'invoices.csv', sizeBytes: 32, sha256: 'a'.repeat(64) }));
+  const client = createHostWorkbenchClient({ downloadFile } as unknown as PluginUiHostApi, { pageLocation: false });
+  const result = { columns: [{ name: 'id', nativeType: 'int8', semanticType: 'integer' as const, nullable: false }],
+    rows: [{ cells: [{ type: 'integer' as const, value: '48212' }] }], completeness: { complete: false as const,
+      continuation: { kind: 'offset' as const, binding: { target: createDatabaseDescriptorV1Fixture().target,
+        relation: { schema: 'public', name: 'invoices' }, columns: [], order: [] }, offset: 1 } } };
+  await expect(client.saveExport({ format: 'csv', result })).resolves.toMatchObject({ success: true, status: 'completed' });
+  expect(downloadFile).toHaveBeenCalledTimes(1);
+  const [request] = downloadFile.mock.calls[0] as unknown as [{ action: unknown; input: { format: string; result: { completeness: { complete: boolean } } } }];
+  // The host fills the destination; the plugin names the Action and hands over exactly what it serializes.
+  expect(request.action).toEqual({ pluginId: 'happier.database', localId: 'rows/export-download' });
+  expect(request.input).not.toHaveProperty('destination');
+  expect(request.input.format).toBe('csv');
+  expect(request.input.result.completeness.complete).toBe(false);
+});
+
 it('preserves demand admission refusal without reconnecting through an ordinary Action', async () => {
   const unavailable = () => { throw new Error('A refused demand never falls back to another read path'); };
   const host = { readResource: unavailable, executeAction: unavailable,

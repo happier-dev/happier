@@ -1,6 +1,8 @@
 import * as React from 'react';
 import {
+  Button,
   CodeBlock,
+  Row,
   Popover,
   Select,
   Stack,
@@ -11,7 +13,7 @@ import {
   useListMultiSelectionStoreSnapshot,
   type ListMultiSelectionStore,
 } from '@happier-dev/plugin-ui/components';
-import type { useRelationPage } from '../hooks.js';
+import { useWorkbenchInstance, type useRelationPage } from '../hooks.js';
 import { exportSelectedRows } from '../../selectedExport.js';
 
 type Page = ReturnType<typeof useRelationPage>;
@@ -28,6 +30,8 @@ export function RowsExport(
   const [format, setFormat] = React.useState<'csv' | 'json'>('csv');
   const [scope, setScope] = React.useState<'selected' | 'loaded'>('selected');
   const { page } = props;
+  const instance = useWorkbenchInstance();
+  const [saving, setSaving] = React.useState<'idle' | 'saving' | 'failed'>('idle');
   const chosen = useListMultiSelectionStoreSnapshot(props.selection);
   const selectedKeys = React.useMemo(
     () => page.rows.filter((row) => chosen.selectedKeys.has(row.rowKey)).map((row) => row.rowKey),
@@ -40,6 +44,16 @@ export function RowsExport(
       page.exportInput(exportsSelected ? selectedKeys : page.rows.map((row) => row.rowKey), format),
     );
   }, [open, page, format, exportsSelected, selectedKeys]);
+  const save = () => {
+    if (!page.exportInput) return;
+    const input = page.exportInput(exportsSelected ? selectedKeys : page.rows.map((row) => row.rowKey), format);
+    setSaving('saving');
+    // The host owns the destination, the transfer and its completion notice; a refusal or cancel is not a failure.
+    instance.client.saveExport(input).then(
+      (result) => setSaving(result.success || result.status === 'cancelled' ? 'idle' : 'failed'),
+      () => setSaving('failed'),
+    );
+  };
   if (page.rows.length === 0 || !page.exportInput) return null;
   const label =
     selectedKeys.length > 0
@@ -89,6 +103,21 @@ export function RowsExport(
             )}
           />
         ) : null}
+        {saving === 'failed' ? (
+          <Text
+            tone="danger"
+            variant="meta"
+            value={translate('plugins.database.export.saveFailed', 'The file wasn’t saved. Try again, or copy it instead.')}
+          />
+        ) : null}
+        <Row justify="flex-end">
+          <Button
+            size="small"
+            busy={saving === 'saving'}
+            title={translate('plugins.database.export.save', 'Save file…')}
+            onPress={save}
+          />
+        </Row>
         {exported ? (
           <CodeBlock
             code={exported.content}

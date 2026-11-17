@@ -1,5 +1,7 @@
 import {
   DATABASE_CONNECTION_RESOURCE_ID_V1,
+  DATABASE_PLUGIN_ID_V1,
+  DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
   DatabaseDemandSnapshotV1Schema,
   DATABASE_OPERATION_ACTION_ID_V1,
   DATABASE_TARGETS_LIST_ACTION_ID_V1,
@@ -9,6 +11,7 @@ import {
   type DatabaseTargetsListResultV1,
 } from '@happier-dev/database-protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
@@ -138,6 +141,15 @@ export function createHostWorkbenchClient(
     },
     async setUnsavedChanges(value) {
       await hostApi.setUnsavedChanges(value);
+    },
+    async saveExport(input, signal) {
+      return await hostApi.downloadFile(
+        {
+          action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1) },
+          input: projectNativeJsonValueForTransport(input),
+        },
+        signal ? { signal } : undefined,
+      );
     },
     presentDeviceStorageError(error) {
       void hostApi.notify(
