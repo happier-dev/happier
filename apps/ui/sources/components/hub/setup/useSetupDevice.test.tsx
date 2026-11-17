@@ -18,6 +18,21 @@ afterEach(() => {
 });
 
 describe('Home setup device presentation', () => {
+    it.each([
+        { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15', width: 1024, height: 768, isComputer: false },
+        { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', width: 390, height: 844, isComputer: true },
+    ])('keeps pairing direction tied to hardware: $userAgent', async ({ userAgent, width, height, isComputer }) => {
+        vi.stubGlobal('navigator', { userAgent, maxTouchPoints: 5 });
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+        Object.assign(viewport, { width, height });
+        const { useSetupDevice } = await import('./useSetupDevice');
+        const hook = await renderHook(() => useSetupDevice());
+        expect(hook.getCurrent()).toMatchObject({ isComputer, isPhone: !isComputer });
+        Object.assign(viewport, { width: height, height: width });
+        await hook.rerender();
+        expect(hook.getCurrent()).toMatchObject({ isComputer, isPhone: !isComputer });
+    });
+
     it('recomposes a narrow desktop browser without treating it as a scanner device', async () => {
         vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
         vi.stubGlobal('window', { matchMedia: (query: string) => ({ matches: query.includes('pointer: fine') }) });

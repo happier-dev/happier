@@ -1,6 +1,6 @@
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import React, { useState } from 'react';
-import { Platform, View, useWindowDimensions } from 'react-native';
+import { View } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -25,8 +25,7 @@ import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { isRunningOnMac } from '@/utils/platform/platform';
-import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { useSetupDevice } from '@/components/hub/setup/useSetupDevice';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { Icon } from '@/components/ui/icons/Icon';
 import { accountErasureFailureNotice } from '@/components/settings/home/governance/homeGovernanceLabels';
@@ -66,7 +65,7 @@ export const WorkspaceRouteBody = React.memo(() => {
     const router = useRouter();
     const accountScope = useAccountSettingsScope();
     const accountExecution = useMountedActionExecution(accountScope);
-    const { width, height } = useWindowDimensions();
+    const { isComputer: showAddYourPhone } = useSetupDevice();
     const [accountDeletionPending, setAccountDeletionPending] = useState(false);
     const [analyticsOptOut, setAnalyticsOptOut] = useSettingMutable('analyticsOptOut');
     const [crashReportsOptOut, setCrashReportsOptOut] = useSettingMutable('crashReportsOptOut');
@@ -203,8 +202,6 @@ export const WorkspaceRouteBody = React.memo(() => {
         finally { setAccountDeletionPending(false); }
     };
 
-    const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
-    const showAddYourPhone = isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb);
     // Only Link new device needs this device's scanner. Add another Home opens the
     // shared add_home restore entry, which falls back to pasting a pairing link.
     const showLinkNewDevice = canUseCurrentDeviceQrScanner();
