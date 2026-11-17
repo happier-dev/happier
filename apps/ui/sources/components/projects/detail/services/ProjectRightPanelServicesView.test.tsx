@@ -207,6 +207,41 @@ describe('ProjectRightPanelServicesView', () => {
     });
     afterEach(async () => { await connection?.dispose(); connection = undefined; await home.reset(); });
 
+    it.each(['project', 'session'] as const)('keeps the %s Services header unknown after a failed launcher read and reports a confirmed empty read', async surface => {
+        const { PaneHeader } = await import('@/components/appShell/panes/PaneHeader');
+        const { PaneHeaderSlotProvider, PaneHeaderSlotScope, usePublishedPaneHeaderContent } = await import('@/components/appShell/panes/paneHeaderSlot');
+        const { SessionRightPanelServicesView } = await import('@/components/sessions/panes/services/SessionRightPanelServicesView');
+        const { t } = await import('@/text');
+        rpc.machine.mockImplementation(async ({ method, signal }: { method: string; signal?: AbortSignal }) => {
+            if (method !== RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) throw new Error(`unexpected_rpc:${method}`);
+            return new Promise(resolve => signal?.addEventListener('abort', () => resolve({ ok: false, reason: 'request_failed' }), { once: true }));
+        });
+        function HeaderProbe(): React.ReactElement {
+            const published = usePublishedPaneHeaderContent('services');
+            return <PaneHeader testID="launcher-truth-header" title="Services" line={published?.line ?? null} actions={published?.action} />;
+        }
+        for (const failed of [false, true]) {
+            const machineId = `launcher-truth-${surface}-${failed}`;
+            // The daemon read is the boundary; the shared launcher store and mounted header remain real.
+            const launcherSnapshotClient = vi.fn(async () => failed
+                ? { ok: false as const, reason: 'request_failed' as const }
+                : { ok: true as const, snapshot: { v: 1 as const, machineId, updatedAt: 1, targets: [] } });
+            const props = { serverId, machineId, inventoryState: buildLocalServiceInventoryState({ rows: [] }), launcherSnapshotClient };
+            const screen = await renderScreen(<PaneHeaderSlotProvider><HeaderProbe /><PaneHeaderSlotScope slotKey="services">
+                {surface === 'project' ? <ProjectRightPanelServicesView {...props} /> : <SessionRightPanelServicesView {...props} />}
+            </PaneHeaderSlotScope></PaneHeaderSlotProvider>);
+            const prefix = `${surface}-rightpanel-services`;
+            await vi.waitFor(() => expect(screen.findByTestId(`${prefix}-${failed ? 'error' : 'empty'}`)).not.toBeNull());
+            const collect = (node: { children: readonly unknown[] }): string => node.children.map(child => typeof child === 'string'
+                ? child : collect(child as { children: readonly unknown[] })).join(' ');
+            const header = collect(screen.findByTestId('launcher-truth-header')!);
+            const emptyCopy = t('localServices.pane.nothingRunningInWorkspace');
+            if (failed) expect(header).not.toContain(emptyCopy);
+            else expect(header).toContain(emptyCopy);
+            await screen.unmount();
+        }
+    });
+
     it('keeps one managed runtime state and recovery across the real rail, detail and Services', async () => {
         const { View } = await import('react-native');
         const { act } = await import('react-test-renderer');

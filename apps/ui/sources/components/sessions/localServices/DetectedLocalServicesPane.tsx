@@ -496,7 +496,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     const launcherPending = props.launcherState != null && launcherState.updatedAt === null
         && launcherState.refreshStatus !== 'error';
     const scanPending = (viewModel.status === 'loading' || launcherPending) && !hasLauncherTargets;
-    const scanUnknown = scanPending || (viewModel.status === 'error' && !hasLauncherTargets);
+    const scanUnknown = scanPending || ((viewModel.status === 'error' || launcherState.refreshStatus === 'error') && !hasLauncherTargets);
     const headerLine = React.useMemo(() => buildHeaderLine({
         offline,
         scanUnknown,
