@@ -23,9 +23,17 @@ async function fixture(options: Readonly<{ names?: readonly string[]; unavailabl
     list: async () => options.unavailable ? { coverage: 'unavailable', items: [] }
       : { coverage: 'complete', items: [...artifacts.values()].map(item => ({ id: item.id, header: item.header, updatedAtMs: 1, owned: true })) },
     read: async id => artifacts.get(id) ?? null,
+    readHeadersByIds: async ids => ids.map(id => ({ status: 'fulfilled' as const, value: artifacts.get(id) ?? null })),
     create: async input => { const id = `skill-${artifacts.size + 1}`;
       artifacts.set(id, { id, ...input, owned: true, revision: { headerVersion: 1, bodyVersion: 1 } }); return id; },
-    update: async () => { throw new Error('Unexpected Artifact mutation'); },
+    update: async input => {
+      const current = artifacts.get(input.artifactId);
+      if (!current) throw new Error('Unknown Artifact');
+      expect(input.expectedRevision).toEqual(current.revision);
+      const revision = { headerVersion: current.revision.headerVersion + 1, bodyVersion: current.revision.bodyVersion + 1 };
+      artifacts.set(input.artifactId, { ...current, header: input.header, body: input.body, revision });
+      return { revision };
+    },
     delete: async () => { throw new Error('Unexpected Artifact deletion'); },
   };
   for (const name of options.names ?? ['review', 'skill-1']) {
@@ -106,7 +114,7 @@ describe('Skills machine CLI name resolution', () => {
     const owner = await fixture(), output = captureConsoleJsonOutput<unknown>();
     try {
       expect(await owner.run(['skills', 'updates', 'check', 'review', '--server-id', 'selected-home', '--json'])).toBe(true);
-      expect(output.json()).toMatchObject({ ok: true, data: { results: [{ kind: 'skill', key: 'skill-1', upstream: { state: 'unchecked' } }] } });
+      expect(output.json(), JSON.stringify(output.json())).toMatchObject({ ok: true, data: { results: [{ kind: 'skill', key: 'skill-1', upstream: { state: 'unchecked' } }] } });
       expect(await owner.run(['skills', 'updates', 'check', 'skill-2', '--server-id', 'selected-home', '--json'])).toBe(true);
       expect(output.json()).toMatchObject({ ok: true, data: { results: [{ key: 'skill-2' }] } });
       expect(owner.machineRequests).toEqual([]);

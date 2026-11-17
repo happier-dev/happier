@@ -829,10 +829,8 @@ describe('plugins command daemon mutations', () => {
       expect(output.json()).toMatchObject({
         ok: false,
         error: {
-          code: 'failed',
+          code,
           message,
-          causeCode: code,
-          causeMessage: message,
         },
       });
     } finally {

@@ -17,9 +17,11 @@ import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { handleActionsCommand } from './actions';
 import { executeSessionMcpAction } from './toolsSessionMcp';
-import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { formatHappierMcpToolFailure, prepareHappierMcpToolInventory, registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
@@ -42,9 +44,9 @@ const deploymentInput = { serverId: 'home', environmentId: 'staging', expectedRe
   expectedTargetLinkRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1,
   contentBodyVersion: 1, requestKey: 'agent-deploy' };
 const deploymentSettings = normalizeActionsSettingsV1({ v: 1,
-  approvalWaivedSurfaces: { 'deployments.deploy': ['agent', 'cli'] },
-  approvalProfiles: [{ id: 'reviewed-deploys', name: 'Reviewed deploys',
-    actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent', 'mcp'] } } }] });
+  approvalWaivedSurfaces: { 'deployments.deploy': ['agent', 'cli'] } });
+const deploymentApprovalProfile = ApprovalProfileV1Schema.parse({ id: 'reviewed-deploys', name: 'Reviewed deploys',
+  actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent', 'mcp'] } } });
 const actionSessionId = 'cmvbeu0ig0040m203zcysq5v8';
 const diagnosticFailure = { ok: false, errorCode: 'action_failed', error: 'Action failed',
   requestId: 'diagnostic-action', effectAttempted: false, details: { expectedRevision: 3 },
@@ -57,11 +59,14 @@ async function createDeploymentAdmissionFixture() {
   // Profile and Artifact persistence are storage boundaries; admission, profile
   // resolution, approval production and deployment dispatch remain real.
   const readActionApprovalProfileId = vi.fn(async (context: ActionExecutorContext) =>
-    context.actionCaller?.kind === 'session' ? 'reviewed-deploys' : undefined);
+    context.actionCaller?.kind === 'session'
+      ? { approvalProfileId: deploymentApprovalProfile.id, approvalProfileTeamOrGroupDerived: false } : undefined);
   const deploymentAction = vi.fn(async () => ({ ok: true as const, environmentId: 'staging', revision: 2,
     deploymentId: 'deployment', deploymentRevision: 1, state: 'succeeded' as const }));
-  const executor = createActionExecutor({
+  const ports = {
     readActionApprovalProfileId,
+    readApprovalProfile: async id => ({ profile: id === deploymentApprovalProfile.id ? deploymentApprovalProfile : null,
+      resolution: { status: id === deploymentApprovalProfile.id ? 'available' : 'missing', requestedId: id } }),
     resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'staging' } }),
     prepareDeploymentAction: async () => ({ input: deploymentInput, preview: { sourceMethod: 'gitIntegration' } }),
     approvalsCreate: async ({ request }) => {
@@ -72,8 +77,11 @@ async function createDeploymentAdmissionFixture() {
       return { artifactId };
     },
     deploymentAction,
-  });
-  return { executor, inbox, readActionApprovalProfileId, deploymentAction,
+  } satisfies Partial<ActionExecutorDeps>;
+  const executor = createActionExecutor(ports);
+  const personExecutor = createCliActionExecutorHarness({ token: 'person-test-token', sessionId: '', mode: 'plain', ctx: null, serverId: 'home',
+    actionsSettingsProvider: { getActionsSettings: () => deploymentSettings } }, ports).executor;
+  return { executor, personExecutor, inbox, readActionApprovalProfileId, deploymentAction,
     close: () => rm(root, { recursive: true, force: true }) };
 }
 
@@ -269,8 +277,7 @@ describe('Agent tools Session MCP authority', () => {
       await handleActionsCommand(['invoke', 'deployments.deploy', '--input-json', JSON.stringify(deploymentInput), '--json'], {
         readCredentialsFn,
         getServerProfileFn: async () => { throw new Error('No saved Home in this fixture'); },
-        createExecutorFn: () => ({ execute: (actionId, input, context) => fixture.executor.execute(actionId, input,
-          { ...context, actionsSettings: deploymentSettings }),
+        createExecutorFn: () => ({ execute: fixture.personExecutor.execute,
           resolveSessionTarget: async (): Promise<never> => { throw new Error('No Session target'); } }),
       });
       expect(output.json(), output.chunks.join('')).toMatchObject({ ok: true, data: { deploymentId: 'deployment', state: 'succeeded' } });
@@ -463,7 +470,7 @@ describe('Agent tools Session MCP authority', () => {
       await handleToolsCommand([command, marker, '--session-id', 'untrusted-target',
         ...(command === 'call' ? ['--source', 'happier', '--tool', 'change_title', '--args-json', '{"title":"new"}'] : []),
         '--json'], { readCredentials });
-      expect(output.json()).toMatchObject({ ok: false, error: { code: 'not_authenticated' } });
+      expect(output.json()).toMatchObject({ ok: false, error: { code: 'action_transport_unavailable' } });
       expect(readCredentials).not.toHaveBeenCalled();
       expect(output.chunks.join('')).not.toContain('/private/custodian-home');
       expect(process.exitCode).toBe(1);

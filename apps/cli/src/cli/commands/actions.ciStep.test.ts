@@ -16,7 +16,8 @@ import { createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResult
   type ActionExecutorDeps } from '@happier-dev/protocol';
 import { handleActionsCommand } from './actions';
 import { dispatchCli } from '@/cli/dispatch';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -25,7 +26,7 @@ import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { HomeApplicationOriginV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { renderDeploymentGithubActionsStep } from '@/cli/actions/deploymentCiStep';
@@ -194,12 +195,10 @@ describe('emitted deployment CI step through the Actions command', () => {
         store.markRunning('operation');
         const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async (actionId, input) => {
           if (actionId === 'deployments.environments.get') return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-            environment: { v: 1, id: environmentId, serverId: homeId, projectSourceId: 'source', revision: 1,
-              owner: { kind: 'account', accountId: 'account' }, protection: 'nonProduction', purpose: 'standard',
-              deployerMode: 'managers', controllerMachineId: 'controller', createdByAccountId: 'account',
-              contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
-              capabilities: { role: 'manager', read: true, deploy: true, manage: true,
-                manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [] });
+            environment: createDeploymentEnvironmentHeaderV1({ id: environmentId, serverId: homeId, projectSourceId: 'source',
+              owner: { kind: 'account', accountId: 'account' }, controllerMachineId: 'controller', contentArtifactId: 'content',
+              capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true,
+                manageBindings: true, manageTargets: true, delete: true } }), targetLinks: [] });
           submissions += 1;
           expect(input).toEqual({ serverId: homeId, environmentId, sha, requestKey: '123-2' });
           if (state === 'offline' || state === 'client_required' || state === 'waitingApproval') return { ok: false,
@@ -211,7 +210,8 @@ describe('emitted deployment CI step through the Actions command', () => {
           };
           return { ok: true, environmentId, revision: 2, deploymentId: 'deployment', deploymentRevision: 1, state };
         };
-        const executor = createActionExecutor({
+        const executor = createCliActionExecutorHarness({ token, sessionId: '', mode: 'plain', ctx: null, serverId: configuration.activeServerId,
+          serverIdentityId: homeId }, {
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "deployments.environments.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), deploymentAction: transport,
           actionOperationAction: request => {
             operationInputs.push(request.input);
@@ -225,7 +225,7 @@ describe('emitted deployment CI step through the Actions command', () => {
               return { kind: 'found', operation: store.get(scope, 'operation') };
             } });
           },
-          resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport) });
+          resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport) }).executor;
         output.logs.length = 0;
         await handleActionsCommand(argv.slice(1), { createExecutorFn: params => {
           // The emitted variable reaches the actual CLI credential reader;

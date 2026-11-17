@@ -2,15 +2,16 @@ import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-
 import { createDeferred } from '@/testkit/async/deferred';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
 const credentialBoundary = vi.hoisted(() => ({ readStoredCredentials: vi.fn() }));
-const approvalTerminal = vi.hoisted(() => ({ promptInput: vi.fn(async () => 'yes') }));
+const approvalTerminal = vi.hoisted(() => ({ promptInput: vi.fn(async () => 'yes'), isInteractiveTerminal: vi.fn(() => false) }));
 vi.mock('@/terminal/prompts/promptInput', async importOriginal => ({
   ...await importOriginal<typeof import('@/terminal/prompts/promptInput')>(),
   promptInput: approvalTerminal.promptInput,
+  isInteractiveTerminal: approvalTerminal.isInteractiveTerminal,
 }));
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
@@ -18,9 +19,14 @@ vi.mock('@/persistence', async (importOriginal) => ({
 }));
 import { handleActionsCommand, resolveActionDefinitionForCliCompletion } from './actions';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
-import { API_TOKEN_FULL_GRANT_V1, createBlockingApprovalCoordinator, createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema, type ApprovalRequest, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, FeaturesResponseSchema, createBlockingApprovalCoordinator, createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema, type ApprovalRequest, type ActionExecutorDeps } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, AccountApiTokensCreateActionInputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
+import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -31,7 +37,20 @@ import { compileActionCliCommands } from '@/cli/actions/compiledCommands';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
+import { installAxiosFastifyAdapter, installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import Fastify from 'fastify';
+import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
+import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { executeActionOperationActionV1, type ActionOperationMachineTransportV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
@@ -233,11 +252,12 @@ describe('public Action failure evidence', () => {
         createExecutorFn: () => ({ ...executor, resolveSessionTarget: async sessionId => ({ ok: true as const, sessionId }) }),
       });
       expect(JSON.parse(output)).toMatchObject({ ok: false, error: {
-        code, requestId: 'fixture-public-failure',
+        // Untyped transport exceptions remain diagnostics; only the explicit
+        // Session refusal above owns the public domain failure envelope.
+        code: actionId === 'session.open' ? code : 'action_failed', requestId: 'fixture-public-failure',
         ...(actionId === 'session.open' ? {} : { failureCause: {
           phase: actionId === 'machines.agents.list' ? 'capabilities.detect' : 'dispatch', errorCode: code,
         } }),
-        ...(actionId === 'machines.agents.list' ? { details: { reason: 'fixture_unavailable' } } : {}),
       } });
       expect(process.exitCode).toBe(1);
     },
@@ -253,21 +273,19 @@ function finiteDeploymentTransport(submit: NonNullable<ActionExecutorDeps['deplo
     if (actionId !== 'deployments.environments.get') return submit(actionId, input, context);
     if (!('environmentId' in input)) throw new Error('Expected Environment');
     return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-      environment: { v: 1, id: input.environmentId, serverId: 'home', projectSourceId: 'source', revision: 1,
-        owner: { kind: 'account', accountId: 'account' }, protection: 'nonProduction', purpose: 'standard',
-        deployerMode: 'managers', controllerMachineId: 'controller', createdByAccountId: 'account',
-        contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
-        capabilities: { role: 'manager', read: true, deploy: true, manage: true,
-          manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [] });
+      environment: createDeploymentEnvironmentHeaderV1({ id: input.environmentId, serverId: input.serverId, projectSourceId: 'source',
+        owner: { kind: 'account', accountId: 'account' }, controllerMachineId: 'controller', contentArtifactId: 'content',
+        capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true,
+          manageBindings: true, manageTargets: true, delete: true } }), targetLinks: [] });
   };
   return transport;
 }
 
 function finiteDeploymentExecutor(submit: NonNullable<ActionExecutorDeps['deploymentAction']>) {
   const transport = finiteDeploymentTransport(submit);
-  return createActionExecutor({
+  return createCliActionExecutorHarness({ token: 'token', sessionId: '', mode: 'plain', ctx: null, serverId: 'home' }, {
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"teams.invitations.accept": Object.keys(ActionSurfaceSchema.shape), "deployments.rollback": Object.keys(ActionSurfaceSchema.shape), "deployments.teardown": Object.keys(ActionSurfaceSchema.shape), "action.invoke": Object.keys(ActionSurfaceSchema.shape), "machines.agentIsolation.set": Object.keys(ActionSurfaceSchema.shape), "connectedServices.quota.get": Object.keys(ActionSurfaceSchema.shape), "machines.agents.list": Object.keys(ActionSurfaceSchema.shape), "session.open": Object.keys(ActionSurfaceSchema.shape), "deployments.environments.get": Object.keys(ActionSurfaceSchema.shape), "browser.diagnostics.snapshot": Object.keys(ActionSurfaceSchema.shape), "projects.open": Object.keys(ActionSurfaceSchema.shape), "projects.script.run": Object.keys(ActionSurfaceSchema.shape), "deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "action.operations.get": Object.keys(ActionSurfaceSchema.shape), "session.goal.get": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.list": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.revoke": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.revokeAll": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), "account.apiTokens.create": Object.keys(ActionSurfaceSchema.shape), "daemon.filesystem.upload": Object.keys(ActionSurfaceSchema.shape), "memory.search": Object.keys(ActionSurfaceSchema.shape), "workflow.run.start": Object.keys(ActionSurfaceSchema.shape), "deployments.domains.add": Object.keys(ActionSurfaceSchema.shape), "session.list": Object.keys(ActionSurfaceSchema.shape), "home.public_profiles.restrict": Object.keys(ActionSurfaceSchema.shape), "machines.list": Object.keys(ActionSurfaceSchema.shape), "action.spec.search": Object.keys(ActionSurfaceSchema.shape), "action.spec.get": Object.keys(ActionSurfaceSchema.shape), "teams.identity.connections.list": Object.keys(ActionSurfaceSchema.shape), "identity.providers.list": Object.keys(ActionSurfaceSchema.shape), "session.status.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(), deploymentAction: transport,
-    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport) });
+    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport) }).executor;
 }
 
 function contributedActionDefinition() {
@@ -339,12 +357,35 @@ describe('actions root command', () => {
       actionArgs: input, summary: 'Browser diagnostics', decision: { kind: 'approve', decidedAtMs: 2 },
       execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } };
     const native = vi.fn(async () => ({ kind: 'approval_request_created', artifactId: 'cli-forwarded', actionId: request.actionId }));
+    const stored: StoredCredentials = { ...credentials('stored_session'),
+      token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature` };
+    const artifact = { id: 'cli-forwarded', ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain',
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/artifacts/cli-forwarded') return { status: 200, data: artifact };
+      throw new Error(`Unexpected forwarded-approval Home read: ${path}`);
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (new URL(String(url)).pathname === '/v1/artifacts/read') return artifactReadResponse(body,
+        id => id === artifact.id ? artifact : null);
+      throw new Error('Unexpected forwarded-approval Home write');
+    });
+    approvalTerminal.isInteractiveTerminal.mockReturnValueOnce(!yes);
     await handleActionsCommand(['invoke', request.actionId, '--input-json', JSON.stringify(input), ...(yes ? ['--yes'] : []), '--json'], {
-      readCredentialsFn: async () => credentials('stored_session'),
-      createExecutorFn: params => ({ ...createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
-        onApprovalRequested: params.onApprovalRequested }, { ...createUnavailableActionTransportDeps(),
-        runtimeActionExecute: native, approvalsGet: async () => request,
-        approvalsUpdate: async () => ({ ok: true }) }).executor,
+      readCredentialsFn: async () => stored,
+      // Full credentialed host owns person authority; only Home HTTP and the
+      // browser daemon are substituted, including the already-settled receipt.
+      createExecutorFn: params => ({ ...createCliActionExecutor({ ...params, token: stored.token, credentials: stored,
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://forwarded-home.test',
+        runtimeActionExecute: native }),
         resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
     });
     expect(JSON.parse(output), output).toMatchObject({ ok: true, data: receipt });
@@ -409,12 +450,12 @@ describe('actions root command', () => {
       return { kind: 'found' as const, operation: outcome === 'mismatched' ? { ...operation, operationId: 'another-operation' } : operation };
     });
     const operationInputs: unknown[] = [];
-    const executor = createActionExecutor({
+    const executor = createCliActionExecutorHarness({ token: 'token', sessionId: '', mode: 'plain', ctx: null, serverId: 'home' }, {
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"projects.script.run": Object.keys(ActionSurfaceSchema.shape), "deployments.deploy": Object.keys(ActionSurfaceSchema.shape), "action.operations.get": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
       actionOperationAction: args => {
         operationInputs.push(args.input);
         return executeActionOperationActionV1({ ...args, transport: async request => rpc(request) });
-      } });
+      } }).executor;
     await handleActionsCommand(['invoke', 'action.operations.get', '--input-json', JSON.stringify({
       serverId: 'home', machineId: 'controller', operationId: 'operation',
     }), '--wait', '--json'], {
@@ -462,13 +503,14 @@ describe('actions root command', () => {
       else store.succeed('operation', receipt);
       return { kind: 'found', operation: store.get(scope, 'operation') };
     });
-    const executor = createActionExecutor({
+    const executor = createCliActionExecutorHarness({ token: 'token', sessionId: '', mode: 'plain', ctx: null, serverId: 'home',
+      serverIdentityId: await resolveServerProfileHomeIdentityId('home') ?? undefined }, {
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"deployments.deploy": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...createUnavailableActionTransportDeps(),
       // Current Environment metadata names a different controller. Only the
       // original returned operation address may select the observation host.
       deploymentAction: deployment,
       resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deployment),
-      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport: rpc }) });
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport: rpc }) }).executor;
     await handleActionsCommand(['invoke', 'deployments.deploy', '--input-json', JSON.stringify({
       serverId: 'home', environmentId: 'staging', expectedRevision: 1, targetLinkId: 'target',
       expectedTargetLinkRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1,
@@ -711,6 +753,7 @@ describe('actions root command', () => {
     } finally { cancellation.abort(); coordinator.dispose(); await invoke; }
   });
   it('invokes API-token creation through real parsing, approval, and live caller custody', async () => {
+    installAxiosRequestMethodAdapter();
     let output = '';
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
       output += String(chunk);
@@ -725,41 +768,73 @@ describe('actions root command', () => {
       expiresAt: null, lastUsedAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
       grant: API_TOKEN_FULL_GRANT_V1, parentTokenId: null, activeChildCount: 0, embedConfig: null,
     } };
-    const coordinator = createBlockingApprovalCoordinator();
     const cancellation = new AbortController();
-    let request: ApprovalRequest | null = null;
-    let onApprovalRequested: Parameters<typeof createCliActionExecutorHarness>[0]['onApprovalRequested'];
-    const effect = vi.fn(async () => result);
-    const { executor } = createCliActionExecutorHarness({ token: 'synthetic-account', sessionId: '', mode: 'plain', ctx: null,
-      onApprovalRequested: (artifactId, signal, decide) => onApprovalRequested?.(artifactId, signal, decide) }, {
-      // Account HTTP/Artifact persistence and device credential provenance are boundaries.
-      accountApiTokensCreateAction: effect,
-      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['account.apiTokens.create']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }),
-      isApprovalExecutionOriginCurrent: async () => true,
-      approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'cli-token-approval' }; },
-      approvalsGet: async () => request,
-      approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
-      approvalsWaitForDecision: async args => ({ ...await coordinator.waitForDecision(args), request: request! }),
-      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+    const stored: StoredCredentials = { ...credentials('stored_session'),
+      token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature` };
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: {
+      serverIdentity: { serverIdentityId: 'srv_token-home' },
+      encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' },
+    } });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
+    const sockets = await createRequesterCurrentnessSocketHarness();
+
+    const trace: string[] = [];
+    onTestFailed(() => console.error('Token approval fixture trace:', JSON.stringify(trace)));
+    sockets.server.on('connection', socket => {
+      socket.on(SOCKET_RPC_EVENTS.REGISTER, packet => { trace.push('socket:register'); socket.emit(SOCKET_RPC_EVENTS.REGISTERED, packet); });
+    socket.on(SOCKET_RPC_EVENTS.CALL, (packet, ack) => {
+      trace.push('socket:call');
+      socket.emit(SOCKET_RPC_EVENTS.REQUEST, { ...packet, callerAuthority: 'present_user' },
+        (result: unknown) => ack({ ok: true, result }));
     });
-    const invoke = handleActionsCommand(['invoke', 'account.apiTokens.create', '--input-json', JSON.stringify({ tokenId, label }), '--json'], {
-      readCredentialsFn: async () => credentials('stored_session'),
-      createExecutorFn: params => { onApprovalRequested = params.onApprovalRequested; return ({
-        execute: (...[id, input, context]: Parameters<typeof executor.execute>) => executor.execute(id, input, {
-          ...context, authority: 'present_user', runtimeAccountId: 'account-1', serverId: 'home-1', defaultSessionMachineId: 'token-machine',
-        }),
-        // This server lookup boundary must remain unreachable for an Account Action.
-        resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); },
-      }); },
-    }, cancellation.signal);
+    });
+    const home = Fastify();
+    const artifacts = registerPlainArtifactRoutes(home, 'account-1');
+    const createdArtifactIds: string[] = [];
+    home.addHook('preHandler', async request => {
+      if (request.method === 'POST' && request.url === '/v1/artifacts') {
+        createdArtifactIds.push(ArtifactJsonCreateHttpInputV1Schema.parse(request.body).id);
+      }
+    });
+    home.get('/v1/account/encryption/currentness', async () => ({
+      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+    }));
+    home.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+    const restoreHttp = installAxiosFastifyAdapter({ app: home, origin: sockets.serverUrl });
+    onTestFinished(async () => { cancellation.abort(); restoreHttp(); await home.close(); await sockets.close(); });
+    const effect = vi.fn(async () => { trace.push('effect'); return result; });
+    home.post(ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, async request => {
+      expect(AccountApiTokensCreateActionInputV1Schema.parse(request.body)).toMatchObject({ tokenId, label });
+      return await effect();
+    });
+    const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
+      actions: { ['account.apiTokens.create']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } } });
+    approvalTerminal.isInteractiveTerminal.mockReturnValueOnce(true);
     try {
-      // ACT-ADMIT-ONCE-2: CLI result custody returns a deferred receipt and the
-      // ordinary terminal confirmation decides it, without a blocking waiter.
-      await invoke;
+      await handleActionsCommand(['invoke', 'account.apiTokens.create', '--input-json', JSON.stringify({ tokenId, label }), '--json'], {
+        readCredentialsFn: async () => stored,
+        createExecutorFn: params => ({ ...createCliActionExecutor({ ...params, token: stored.token, credentials: stored,
+          sessionId: '', mode: 'plain', ctx: null, serverId: 'home-1', serverIdentityId: 'srv_token-home',
+          serverHttpBaseUrl: sockets.serverUrl, runtimeActionMachineId: 'token-machine',
+          isApprovalExecutionOriginCurrent: createHostApprovalOriginCurrentness({ credentials: stored,
+            serverId: 'home-1', serverApiUrl: sockets.serverUrl,
+            resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: sockets.serverUrl, token: stored.token }),
+            checkDaemonOrigin: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials: stored,
+              machineId: 'token-machine', serverId: 'home-1', serverApiUrl: sockets.serverUrl }),
+          }),
+          onApprovalRequested: async (...args) => { trace.push('approval-requested'); return await params.onApprovalRequested?.(...args); },
+          actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings, allowEnvironmentOverride: false }),
+          accountServerActionDeps: createAccountServerActionDeps({ token: stored.token, credentials: stored,
+            serverId: 'home-1', serverIdentityId: 'srv_token-home', serverHttpBaseUrl: sockets.serverUrl }) }),
+          resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
+      }, cancellation.signal);
       expect(JSON.parse(output), output).toMatchObject({ ok: true, data: result });
       expect(effect).toHaveBeenCalledOnce();
-      expect(JSON.stringify(request)).not.toContain(result.token);
-    } finally { cancellation.abort(); coordinator.dispose(); await invoke; }
+      expect(createdArtifactIds).toHaveLength(1);
+      const approval = artifacts.read(createdArtifactIds[0]!);
+      expect(approval).toBeDefined();
+      expect(JSON.stringify(approval)).not.toContain(result.token);
+    } finally { cancellation.abort(); }
   });
   it('refuses a filesystem byte transfer without local custody before reading credentials', async () => {
     let output = '';
@@ -1005,7 +1080,7 @@ describe('actions root command', () => {
 
     expect(execute).toHaveBeenCalledWith(
       'machines.list',
-      { limit: 200 },
+      {},
       expect.objectContaining({ actionRequestId: 'corrélation-☃' }),
     );
     expect(process.exitCode).toBe(0);
