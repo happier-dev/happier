@@ -157,7 +157,7 @@ describe("Team capability resolver", () => {
         };
         const team = {
             id: "team", name: "Team", description: null, logo: null,
-            sessionCreationPolicy: "private_default" as const, externalSharingPolicy: "allowed" as const,
+            sessionCreationPolicy: "private_default" as const, reviewCreationPolicy: "private_default" as const, externalSharingPolicy: "allowed" as const,
             defaultSessionHistoryAccess: "from_membership" as const, admissionMode: "invite_only" as const,
             authenticationPolicy: null, archivedAt: null, directorySources: [source],
         };
@@ -203,7 +203,7 @@ describe("Team capability resolver", () => {
             name: "Team",
             description: null,
             logo: null,
-            sessionCreationPolicy: "private_default",
+            sessionCreationPolicy: "private_default", reviewCreationPolicy: "private_default",
             externalSharingPolicy: "allowed",
             defaultSessionHistoryAccess: "from_membership",
             admissionMode: "invite_only",

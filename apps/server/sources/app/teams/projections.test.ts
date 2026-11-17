@@ -13,7 +13,7 @@ describe("Team managed defaults audience", () => {
             ...membership,
             team: {
                 id: "team", name: "Team", description: null, logo: null, archivedAt: null,
-                sessionCreationPolicy: "private_default", externalSharingPolicy: "allowed",
+                sessionCreationPolicy: "private_default", reviewCreationPolicy: "private_default", externalSharingPolicy: "allowed",
                 defaultSessionHistoryAccess: "from_membership", admissionMode: "invite_only",
                 authenticationPolicy: null, managedDefaults,
             },
@@ -30,7 +30,7 @@ describe("Team managed defaults audience", () => {
     it("withholds managed defaults from a safe summary when Team reading is denied", () => {
         const team: TeamRecord = {
             id: "team", name: "Team", description: null, logo: null, archivedAt: null,
-            sessionCreationPolicy: "private_default", externalSharingPolicy: "allowed",
+            sessionCreationPolicy: "private_default", reviewCreationPolicy: "private_default", externalSharingPolicy: "allowed",
             defaultSessionHistoryAccess: "from_membership", admissionMode: "invite_only",
             authenticationPolicy: null,
             managedDefaults: { team: { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" } }, groups: {} },

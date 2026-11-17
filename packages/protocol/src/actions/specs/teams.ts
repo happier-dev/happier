@@ -577,6 +577,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     inputHints: { fields: [
       TEAM_ID_FIELD,
       approvalField('sessionCreationPolicy', 'Session creation policy'),
+      approvalField('reviewCreationPolicy', 'Review creation policy'),
       approvalField('externalSharingPolicy', 'External sharing policy'),
       approvalField('defaultSessionHistoryAccess', 'Default history access'),
       approvalField('admissionMode', 'Admission mode'),

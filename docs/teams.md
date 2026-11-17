@@ -420,12 +420,13 @@ have disclosed.
 
 ## Policy
 
-Four closed enums, a nullable accepted-authentication document, and nullable managed Session defaults, each with a named downstream consumer:
+Closed policy enums, a nullable accepted-authentication document, and nullable managed Session defaults, each with a named downstream consumer:
 
 | Field | Meaning | Enforced by |
 |---|---|---|
 | `sessionCreationPolicy` | initial/required Team audience intent for new Team-context Sessions | Session access owner |
-| `externalSharingPolicy` | may only narrow external sharing | Session access owner |
+| `reviewCreationPolicy` | independent initial/required Team audience intent for new project Reviews (0.3 development) | Review admission and Artifact grant writer |
+| `externalSharingPolicy` | may only narrow new external sharing | Session access owner and project Review Artifact writer |
 | `defaultSessionHistoryAccess` | default admission history intent | membership owner mints the actual horizon |
 | `admissionMode` | membership admission intent | invitation/provisioning owners |
 | `authenticationPolicy` | inherited or explicitly accepted authentication references | auth-entry and Team access owners |
@@ -436,8 +437,11 @@ permission matrix, or policy revision counter. Resource domains keep their own p
 credentials, Machines, automations, and repositories do not add fields here merely because
 they belong to a Team.
 
-Policy is prospective. A change never rewrites existing Session grants and never rewrites a
-membership horizon that was minted once at activation. A mixed patch is authorized field by
+Creation policy is prospective. A change never rewrites existing Session or Review grants and never rewrites a
+membership horizon that was minted once at activation. A new project Review uses its own `reviewCreationPolicy`
+(`private_default`, `team_default`, or `team_required`); its run Session independently uses Session creation policy.
+A required Review Team grant remains at least Edit. Later new external-sharing requests use the current
+ProjectSource Team context and `externalSharingPolicy`; this does not rewrite an existing audience. A mixed patch is authorized field by
 field before anything is written and commits wholly or not at all.
 
 ### Managed Session defaults

@@ -109,6 +109,12 @@ describe('Team policy contract', () => {
     }).success).toBe(false);
   });
 
+  it('admits Review creation policy independently of Session policy', () => {
+    const patch = { v: 1, teamId: 't1', reviewCreationPolicy: 'team_required' };
+    expect(TeamPolicySetInputV1Schema.parse(patch)).toEqual(patch);
+    expect(TeamPolicySetInputV1Schema.safeParse({ ...patch, reviewCreationPolicy: 'anything' }).success).toBe(false);
+  });
+
   it('treats an omitted policy field as unchanged and rejects an empty patch', () => {
     expect(TeamPolicySetInputV1Schema.parse({ v: 1, teamId: 't1', externalSharingPolicy: 'disabled' })).toEqual({
       v: 1,

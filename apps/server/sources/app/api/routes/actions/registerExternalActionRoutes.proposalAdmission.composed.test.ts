@@ -1060,7 +1060,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         rows.environment.deployerMode = 'members';
         if (role === 'use') {
             storage.state.creation.team = { id: 'source-team', name: 'Source Team', description: null, logo: null,
-                sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
+                sessionCreationPolicy: 'private_default', reviewCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
                 defaultSessionHistoryAccess: 'all_existing', admissionMode: 'invite_only',
                 authenticationPolicy: null, archivedAt: null };
             storage.state.metadata = shareableMachineMetadata;
@@ -1336,7 +1336,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         rows.enabled = true; rows.sourceReadable = true;
         rows.source.owner = { kind: 'team', teamId: 'source-team' };
         creation.team = { id: 'source-team', name: 'Source Team', description: null, logo: null,
-            sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
+            sessionCreationPolicy: 'private_default', reviewCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
             defaultSessionHistoryAccess: 'all_existing', admissionMode: 'invite_only',
             authenticationPolicy: null, archivedAt: null };
         creation.membershipActive = true;

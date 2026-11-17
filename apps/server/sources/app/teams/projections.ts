@@ -26,6 +26,7 @@ export const TEAM_PROJECTION_SELECT = {
     description: true,
     logo: true,
     sessionCreationPolicy: true,
+    reviewCreationPolicy: true,
     externalSharingPolicy: true,
     defaultSessionHistoryAccess: true,
     admissionMode: true,
@@ -52,6 +53,7 @@ export type TeamRecord = Readonly<{
     description: string | null;
     logo: unknown;
     sessionCreationPolicy: TeamSessionCreationPolicy;
+    reviewCreationPolicy: TeamSessionCreationPolicy;
     externalSharingPolicy: TeamExternalSharingPolicy;
     defaultSessionHistoryAccess: SessionHistoryAccess;
     admissionMode: TeamAdmissionMode;
@@ -117,6 +119,7 @@ export function projectTeamPolicyV1(team: TeamRecord, homeDefaults?: TeamPolicyV
     return {
         v: 1,
         sessionCreationPolicy: team.sessionCreationPolicy,
+        reviewCreationPolicy: team.reviewCreationPolicy,
         externalSharingPolicy: team.externalSharingPolicy,
         defaultSessionHistoryAccess: team.defaultSessionHistoryAccess,
         admissionMode: team.admissionMode,

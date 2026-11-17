@@ -16,7 +16,7 @@ describe('Source page capture cost', () => {
         const snapshot: ProjectSourceAccessCapture = {
             actor: { id: 'actor', status: 'active', homeRole: 'member', publicKey: 'key', encryptionMode: 'plain' },
             sources: [{ ...source, createdAt: source.createdAt.getTime(), updatedAt: source.updatedAt.getTime(), deletedAt: null }],
-            teams: [{ id: 'team', name: 'Team', description: null, logo: null, sessionCreationPolicy: 'private_default',
+            teams: [{ id: 'team', name: 'Team', description: null, logo: null, sessionCreationPolicy: 'private_default', reviewCreationPolicy: 'private_default',
                 externalSharingPolicy: 'allowed', defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only',
                 authenticationPolicy: null, archivedAt: null }],
             memberships: [{ teamId: 'team', membership: { id: 'membership', role: 'member', status: 'active', managedExternally: false } }],

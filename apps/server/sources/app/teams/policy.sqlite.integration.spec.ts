@@ -69,6 +69,17 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         return { owner, teamId: created.team.id };
     }
 
+    it("persists independent Review creation intent without rewriting Session policy", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const input = { actorAccountId: owner.id, teamId, reviewCreationPolicy: "team_required" as const };
+        const result = await inTx(tx => setTeamPolicyInTx(tx, input));
+        expect(result).toMatchObject({ ok: true, team: { policy: {
+            reviewCreationPolicy: "team_required", sessionCreationPolicy: "private_default",
+        } } });
+        const fresh = await inTx(tx => readTeamSummaryForActorInTx(tx, { actorAccountId: owner.id, teamId }));
+        expect(fresh).toMatchObject({ ok: true, team: { policy: { reviewCreationPolicy: "team_required" } } });
+    });
+
     it("persists managed defaults and patches one active Group without replacing sibling defaults", async () => {
         const { owner, teamId } = await ownedTeam();
         const first = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("First") } });

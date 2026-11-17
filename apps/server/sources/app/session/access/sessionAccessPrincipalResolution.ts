@@ -11,6 +11,7 @@ import {
 import type { SessionAccessAuthentication } from "./sessionAccessAuthentication";
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import { projectTeamCreationPolicy } from "@/app/teams/creationPolicy";
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { SessionAccessCandidatesInspectResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { assertSessionAccessManageAccessInTx } from './sessionAccessGrantService';
@@ -128,16 +129,11 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
         const context = contexts.get(input.creationTeamId);
         const qualification = qualifications.get(input.creationTeamId);
         if (context && qualification?.ok && grantableTeamIds.has(input.creationTeamId)) {
-            const policy = context.team.sessionCreationPolicy;
             creationDecision = {
                 v: 1,
                 teamId: context.team.id,
                 teamName: context.team.name,
-                requiredByPolicy: policy === "team_required",
-                defaultGrant: policy === "private_default" ? null : {
-                    accessLevel: "edit",
-                    canApprovePermissions: false,
-                },
+                ...projectTeamCreationPolicy(context.team.sessionCreationPolicy),
                 externalSharingPolicy: context.team.externalSharingPolicy,
             };
         }

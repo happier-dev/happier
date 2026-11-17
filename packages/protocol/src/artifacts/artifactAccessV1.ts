@@ -58,6 +58,8 @@ export const ArtifactTemplateAcceptedVersionSummaryV1Schema = lazyZodSchema(() =
   reportedAt: z.number().check(z.int(), z.nonnegative()),
 }));
 export const ArtifactAccessGrantRowV1Schema = lazyZodSchema(() => z.extend(ResourceAccessGrantRowV1Schema, {
+  /** Set once by Team policy at Review creation; clients cannot set this operand. */
+  requiredByTeamPolicy: z.optional(z.boolean()),
   /** Owner-only direct Account reports; absent on other kinds or self-only recipient projections. */
   acceptedVersions: z.optional(z.array(ArtifactTemplateAcceptedVersionSummaryV1Schema)),
 }));

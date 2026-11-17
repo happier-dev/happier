@@ -74,6 +74,7 @@ export type SetTeamPolicyInput = Readonly<{
     teamId: string;
     env?: NodeJS.ProcessEnv;
     sessionCreationPolicy?: TeamSessionCreationPolicy;
+    reviewCreationPolicy?: TeamSessionCreationPolicy;
     externalSharingPolicy?: TeamExternalSharingPolicy;
     defaultSessionHistoryAccess?: SessionHistoryAccess;
     admissionMode?: TeamAdmissionMode;
@@ -110,6 +111,7 @@ function sameAuthenticationPolicy(
 
 type TeamPolicyPatch = Pick<SetTeamPolicyInput,
     | "sessionCreationPolicy"
+    | "reviewCreationPolicy"
     | "externalSharingPolicy"
     | "defaultSessionHistoryAccess"
     | "admissionMode"
@@ -136,12 +138,13 @@ export function authorizeTeamPolicyPatch(
     capabilities: TeamCapabilitiesV1,
     patch: TeamPolicyPatch,
 ): boolean {
-    const changesSessionPolicy = patch.sessionCreationPolicy !== undefined
+    const changesResourcePolicy = patch.sessionCreationPolicy !== undefined
+        || patch.reviewCreationPolicy !== undefined
         || patch.externalSharingPolicy !== undefined
         || patch.defaultSessionHistoryAccess !== undefined;
     const changesAuthentication = patch.admissionMode !== undefined
         || patch.authenticationPolicy !== undefined;
-    return (!changesSessionPolicy || capabilities.managePolicy)
+    return (!changesResourcePolicy || capabilities.managePolicy)
         && (!changesAuthentication || capabilities.manageAuthentication)
         && (patch.managedDefaults === undefined || capabilities.manageSettings)
         && (patch.managedGroupDefaults === undefined || capabilities.manageGroups);
@@ -193,6 +196,7 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
     const isAuthenticationPolicyRepairOnly = current.status === "repair_required"
         && changesAuthenticationPolicy
         && input.sessionCreationPolicy === undefined
+        && input.reviewCreationPolicy === undefined
         && input.externalSharingPolicy === undefined
         && input.defaultSessionHistoryAccess === undefined
         && input.managedDefaults === undefined
@@ -293,6 +297,7 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
             managedDefaults: managedDefaults === null ? getActivePrismaRuntime().DbNull : managedDefaults,
         }),
         ...(input.sessionCreationPolicy === undefined ? {} : { sessionCreationPolicy: input.sessionCreationPolicy }),
+        ...(input.reviewCreationPolicy === undefined ? {} : { reviewCreationPolicy: input.reviewCreationPolicy }),
         ...(input.externalSharingPolicy === undefined ? {} : { externalSharingPolicy: input.externalSharingPolicy }),
         ...(input.defaultSessionHistoryAccess === undefined
             ? {}

@@ -462,7 +462,8 @@ export function artifactsRoutes(app: Fastify) {
         // lock, fencing mode/key changes. A Serializable snapshot instead goes
         // stale whenever a peer publishes on those same Account rows.
         const mutationGuard = candidateMutationGuard(request, request.params.id);
-        const result = await inTx(tx => setArtifactAccessGrantInTx(tx, { ...request.body, actorAccountId: request.userId }, mutationGuard), {
+        const result = await inTx(tx => setArtifactAccessGrantInTx(tx, { ...request.body, actorAccountId: request.userId,
+            authentication: readSessionAccessAuthenticationFromRequest(request) }, mutationGuard), {
             isolationLevel: "ReadCommitted", transactionClass: "artifact-access-grant-set",
         });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });

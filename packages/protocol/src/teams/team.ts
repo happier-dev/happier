@@ -32,9 +32,15 @@ export function isTeamPrincipalRoleV1(role: TeamRoleV1): boolean {
   return role !== 'guest';
 }
 
+/** Shared audience vocabulary; each resource reads its own independent Team preference. */
+export const TeamResourceCreationPolicyV1Schema = lazyZodSchema(() => z.enum(['private_default', 'team_default', 'team_required']));
+export type TeamResourceCreationPolicyV1 = z.infer<typeof TeamResourceCreationPolicyV1Schema>;
 /** The initial/required Team audience intent for new Team-context Sessions. */
-export const TeamSessionCreationPolicyV1Schema = lazyZodSchema(() => z.enum(['private_default', 'team_default', 'team_required']));
+export const TeamSessionCreationPolicyV1Schema = TeamResourceCreationPolicyV1Schema;
 export type TeamSessionCreationPolicyV1 = z.infer<typeof TeamSessionCreationPolicyV1Schema>;
+/** The initial/required Team audience intent for new Team-context Reviews. */
+export const TeamReviewCreationPolicyV1Schema = TeamResourceCreationPolicyV1Schema;
+export type TeamReviewCreationPolicyV1 = z.infer<typeof TeamReviewCreationPolicyV1Schema>;
 
 /** May only narrow external sharing; the Session owner still decides each share. */
 export const TeamExternalSharingPolicyV1Schema = lazyZodSchema(() => z.enum(['allowed', 'team_admins_only', 'disabled']));
@@ -70,6 +76,7 @@ export const TEAM_DEFAULT_SESSION_HISTORY_ACCESS_V1: SessionHistoryAccessV1 = 'f
 export const TeamPolicyV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   sessionCreationPolicy: TeamSessionCreationPolicyV1Schema,
+  reviewCreationPolicy: z.optional(TeamReviewCreationPolicyV1Schema),
   externalSharingPolicy: TeamExternalSharingPolicyV1Schema,
   defaultSessionHistoryAccess: SessionHistoryAccessV1Schema,
   admissionMode: TeamAdmissionModeV1Schema,
@@ -212,6 +219,7 @@ export const TeamPolicySetInputV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   teamId: TeamIdV1Schema,
   sessionCreationPolicy: z.optional(TeamSessionCreationPolicyV1Schema),
+  reviewCreationPolicy: z.optional(TeamReviewCreationPolicyV1Schema),
   externalSharingPolicy: z.optional(TeamExternalSharingPolicyV1Schema),
   defaultSessionHistoryAccess: z.optional(SessionHistoryAccessV1Schema),
   admissionMode: z.optional(TeamAdmissionModeV1Schema),
@@ -233,7 +241,8 @@ export const TeamPolicySetInputV1Schema = lazyZodSchema(() => z.strictObject({
       path: ['previousAuthenticationPolicy'],
     });
   }
-}), z.refine((input) => input.sessionCreationPolicy !== undefined
+}), z.refine((input) => input.reviewCreationPolicy !== undefined
+    || input.sessionCreationPolicy !== undefined
     || input.externalSharingPolicy !== undefined
     || input.defaultSessionHistoryAccess !== undefined
     || input.admissionMode !== undefined

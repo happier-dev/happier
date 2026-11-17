@@ -19,7 +19,7 @@ import { resolveResourceGrantAccessFromFacts, resolveResourceGrantAudienceFromFa
     resolveResourceGrantAccessInTx, resolveResourceGrantAudienceInTx,
     type ResourceGrantAccess, projectResourceRecipientEnvelope as projectRecipientEnvelope,
     projectResourceRecipientCensus, validateResourceRecipientEnvelopeCommit, applyResourceRecipientKeyEnvelopesInTx,
-    mayManageResourceGrants, validateResourceGrantPrincipalInTx, validateResourceGrantPrincipalsInTx,
+    mayManageResourceGrants, isResourceAccessLevelIncrease, validateResourceGrantPrincipalInTx, validateResourceGrantPrincipalsInTx,
     resolveResourceGrantMissingAudienceInTx, readResourceGrantPrincipalAudienceInTx, validateResourceRecipientKeyEnvelopes,
     type ResourceStoredRecipientEnvelope, type ResourceRecipientEnvelopeStorageAdapter } from '@/app/teams/resourceGrantAccess';
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
@@ -48,6 +48,8 @@ export { countTeamSharedArtifactsInTx } from './artifactTeamResourceQuery';
 import { publishWorkflowActionIndexChangedInTx } from '@/app/automations/automationActionIndex';
 import type { ProjectSourcePublicationPatchV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ProjectSourceContentReference } from '@/app/projects/sources/projectSourceContentReferences';
+import { mayAdmitReviewExternalGrantInTx } from '@/app/reviews/reviewCreationPolicy';
+import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 
 export type ArtifactAccess = ResourceGrantAccess;
 
@@ -58,7 +60,7 @@ export function projectArtifactPublicAudience(publication: Parameters<typeof isP
 
 /** Request-private admission carried into the transaction that changes the Artifact. */
 export type ArtifactMutationAdmission = Readonly<{
-    publicationGrants: readonly Pick<ArtifactAccessGrantSetStorageInputV1, 'principal' | 'accessLevel'>[];
+    publicationGrants: readonly (Pick<ArtifactAccessGrantSetStorageInputV1, 'principal' | 'accessLevel'> & { requiredByTeamPolicy?: boolean })[];
 }>;
 export interface ArtifactMutationTransactionGuard {
     admitInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string }>): Promise<ArtifactMutationAdmission | null>;
@@ -976,18 +978,18 @@ export async function readArtifactAccessGrantsForAdmittedCustodyInTx(tx: Tx,
         } }));
     return [
             ...accounts.map(row => ({ principal: { kind: "account" as const, accountId: row.accountId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: resolveAccountDisplayLabelV1(row.account), username: row.account.username } })),
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), requiredByTeamPolicy: row.requiredByTeamPolicy, display: { name: resolveAccountDisplayLabelV1(row.account), username: row.account.username } })),
             ...teams.map(row => ({ principal: { kind: "team" as const, teamId: row.teamId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } })),
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), requiredByTeamPolicy: row.requiredByTeamPolicy, display: { name: row.team.name } })),
             ...groups.map(row => ({ principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroupId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: null },
+                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), requiredByTeamPolicy: row.requiredByTeamPolicy, display: { name: null },
                 groupName: recipientAccountId === undefined ? { kind: 'unavailable' as const }
                     : projectTeamGroupNameForRecipient({ serialized: row.teamGroup.name, recipientAccountId }) })),
         ];
 }
 
 /** Owner/admin idempotent grant writes; only the owner may assign admin. */
-export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGrantSetStorageInputV1 & { actorAccountId: string },
+export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGrantSetStorageInputV1 & { actorAccountId: string; authentication?: SessionAccessAuthentication },
     mutationGuard?: ArtifactMutationTransactionGuard,
 ): Promise<AccessResult<ArtifactAccessGrantMutationResponseV1>> {
     if (!await admitArtifactMutationInTx(tx, input, mutationGuard, {
@@ -1000,6 +1002,10 @@ export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGr
     const principalError = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
         ownerAccountId: access.ownerAccountId, principal: input.principal, hasExistingGrant: mutation.previous !== null });
     if (principalError) return { ok: false, error: `artifact_${principalError}` };
+    const increasesAccess = isResourceAccessLevelIncrease(mutation.previous?.accessLevel ?? null, input.accessLevel);
+    if (increasesAccess && !await mayAdmitReviewExternalGrantInTx(tx, input)) {
+        return { ok: false, error: 'artifact_access_forbidden' };
+    }
     const changed = mutation.previous?.accessLevel !== input.accessLevel;
     const previousAudience = changed ? await resolveArtifactAudienceInTx(tx, input.artifactId) : [];
     if (changed) await mutation.upsert();
@@ -1020,7 +1026,8 @@ export async function applyArtifactPublicationGrantsInTx(tx: Tx, input: Readonly
     for (const grant of input.publicationGrants) {
         if (grant.principal.kind === 'account' && grant.principal.accountId === input.actorAccountId) continue;
         const mutation = await readArtifactGrantMutationInTx(tx, { ...input, ...grant });
-        if (mutation.previous?.accessLevel !== grant.accessLevel) await mutation.upsert();
+        if (mutation.previous?.accessLevel !== grant.accessLevel
+            || (grant.requiredByTeamPolicy === true && mutation.previous?.requiredByTeamPolicy !== true)) await mutation.upsert();
     }
 }
 
@@ -1062,10 +1069,11 @@ export async function joinArtifactSignedInLinkAccessInTx(tx: Tx, input: Readonly
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: input.authorAccountId, access: current?.level ?? 'view' } } as const;
 }
 
-async function readArtifactGrantMutationInTx(tx: Tx, input: ArtifactAccessGrantSetStorageInputV1 & { actorAccountId: string }) {
+async function readArtifactGrantMutationInTx(tx: Tx, input: ArtifactAccessGrantSetStorageInputV1 & { actorAccountId: string; requiredByTeamPolicy?: boolean }) {
     const principal = input.principal;
-    const data = { accessLevel: input.accessLevel, createdByAccountId: input.actorAccountId };
-    let previous: Readonly<{ accessLevel: string }> | null;
+    const data = { accessLevel: input.accessLevel, createdByAccountId: input.actorAccountId,
+        ...(input.requiredByTeamPolicy === true ? { requiredByTeamPolicy: true } : {}) };
+    let previous: Readonly<{ accessLevel: ArtifactAccessGrantSetStorageInputV1['accessLevel']; requiredByTeamPolicy: boolean }> | null;
     let upsert: () => Promise<unknown>;
     if (principal.kind === "account") {
         const where = { artifactId_accountId: { artifactId: input.artifactId, accountId: principal.accountId } };

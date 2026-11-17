@@ -312,6 +312,7 @@ model Team {
     description                 String?
     logo                        Json?
     sessionCreationPolicy       TeamSessionCreationPolicy @default(private_default)
+    reviewCreationPolicy        TeamSessionCreationPolicy @default(private_default)
     externalSharingPolicy       TeamExternalSharingPolicy @default(allowed)
     defaultSessionHistoryAccess SessionHistoryAccess      @default(from_membership)
     admissionMode               TeamAdmissionMode         @default(invite_only)
@@ -3988,6 +3989,7 @@ model ArtifactBlob {
 }
 
 model ArtifactGrant {
+    requiredByTeamPolicy Boolean @default(false)
     id                 String @id @default(cuid())
     artifactId String
     /// Provider database constraint enforces exactly one real principal FK to this selected arm.

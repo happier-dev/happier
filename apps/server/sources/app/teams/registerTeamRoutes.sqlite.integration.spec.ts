@@ -93,6 +93,23 @@ describe("Team routes (SQLite integration)", () => {
         }
     });
 
+    it("writes independent Review policy through the Team Action transport and refuses a member", async () => {
+        const owner = await account();
+        const member = await account();
+        const created = await post("/v1/teams/create", owner.id, { v: 1, name: "Review audience", requestKey: crypto.randomUUID() });
+        expect(created.statusCode, created.body).toBe(200);
+        const teamId: string = created.json().id;
+        await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
+        const updated = await post("/v1/teams/policy/set", owner.id, { v: 1, teamId, reviewCreationPolicy: "team_required" });
+        expect(updated.statusCode, updated.body).toBe(200);
+        expect(updated.json().policy).toMatchObject({ reviewCreationPolicy: "team_required", sessionCreationPolicy: "private_default" });
+        const read = await post("/v1/teams/get", owner.id, { v: 1, teamId });
+        expect(read.json().policy.reviewCreationPolicy).toBe("team_required");
+        const refused = await post("/v1/teams/policy/set", member.id, { v: 1, teamId, reviewCreationPolicy: "private_default" });
+        expect(refused.statusCode).toBe(403);
+        expect((await post("/v1/teams/get", owner.id, { v: 1, teamId })).json().policy.reviewCreationPolicy).toBe("team_required");
+    });
+
     it("writes and reads typed managed defaults through the existing Team policy transport", async () => {
         const owner = await account();
         const created = await post("/v1/teams/create", owner.id, { v: 1, name: "Managed defaults", requestKey: crypto.randomUUID() });

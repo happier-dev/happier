@@ -32,7 +32,7 @@ const team = {
     name: "Directory Team",
     description: null,
     logo: null,
-    sessionCreationPolicy: "private_default",
+    sessionCreationPolicy: "private_default", reviewCreationPolicy: "private_default",
     externalSharingPolicy: "allowed",
     defaultSessionHistoryAccess: "all_existing",
     admissionMode: "invite_only",

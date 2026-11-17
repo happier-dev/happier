@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { encodeBase64 } from '../crypto/base64.js';
 import { computeContentPublicKeyFingerprint } from '../machines/identity/contentPublicKeyFingerprint.js';
-import { ArtifactAccessActionOutputSchemasV1, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessGrantRowV1Schema, ArtifactAccessGrantsListResponseV1Schema,
+import { ArtifactAccessActionOutputSchemasV1, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessGrantRowV1Schema, ArtifactAccessGrantSetInputV1Schema, ArtifactAccessGrantsListResponseV1Schema,
   ArtifactRecipientKeyEnvelopeInputV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
   ArtifactHttpReadV1Schema, ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from './artifactAccessV1.js';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '../storage/artifactStoredContent.js';
@@ -46,6 +46,16 @@ describe('Artifact grant mutation contract', () => {
       principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view', createdByAccountId: 'owner',
       createdAt: 0, display: { name: 'Recipient' },
     }] }).success).toBe(false);
+  });
+});
+
+describe('Artifact required Team grant projection', () => {
+  it('carries the admission-time required flag without accepting it as a client grant operand', () => {
+    const row = { principal: { kind: 'team', teamId: 'team' }, accessLevel: 'edit', createdByAccountId: 'owner',
+      createdAt: 0, display: { name: 'Team' }, requiredByTeamPolicy: true };
+    expect(ArtifactAccessGrantRowV1Schema.parse(row)).toEqual(row);
+    expect(ArtifactAccessGrantSetInputV1Schema.safeParse({ artifactId: 'artifact', principal: row.principal,
+      accessLevel: row.accessLevel, requiredByTeamPolicy: false }).success).toBe(false);
   });
 });
 

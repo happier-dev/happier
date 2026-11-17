@@ -159,6 +159,11 @@ export function resolveTeamResourceGrantMatchedContributionsFromFacts<T>(input: 
 
 const accessRank = { view: 1, edit: 2, admin: 3, owner: 4 } as const;
 
+/** New grants and stronger access admit a larger audience capability; tightening does not. */
+export function isResourceAccessLevelIncrease(previous: ResourceCallerAccessV1 | null, next: ResourceCallerAccessV1): boolean {
+    return previous === null || accessRank[next] > accessRank[previous];
+}
+
 function hasEffectiveTeamGrant(grant: ResourceGrantAccessFacts['teamGrants'][number], actorAccountId: string): boolean {
     return resolveResourceGrantMatchedContributionsFromFacts([{
         principal: { kind: 'team', memberships: grant.team.memberships.map(member => ({
@@ -314,7 +319,7 @@ export function resolveResourceGrantAccessFromFacts(row: ResourceGrantAccessFact
     if (row.ownerAccountId === actorAccountId) return { ...access, level: 'owner', matchedGrants: [] };
     let level: ResourceCallerAccessV1 | null = null;
     const include = (candidate: ResourceAccessLevelV1) => {
-        if (level === null || accessRank[candidate] > accessRank[level]) level = candidate;
+        if (isResourceAccessLevelIncrease(level, candidate)) level = candidate;
     };
     const matchedGrants = resolveResourceGrantMatchedContributionsFromFacts(resourceGrantPrincipalContributionsFromFacts(row), actorAccountId);
     for (const candidate of matchedGrants) include(candidate.accessLevel);
