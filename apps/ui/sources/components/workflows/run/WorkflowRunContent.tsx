@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
-import { WorkflowPageNavigation } from '../navigation/WorkflowNavigationViews';
+import { useWorkflowPageNavigationShown, WorkflowPageNavigation } from '../navigation/WorkflowNavigationViews';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { normalizeResultPreview } from '@/components/workflows/presentation/resultPreview';
@@ -592,6 +592,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         phone, presented: props.active !== false,
         selectPage });
     const executeNavigation = useMountedScopeActionCommand(navigationScope);
+    // The navigation owner's one answer to whether page tabs show, so a row with nothing in it never keeps its space.
+    const navigationShown = useWorkflowPageNavigationShown(navigation, phone);
     // One identity for the page tabs, so live progress does not re-render them.
     const selectNavigation = React.useCallback((id: string) => selectWorkflowNavigationItem(executeNavigation, navigation.model, id),
         [executeNavigation, navigation.model]);
@@ -958,9 +960,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const failureReasonPending = failureReason === null
         && (props.run.state === 'failed' || props.run.state === 'interrupted')
         && props.firstFailedInvocationResolution === 'loading' && (phone || props.selectedInvocationId === null);
-    const failureRecoveryInstruction = failurePresentation?.recovery.usageLimitWait
-        ?? (failurePresentation !== null && primaryAction === 'stop' && resolveWorkflowRecoveryChoices(failurePresentation.recovery, props).noChoices
-            ? t('workflows.recovery.nextStop') : null);
+    const failureChoices = failurePresentation == null ? null : resolveWorkflowRecoveryChoices(failurePresentation.recovery, props);
+    // When its choices appear is said by the failed step's card when that step is open beside the Run; the page says
+    // it when no pane shows that card: on a phone, or with nothing open beside it. Stop stays the page's own next step.
+    const failureStepBeside = !phone && failurePresentation != null && props.selectedInvocationId === failurePresentation.invocationId;
+    const failureRecoveryInstruction = (failureStepBeside ? null : failurePresentation?.recovery.usageLimitWait ?? failureChoices?.waitLine)
+        ?? (failureChoices?.noChoices === true && primaryAction === 'stop' ? t('workflows.recovery.nextStop') : null);
     const outcomeWord = formatWorkflowRunOutcomeLabel({
         state: props.run.state,
         workflowCustodyState: props.run.workflowCustodyState,
@@ -1543,7 +1548,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
                 route's view id; the person reads the one map as Map. */}
-            <View style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : styles.viewSwitchOnMark]}>
+            {/* A phone keeps its pages in the bottom bar and folds a settled Run's source action into ⋯: with neither
+                here, the row is absent rather than an empty band above the view. */}
+            {!navigationShown && sourceFolded && isTerminalWorkflowRunState(props.run.state) ? null : (
+            <View testID={`${testIDPrefix}-view-switch`} style={[styles.viewSwitch, phone ? styles.viewSwitchPhone : styles.viewSwitchOnMark]}>
                 {/* A phone's pages usually live in the bottom bar; no wrapper, so an absent strip leaves no gap. */}
                 {phone ? <WorkflowPageNavigation navigation={navigation} phone
                     testIDPrefix={`${testIDPrefix}-view`}
@@ -1576,6 +1584,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     /> : null}
                 </View>}
             </View>
+            )}
         </View>
     );
 

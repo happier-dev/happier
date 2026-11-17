@@ -155,7 +155,13 @@ function offlineSceneData() {
   };
 }
 
+/** Each invocation belongs to its scene's Run, as the Run read returns them, so Activity reads its own rows. */
 function sceneData(scene: WorkflowRunSpecimenScene) {
+  const data = sceneRecords(scene);
+  return { ...data, invocations: data.invocations.map((invocation) => ({ ...invocation, runId: data.run.id })) };
+}
+
+function sceneRecords(scene: WorkflowRunSpecimenScene) {
   if (scene === 'offline') return offlineSceneData();
   const failed = scene === 'failed';
   const invocations = [

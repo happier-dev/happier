@@ -974,6 +974,35 @@ describe('WorkflowRunContent', () => {
     expect(notOffered.findByTestId('workflow-run-failure-next')?.props.children).toBe('workflows.recovery.nextStop');
   });
 
+  it('says when recovery choices appear on the Run page while its Machine is away, once beside an open failure', async () => {
+    // WAVE-ACCEPT-1117B fix 6: the phone page had no next step; only the wide step pane said it.
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', parentRecordId: 'root', lifecycle: 'failed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: 'analyze', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+      reason: { code: 'machine_unavailable', message: 'The target Machine was offline.' } });
+    const offline = {
+      run: createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' }),
+      machineName: 'MacBook Pro', machineReachable: false, invocations: [invocation],
+      invocationProgressById: new Map([[invocation.id, progress]]), firstFailedInvocationId: invocation.id,
+      firstFailedInvocationResolution: 'resolved' as const,
+    };
+    const reconnect = 'workflows.recovery.choicesOnReconnect:{"machine":"MacBook Pro"}';
+    viewport.window = { width: 390, height: 844 };
+    const phone = await renderContent({ ...offline, selectedInvocationId: null });
+    expect(phone.findByTestId('workflow-run-failure-next')?.props.children).toBe(reconnect);
+    // Its pages live in the phone bar and a settled Run folds its source action, so no empty switch band holds a gap.
+    expect(phone.findByTestId('workflow-run-view:activity')).toBeNull();
+    expect(phone.findByTestId('workflow-run-view-switch')).toBeNull();
+    viewport.window = { width: 1440, height: 900 };
+    const nothingOpen = await renderContent({ ...offline, selectedInvocationId: null });
+    expect(nothingOpen.findByTestId('workflow-run-failure-next')?.props.children).toBe(reconnect);
+    expect(nothingOpen.findByTestId('workflow-run-view-switch')).not.toBeNull();
+    // The failed step open beside the Run says it in its own card; the page does not repeat it.
+    const open = await renderContent({ ...offline, selectedInvocationId: invocation.id, selectedInvocationProgress: progress });
+    expect(open.findByTestId('workflow-run-failure-next')).toBeNull();
+    expect(open.getTextContent()).toContain(reconnect);
+  });
+
   it('says Skipped on a completed Run map for a step it never ran, and only when the history is complete', async () => {
     const root = createWorkflowInvocationIndexFixture({ id: 'root', lifecycle: 'completed' });
     const taken = createWorkflowInvocationIndexFixture({ id: 'taken', parentRecordId: root.id, sequence: '1', lifecycle: 'completed' });

@@ -317,7 +317,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const {
         prepared: preparedOffered, reattach: reattachOffered, retrySame: retrySameOffered, retryFresh: retryFreshOffered, retry: retryOffered,
         replacement: replacementOffered, restore: restoreOffered, reviewed: reviewedNewRunOffered, another: anotherAgentOffered,
-        offered: offeredChoices, choiceOffered, noChoices,
+        offered: offeredChoices, choiceOffered, noChoices, waitLine,
     } = resolveWorkflowRecoveryChoices(recovery, props);
     const choiceDisplay = (choice: (typeof offeredChoices)[number]) => offeredChoices[0] === choice
         ? props.recoveryPrimaryDisplay ?? 'default' : 'secondary';
@@ -344,10 +344,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         && props.onRunAgain !== undefined;
     // A failure only a Machine setting can fix leads to that setting; Run again stays beside it, quieter.
     const remedy = noChoices && props.onOpenMachineRemedy !== undefined ? recovery.remedy ?? null : null;
-    const noChoicesLine = !noChoices ? null
-        : usageLimitWait ?? (unavailableMachine !== null
-            ? t('workflows.recovery.choicesOnReconnect', { machine: unavailableMachine.name })
-            : resolveNoChoicesLine(runAgainShown ? null : props.noChoicesNext ?? null));
+    const noChoicesLine = !noChoices ? null : waitLine ?? resolveNoChoicesLine(runAgainShown ? null : props.noChoicesNext ?? null);
     // A failed step's own result is the detail of what went wrong; it waits one quiet tap away in its card.
     const failureDetails = props.lifecycle === 'failed' && props.finalResult == null && props.waitPrompt == null
         ? props.progress?.result : undefined;

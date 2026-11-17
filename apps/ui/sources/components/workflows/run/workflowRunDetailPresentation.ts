@@ -466,9 +466,14 @@ export function resolveWorkflowRecoveryChoices(recovery: WorkflowInvocationRecov
         ['restore', restore], ['reviewed', reviewed], ['another', another],
     ] as const).filter(([, isOffered]) => isOffered).map(([choice]) => choice);
     const choiceOffered = offered.length > 0 || replacement;
+    const noChoices = !(choiceOffered || recovery.workspaceUnavailable || recovery.waitingForStop
+        || (recovery.remainingNotStartedSiblingCount ?? 0) > 0);
+    // With nothing to choose yet, the one line saying when choices appear: a usage limit's reset, else the Machine's
+    // return. The step's recovery card and the Run page (a phone, or no step open beside it) both read it.
+    const waitLine = !noChoices ? null : recovery.usageLimitWait ?? (recovery.unavailableMachine
+        ? t('workflows.recovery.choicesOnReconnect', { machine: recovery.unavailableMachine.name }) : null);
     return { prepared, reattach, retrySame, retryFresh, retry, replacement, restore, reviewed, another, offered, choiceOffered,
-        noChoices: !(choiceOffered || recovery.workspaceUnavailable || recovery.waitingForStop
-            || (recovery.remainingNotStartedSiblingCount ?? 0) > 0) };
+        noChoices, waitLine };
 }
 
 export type WorkflowRunFailurePresentation = Readonly<{
