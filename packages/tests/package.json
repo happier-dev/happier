@@ -122,7 +122,8 @@
     "providers:kimi:smoke:update-baselines": "pnpm --silent run providers:run kimi smoke --update-baselines",
     "providers:auggie:smoke:update-baselines": "pnpm --silent run providers:run auggie smoke --update-baselines",
     "providers:pi:smoke:update-baselines": "pnpm --silent run providers:run pi smoke --update-baselines",
-    "providers:grok:smoke:update-baselines": "pnpm --silent run providers:run grok smoke --update-baselines"
+    "providers:grok:smoke:update-baselines": "pnpm --silent run providers:run grok smoke --update-baselines",
+    "test:deployments:journeys": "../../apps/stack/bin/hstack-exec --target=nl1 --cwd=packages/tests -- env HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT=1 HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT=1 HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD=1 HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD=1 node scripts/run-vitest-with-heartbeat.mjs --config vitest.core.slow.config.ts suites/core-e2e/deployments.journey.slow.e2e.test.ts"
   },
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
