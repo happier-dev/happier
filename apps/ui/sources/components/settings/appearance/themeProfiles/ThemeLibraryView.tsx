@@ -80,6 +80,8 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
           id: slotMode,
           title: slot.name,
           subtitle: `${modeTitle(slotMode)} · ${slot.sourceLabel}`,
+          // The mode this device shows now, said once at the slot's top end (lab A1).
+          ...(slot.showing ? { status: t('settingsAppearance.themeProfiles.showingNow') } : {}),
           preview: (
             <LibraryPreview
               preview={slot.preview}
@@ -122,6 +124,7 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
           <SettingAnchor setting={THEMES_SETTINGS.settings.darkTheme}>
             <SelectionTiles
               variant="card"
+              selectionMark="outline"
               density={phone ? 'regular' : 'compact'}
               descriptionPlacement={phone ? 'below' : 'beside'}
               previewAspectRatio={PHONE_SLOT_PREVIEW_ASPECT}
@@ -192,7 +195,8 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
       </ItemGroup>
 
       {props.onOpenStore ? (
-        <ItemGroup>
+        // One quiet onward line at the page foot (lab A1): no card under the bare tiles.
+        <ItemGroup surface="none">
           <Item
             testID="settings-theme-store"
             icon={<Icon name={PLUGINS_SURFACE_ICON} size={ICON_SIZE.md} />}
@@ -225,19 +229,14 @@ const LibraryPreview = React.memo(function LibraryPreview(
   );
 });
 
-/** Under a slot: whether this device shows that mode now, and the way to send its theme to other devices. */
+/** Under a slot: the way to send its theme to other devices. */
 function SlotFooter(
   props: Readonly<{ slot: ThemeLibraryViewProps['slots'][ThemeProfileMode] }>,
 ) {
   const { slot } = props;
-  if (!slot.showing && !slot.onUseOtherDevices) return null;
+  if (!slot.onUseOtherDevices) return null;
   return (
     <View testID={`settings-theme-slot-${slot.mode}-footer`} style={stylesheet.slotFooter}>
-      {slot.showing ? (
-        <Text variant="meta" style={stylesheet.meta}>
-          {t('settingsAppearance.themeProfiles.showingNow')}
-        </Text>
-      ) : null}
       {slot.onUseOtherDevices ? (
         <View ref={slot.devicesAnchorRef as React.Ref<React.ElementRef<typeof View>>} collapsable={false}>
         <TextLinkButton
@@ -410,9 +409,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: 'center',
     columnGap: theme.space.s12,
     rowGap: theme.space.s4,
-  },
-  meta: {
-    color: theme.colors.text.secondary,
   },
   notice: {
     flexDirection: 'row',

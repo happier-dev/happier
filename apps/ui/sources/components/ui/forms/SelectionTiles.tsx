@@ -47,6 +47,8 @@ export interface SelectionTile<T extends string> {
     mark?: React.ReactNode;
     disabled?: boolean;
     badge?: string;
+    /** Card tiles: a quiet fact about the option right now ("Showing now"), where a chosen card's check stands. */
+    status?: string;
     /**
      * A small rendering of what this option looks like (visual tiles or compact card rows). Pass the real component at
      * static props — not a drawn replica — so the preview cannot drift from the product.
@@ -89,6 +91,8 @@ type SelectionTilesBaseProps<T extends string> = {
     /** The group's accessible name (the setting it chooses). */
     accessibilityLabel?: string;
     testIdPrefix?: string;
+    /** Card variant: `outline` marks the chosen card by its ink outline alone (cards that picture their option). */
+    selectionMark?: 'check' | 'outline';
     density?: 'regular' | 'compact';
     minimumColumns?: number;
     maximumColumns?: number;

@@ -366,7 +366,7 @@ describe('Theme profile settings screen', () => {
     it('says which mode this device shows now, following the system when the appearance follows it', async () => {
         storage.getState().applyLocalSettings({ themePreference: 'adaptive' });
         const screen = await renderProfilesScreen();
-        const slotText = (mode: 'light' | 'dark') => screen.findByTestId(`settings-theme-slot-${mode}-footer`)!
+        const slotText = (mode: 'light' | 'dark') => screen.findByTestId(`settings-theme-slot:${mode}`)!
             .findAll((node) => typeof node.type === 'string').flatMap((node) => node.children.filter((child) => typeof child === 'string')).join(' ');
         const showingNow = 'settingsAppearance.themeProfiles.showingNow';
         expect(slotText('light')).toContain(showingNow);
