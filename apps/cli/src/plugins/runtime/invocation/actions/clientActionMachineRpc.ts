@@ -9,7 +9,8 @@ type ClientActionMachineRpc = Readonly<{
   callConnectedClientRpc(
     method: string,
     params: unknown,
-    options: Readonly<{ timeoutMs: null; signal?: AbortSignal; answeringClient?: SocketRpcAnsweringClientV1; onIssued(): void }>,
+    options: Readonly<{ timeoutMs: null; signal?: AbortSignal; answeringClient?: SocketRpcAnsweringClientV1; onIssued(): void;
+      principalAccountId?: string }>,
   ): Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode?: string; error?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
 }>;
 
@@ -25,7 +26,7 @@ function unavailable(clientId?: string, cause?: unknown): UiContributedActionExe
 /** Uses the existing machine socket once; an uncertain effect is never retried. */
 export function createClientActionMachineRpcExecutor(
   getMachineClient: () => ClientActionMachineRpc | null | undefined,
-): (request: UiContributedActionExecuteRequestV1, options: Readonly<{ signal?: AbortSignal; clientId?: string }>) => Promise<UiContributedActionExecuteResponseV1> {
+): (request: UiContributedActionExecuteRequestV1, options: Readonly<{ signal?: AbortSignal; clientId?: string; principalAccountId?: string }>) => Promise<UiContributedActionExecuteResponseV1> {
   return async (request, options) => {
     const client = getMachineClient();
     // Positive reconnect advertisements cannot prove absence. The authenticated
@@ -44,6 +45,7 @@ export function createClientActionMachineRpcExecutor(
         RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE, request,
         { timeoutMs: null, ...(options.signal ? { signal: options.signal } : {}),
           answeringClient: { requireSingle: true, ...(options.clientId ? { clientId: options.clientId } : {}) },
+          ...(options.principalAccountId ? { principalAccountId: options.principalAccountId } : {}),
           onIssued: () => { issued = true; } },
       );
       if (!response.ok) {

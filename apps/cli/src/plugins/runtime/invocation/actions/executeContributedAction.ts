@@ -85,7 +85,7 @@ export type PluginActionExecutionAttempt = Readonly<
 
 export type ClientContributedActionExecutor = (
   request: UiContributedActionExecuteRequestV1,
-  options: Readonly<{ signal?: AbortSignal; clientId?: string }>,
+  options: Readonly<{ signal?: AbortSignal; clientId?: string; principalAccountId?: string }>,
 ) => Promise<PluginActionExecutorResult>;
 
 type PluginActionExecutionRegistry = ResolvedContributionRegistry | ResolvedExecutablePluginRuntimeRegistry;
@@ -414,6 +414,8 @@ export async function executeContributedAction(params: Readonly<{
       & Pick<RpcHandlerContext, 'callerInputAuthorization'>;
     /** Host-owned custody transition after final admission, before plugin code. */
     beforeHandlerInvocation?: () => Promise<void>;
+    /** Host-stamped acting Account; the daemon's client transport reaches only its own Apps. */
+    principalAccountId?: string;
   }>;
 }>): Promise<PluginActionExecutionAttempt> {
   const actionId = String(params.actionId);
@@ -632,6 +634,7 @@ export async function executeContributedAction(params: Readonly<{
     }
     return { matched: true, result: await runtimeRegistry.executeClientAction(request.data, {
       ...(params.context.signal ? { signal: params.context.signal } : {}),
+      ...(params.context.principalAccountId ? { principalAccountId: params.context.principalAccountId } : {}),
       ...(params.clientId === undefined ? {} : { clientId: params.clientId }),
     }) };
   }

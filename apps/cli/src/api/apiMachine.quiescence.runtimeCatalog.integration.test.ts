@@ -10,6 +10,8 @@ import { ApiMachineClient } from './apiMachine';
 import { encodeBase64, encrypt } from './encryption';
 import { AccountProfileResponseSchema, decodePlainMachineStoredContent, FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, RPC_METHODS } from '@happier-dev/protocol';
 import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
+import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/automation/reverseDispatch';
+import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { createBrowserRecordingNativeViewCaptureAdapter } from '@/daemon/browser/recording/adapters/nativeView';
 import { createBrowserRecordingNativeViewCaptureCommand } from '@/daemon/browser/recording/adapters/nativeViewCommand';
 import { createDesktopBrowserRecordingNativeViewCaptureTransport } from '@/daemon/browser/recording/adapters/nativeViewTransport';
@@ -109,6 +111,35 @@ function encryptForMachine(machine: Machine, value: unknown): string {
 }
 
 describe('ApiMachineClient daemon quiescence admission', () => {
+    it('sends no reverse client RPC for another Account through any daemon route into its own Apps', async () => {
+        // MACH-PRINCIPAL-AUDIT-1116 A-R4 / SEC 1116C: the Machine socket reaches the daemon
+        // Account's Apps; a hosted member's client, plugin or App-view Action never uses them.
+        const emitted: string[] = [];
+        const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (_event, payload) => {
+            emitted.push(String((payload as { method?: unknown }).method));
+            return { ok: true, result: { v: 1, execution: { ok: true, result: {} } } };
+        } });
+        const ownerToken = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
+        Reflect.set(client, 'socket', socket);
+        const plugin = createClientActionMachineRpcExecutor(() => client);
+        const browser = createBrowserAutomationReverseDispatcher({ getMachineClient: () => client });
+        const presenter = createClientActionReverseDispatcher(() => client);
+        const contributed = { v: 1 as const, action: { pluginId: 'example.plugin', localId: 'open' }, input: null, surface: 'agent' as const };
+        const context = (accountId: string) => ({ surface: 'agent' as const, authority: 'account_automation' as const, runtimeAccountId: accountId,
+            defaultSessionId: 'hosted-session' });
+        const view = { browserSessionId: 'browser', viewId: 'app-view', actionKind: 'snapshot' };
+        expect(await plugin(contributed, { principalAccountId: 'member' })).toMatchObject({ ok: false, actionHandlerInvocation: 'notStarted' });
+        expect(await browser({ actionId: 'browser.automation.snapshot', input: view, context: context('member') } as never)).toMatchObject({ ok: false });
+        // Typed client absence (inbox.get settles as status 'unavailable'), never a delivery.
+    expect(await presenter({ actionId: 'inbox.get', input: {}, context: context('member') })).toEqual({ ok: true, result: { status: 'unavailable' } });
+        expect(emitted).toEqual([]);
+        await plugin(contributed, { principalAccountId: 'owner' });
+        await browser({ actionId: 'browser.automation.snapshot', input: view, context: context('owner') } as never);
+        await presenter({ actionId: 'inbox.get', input: {}, context: context('owner') });
+        expect(emitted).toHaveLength(3);
+    });
+
     it('keeps a received client receipt when the socket disconnects immediately afterwards', async () => {
         const receipt = { v: 1, execution: { ok: true, result: { status: 'opened' } } };
         const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async () => {

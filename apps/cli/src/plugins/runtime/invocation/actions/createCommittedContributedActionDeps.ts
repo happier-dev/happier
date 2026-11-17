@@ -1,4 +1,5 @@
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { admitAccountActionInvokeConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
@@ -215,6 +216,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
           isCurrent: () => !invocationSignal.aborted && (!binding || binding.isCurrent()) && (!purposeActivation || purposeActivation.isCurrent()),
         };
       }
+      const principalAccountId = readActionPrincipalAccountId(context);
       const attempt = await executeContributedAction({
         runtimeRegistry: lease.registry,
         ...input.inheritedInvocation,
@@ -261,6 +263,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
           ...(input.inheritedInvocation?.caller ? { caller: input.inheritedInvocation.caller } : {}),
           ...(externalActionContext ? { externalActionContext } : {}),
           ...(typeof context.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
+          ...(principalAccountId ? { principalAccountId } : {}),
           signal: invocationSignal,
         },
       });

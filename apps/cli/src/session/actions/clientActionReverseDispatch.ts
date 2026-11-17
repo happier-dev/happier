@@ -20,6 +20,7 @@ import { isWorkflowAuthoringActionId, workflowDraftClientRpcMethod, WorkflowDraf
 import { PluginExecutionOriginActionIdSchema, PluginExecutionOriginActionInputSchemas } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
 import type { SocketRpcAnsweringClientV1, SocketRpcAnsweringClientCandidateV1 } from '@happier-dev/protocol/socketRpc';
 import { readCliActionBoundSessionId } from './resolveCliActionCallerSession';
+import { readActionPrincipalAccountId } from './actionPrincipalAccount';
 import { retainAdmittedClientActionParent } from './admittedClientActionChildren';
 import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/automation/reverseDispatch';
@@ -32,7 +33,8 @@ import { readWidgetActionSessionTargetV1, readWidgetActionSurfaceV1 } from '@hap
 export type ClientActionMachineRpc = Readonly<{
   hasConnectedClientRpcHandler(method: string): boolean;
   callConnectedClientRpc(method: string, params: unknown,
-    options: Readonly<{ timeoutMs: number | null; signal?: AbortSignal; answeringClient?: SocketRpcAnsweringClientV1; onIssued(): void }>):
+    options: Readonly<{ timeoutMs: number | null; signal?: AbortSignal; answeringClient?: SocketRpcAnsweringClientV1; onIssued(): void;
+      principalAccountId?: string }>):
     Promise<Readonly<{ ok: true; result: unknown; answeringClientId?: string; answeringClientIds?: readonly string[]; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }> | Readonly<{ ok: false; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
 }>;
 
@@ -45,16 +47,9 @@ type ClientActionReverseRequest = Omit<Parameters<NonNullable<ActionExecutorDeps
 export function createClientActionReverseDispatcher(
   getMachineClient: () => ClientActionMachineRpc | null | undefined,
   voiceRun?: VoiceRunActionDispatchRequestV1['voiceRun'],
-  /** The Account whose Apps the Machine transport reaches; a daemon passes its own. */
-  options?: Readonly<{ appAccountId?: string | null }>,
 ): (request: ClientActionReverseRequest) => Promise<ActionExecuteResult> {
   return async ({ actionId, input, context, executeChild, admittedHostReviewedChildren }) => {
-    // A daemon's reverse client RPC reaches its own Account's Apps. A hosted member's
-    // Action (shared Machine) never runs there with the owner's App authority.
-    const principalAccountId = context.externalActionExecutionAuthorization?.binding.accountId ?? context.runtimeAccountId;
-    if (options?.appAccountId && principalAccountId && principalAccountId !== options.appAccountId) {
-      return { ok: false, errorCode: 'client_not_available', error: 'client_not_available' };
-    }
+    const principalAccountId = readActionPrincipalAccountId(context);
     const requestedClientId: unknown = input && typeof input === 'object' ? Reflect.get(input, 'clientId') : undefined;
     const clientId = typeof requestedClientId === 'string' ? requestedClientId : undefined;
     const unavailable = () => isThemeActionId(actionId) ? clientActionUnavailable(actionId) : clientId
@@ -73,6 +68,7 @@ export function createClientActionReverseDispatcher(
           timeoutMs: options?.timeoutMs ?? null,
           ...(options?.signal ? { signal: options.signal } : {}),
           ...(options?.answeringClient ? { answeringClient: options.answeringClient } : {}),
+          ...(options?.principalAccountId ? { principalAccountId: options.principalAccountId } : {}),
           onIssued: () => options?.onIssued?.(),
         }),
       } : null });
@@ -176,7 +172,7 @@ export function createClientActionReverseDispatcher(
     };
     try {
       const response = await client.callConnectedClientRpc(method, request, {
-        ...(answeringClient ? { answeringClient } : {}),
+        ...(answeringClient ? { answeringClient } : {}), ...(principalAccountId ? { principalAccountId } : {}),
         timeoutMs: null, ...(context.signal ? { signal: context.signal } : {}), onIssued: () => {
           issued = true;
           context.onTransportIssued?.();

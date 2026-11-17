@@ -1098,8 +1098,7 @@ resolveServerFeaturesSnapshot?: () =>
             : { v: 1, ok: false, error: 'discussion_post_denied' };
         },
         credentials,
-        clientActionExecute: createClientActionReverseDispatcher(() => params.getApiMachineForSessions(), undefined,
-          { appAccountId: readPreviewAccountIdFromToken(params.credentials.token) }),
+        clientActionExecute: createClientActionReverseDispatcher(() => params.getApiMachineForSessions()),
         ...(observedServerIdentityId ? { machineRecipesRead: createMachineRecipeReadAction({
           homeId: observedServerIdentityId, machineId: params.machineId,
           ...(apiMachineForSessions ? { readMachineMetadataSnapshot: () => apiMachineForSessions.getMachineMetadataSnapshot() } : {}),

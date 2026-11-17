@@ -4208,8 +4208,14 @@ export class ApiMachineClient {
         method: string,
         params: unknown,
         options?: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void;
-            answeringClient?: SocketRpcAnsweringClientV1 }>,
+            answeringClient?: SocketRpcAnsweringClientV1;
+            /** The Action's acting Account; this socket reaches only this daemon Account's Apps. */
+            principalAccountId?: string }>,
     ): Promise<Readonly<{ ok: true; result: TResult; answeringClientId?: string; answeringClientIds?: readonly string[]; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }> | Readonly<{ ok: false; error?: string; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>> {
+        // A hosted member's Action (shared Machine) never runs in the owner's Apps.
+        if (options?.principalAccountId && options.principalAccountId !== readAccountIdFromToken(this.token)) {
+            return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+        }
         const socket = this.socket;
         if (!socket || !this.machineContentReady) {
             return { ok: false, errorCode: 'machine_socket_unavailable' };

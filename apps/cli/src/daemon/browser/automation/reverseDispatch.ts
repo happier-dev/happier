@@ -6,6 +6,7 @@ import { clientActionAmbiguous, withoutClientActionInput } from '@happier-dev/pr
 
 import type { ReverseCaptureMachineRpcClient } from '../recording/reverseChannel/desktopReverseCaptureUiCall';
 import { browserCommandDispatchFailure } from '../control/types';
+import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 
 const unavailable = { ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_ui_automation_unavailable' } as const;
 
@@ -43,12 +44,14 @@ export function createBrowserAutomationReverseDispatcher(input: Readonly<{
         : interrupted()
       : unavailable;
     if (args.context.signal?.aborted) return unavailable;
+    const principalAccountId = readActionPrincipalAccountId(args.context);
     try {
       // Automation owns its execution budget; do not let the generic RPC default cut
       // a valid long-running page action off first.
       const response = await client.callConnectedClientRpc(method, request.data,
         { ...(typeof record.timeoutMs === 'number' ? { timeoutMs: record.timeoutMs } : {}),
           answeringClient: { requireSingle: true, ...(typeof record.clientId === 'string' ? { clientId: record.clientId } : {}) }, signal: args.context.signal,
+          ...(principalAccountId ? { principalAccountId } : {}),
           onIssued: () => { issued = true; args.context.onTransportIssued?.(); } });
       if (!response.ok && response.errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS) {
         return clientActionAmbiguous(response.answeringClients);
