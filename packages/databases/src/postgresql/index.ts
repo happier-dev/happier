@@ -1,4 +1,5 @@
 export { admitPsqlInput, psqlInputScanner, PostgresqlInputError } from './input.js';
+export { decodePostgresqlObjectRowsV1 } from './objectRows.js';
 export { admitPostgresqlWorkbenchStatement, postgresqlStatementRanges, normalizePostgresqlStatement } from './statement.js';
 export {
     quotePostgresqlIdentifier, postgresqlParameter, postgresqlSemanticType,
