@@ -83,3 +83,33 @@ it('takes the Isolation door’s one availability decision: offline it says so o
     expect(shared.findByTestId('machine-sandboxes-empty-add')).toBeNull();
     expect(shared.getTextContent()).toContain(t('machineDetailPage.isolation.notManager'));
 });
+
+it.each(['portable', 'profile'] as const)('settles a refused host inventory visibly through a %s Home and retries through the inventory owner', async identifier => {
+    const homeId = 'srv_host_sandboxes_refused';
+    let refused = true;
+    homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://host-sandboxes-refused.test',
+        serverIdentityId: homeId, accountId: 'owner' }], route: request => request.path === '/v1/machines/managed/actions/list'
+            ? refused ? Response.json({ code: 'permission_denied' }, { status: 403 }) : Response.json({ machines: [] }) : undefined });
+    const serverId = identifier === 'profile' ? homes.homes.home!.profileId : homes.homes.home!.id;
+    const machine = createMachineFixture({ id: 'controller', installationId: 'installation' });
+    function Route() {
+        const managedEnrolled = useManagedEnrolledMachine({ serverId, enrolledMachineId: undefined });
+        const state = { target: { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId,
+            machine, machineName: 'Host', machineSentenceName: 'Host', isServerSwitching: false,
+            isHydratingMachine: false, switchReady: true }, managedEnrolled, refreshKey: 0,
+            reload: async () => {} } satisfies MachinePageState;
+        return <MachinePageStateContext.Provider value={state}>
+            <MachineSandboxesTab serverId={serverId} machineId={machine.id} machineName="Host" online
+                params={{ id: 'sandboxes' }} setParams={() => {}} />
+        </MachinePageStateContext.Provider>;
+    }
+    const screen = await renderScreen(<Route />);
+    await vi.waitFor(() => expect(screen.findByTestId('machine-sandboxes-read-state')).not.toBeNull());
+    expect(screen.findByTestId('machine-sandboxes-loading')).toBeNull();
+    expect(screen.findByTestId('machine-sandboxes-empty')).toBeNull();
+    expect(screen.getTextContent()).toContain(t('managedMachines.detail.readRefused'));
+    refused = false;
+    await screen.pressByTestIdAsync('machine-sandboxes-read-retry');
+    await vi.waitFor(() => expect(screen.findByTestId('machine-sandboxes-empty')).not.toBeNull());
+    expect(screen.findByTestId('machine-sandboxes-read-state')).toBeNull();
+});

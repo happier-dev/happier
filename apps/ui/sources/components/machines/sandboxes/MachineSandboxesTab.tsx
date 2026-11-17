@@ -14,6 +14,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { describeMachineIsolationAvailability, MachineIsolationOfflineLine, type MachineIsolationAvailability } from '@/components/machines/security/isolation/MachineIsolationAvailability';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -49,9 +50,16 @@ function MachineHostSandboxes(props: Readonly<{
     const host = useHostMachineSandboxes({ serverId: props.serverId, controller: props.controller });
     const live = React.useMemo(() => host.sandboxes.filter(sandbox => sandbox.archivedAt === undefined), [host.sandboxes]);
     if (host.firstAnswerPending && live.length === 0) return <SkeletonRows testID="machine-sandboxes-loading" rows={3} />;
-    if (live.length === 0) return props.empty;
+    const failed = host.entry && host.entry.status !== 'loading' && host.entry.status !== 'ready' ? host.entry : null;
+    const failure = failed ? <SurfaceStateCard testID="machine-sandboxes-read-state"
+        kind={failed.status === 'denied' ? 'denied' : 'unavailable'} size={live.length > 0 ? 'line' : undefined}
+        title={failed.status === 'denied' ? t('managedMachines.detail.readRefused') : t('managedMachines.detail.loadFailed')}
+        diagnosticCode={failed.errorCode}
+        action={{ label: t('common.retry'), onPress: host.refresh, testID: 'machine-sandboxes-read-retry' }} /> : null;
+    if (live.length === 0) return failure ?? props.empty;
     return (
         <>
+            {failure}
             <MachineTabSubHead title={null} back={null} description={t('machineDetailPage.isolation.host.count', { count: host.count })} />
             <ItemGroup testID="machine-sandboxes-list">
                 {live.map(sandbox => <MachineSandboxRow key={sandbox.id} serverId={props.serverId} sandbox={sandbox} />)}
