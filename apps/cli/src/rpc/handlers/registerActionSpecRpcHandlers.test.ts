@@ -4,9 +4,8 @@ import { z } from 'zod/mini';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
-import { withSetupRpcRegistrations } from '@/testkit/setupRpcRegistrations';
+import { SETUP_RPC_REGISTRATION_ACTION_IDS, withSetupRpcRegistrations } from '@/testkit/setupRpcRegistrations';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import {
@@ -55,17 +54,7 @@ describe('ActionSpec-derived RPC registrar', () => {
     it('publishes the setup families through their production Machine registrars', async () => {
         // Account-only preset CRUD and Project/Team rows have no daemon binding.
         // This census covers the concrete Machine families consumed by setup.
-        const actionIds = new Set<string>([
-            ...ACTION_ID_FAMILIES_V1.project_execution,
-            ...ACTION_ID_FAMILIES_V1.project_definitions,
-            ...ACTION_ID_FAMILIES_V1.managed_machines,
-            ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
-            ...ACTION_ID_FAMILIES_V1.local_services_inventory,
-            ...ACTION_ID_FAMILIES_V1.local_services_launcher,
-            ...ACTION_ID_FAMILIES_V1.local_services_preview,
-            ...ACTION_ID_FAMILIES_V1.local_services_actions,
-            ...ACTION_ID_FAMILIES_V1.scm_repository,
-        ]);
+        const actionIds = new Set<string>(SETUP_RPC_REGISTRATION_ACTION_IDS);
         // An RPC-enabled Action may use the generic receiver without declaring a
         // dedicated method. The catalog owner defines the direct registrations.
         const specs = listActionSpecRpcRegistrations().filter(spec => actionIds.has(spec.id));

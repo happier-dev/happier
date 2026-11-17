@@ -1,4 +1,5 @@
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineRpcHandlers } from '@/api/machine/rpcHandlers';
@@ -9,6 +10,19 @@ import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 
 import { createUnavailableActionTransportDeps } from './actionTransportDeps';
+
+/** Declared family coverage; absent methods outside this scope remain unverified. */
+export const SETUP_RPC_REGISTRATION_ACTION_IDS = Object.freeze([
+    ...ACTION_ID_FAMILIES_V1.project_execution,
+    ...ACTION_ID_FAMILIES_V1.project_definitions,
+    ...ACTION_ID_FAMILIES_V1.managed_machines,
+    ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
+    ...ACTION_ID_FAMILIES_V1.local_services_inventory,
+    ...ACTION_ID_FAMILIES_V1.local_services_launcher,
+    ...ACTION_ID_FAMILIES_V1.local_services_preview,
+    ...ACTION_ID_FAMILIES_V1.local_services_actions,
+    ...ACTION_ID_FAMILIES_V1.scm_repository,
+]);
 
 /** Real registrar selections for the setup corridor; no expected Action rows are supplied. */
 export async function withSetupRpcRegistrations<T>(
