@@ -39,7 +39,7 @@ export function readSessionInputPromptTitleTextV1(text: string): string {
       remaining = afterPlan;
       continue;
     }
-    const partialPlan = remaining.match(/^<happier_coding_prompt length="(\d+)">\n/);
+    const partialPlan = remaining.match(/^<happier_coding_prompt length="(\d+)">\s/u);
     if (partialPlan) {
       // Native previews can end inside the body or closing tag. The declared
       // body length keeps a partial closing tag out of the visible title.

@@ -26,7 +26,7 @@ describe('Codex external session titles', () => {
     ] }))}\n\n${FRAMED}`;
     expect(readCodexNativeCandidateTitle({ preview: prompt })).toBe('Fix the login redirect');
     expect(readCodexExternalSessionTitleCandidate(prompt, { source: 'prompt' })).toBe('Fix the login redirect');
-    expect(readCodexNativeCandidateTitle({ preview: prompt.slice(0, 80) })).toBeUndefined();
-    expect(readCodexExternalSessionTitleCandidate(prompt.slice(0, 80), { source: 'prompt' })).toBeNull();
+    expect(readCodexNativeCandidateTitle({ preview: prompt.slice(0, 80) })).toBe('Dynamic resource context with repeated spa');
+    expect(readCodexExternalSessionTitleCandidate(prompt.slice(0, 80), { source: 'prompt' })).toBe('Dynamic resource context with repeated spa');
   });
 });
