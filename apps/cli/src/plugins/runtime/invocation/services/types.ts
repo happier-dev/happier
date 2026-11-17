@@ -270,6 +270,8 @@ export type CreateAgentInvocationServices = (
         auxiliaryNativeOperation?: Readonly<{
             retainCleanup(cleanup: Readonly<{ dispose(): Promise<void> }>): void;
         }>;
+        /** Captured Run-native placement; Account/result ownership remains on the invocation seed. */
+        nativeOperation?: import('@/daemon/agentRuntime/executionRunNativeOperation').ExecutionRunNativeOperation;
         /** Captured host preparation; generic Exec stays nonactivating. */
         prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
         /** Captured host authority, rechecked by the physical Exec owner before launch. */

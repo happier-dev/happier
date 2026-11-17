@@ -88,6 +88,8 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     setupAutostart?: import('@/workspaces/projectSetup/projectSetupAutostart').ProjectSetupAutostartContext;
     /** Host-authored identity and control of the existing Session-owned Run. */
     executionRun?: RetainedExecutionRunControl & Readonly<{ runId: string }>;
+    prepareNativeOperation?: (cwd: string, signal: AbortSignal, correlationId: string) => Promise<import('./executionRunNativeOperation').ExecutionRunNativeOperation | undefined>;
+    disposeNativeOperation?: () => Promise<void>;
     isCurrent(): boolean | Promise<boolean>;
     resolveRuntime(ingress: RpcHandlerContext): Promise<ProjectFiniteActionRuntime | null>;
     /** The native invocation's already-qualified installed Account Agent.

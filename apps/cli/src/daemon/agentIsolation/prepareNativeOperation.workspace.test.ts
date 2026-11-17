@@ -69,6 +69,25 @@ it('refuses material outside the selected native home before admitting an operat
   })).toThrowError(expect.objectContaining({ code: 'agent_isolation_unavailable' }));
 });
 
+it('retains selected native Provider material on a prepared Run operation', async () => {
+  const requesterIdentity = { kind: 'isolated' as const, separationRequired: false, homeServerIdentityId: 'home',
+    requester: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' } };
+  const material = { materializationKey: 'run-operation', environment: { XDG_CONFIG_HOME: '/native/.config' }, selectedMaterials: [] };
+  const target = { runtimeHome: '/native/runtime/operations/run-operation', environment: material.environment, selectedMaterials: [] };
+  const operation = createAgentIsolationOperationContext({
+    machine: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [] }) },
+    managedHappierBinaryPath: '/managed/happier', requesterIdentity,
+    nativeIdentity: { agentUid: 2401, agentGid: 2401, home: '/native' }, signal: new AbortController().signal,
+    readMaterial: () => material, readTarget: () => target,
+  });
+  const selected = { environment: { SELECTED_PROVIDER: 'requester' },
+    selectedMaterials: [{ relativePath: 'provider.json', contentBase64: Buffer.from('selected').toString('base64') }] };
+  const prepared = await operation.prepareLaunch!({ requesterIdentity, agentNativeLaunch: true,
+    mcpLaunchMaterial: selected, signal: new AbortController().signal });
+  expect(prepared.read()?.launch).toMatchObject({ environment: { ...material.environment, ...selected.environment },
+    selectedMaterials: selected.selectedMaterials });
+});
+
 it.skipIf(process.platform !== 'linux').each(['member', 'sharedAgent'] as const)('reuses the admitted %s tuple after the live policy projection changes', async kind => {
   await withTempDir('held-native-operation-', async home => {
     const requesterIdentity = { kind: 'isolated' as const, separationRequired: false, homeServerIdentityId: 'home',

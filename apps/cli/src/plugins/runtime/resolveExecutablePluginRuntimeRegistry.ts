@@ -6453,12 +6453,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
             });
         }
         const declaredAgentLocalId = declaredAgent.identity?.localId ?? declaredAgent.id;
-        const nativeOperation = agentParams.auxiliaryNativeOperation && params?.agentIsolation?.read()?.enabled
+        const nativeOperation = agentParams.nativeOperation ?? (agentParams.auxiliaryNativeOperation && params?.agentIsolation?.read()?.enabled
             ? await prepareAgentAuxiliaryNativeOperation({ machine: params.agentIsolation,
                 requester: readDaemonManagedServiceRequester(), correlationId: agentParams.correlationId,
                 signal: agentParams.signal })
-            : undefined;
-        if (nativeOperation) agentParams.auxiliaryNativeOperation!.retainCleanup(nativeOperation);
+            : undefined);
+        if (nativeOperation && agentParams.auxiliaryNativeOperation) agentParams.auxiliaryNativeOperation.retainCleanup(nativeOperation);
         const agentIsolation = nativeOperation?.agentIsolation ?? params?.agentIsolation;
         const agentSystemTools = createDeclaredAgentCliSystemToolService({
             ...(!agentParams.agentCliLaunch ? { readMemberLaunch: () => readMemberAgentCliLaunchContext(agentIsolation, 'agent_invocation_services') } : {}),
@@ -6552,7 +6552,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         return { seed, operation: {
             filesystemRoots: Object.freeze({
                 pluginData: join(storePaths.storageDir, agentParams.pluginId, 'fs'),
-                workspace: nativeOperation?.workingDirectory ?? agentParams.cwd,
+                workspace: agentParams.nativeOperation ? agentParams.cwd : nativeOperation?.workingDirectory ?? agentParams.cwd,
                 projects: new Map(),
             }),
             hostAccessRequests: Object.freeze([
@@ -6561,7 +6561,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ]),
             ...(agentParams.environment ? { environment: agentParams.environment } : {}),
             ...(nativeOperation ? { agentIsolation: nativeOperation.agentIsolation,
-                requesterIdentity: nativeOperation.requesterIdentity, defaultCwd: nativeOperation.workingDirectory } : {}),
+                requesterIdentity: nativeOperation.requesterIdentity, defaultCwd: agentParams.nativeOperation ? agentParams.cwd : nativeOperation.workingDirectory } : {}),
             ...(agentParams.prepareAgentNativeLaunch ? { prepareAgentNativeLaunch: agentParams.prepareAgentNativeLaunch } : {}),
             ...(agentParams.assertLaunchCurrent ? { assertLaunchCurrent: agentParams.assertLaunchCurrent } : {}),
             ...(exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId } : {}),

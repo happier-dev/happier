@@ -217,7 +217,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       signal?.throwIfAborted(); input.signal.throwIfAborted(); return requesterIdentity;
     },
     read: () => read(),
-    async prepareLaunch({ requesterIdentity, signal, sessionMcpContext }) {
+    async prepareLaunch({ requesterIdentity, signal, sessionMcpContext, mcpLaunchMaterial }) {
       signal?.throwIfAborted(); input.signal.throwIfAborted();
       if (requesterIdentity?.kind !== 'isolated') unavailable();
       if (member) requireAgentIsolationMaterialNativeIdentity(member, { ...requesterIdentity,
@@ -227,7 +227,11 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       read(captured);
       return { requesterIdentity, ...(onNativeLaunchFailure ? { onNativeLaunchFailure } : {}), read: () => {
         const snapshot = read(captured);
-        return sessionMcpContext ? { ...snapshot, launch: { ...snapshot.launch, sessionMcpContext } } : snapshot;
+        return { ...snapshot, launch: { ...snapshot.launch,
+          ...(mcpLaunchMaterial ? { environment: { ...snapshot.launch.environment, ...mcpLaunchMaterial.environment },
+            selectedEnvironmentKeys: [...new Set([...snapshot.launch.selectedEnvironmentKeys, ...Object.keys(mcpLaunchMaterial.environment)])],
+            selectedMaterials: [...snapshot.launch.selectedMaterials, ...mcpLaunchMaterial.selectedMaterials] } : {}),
+          ...(sessionMcpContext ? { sessionMcpContext } : {}) } };
       } };
     },
   };

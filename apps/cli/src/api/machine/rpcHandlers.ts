@@ -1,4 +1,5 @@
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { createExecutionRunNativeOperationOwner } from '@/daemon/agentRuntime/executionRunNativeOperation';
 import { randomUUID } from 'node:crypto';
 import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -299,7 +300,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   readSpawnFailureLimits?: MachineTerminalRpcHandlerDeps['readSpawnFailureLimits'];
   ownerRemainder?: MachineTerminalRpcHandlerDeps['ownerRemainder'];
   agentIsolation?: MachineTerminalRpcHandlerDeps['agentIsolation'];
-  nativeOperationRuntime?: MachineTerminalRpcHandlerDeps['nativeOperationRuntime'];
+  nativeOperationRuntime?: MachineTerminalRpcHandlerDeps['nativeOperationRuntime'] & Partial<Pick<import('@/api/apiMachine').ApiMachineClient, 'readMemberFolderOwner'>>;
   resolveHostHomeServerIdentityId?: MachineTerminalRpcHandlerDeps['resolveHostHomeServerIdentityId'];
   readMachineEffectiveCores?: () => number | undefined;
   requesterSessionRuntime?: NonNullable<Parameters<typeof import('@/rpc/handlers/sessionLifecycle').registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
@@ -673,7 +674,16 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
         ...(context.operationCancellation ? { operationCancellation: context.operationCancellation } : {}),
         ...(context.operationReview ? { operationReview: context.operationReview } : {}),
       } : undefined;
-      return { ingress, ...(operation ? { operation } : {}),
+      const nativeRuntime = params.deps?.nativeOperationRuntime;
+      const agentIsolation = params.deps?.agentIsolation;
+      const nativeOwner = nativeRuntime?.readMemberFolderOwner && agentIsolation
+        ? createExecutionRunNativeOperationOwner({ machine: { prepareNativeOperation: nativeRuntime.prepareNativeOperation,
+          readMemberFolderOwner: nativeRuntime.readMemberFolderOwner }, agentIsolation, ingress,
+          resolveRequesterIdentity: async () => {
+            const home = await params.deps?.resolveHostHomeServerIdentityId?.(context.signal);
+            return selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: home });
+          } }) : undefined;
+      return { ingress, ...(nativeOwner ?? {}), ...(operation ? { operation } : {}),
         ...(context.requesterSessionBootstrap ? { requester: { bootstrap: context.requesterSessionBootstrap,
           isCurrent: context.requesterSessionBootstrap.isCurrent } } : {}),
         isCurrent: async () => !context.signal!.aborted && (!context.verifyMachineAdmissionCurrent || await context.verifyMachineAdmissionCurrent()),

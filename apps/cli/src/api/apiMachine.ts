@@ -2314,6 +2314,7 @@ export class ApiMachineClient {
                     return placement.payloadPlacement;
                 },
                 nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
+                    readMemberFolderOwner: path => this.readMemberFolderOwner(path),
                     prepareConnectedAccountProcessEnvironment: input => this.prepareConnectedAccountProcessEnvironment(input) },
                 resolveHostHomeServerIdentityId: async signal => (await resolveExternalActionOrigin(signal))?.serverIdentityId ?? null,
                 mcpServers: { ...deps?.mcpServers, readCredentials: readExecutionRunAccountCredentials,
