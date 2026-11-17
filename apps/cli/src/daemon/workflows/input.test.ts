@@ -514,6 +514,24 @@ describe('workflow input materialization', () => {
     }) });
   });
 
+  it.each(['before', 'after'] as const)('accepts safe %s Action cause without a private payload for workflow admission', phase => {
+    const evidence = { actionId: 'scm.commit.create', requestId: 'action-request-1', phase,
+      machineId: 'machine-1', originRunId: 'origin-run-1',
+      ...(phase === 'after' ? { status: 'failed' as const, errorCode: 'scm_commit_failed' } : {}) };
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1',
+      evidence: { v: 1, kind: 'action', occurredAt: 42, subjects: [], ...evidence } });
+    const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'action', triggerId: 'trigger-1',
+      triggerRevision: 1, occurredAt: 42, evidence, occurrenceKey });
+    const seed = resolveAutomationWorkflowOccurrenceSeed({ cause, openedEvidence: null });
+    expect(seed).toEqual({ ...evidence, triggerId: 'trigger-1', occurrenceKey });
+    expect(bindAutomationWorkflowInputs({ definition: { inputs: [] }, evidence: seed })).toEqual({});
+    expect(bindAutomationWorkflowInputs({ definition: { inputs: [
+      { name: 'requestId', valueType: 'string', required: true },
+    ] }, evidence: seed })).toEqual({ requestId: evidence.requestId });
+    expect(() => resolveAutomationWorkflowOccurrenceSeed({ cause, openedEvidence: { input: 'private' } }))
+      .toThrowError('invalid_input');
+  });
+
   it('keeps plugin and conversation occurrence evidence opaque and exact', () => {
     const evidence = { event: { id: 'evt-1' }, request: 'ship it' } as const;
     expect(resolveAutomationWorkflowOccurrenceSeed({

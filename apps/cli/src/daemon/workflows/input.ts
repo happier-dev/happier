@@ -40,7 +40,7 @@ export class WorkflowInputResolutionError extends Error {
 /**
  * Projects one immutable Automation occurrence into the named-input seed.
  *
- * Schedule/session/Run-lifecycle evidence already belongs to the bounded Run
+ * Schedule/session/Run-lifecycle/Action evidence already belongs to the bounded Run
  * cause. Plugin and Conversation payloads remain opaque to the server and are
  * opened only by the assigned daemon. This adapter deliberately does not
  * merge the two sources or infer fields from current trigger state.
@@ -61,7 +61,8 @@ export function resolveAutomationWorkflowOccurrenceSeed(params: Readonly<{
       ...fingerprintEvidence, occurrenceKey: params.cause.occurrenceKey };
   }
   if (params.cause.kind === 'trigger'
-    && (params.cause.triggerKind === 'sessionLifecycle' || params.cause.triggerKind === 'runLifecycle')) {
+    && (params.cause.triggerKind === 'sessionLifecycle' || params.cause.triggerKind === 'runLifecycle'
+      || params.cause.triggerKind === 'action')) {
     if (params.openedEvidence !== null) throw new WorkflowInputResolutionError('invalid_input');
     return { ...params.cause.evidence, triggerId: params.cause.triggerId, ...fingerprintEvidence, occurrenceKey: params.cause.occurrenceKey };
   }
