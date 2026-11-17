@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { webcrypto } from 'node:crypto';
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from '@zip.js/zip.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -26,6 +27,12 @@ async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: bool
   })) await writer.add(path, new Uint8ArrayReader(new TextEncoder().encode(text)), { useWebWorkers: false });
   const bytes = await writer.close();
   const calls: string[] = [];
+  const digestInputs: Uint8Array[] = [];
+  // Platform crypto is an external boundary; retain the real adapter and checksum comparison.
+  const sha256Bytes = async (input: Uint8Array) => {
+    digestInputs.push(input);
+    return new Uint8Array(await webcrypto.subtle.digest('SHA-256', new Uint8Array(input)));
+  };
   let latest = '1.0.0';
   const detail = () => ({ namespace: 'sample', name: 'palette', version: latest, displayName: 'Sample palette', ...(options.absentLicense ? {} : { license: options.license ?? 'Custom licence' }),
     files: { manifest: 'https://open-vsx.org/manifest.json', download: 'https://open-vsx.org/package.vsix', sha256: 'https://open-vsx.org/package.sha256',
@@ -37,9 +44,26 @@ async function fixture(options: Readonly<{ badHash?: boolean; badIdentity?: bool
     async getText(url) { calls.push(url); return { ok: true, fetchedAt: 1, value: options.badHash ? '0'.repeat(64) : bytesToHex(sha256(bytes)) }; },
     async getBytes(url) { calls.push(url); return { ok: true, fetchedAt: 1, value: bytes }; },
   };
-  return { calls, http, setLatest: (version: string) => { latest = version; }, host: createRegistryHostV1({ host: 'web', http, readSources: async () => [source] }) };
+  return { calls, http, bytes, digestInputs, sha256Bytes, setLatest: (version: string) => { latest = version; }, host: createRegistryHostV1({ host: 'web', http, sha256Bytes, readSources: async () => [source] }) };
 }
 describe('Open VSX theme acquisition through the registry host', () => {
+  it.each([false, true])('uses one platform digest for package acquisition and none for metadata (admitted=%s)', async admitted => {
+    const f = await fixture();
+    const host = createRegistryHostV1({ host: 'web', http: f.http, sha256Bytes: f.sha256Bytes, readSources: async () => [source],
+      ...(admitted ? { admitSource: async () => ({ http: f.http }) } : {}) });
+    await host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample/palette' });
+    expect(f.digestInputs).toEqual([]);
+    const acquired = await host.readRegistryTheme({ sourceId: source.id, itemId: 'sample/palette' });
+    expect(acquired.item.payload.themes).toHaveLength(2);
+    expect(f.digestInputs).toHaveLength(1);
+    expect(f.digestInputs[0]).toBe(f.bytes);
+  });
+  it('refuses a package when the platform digest does not match its checksum', async () => {
+    const f = await fixture({ badHash: true });
+    await expect(f.host.readRegistryTheme({ sourceId: source.id, itemId: 'sample/palette' }))
+      .rejects.toMatchObject({ status: { state: 'invalid_source', themeIssue: 'checksum_mismatch' } });
+    expect(f.digestInputs).toHaveLength(1);
+  });
   it('admits the content intent only for theme reads', () => {
     const request = { op: 'read', sourceId: source.id, itemId: 'sample/palette', themeContent: true };
     expect(RegistryFetchRequestV1Schema.safeParse({ ...request, kind: 'theme' }).success).toBe(true);
@@ -123,7 +147,7 @@ describe('Open VSX theme acquisition through the registry host', () => {
   it('forwards only native content acquisition to the daemon and retains the request flag', async () => {
     const f = await fixture();
     const requests: unknown[] = [];
-    const daemon = createRegistryHostV1({ host: 'node', http: f.http, readSources: async () => [source] });
+    const daemon = createRegistryHostV1({ host: 'node', http: f.http, sha256Bytes: f.sha256Bytes, readSources: async () => [source] });
     const native = createRegistryHostV1({ host: 'native', http: f.http, readSources: async () => [source], daemonFetch: async request => {
       requests.push(request); return daemon.fetchRequest(request);
     } });
@@ -136,7 +160,7 @@ describe('Open VSX theme acquisition through the registry host', () => {
   it('returns canonical acquisition provenance after one source read and one admission', async () => {
     const f = await fixture();
     let reads = 0; let admissions = 0;
-    const host = createRegistryHostV1({ host: 'web', http: f.http, readSources: async () => { reads++; return [source]; },
+    const host = createRegistryHostV1({ host: 'web', http: f.http, sha256Bytes: f.sha256Bytes, readSources: async () => { reads++; return [source]; },
       admitSource: async () => { admissions++; return { http: f.http }; } });
     const result = await host.readRegistryTheme({ sourceId: source.id, itemId: 'sample/palette', version: '1.0.0' });
     expect(result.item.payload).toMatchObject({ kind: 'theme', state: 'ready' });

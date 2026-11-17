@@ -103,12 +103,16 @@ export const openVsxThemesRegistryAdapterV1: RegistryFormatAdapterV1 = {
     // settles the existing versioned acquisition without fetching or parsing an irrelevant VSIX.
     if (listing.includes.length === 0) return { summary: itemSummary, fetchedAt: response.fetchedAt,
       payload: { kind: 'theme', state: 'ready', version: detail.version, listing, themes: [], ref: { kind: 'version', version: detail.version } } };
+    if (!ctx.sha256Bytes) throw new Error('Registry host requires a platform SHA-256 digest for theme acquisition');
     const [download, checksum] = await Promise.all([ctx.http.getBytes(acquisition.downloadUrl, { source: req.source }), ctx.http.getText(acquisition.checksumUrl, { source: req.source })]);
     if (!download.ok) throw new RegistryFetchErrorV1(download.status);
     if (!checksum.ok) throw new RegistryFetchErrorV1(checksum.status);
     ctx.signal?.throwIfAborted();
     const expected = /^([a-f\d]{64})(?:\s+.*)?$/i.exec(checksum.value.trim())?.[1]?.toLowerCase();
-    if (!expected || bytesToHex(sha256(download.value)) !== expected) throw invalid('checksum_mismatch');
+    if (!expected) throw invalid('checksum_mismatch');
+    const actual = await ctx.sha256Bytes(download.value);
+    ctx.signal?.throwIfAborted();
+    if (bytesToHex(actual) !== expected) throw invalid('checksum_mismatch');
     const { openZipEntriesV1 } = await import('../../archives/zipEntriesV1.js');
     const archive = await openZipEntriesV1(download.value, ctx.signal).catch(() => { ctx.signal?.throwIfAborted(); throw invalid('invalid_package'); });
     try {

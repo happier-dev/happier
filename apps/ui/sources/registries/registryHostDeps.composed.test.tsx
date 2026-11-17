@@ -34,6 +34,7 @@ import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { checkRegistryAppUpdatesV1, checkRegistryUpstreamV1, createRegistryHostV1, type RegistryRemoteSourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createUiRegistryHttpV1 } from './registryHttpV1';
+import { digest } from '@/platform/digest';
 import type { DirectoryGroup } from '@/components/store/StoreKindPage';
 import type { StoreDirectorySectionInput } from '@/components/store/discover/StoreDirectorySection';
 
@@ -435,7 +436,7 @@ it('opens authenticated Open VSX theme faces through captured requester custody 
     const themeBytes = await themeZip.close();
     const themeReads: string[] = [];
     // Remote HTTP is the boundary; source placement, requester sealing and the full registry adapter stay real.
-    const daemonThemeHost = createRegistryHostV1({ host: 'node', readSources: async () => listRegistrySourcesV1({
+    const daemonThemeHost = createRegistryHostV1({ host: 'node', sha256Bytes: bytes => digest('SHA-256', bytes), readSources: async () => listRegistrySourcesV1({
         record: { v: 2, sources: [themeSource], disabledSourceIds: [] }, pluginSources: [] }), http: {
         async getJson(url) { themeReads.push(url); return { ok: true, fetchedAt: 1, value: url.endsWith('/manifest.json')
             ? themeManifest : { namespace: 'sample', name: 'palette', version: '1.0.0', files: {

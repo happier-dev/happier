@@ -34,6 +34,7 @@ export type RegistryBotTemplateReaderV1 = (input: Readonly<{
 type RegistrySourceFetchRequestV1<T = RegistryFetchRequestV1> = T extends { sourceId: string } ? Omit<T, 'sourceId'> : never;
 export type RegistryHostDepsV1=Readonly<{
   host:'web'|'native'|'node';http:RegistryHttpV1;signal?:AbortSignal;git?:RegistryFetchContextV1['git'];
+  sha256Bytes?:RegistryFetchContextV1['sha256Bytes'];
   packageContent?:RegistryFetchContextV1['packageContent'];
   withAppCatalog?:RegistryFetchContextV1['withAppCatalog'];
   readSources:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
@@ -136,7 +137,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     ? (input, consume) => read(input, sharedHttp => consume(wrapHttp(sharedHttp)))
     : undefined;
   const http = wrapHttp(deps.http);
-  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git, packageContent: deps.packageContent, withAppCatalog: wrapAppCatalog(deps.withAppCatalog) };
+  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, sha256Bytes: deps.sha256Bytes, git: deps.git, packageContent: deps.packageContent, withAppCatalog: wrapAppCatalog(deps.withAppCatalog) };
   const viaDaemon = async (request: RegistryFetchRequestV1): Promise<RegistryFetchResponseV1> => {
     const fetch = deps.daemonFetch;
     return fetch
@@ -153,7 +154,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     if (!source.enabled) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     if (!deps.admitSource) return operationCtx;
     const admitted = await deps.admitSource(source);
-    return { ...admitted, http: wrapHttp(admitted.http), withAppCatalog: wrapAppCatalog(admitted.withAppCatalog) };
+    return { ...admitted, sha256Bytes: deps.sha256Bytes, http: wrapHttp(admitted.http), withAppCatalog: wrapAppCatalog(admitted.withAppCatalog) };
   };
   const direct=async(request:Extract<RegistryFetchRequestV1,{sourceId:string}>,source:RegistrySourceDescriptorV1, operationCtx: RegistryFetchContextV1):Promise<RegistryFetchResponseV1>=>{
     if ('packageContent' in source) {

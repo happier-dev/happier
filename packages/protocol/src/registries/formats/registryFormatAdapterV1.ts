@@ -13,6 +13,8 @@ export type RegistryHttpV1 = Readonly<{
 export type RegistryDetectedSourceV1 = Readonly<{ format: RegistryFormatV1; kinds: readonly RegistryKindV1[]; title: string; itemCount?: number }>
   | Readonly<{ unsupported: 'organisation' | 'unknown_format' | 'needs_token' | 'unreachable' }>;
 export type RegistryFetchContextV1 = Readonly<{ http: RegistryHttpV1; signal?: AbortSignal;
+  /** Platform digest for package checksums; hosts acquiring theme content supply it. */
+  sha256Bytes?: (bytes: Uint8Array) => Promise<Uint8Array>;
   /** Already resolved by the source owner; normalization consumes authored probes before admission. */
   appTemplateHints?: RegistryAppTemplateHintsV1;
   /** Node owner retains immutable catalog resources across finite reads; mutable currentness stays with the adapter. */

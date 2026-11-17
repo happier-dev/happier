@@ -3,6 +3,7 @@ import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from '@zip.js/zip.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { createRegistryHostV1 } from '../registryHostV1.js';
+import { webcrypto } from 'node:crypto';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, deriveMarketplaceSourceId } from '../../marketplace/marketplaceSourceRegistryV1.js';
 import type { RegistrySourceDescriptorV1 } from '../registrySourcesV1.js';
 
@@ -86,7 +87,8 @@ it('keeps curated theme picks metadata-only until selected content follows daemo
     async getBytes(request: string) { calls.push(request); return { ok: true as const, fetchedAt: 1, value: bytes }; },
   };
   const requests: unknown[] = [];
-  const daemon = createRegistryHostV1({ host: 'node', readSources: async () => [source], http });
+  const daemon = createRegistryHostV1({ host: 'node', readSources: async () => [source], http,
+    sha256Bytes: async input => new Uint8Array(await webcrypto.subtle.digest('SHA-256', new Uint8Array(input))) });
   const native = createRegistryHostV1({ host: 'native', readSources: async () => [source], http,
     daemonFetch: async request => { requests.push(request); return daemon.fetchRequest(request); } });
   const page = await native.fetchRequest({ op: 'list', sourceId: source.id, kind: 'theme' });

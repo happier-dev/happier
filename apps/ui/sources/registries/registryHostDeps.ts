@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { digest } from '@/platform/digest';
 import { createRegistryHostV1, listRegistrySourcesV1, RegistryFetchErrorV1,
     RegistryFetchResponseV1Schema, REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, REGISTRY_FORMAT_ADAPTERS_V1,
     type RegistrySourceDescriptorV1, type RegistryFetchRequestV1, type RegistryActionIdV1,
@@ -171,6 +172,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
         return executeOnMachine(machineId, actionId, input);
     };
     const host = createRegistryHostV1({ host: Platform.OS === 'web' ? 'web' : 'native', signal: context.signal,
+        sha256Bytes: bytes => digest('SHA-256', bytes),
         http: createUiRegistryHttpV1(runtimeFetch, context.signal, Date.now, memo.rateLimitedUntil), readSources,
         readThemeUpdateItems: async () => {
             const { sync } = await import('@/sync/sync');

@@ -1,3 +1,4 @@
+import { webcrypto } from 'node:crypto';
 import { createRegistryHostV1,listRegistrySourcesV1,createPluginRegistrySourceDescriptorV1,RegistryFetchErrorV1,type RegistrySourceDescriptorV1, type RegistryHostDepsV1 } from '@happier-dev/protocol/registries';
 import { createCliRegistryBotTemplateReaderV1 } from './botTemplates';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -112,6 +113,7 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
     } catch(error) { if(error instanceof SavedSecretOperationAdmissionError)return null;throw error; }
   };
   const createFetchContext = (resolve: typeof resolveToken) => ({ signal: input.signal,
+    sha256Bytes: async (bytes: Uint8Array) => new Uint8Array(await webcrypto.subtle.digest('SHA-256', new Uint8Array(bytes))),
     withAppCatalog: createAppCatalogReadsV1(scopeKey, {
       http: createRegistryHttpV1({resolveToken:resolve}), signal: input.signal,
     }),
