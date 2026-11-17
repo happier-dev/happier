@@ -35,6 +35,18 @@ function builtInProfile(index: number): ThemeProfileV1 {
 }
 
 describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
+    it('carries the prepared native surface table through the strict host snapshot', () => {
+        const theme = themeFor(null, 'dark');
+        const surfaces = { composer: { root: { base: { paddingTop: 7, backgroundColor: 'rgb(1, 2, 3)' }, states: { disabled: { opacity: 0.4 } } } } };
+        const sanitizedCss = '[data-surface="composer"] { padding-top: 7px; }';
+        const projected = PluginUiHostApiSurfaceThemeV1Schema.parse(projectPluginUiTheme({ ...theme, surfaces }, undefined, sanitizedCss));
+        expect(projected.surfaces).toEqual(surfaces);
+        expect(projected.sanitizedCss).toBe(sanitizedCss);
+        expect(PluginUiHostApiSurfaceThemeV1Schema.safeParse({ ...projected, surfaces: {
+            composer: { root: { base: { paddingTop: { invalid: true } }, states: {} } },
+        } }).success).toBe(false);
+    });
+
     it('refreshes shared text role faces from the selected bundled family', () => {
         const base = themeFor(null);
         const styled = applyThemeStyleScales(base, resolveThemeStyleScales({ fontFamily: BUNDLED_FONTS.plexMono.faces.regular.family }));

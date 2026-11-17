@@ -13270,6 +13270,19 @@ preserve existing inputs. The Host context and nested metric objects remain clos
 older strict development readers require matching source under the unpublished 0.3
 direct cut. This presentation addition changes no authority, stored format or wire epoch.
 
+### Theme surface projection (unreleased 0.3)
+
+The strict V1 host theme snapshot optionally carries `sanitizedCss`, the existing
+stylesheet owner's completed sanitizer output, and `surfaces`, the CSS compiler's
+mode-resolved native surface/part table. Each part holds `base` and `states`; style
+values are the compiler's native strings and numbers. Presentation maps remain
+open to new keys, while part envelopes and the surrounding Host context stay closed.
+The hosted client uses existing context results and notifications to maintain one
+stylesheet, with no second sanitizer or context watch. Native presentation reads
+the prepared table through the shared surface resolver. Missing optional fields
+preserve existing snapshots; matching development hosts and plugins reload together
+under the SDK direct cut. No persisted format or wire epoch changes.
+
 ### SCM operation environment (unreleased 0.3)
 
 The existing in-process SCM `BackendRuntimeServices` can provide

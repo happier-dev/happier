@@ -1,4 +1,5 @@
 import type { SurfaceAddress, SurfaceId, SurfacePart, ThemeSurfaceState } from '@happier-dev/plugin-ui';
+import type { PluginUiHostApiSurfaceThemeV1 } from '@happier-dev/protocol/plugins/ui/surfaceContext';
 import type { TextStyle, ViewStyle } from 'react-native';
 import type {
     ThemeCssRange as WireThemeCssRange,
@@ -12,11 +13,12 @@ export type ThemeCssRuleCoverage = WireThemeCssRuleCoverage;
 export type ThemeCssCoverage = WireThemeCssCoverage<SurfaceAddress>;
 /** Detailed authored ranges are requested by get/editor, never echoed in operation results. */
 export type ThemeCssDetailedCoverage = WireThemeCssDetailedCoverage<SurfaceAddress>;
+type SurfaceStyle = NonNullable<PluginUiHostApiSurfaceThemeV1['surfaces']>[string][string]['base'] & Readonly<ViewStyle & TextStyle>;
 export type ThemeSurfaceStyleTable = Readonly<{
     [S in SurfaceId]?: Readonly<{
         [P in SurfacePart<S>]?: Readonly<{
-            base: Readonly<ViewStyle & TextStyle>;
-            states: Partial<Readonly<Record<ThemeSurfaceState<S>, Readonly<ViewStyle & TextStyle>>>>;
+            base: SurfaceStyle;
+            states: Partial<Readonly<Record<ThemeSurfaceState<S>, SurfaceStyle>>>;
         }>;
     }>;
 }>;

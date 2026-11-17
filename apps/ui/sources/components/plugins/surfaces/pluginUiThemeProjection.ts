@@ -19,6 +19,7 @@ import { resolveAttentionStateColors } from '@/components/ui/status/StatusPill';
 import { shadowLevelStyle } from '@/shadowElevation';
 import type { Theme } from '@/theme';
 import type { ThemeColorTokenId } from '@/theme/tokens/themeColorTokenDefinitions';
+import { getThemeStylesheetCss, subscribeThemeStylesheet } from '@/theme/css/themeStylesheet';
 
 /**
  * The semantic theme projection for executable plugin UI (§3.3, UI-D12).
@@ -169,10 +170,11 @@ export function readPluginUiHostTypography(theme?: Pick<Theme, 'typography'>): H
  * projection itself. Render code takes its plugin theme here; `projectPluginUiTheme` is the pure projection.
  */
 export function usePluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['spinner']): PluginUiThemeV1 {
+    const sanitizedCss = React.useSyncExternalStore(subscribeThemeStylesheet, getThemeStylesheetCss, getThemeStylesheetCss);
     // Unistyles replaces its outer Proxy each render, not the resolved fields. Read those fields
     // here (also registering the theme dependency) rather than invalidating on the wrapper.
-    const projected = React.useMemo(() => projectPluginUiTheme(theme, spinner), [
-        theme.colors, theme.dark, theme.space, theme.borderRadius, theme.finish, theme.parts, theme.typography, spinner,
+    const projected = React.useMemo(() => projectPluginUiTheme(theme, spinner, sanitizedCss), [
+        theme.colors, theme.dark, theme.space, theme.borderRadius, theme.finish, theme.parts, theme.typography, theme.surfaces, spinner, sanitizedCss,
     ]);
     const faintInk = useGlassBackedInk();
     return React.useMemo(() => {
@@ -191,7 +193,7 @@ export function usePluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['spinne
  * canonical typography/weight primitive, so there is no unresolved-token branch
  * and no fallback palette.
  */
-export function projectPluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['spinner']): PluginUiThemeV1 {
+export function projectPluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['spinner'], sanitizedCss: string | null = null): PluginUiThemeV1 {
     const code = ({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() });
     const surfaceFinish: NonNullable<PluginUiThemeV1['surfaceFinish']> = {};
     for (const role of ['card', 'floating', 'composer', 'primaryButton', 'secondaryButton'] as const) {
@@ -219,6 +221,8 @@ export function projectPluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['sp
     Object.freeze(surfaceFinish);
     return Object.freeze({
         version: 1,
+        ...(sanitizedCss === null ? {} : { sanitizedCss }),
+        ...(theme.surfaces ? { surfaces: theme.surfaces } : {}),
         ...(spinner ? { spinner: Object.freeze({ ...spinner }) } : {}),
         surfaceFinish,
         statusText: Object.freeze({
