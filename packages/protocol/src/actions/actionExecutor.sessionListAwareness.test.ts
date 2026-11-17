@@ -588,6 +588,7 @@ describe('session.list execution', () => {
       ok: false,
       errorCode: 'filtered_session_listing_unavailable',
       error: 'filtered_session_listing_unavailable',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'filtered_session_listing_unavailable', httpStatus: null },
       details: {
         error: 'not_found',
         code: 'filtered_session_listing_unavailable',
@@ -613,6 +614,7 @@ describe('session.list execution', () => {
       ok: false,
       errorCode: 'action_failed',
       error: 'Unexpected status from /v2/sessions/query: 404',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: null, httpStatus: 404 },
     });
     expect(JSON.stringify(result)).not.toContain('secret-sentinel');
   });
