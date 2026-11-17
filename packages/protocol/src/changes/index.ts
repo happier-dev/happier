@@ -229,7 +229,9 @@ export const EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'ephemera
 /** Additive-open advisory hint for the canonical Session Organization owner. */
 export const SessionOrganizationChangeHintSchema = lazyZodSchema(() => z.looseObject({
   sessionOrganization: z.literal(true),
-  scope: z.enum(['pins', 'folders', 'folderAssignments', 'tags', 'tagAssignments', 'order', 'labels', 'attentionStandings', 'sessionAppearances']),
+  scope: z.enum(['pins', 'folders', 'folderAssignments', 'tags', 'tagAssignments', 'order', 'labels', 'attentionStandings', 'sessionAppearances', 'resourceSpaceMemberships']),
+  spaceIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
+  resourceIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   sessionIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   folderIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   tagIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),

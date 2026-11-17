@@ -18,6 +18,8 @@ type CollectionSpaceKindPresentation = Readonly<{
 export const COLLECTION_SPACE_KIND_PRESENTATION = {
     sessionWork: { defaultNameKey: 'sessionsList.filtersMyWork', manageTitleKey: 'sessionsList.spacesManageSessions',
         listRoute: '/', listTitleKey: 'sessionsList.filtersTitle', settingsPageId: 'session' },
+    review: { defaultNameKey: 'detailsSurface.review.title', manageTitleKey: 'sessionsList.spacesTitle',
+        listRoute: '/reviews', listTitleKey: 'detailsSurface.review.title', settingsPageId: 'settings' },
     workflow: { defaultNameKey: 'sessionsList.spacesAllWorkflows', manageTitleKey: 'sessionsList.spacesManageWorkflows',
         listRoute: '/workflows', listTitleKey: 'workflows.title', settingsPageId: 'settings' },
     discussion: { defaultNameKey: 'sessionsList.spacesAllDiscussions', manageTitleKey: 'sessionsList.spacesManageDiscussions',

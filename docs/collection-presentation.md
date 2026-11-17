@@ -328,6 +328,26 @@ editable draft; creation resolves its tag at the chosen destination Home
 through the organization-placement owner. It does not derive execution
 placement from filter clauses or consult a later sidebar selection.
 
+In unreleased 0.3 source, Review spaces use the same collection definition owner,
+with Review metadata filters and a `manual_only` or `filter_or_manual` membership
+mode. Their actual members live in the organization owner's
+`ResourceSpaceMembership` relation, scoped by the organizing Account, space and
+Artifact id. They are never stored as a settings inventory, Session tags or
+Review header fields. The organization mutation admits Artifact View access once;
+a View recipient can therefore organize their own list without Edit access.
+Adding, moving, removing and resetting membership publish only to that organizer
+through the existing AccountChange channel. Unchanged operations publish nothing.
+The Review list applies the owner's personal membership predicate before taking
+a page, alongside its smart filter. A withdrawn grant removes the resource from
+the next authorized read even if its personal association remains. Deleting a
+space removes only that Account's associations; deleting the Artifact cascades
+its associations. The generic `collection.space.membership.set` Action and
+collection definition cleanup consume this organization owner.
+Cleanup runs before the definition's settings CAS. Refusal or pending approval
+keeps the space available to retry. If cleanup succeeds but the settings write
+fails, the space stays visible with no manual members; retry deletion or file
+the resources into it again. This recoverable gap needs no cross-owner transaction.
+
 Session/Run Status consumes the same P4 Work result as each row. Raw states stay
 in their canonical Session or Workflow vocabulary; the registry does not convert
 Run states into Session states. The incumbent grouped Work choices also apply

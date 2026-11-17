@@ -5,6 +5,9 @@ import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotRe
 import { SetSessionAttentionStandingRequestSchema, SetSessionAttentionStandingResponseSchema } from '@happier-dev/protocol/sessions/organization/standings';
 import { SetSessionAppearanceRequestSchema, SetSessionAppearanceResponseSchema } from '@happier-dev/protocol/sessions/organization/appearances';
 import { z } from "zod/mini";
+import { ResourceSpaceMembershipMutationV1Schema, ResourceSpaceMembershipMutationResultV1Schema, ResourceSpaceMembershipQueryV1Schema, ResourceSpaceMembershipQueryResultV1Schema } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
+import { mutateResourceSpaceMembership } from '@/app/session/organization/organizationMutations';
+import { fetchResourceSpaceMemberships } from '@/app/session/organization/organizationQueries';
 
 import { enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
@@ -41,6 +44,20 @@ const tagIdParamsSchema = z.object({
 });
 
 export function registerSessionOrganizationRoutes(app: Fastify) {
+    app.post('/v2/session-organization/resource-space-memberships', {
+        preHandler: app.authenticate,
+        schema: { body: ResourceSpaceMembershipMutationV1Schema,
+            response: { 200: ResourceSpaceMembershipMutationResultV1Schema, 404: z.strictObject({ error: z.literal('not-found') }) } },
+    }, async (request, reply) => {
+        const result = await mutateResourceSpaceMembership({ accountId: request.userId, input: request.body });
+        if ('error' in result) return reply.code(404).send(result);
+        return reply.send(result);
+    });
+    app.get('/v2/session-organization/resource-space-memberships', {
+        preHandler: app.authenticate,
+        schema: { querystring: ResourceSpaceMembershipQueryV1Schema, response: { 200: ResourceSpaceMembershipQueryResultV1Schema } },
+    }, async (request, reply) => reply.send(await fetchResourceSpaceMemberships({ accountId: request.userId, spaceId: request.query.spaceId })));
+
     app.get("/v2/session-organization", {
         preHandler: app.authenticate,
         schema: {

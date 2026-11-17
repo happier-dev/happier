@@ -30,7 +30,8 @@ export type SessionOrganizationChangeScope =
     | "order"
     | "labels"
     | "attentionStandings"
-    | "sessionAppearances";
+    | "sessionAppearances"
+    | "resourceSpaceMemberships";
 
 export function buildSessionOrganizationHint(params: Readonly<{
     scope: SessionOrganizationChangeScope;
@@ -39,6 +40,8 @@ export function buildSessionOrganizationHint(params: Readonly<{
     tagIds?: readonly string[];
     deletedTagIds?: readonly string[];
     scopeKeys?: readonly string[];
+    spaceIds?: readonly string[];
+    resourceIds?: readonly string[];
 }>) {
     return {
         sessionOrganization: true,
@@ -48,6 +51,8 @@ export function buildSessionOrganizationHint(params: Readonly<{
         ...(params.tagIds ? { tagIds: [...params.tagIds] } : {}),
         ...(params.deletedTagIds ? { deletedTagIds: [...params.deletedTagIds] } : {}),
         ...(params.scopeKeys ? { scopeKeys: [...params.scopeKeys] } : {}),
+        ...(params.spaceIds ? { spaceIds: [...params.spaceIds] } : {}),
+        ...(params.resourceIds ? { resourceIds: [...params.resourceIds] } : {}),
     };
 }
 
@@ -100,6 +105,8 @@ export async function markSessionOrganizationChanged(
         tagIds?: readonly string[];
         deletedTagIds?: readonly string[];
         scopeKeys?: readonly string[];
+        spaceIds?: readonly string[];
+        resourceIds?: readonly string[];
     }>,
 ): Promise<AccountChangePublication> {
     await bumpSessionOrganizationCheckpoint(tx, params.accountId);

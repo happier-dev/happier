@@ -16,6 +16,16 @@ const empty: CollectionSpacesV1 = { v: 1, spaces: [] };
 const custom = (id: string) => ({ ...createDefaultCollectionSpaceV1('sessionWork'), id, name: id });
 
 describe('collection spaces', () => {
+    it('persists Review space selection mode without storing a member inventory or Session tags', () => {
+        const catalog = CollectionSpacesV1Schema.parse({ v: 1, spaces: [{ entityKind: 'review', id: 'manual-reviews',
+            name: 'Manual reviews', icon: { kind: 'icon', name: 'list' }, filter: {}, includeNeedsYouEverywhere: false,
+            membership: { mode: 'manual_only' },
+        }] });
+        expect(catalog.spaces[0]).toMatchObject({ entityKind: 'review', membership: { mode: 'manual_only' } });
+        expect(CollectionSpacesV1Schema.safeParse({ v: 1, spaces: [{ ...catalog.spaces[0],
+            membership: { mode: 'manual_only', resourceIds: ['review-id'] },
+        }] }).success).toBe(false);
+    });
     it('rebases a membership mode edit without replacing historical links in the current catalog', () => {
         const admitted = SettingsDeclarationActionInputSchemasV1['settings.invoke'].parse({ anchor: 'session.list.spaces', input: {
             kind: 'collection_space', entityKind: 'sessionWork', mutation: { op: 'edit', spaceId: 'mixed', changes: { membership: { mode: 'manual_only' } } },

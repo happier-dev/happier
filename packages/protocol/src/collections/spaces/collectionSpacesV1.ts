@@ -7,13 +7,15 @@ import { SessionListFilterV1Schema, normalizeSessionListFilterV1, getSessionList
 import { WorkflowListFilterV1Schema, DEFAULT_WORKFLOW_LIST_FILTER_V1, workflowListFilterFieldsV1 } from '../../workflows/listing/workflowListFilterV1.js';
 import { DiscussionListFilterV1Schema, DEFAULT_DISCUSSION_LIST_FILTER_V1, discussionListFilterFieldsV1 } from '../../discussions/listing/discussionListFilterV1.js';
 import { DeploymentEnvironmentListFilterV1Schema, DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1, deploymentEnvironmentListFilterFieldsV1 } from '../../deployments/deploymentEnvironmentListFilterV1.js';
+import { ReviewListFilterV1Schema, DEFAULT_REVIEW_LIST_FILTER_V1, reviewListFilterFieldsV1 } from '../../reviews/reviewListFilterV1.js';
+import { ResourceSpaceMembershipV1Schema, type ResourceSpaceMembershipV1 } from './resourceSpaceMembershipV1.js';
 import type { CollectionFilterMapV1 } from '../filter/entityListFilterV1.js';
 import { getUnsupportedEntityFilterFieldsV1 } from '../filter/fieldRegistryV1.js';
 export type { CollectionFilterMapV1 } from '../filter/entityListFilterV1.js';
 export { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1, CollectionSpacesEnabledV1Schema } from './collectionSpaceEnablementV1.js';
 
 /** V1 persisted identities and mutation envelopes are closed; settings owns byte bounds and sealing. */
-export const COLLECTION_ENTITY_KINDS_V1 = ['sessionWork', 'workflow', 'discussion', 'deploymentEnvironment'] as const;
+export const COLLECTION_ENTITY_KINDS_V1 = ['sessionWork', 'workflow', 'discussion', 'deploymentEnvironment', 'review'] as const;
 export const CollectionEntityKindV1Schema = lazyZodSchema(() => z.enum(COLLECTION_ENTITY_KINDS_V1));
 export type CollectionEntityKindV1 = keyof CollectionFilterMapV1;
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
@@ -32,13 +34,13 @@ export type SessionSpaceMembershipV1 = Readonly<{ mode: 'filter_or_manual' | 'ma
 export type CollectionSpaceV1<K extends CollectionEntityKindV1 = CollectionEntityKindV1> = {
     [E in K]: Readonly<{ entityKind: E; id: string; name: string; icon: CollectionSpaceIconV1;
         filter: CollectionFilterMapV1[E]; includeNeedsYouEverywhere: boolean;
-        membership?: E extends 'sessionWork' ? SessionSpaceMembershipV1 : never }>;
+        membership?: E extends 'sessionWork' ? SessionSpaceMembershipV1 : E extends 'review' ? ResourceSpaceMembershipV1 : never }>;
 }[K];
 export type CollectionSpacesV1 = Readonly<{ v: 1; spaces: readonly CollectionSpaceV1[] }>;
 export type CollectionSpaceSelectionV1 = Readonly<{ v: 1; byAccountScope: Readonly<Record<string,
     Partial<Readonly<Record<CollectionEntityKindV1, Readonly<{ spaceId: string }>>>>>> }>;
-const DEFAULT_IDS = { sessionWork: 'my-work', workflow: 'all-workflows', discussion: 'all-discussions', deploymentEnvironment: 'all-services' } as const satisfies Record<CollectionEntityKindV1, string>;
-const DEFAULT_NAMES = { sessionWork: 'My work', workflow: 'All workflows', discussion: 'All discussions', deploymentEnvironment: 'All services' } as const satisfies Record<CollectionEntityKindV1, string>;
+const DEFAULT_IDS = { sessionWork: 'my-work', workflow: 'all-workflows', discussion: 'all-discussions', deploymentEnvironment: 'all-services', review: 'all-reviews' } as const satisfies Record<CollectionEntityKindV1, string>;
+const DEFAULT_NAMES = { sessionWork: 'My work', workflow: 'All workflows', discussion: 'All discussions', deploymentEnvironment: 'All services', review: 'All reviews' } as const satisfies Record<CollectionEntityKindV1, string>;
 export function getDefaultCollectionSpaceIdV1<K extends CollectionEntityKindV1>(entityKind: K): typeof DEFAULT_IDS[K] {
     return DEFAULT_IDS[entityKind];
 }
@@ -52,20 +54,21 @@ const SessionSpaceSchema = lazyZodSchema(() => z.strictObject({ entityKind: z.li
 const WorkflowSpaceSchema = lazyZodSchema(() => z.strictObject({ entityKind: z.literal('workflow'), ...spaceFields(WorkflowListFilterV1Schema) }));
 const DiscussionSpaceSchema = lazyZodSchema(() => z.strictObject({ entityKind: z.literal('discussion'), ...spaceFields(DiscussionListFilterV1Schema) }));
 const DeploymentEnvironmentSpaceSchema = lazyZodSchema(() => z.strictObject({ entityKind: z.literal('deploymentEnvironment'), ...spaceFields(DeploymentEnvironmentListFilterV1Schema) }));
+const ReviewSpaceSchema = lazyZodSchema(() => z.strictObject({ entityKind: z.literal('review'), ...spaceFields(ReviewListFilterV1Schema), membership: z.optional(ResourceSpaceMembershipV1Schema) }));
 export const CollectionSpaceV1Schema = lazyZodSchema(() => z.discriminatedUnion('entityKind', [
-    SessionSpaceSchema, WorkflowSpaceSchema, DiscussionSpaceSchema, DeploymentEnvironmentSpaceSchema,
+    SessionSpaceSchema, WorkflowSpaceSchema, DiscussionSpaceSchema, DeploymentEnvironmentSpaceSchema, ReviewSpaceSchema,
 ]).check(z.refine(space => belongsToKind(space.id, space.entityKind))));
 export const CollectionSpacesV1Schema = lazyZodSchema(() => z.strictObject({ v: z.literal(1), spaces: z.array(CollectionSpaceV1Schema)
     .check(z.refine(spaces => new Set(spaces.map(space => space.id)).size === spaces.length)) }));
 export const CollectionSpacesStoredReadV1Schema = createStoredReadSchema(CollectionSpacesV1Schema);
 export const CollectionSpaceSelectionV1Schema = lazyZodSchema(() => z.strictObject({ v: z.literal(1), byAccountScope: z.record(IdSchema,
     z.strictObject({ sessionWork: z.optional(z.strictObject({ spaceId: IdSchema })), workflow: z.optional(z.strictObject({ spaceId: IdSchema })),
-        discussion: z.optional(z.strictObject({ spaceId: IdSchema })), deploymentEnvironment: z.optional(z.strictObject({ spaceId: IdSchema })) })) }));
+        discussion: z.optional(z.strictObject({ spaceId: IdSchema })), deploymentEnvironment: z.optional(z.strictObject({ spaceId: IdSchema })), review: z.optional(z.strictObject({ spaceId: IdSchema })) })) }));
 export const CollectionSpaceSelectionValueV1Schema = lazyZodSchema(() => z.strictObject({ spaceId: IdSchema }));
 
 export type CollectionSpaceMutationV1<K extends CollectionEntityKindV1> =
     | Readonly<{ op: 'create'; space: CollectionSpaceV1<K> }>
-    | Readonly<{ op: 'edit'; spaceId: string; changes: Partial<Pick<CollectionSpaceV1<K>, 'name' | 'icon' | 'filter' | 'includeNeedsYouEverywhere'>> & { membership?: K extends 'sessionWork' ? Pick<SessionSpaceMembershipV1, 'mode'> : never } }>
+    | Readonly<{ op: 'edit'; spaceId: string; changes: Partial<Pick<CollectionSpaceV1<K>, 'name' | 'icon' | 'filter' | 'includeNeedsYouEverywhere'>> & { membership?: K extends 'sessionWork' ? Pick<SessionSpaceMembershipV1, 'mode'> : K extends 'review' ? ResourceSpaceMembershipV1 : never } }>
     | Readonly<{ op: 'delete'; spaceId: string }>
     | Readonly<{ op: 'reorder'; spaceId: string; beforeSpaceId: string | null }>
     | Readonly<{ op: 'resetDefault' }>;
@@ -97,13 +100,14 @@ export const CollectionSpaceOperationV1Schema = lazyZodSchema(() => z.discrimina
     z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('workflow'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject(editChangesFields(WorkflowListFilterV1Schema)), WorkflowSpaceSchema, 'workflow')) }),
     z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('discussion'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject(editChangesFields(DiscussionListFilterV1Schema)), DiscussionSpaceSchema, 'discussion')) }),
     z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('deploymentEnvironment'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject(editChangesFields(DeploymentEnvironmentListFilterV1Schema)), DeploymentEnvironmentSpaceSchema, 'deploymentEnvironment')) }),
+    z.strictObject({ kind: z.literal('collection_space'), entityKind: z.literal('review'), mutation: z.discriminatedUnion('op', mutationVariants(z.strictObject({ ...editChangesFields(ReviewListFilterV1Schema), membership: z.optional(ResourceSpaceMembershipV1Schema) }), ReviewSpaceSchema, 'review')) }),
 ]));
 
 export function createDefaultCollectionSpaceV1<K extends CollectionEntityKindV1>(entityKind: K,
     override?: Readonly<{ name?: string; filter?: CollectionFilterMapV1[K] }>): CollectionSpaceV1<K> {
     const filter = override?.filter ?? (entityKind === 'sessionWork' ? normalizeSessionListFilterV1()
         : entityKind === 'workflow' ? DEFAULT_WORKFLOW_LIST_FILTER_V1 : entityKind === 'discussion' ? DEFAULT_DISCUSSION_LIST_FILTER_V1
-            : DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1);
+            : entityKind === 'review' ? DEFAULT_REVIEW_LIST_FILTER_V1 : DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1);
     // The discriminant selects the corresponding filter; TypeScript cannot narrow a generic key.
     return { entityKind, id: DEFAULT_IDS[entityKind], name: override?.name ?? DEFAULT_NAMES[entityKind],
         icon: { kind: 'icon', name: entityKind === 'discussion' ? 'conversations' : 'list' }, filter,
@@ -138,6 +142,10 @@ function supportsChangedFilter(operation: CollectionSpaceOperationV1): boolean {
         case 'discussion': {
             const filter = changedFilter(operation.mutation);
             return filter === undefined || getUnsupportedEntityFilterFieldsV1(discussionListFilterFieldsV1, filter, 'list').length === 0;
+        }
+        case 'review': {
+            const filter = changedFilter(operation.mutation);
+            return filter === undefined || getUnsupportedEntityFilterFieldsV1(reviewListFilterFieldsV1, filter, 'list').length === 0;
         }
         case 'deploymentEnvironment': {
             const filter = changedFilter(operation.mutation);

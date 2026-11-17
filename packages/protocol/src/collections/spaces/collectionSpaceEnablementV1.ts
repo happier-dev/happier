@@ -6,6 +6,7 @@ import type { CollectionEntityKindV1 } from './collectionSpacesV1.js';
 export const CollectionSpacesEnabledV1Schema = lazyZodSchema(() => z.boolean());
 export const COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1 = {
     sessionWork: 'sessionSpacesEnabled',
+    review: 'reviewSpacesEnabled',
     workflow: 'workflowSpacesEnabled',
     discussion: 'discussionSpacesEnabled',
     deploymentEnvironment: 'deploymentEnvironmentSpacesEnabled',

@@ -2,6 +2,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import type { EntityFilterEvaluatorV1, EntityFilterMatchV1, EntityFilterRegistryV1 } from './fieldRegistryV1.js';
+import type { ReviewListFilterV1 } from '../../reviews/reviewListFilterV1.js';
 import type { SessionListFilterV1 } from '../../sessions/listFilter/sessionListFilterV1.js';
 import type { WorkflowListFilterV1 } from '../../workflows/listing/workflowListFilterV1.js';
 import type { DiscussionListFilterV1 } from '../../discussions/listing/discussionListFilterV1.js';
@@ -9,6 +10,7 @@ import type { DeploymentEnvironmentListFilterV1 } from '../../deployments/deploy
 
 export type CollectionFilterMapV1 = Readonly<{
     sessionWork: SessionListFilterV1;
+    review: ReviewListFilterV1;
     workflow: WorkflowListFilterV1;
     discussion: DiscussionListFilterV1;
     /** Services → Apps: the Account's Environments (owner D5). */

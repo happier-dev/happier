@@ -1,3 +1,5 @@
+import { readArtifactCandidateAccess } from '@/app/artifacts/artifactAccessService';
+import { artifactVisibleWhere } from '@/app/artifacts/artifactClassification';
 import type { Prisma } from "@prisma/client";
 import { type SessionOrganizationSnapshotRequest } from '@happier-dev/protocol/sessions/organization/snapshot';
 
@@ -332,5 +334,25 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
                 return { sessionId: mapped.sessionId, standing: row.remindAt && row.remindAt.getTime() > Date.now() ? false : mapped.standing, updatedAt: mapped.updatedAt };
             }) } : {}),
         });
+    });
+}
+
+/** The caller composes this personal predicate with grant admission before taking a page. */
+export function createArtifactResourceSpaceMembershipWhere({ accountId, spaceId }: Readonly<{ accountId: string; spaceId: string }>): Prisma.ArtifactWhereInput {
+    return { resourceSpaceMemberships: { some: { accountId, spaceId, resourceKind: 'artifact' } } };
+}
+
+/** Read only the demanded Space's accessible opaque ids; personal organization never admits access. */
+export async function fetchResourceSpaceMemberships(params: Readonly<{
+    accountId: string; spaceId: string;
+}>): Promise<Readonly<{ resourceIds: string[] }>> {
+    return await captureReadSnapshot(async tx => {
+        const access = readArtifactCandidateAccess(params.accountId);
+        const arms = [...(access.owned ? [access.owned] : []), ...access.received];
+        const pages = await Promise.all(arms.map(arm => tx.artifact.findMany({
+            where: { AND: [arm, artifactVisibleWhere, createArtifactResourceSpaceMembershipWhere(params)] },
+            select: { id: true }, orderBy: { id: 'asc' },
+        })));
+        return { resourceIds: [...new Set(pages.flatMap(rows => rows.map(row => row.id)))].sort() };
     });
 }

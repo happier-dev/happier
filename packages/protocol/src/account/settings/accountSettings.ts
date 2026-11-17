@@ -902,6 +902,7 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     collectionColumnPreferencesV1: accountPreference(z.record(z.string(), StrictJsonValueSchema), {}, 'collection column presentation', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     collectionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     sessionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
+    reviewSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     workflowSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     discussionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     deploymentEnvironmentSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),

@@ -1,3 +1,5 @@
+import type { ResourceSpaceMembershipMutationV1 } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
+import { resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
 import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type MutateSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
@@ -1346,4 +1348,46 @@ export async function deleteSessionOrganizationLabel(params: Readonly<{
             archived: true,
         };
     }, { isolationLevel: "ReadCommitted" });
+}
+
+/** Personal membership does not mutate the resource or confer a resource grant. */
+export async function mutateResourceSpaceMembership(params: Readonly<{
+    accountId: string;
+    input: ResourceSpaceMembershipMutationV1;
+}>): Promise<Readonly<{ changed: boolean }> | Readonly<{ error: 'not-found' }>> {
+    return await inTx(async tx => {
+        await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId);
+        const input = params.input;
+        if (input.operation !== 'delete_space') {
+            const access = await resolveArtifactAccessInTx(tx, { actorAccountId: params.accountId, artifactId: input.resourceId });
+            if (!access) return { error: 'not-found' } as const;
+        }
+        const where: Prisma.ResourceSpaceMembershipWhereInput = {
+            accountId: params.accountId, resourceKind: input.resourceKind,
+            ...(input.operation === 'delete_space' ? { spaceId: input.spaceId } : {
+                resourceId: input.resourceId,
+                ...(input.operation === 'reset' ? {} : { spaceId: input.operation === 'move'
+                    ? { in: [input.spaceId, input.sourceSpaceId] } : input.spaceId }),
+            }),
+        };
+        const existing = await tx.resourceSpaceMembership.findMany({ where, select: { spaceId: true, resourceId: true } });
+        const add = (input.operation === 'add' || input.operation === 'move')
+            && !existing.some(row => row.spaceId === input.spaceId);
+        const removed = input.operation === 'add' ? [] : existing.filter(row => input.operation !== 'move'
+            || input.sourceSpaceId !== input.spaceId && row.spaceId === input.sourceSpaceId);
+        if (!add && removed.length === 0) return { changed: false };
+        if (removed.length) await tx.resourceSpaceMembership.deleteMany({ where: {
+            ...where, ...(input.operation === 'move' ? { spaceId: input.sourceSpaceId } : {}),
+        } });
+        if (add && (input.operation === 'add' || input.operation === 'move')) {
+            await tx.resourceSpaceMembership.create({ data: { accountId: params.accountId,
+                spaceId: input.spaceId, resourceKind: input.resourceKind, resourceId: input.resourceId } });
+        }
+        await markSessionOrganizationChanged(tx, {
+            accountId: params.accountId, scope: 'resourceSpaceMemberships',
+            spaceIds: [...new Set([...removed.map(row => row.spaceId), ...(add && 'spaceId' in input ? [input.spaceId] : [])])],
+            resourceIds: input.operation === 'delete_space' ? [...new Set(removed.map(row => row.resourceId))] : [input.resourceId],
+        });
+        return { changed: true };
+    }, { isolationLevel: 'ReadCommitted' });
 }

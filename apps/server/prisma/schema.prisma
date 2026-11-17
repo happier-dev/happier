@@ -191,6 +191,7 @@ model Account {
     SessionOrganizationFolder     SessionOrganizationFolder[]
     SessionOrganizationTag        SessionOrganizationTag[]
     SessionTagAssignment          SessionTagAssignment[]
+    resourceSpaceMemberships      ResourceSpaceMembership[]
     SessionOrganizationOrderEntry SessionOrganizationOrderEntry[]
     SessionOrganizationLabel      SessionOrganizationLabel[]
     SessionOrganizationCheckpoint SessionOrganizationCheckpoint?
@@ -3664,6 +3665,7 @@ model ReviewMetadata {
 }
 
 model Artifact {
+    resourceSpaceMemberships ResourceSpaceMembership[]
     reviewMetadata ReviewMetadata?
     deploymentDomains DeploymentDomain[]
     projectDeploymentDefaults ProjectDeploymentDefaults[]
@@ -3707,6 +3709,20 @@ model Artifact {
     @@index([accountId, kind])
     @@index([accountId, kind, approvalState, updatedAt(sort: Desc), id])
     @@index([accountId, approvalSessionId, updatedAt(sort: Desc), id])
+}
+
+/// Personal organization only. Membership never grants access to the resource.
+model ResourceSpaceMembership {
+    accountId String
+    spaceId String
+    resourceKind String
+    resourceId String
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    resource Artifact @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+    @@id([accountId, spaceId, resourceKind, resourceId])
+    @@index([accountId, resourceKind, resourceId])
+    @@index([resourceId])
 }
 
 model DeploymentEnvironment {
