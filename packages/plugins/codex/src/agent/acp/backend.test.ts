@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { delimiter, resolve } from 'node:path';
 
+import { resolveCausalPermissionMode } from '@/agent/permissions/causalPermissionMode';
+
 import { CODEX_ACP_TOOL_PATTERNS } from './transport';
 import {
   buildCodexNativeAcpRuntimeOptions,
@@ -33,18 +35,42 @@ describe('buildCodexNativeAcpRuntimeOptions', () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
-  it.each(['safe-yolo', 'read-only'] as const)('disables the ACP native sandbox without changing %s approval policy', (mode) => {
+  it.each([
+    { mode: 'read-only', nativeSandbox: 'off', approval: 'untrusted', sandbox: 'danger-full-access' },
+    { mode: 'read-only', nativeSandbox: 'on', approval: 'never', sandbox: 'read-only' },
+    { mode: 'safe-yolo', nativeSandbox: 'off', approval: 'on-request', sandbox: 'danger-full-access' },
+    { mode: 'yolo', nativeSandbox: 'off', approval: 'never', sandbox: 'danger-full-access' },
+    { mode: 'default', nativeSandbox: 'off', approval: 'untrusted', sandbox: 'danger-full-access' },
+    { mode: 'plan', nativeSandbox: 'off', approval: 'untrusted', sandbox: 'danger-full-access' },
+    { mode: 'yolo', nativeSandbox: 'off', workspaceWrites: 'deny', approval: 'never', sandbox: 'read-only' },
+  ] as const)('applies the admitted $mode policy to ACP launch with sandbox $nativeSandbox', (policy) => {
     const options = buildCodexNativeAcpRuntimeOptions({ kind: 'create', sessionId: 'sandbox', cwd: '/workspace',
       configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
-        permissionIntent: { value: mode, updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
-    expect(options.transport.args).toEqual(['-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="danger-full-access"']);
+        permissionIntent: { value: policy.mode, updatedAtMs: 0 }, nativeSandbox: policy.nativeSandbox, options: {},
+        ...('workspaceWrites' in policy ? { workspaceWrites: policy.workspaceWrites } : {}) } });
+    expect(options.transport.args).toEqual([
+      '-c', `approval_policy="${policy.approval}"`, '-c', `sandbox_mode="${policy.sandbox}"`,
+    ]);
   });
-  it('preserves native ACP approvals when only a sandbox choice is supplied', () => {
+  it('requires approvals for an imposed read-only ceiling at ACP launch with the sandbox off', () => {
+    const constrained = resolveCausalPermissionMode({
+      currentPermissionMode: 'yolo',
+      context: { causalPermissionAuthority: {
+        kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only',
+      } },
+    });
+    if (!constrained.ok) throw new Error(`Causal read-only ceiling refused: ${constrained.reason}`);
+    const options = buildCodexNativeAcpRuntimeOptions({ kind: 'create', sessionId: 'ceiling', cwd: '/workspace',
+      configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: constrained.effectiveMode, updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
+    expect(options.transport.args).toEqual(['-c', 'approval_policy="untrusted"', '-c', 'sandbox_mode="danger-full-access"']);
+  });
+  it('applies the default approval policy when only a sandbox choice is supplied on resume', () => {
     const options = buildCodexNativeAcpRuntimeOptions({ kind: 'resume', sessionId: 'sandbox',
       providerSessionId: 'native-sandbox', cwd: '/workspace',
       configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
         permissionIntent: { value: null, updatedAtMs: 0 }, nativeSandbox: 'off', options: {} } });
-    expect(options.transport.args).toEqual(['-c', 'sandbox_mode="danger-full-access"']);
+    expect(options.transport.args).toEqual(['-c', 'approval_policy="untrusted"', '-c', 'sandbox_mode="danger-full-access"']);
   });
   it('preserves each admitted Session PATH, including an explicitly empty value', () => {
     vi.stubEnv('PATH', '/ambient-host-bin');

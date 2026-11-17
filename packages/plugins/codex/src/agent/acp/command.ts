@@ -39,22 +39,13 @@ function appendPermissionModeDerivedOverrides(
   const mode = opts.permissionMode;
   if (!mode && opts.nativeSandbox === undefined && opts.workspaceWrites !== 'deny') return spec;
 
-  const derivedByMode: Readonly<Partial<Record<string, readonly string[]>>> = {
-    yolo: ['approval_policy="never"', 'sandbox_mode="danger-full-access"'],
-    bypassPermissions: ['approval_policy="never"', 'sandbox_mode="danger-full-access"'],
-    'safe-yolo': ['approval_policy="on-request"', 'sandbox_mode="workspace-write"'],
-    'read-only': ['approval_policy="on-request"', 'sandbox_mode="read-only"'],
-    default: ['approval_policy="on-request"', 'sandbox_mode="read-only"'],
-    plan: ['approval_policy="on-request"', 'sandbox_mode="read-only"'],
-  };
-  const inherited = mode ? derivedByMode[mode] ?? [] : [];
-  // ACP retains its transport's approval mapping. Explicit sandbox selection
-  // uses the same native sandbox policy as App Server, including role ceilings.
-  const derived = opts.nativeSandbox === undefined && opts.workspaceWrites !== 'deny' ? inherited
-    : [...inherited.filter(entry => !entry.startsWith('sandbox_mode=')),
-      `sandbox_mode=${JSON.stringify(resolveCodexTerminalPermissionPolicy(mode ?? 'default', opts.workspaceWrites,
-        undefined, opts.nativeSandbox).sandbox)}`];
-  if (derived.length === 0) return spec;
+  const policy = resolveCodexTerminalPermissionPolicy(
+    mode ?? 'default', opts.workspaceWrites, undefined, opts.nativeSandbox,
+  );
+  const derived = [
+    `approval_policy=${JSON.stringify(policy.approvalPolicy)}`,
+    `sandbox_mode=${JSON.stringify(policy.sandbox)}`,
+  ];
   return { command: spec.command, args: [...spec.args, ...derived.flatMap((entry) => ['-c', entry])] };
 }
 
