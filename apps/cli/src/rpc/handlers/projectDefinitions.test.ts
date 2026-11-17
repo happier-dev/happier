@@ -264,7 +264,7 @@ describe('project definition Actions through registered Machine RPC', () => {
         scripts: manifest.scripts, workspace: manifest.workspace,
         toolchain: manifest.toolchain, environmentVariables: manifest.environmentVariables,
       } });
-      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(4096);
+      expect(result.effectiveDefinition?.origins.some(origin => origin.path[0] === 'services')).toBe(false);
       expect(result.definition.document?.status === 'valid' && result.definition.document.manifest.services).toBeUndefined();
     }
     for (const read of [{ kind: 'services' }, { kind: 'scripts' }, { kind: 'editor' },
