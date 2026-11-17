@@ -52,6 +52,7 @@ it('stands the try bar above the floating bottom bar, so Revert and Install stay
         miniature={null}
         here="this device"
         busy={null}
+        installLabel="Apply"
         onRevert={() => {}}
         onInstall={() => {}}
         testID="try"
@@ -67,4 +68,5 @@ it('stands the try bar above the floating bottom bar, so Revert and Install stay
     if (style?.position === 'absolute' && typeof style.bottom === 'number') lift = Math.max(lift, style.bottom);
   }
   expect(lift).toBeGreaterThan(80);
+  expect(screen.getTextContent()).toContain('Apply');
 });

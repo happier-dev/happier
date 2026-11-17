@@ -153,7 +153,7 @@ it('browses an admitted plugin theme through the joined library and keeps its re
     expect(browse.getCurrent().items).toHaveLength(0);
     await browse.rerender(browseInput);
     expect(fixture.bodyReads).toEqual([]);
-    const screen = await renderScreen(wrap(<StoreListingBody reference={route.reference} presentation="page" onClose={() => {}} />));
+    const screen = await renderScreen(wrap(<><StoreListingBody reference={route.reference} presentation="page" onClose={() => {}} /><ThemeTryBarHost /></>));
     await vi.waitFor(() => expect(screen.findAllByType(StoreThemeListing)[0]?.props.facesState).toBe('ready'));
     const view = () => screen.findAllByType(StoreThemeListing)[0]!.props;
     expect(view().meta).toContain('Palette studio');
@@ -161,8 +161,13 @@ it('browses an admitted plugin theme through the joined library and keeps its re
     expect(view().faces?.map(face => face.name)).toEqual(['Night sky']);
     await act(async () => { await view().onTryFace('night'); });
     await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.selection).toEqual(reference));
+    expect(getThemeTryOnOwner().read()?.origin).toEqual({ kind: 'store', reference });
     expect(storage.getState().localSettings.themeProfileSelection).not.toMatchObject({ dark: reference });
-    await act(async () => { await view().onInstall(); });
+    await screen.update(wrap(<ThemeTryBarHost />));
+    const bar = screen.findAllByType(ThemeTryBar)[0]!;
+    expect(bar.props.visible).toBe(true);
+    expect(bar.props.installLabel).toBe(t('common.apply'));
+    await act(async () => { await bar.props.onInstall(); });
     await vi.waitFor(() => expect(storage.getState().localSettings.themeProfileSelection).toMatchObject({ dark: reference }));
     expect(fixture.bodyReads).toEqual([]);
     expect(fixture.artifactWrites).toEqual([]);

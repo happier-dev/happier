@@ -94,6 +94,7 @@ export type ThemeTryPresentationProps = Readonly<{
   /** Keep switches an explicit appearance mode; Adaptive never switches. */
   switchToMode?: ThemeProfileMode;
   origin?: 'store' | 'agent' | 'editor';
+  installLabel?: string;
   disabled?: boolean;
   visible: boolean;
   faceName: string;

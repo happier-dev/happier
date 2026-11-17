@@ -93,7 +93,7 @@ export function ThemeTryBar(props: ThemeTryPresentationProps) {
             />
             <RoundButton
               size="small"
-              title={t(props.origin === 'store' || props.origin === undefined ? 'themeStore.install' : 'themeCard.keep')}
+              title={props.installLabel ?? t(props.origin === 'store' || props.origin === undefined ? 'themeStore.install' : 'themeCard.keep')}
               onPress={props.onInstall}
               loading={props.busy === 'install'}
               disabled={props.disabled || props.busy !== null}

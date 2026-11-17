@@ -18,6 +18,8 @@ import { desktopHostKind, invokeDesktopHost, isDesktopHost } from '@/utils/platf
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 import { usePluginPageExplicitNavigation } from '@/components/plugins/pages/pluginPageNavigation';
+import { matchWorkspaceDestinationRoute, workspacePluginAppPageRouteKey } from '@/components/appShell/workspace/workspaceRoutes';
+import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 
 /**
  * Owns every navigation/auth-driven side effect from the app root layout.
@@ -69,6 +71,14 @@ function LocalRootLayoutNavigationEffects(): React.ReactElement | null {
     const routerServerId = useCurrentRouteParamsSelector(selectRouteServerId);
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const activeServerAccountScope = useActiveServerAccountScope();
+    const route = matchWorkspaceDestinationRoute(pathname);
+    const inStore = route !== null && (route.routeKey === 'plugins' || route.routeKey.startsWith('plugins/'))
+        && workspacePluginAppPageRouteKey(route.routeKey) === null;
+    const wasInStore = React.useRef(inStore);
+    React.useEffect(() => {
+        if (wasInStore.current && !inStore) getThemeTryOnOwner().leaveStore();
+        wasInStore.current = inStore;
+    }, [inStore]);
 
     useWebInitialRouteReconcile({ routerPathname: pathname, routerServerId });
 

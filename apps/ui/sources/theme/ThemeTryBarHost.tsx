@@ -33,5 +33,6 @@ export function ThemeTryBarHost() {
         switchToMode={preview && preference !== 'adaptive' && preference !== preview.mode ? preview.mode : undefined}
         miniature={miniature} here={t('themeDevices.here')} busy={busy}
         disabled={!ready} origin={preview?.origin.kind ?? 'editor'}
+        installLabel={preview?.selection?.kind === 'plugin' ? t('common.apply') : undefined}
         onInstall={() => settle('install')} onRevert={() => settle('revert')} testID="theme.tryBar" />;
 }

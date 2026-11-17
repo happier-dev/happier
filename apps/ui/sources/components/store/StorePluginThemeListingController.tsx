@@ -36,7 +36,8 @@ export function StorePluginThemeListingController(props: Readonly<{ reference: S
     const read = React.useCallback(() => {
         const current = owner.read();
         const ref = current?.selection;
-        return ref?.kind === 'plugin' && ref.pluginId === pluginId && ref.contributionId === contributionId ? current : null;
+        return current?.origin.kind === 'store' && ref?.kind === 'plugin' && ref.pluginId === pluginId
+            && ref.contributionId === contributionId ? current : null;
     }, [owner, pluginId, contributionId]);
     const matching = React.useSyncExternalStore(subscribe, read, read);
     React.useLayoutEffect(() => presented && matching ? owner.present(matching.previewRef) : undefined,
@@ -83,7 +84,7 @@ export function StorePluginThemeListingController(props: Readonly<{ reference: S
             { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },
             { key: 'licence', value: t('common.unknown') }], busy,
         onTryFace: id => id === contributionId && document.document && entry
-            ? run('try', THEME_ACTION_IDS.tryOn, { document: document.document, mode: entry.mode, origin: { kind: 'editor' } }) : undefined,
+            ? run('try', THEME_ACTION_IDS.tryOn, { document: document.document, mode: entry.mode, origin: { kind: 'store' } }) : undefined,
         onRevert: () => matching ? run('revert', THEME_ACTION_IDS.revert, { previewRef: matching.previewRef }) : undefined,
         onInstall: apply, onRetryFaces: document.retry, onRetryAcquisition: document.retry,
         onDuplicate: entry ? () => run('duplicate', THEME_ACTION_IDS.duplicate, { ref: props.reference }) : undefined,

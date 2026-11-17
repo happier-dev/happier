@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -39,6 +39,14 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
 }));
 vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text' }));
 
+// Compile the real root graph before the per-case behavior deadline.
+const { RootLayoutNavigationEffects } = await import('./RootLayoutNavigationEffects');
+const { CurrentRouteLocationProvider } = await import('@/components/appShell/workspace/currentRouteLocation');
+const { getThemeTryOnOwner } = await import('@/theme/profiles/themeTryOnRuntime');
+const { createThemeProfileDraft } = await import('@/theme/profiles/createThemeProfileDraft');
+const { parseThemeProfileDocument } = await import('@happier-dev/protocol/account/settings/themeProfiles');
+const { storage } = await import('@/sync/domains/state/storage');
+
 afterEach(() => {
     standardCleanup();
     vi.unstubAllEnvs();
@@ -46,7 +54,6 @@ afterEach(() => {
 
 it('keeps a capability link\'s bearer out of the debug pathname readout', async () => {
     vi.stubEnv('EXPO_PUBLIC_DEBUG', '1');
-    const { RootLayoutNavigationEffects } = await import('./RootLayoutNavigationEffects');
 
     const rendered = await renderScreen(<RootLayoutNavigationEffects />);
 
@@ -55,4 +62,50 @@ it('keeps a capability link\'s bearer out of the debug pathname readout', async 
     const text = rendered.getTextContent();
     expect(text).toContain('/join/');
     expect(text).not.toContain(INVITATION_TOKEN);
+});
+
+it('ends Store try-on only when the current destination leaves Store, preserving agent and editor previews', async () => {
+    const settingsScope = storage.getState().settingsScope;
+    const selection = storage.getState().localSettings.themeProfileSelection;
+    storage.setState({ settingsScope: { serverId: 'route-home', accountId: 'route-account' } });
+    onTestFinished(() => { storage.setState({ settingsScope }); });
+    const parsed = parseThemeProfileDocument(createThemeProfileDraft({ id: 'route-preview', name: 'Route preview', now: '2026-11-17' }));
+    if (!parsed.ok) throw new Error('Invalid theme fixture');
+    const owner = getThemeTryOnOwner();
+    const surface = (pathname: string, params: Record<string, string> = {}) => <CurrentRouteLocationProvider value={{ pathname, params }}>
+        <RootLayoutNavigationEffects />
+    </CurrentRouteLocationProvider>;
+    const screen = await renderScreen(surface('/plugins', { selection: 'opened-listing' }));
+    const preview = owner.begin({ document: parsed.document, mode: 'dark',
+        origin: { kind: 'store', listing: { sourceId: 'catalog', itemId: 'theme' } } });
+    const closeDetail = owner.present(preview.previewRef);
+    closeDetail();
+    await screen.update(surface('/plugins'));
+    expect(owner.read()).toBe(preview);
+    expect(owner.readGlobalPresentation()).toBe(preview);
+    await screen.update(surface('/plugins/listing'));
+    expect(owner.read()).toBe(preview);
+    let publications = 0;
+    const stop = owner.subscribe(() => { publications++; });
+    await screen.update(surface('/session/session-a'));
+    expect(owner.read()).toBeNull();
+    expect(publications).toBe(1);
+    await screen.update(surface('/settings'));
+    expect(publications).toBe(1);
+    stop();
+
+    for (const kind of ['agent', 'editor'] as const) {
+        await screen.update(surface('/plugins'));
+        const retained = owner.begin({ document: parsed.document, mode: 'dark', origin: { kind } });
+        await screen.update(surface('/settings'));
+        expect(owner.read()).toBe(retained);
+        owner.revert(retained.previewRef);
+    }
+    // A contributed app page has its own destination despite sharing the URL prefix.
+    await screen.update(surface('/plugins'));
+    owner.begin({ document: parsed.document, mode: 'dark', origin: { kind: 'store', listing: { sourceId: 'catalog', itemId: 'theme' } } });
+    await screen.update(surface('/plugins/sample.palette/board'));
+    expect(owner.read()).toBeNull();
+    expect(storage.getState().localSettings.themeProfileSelection).toBe(selection);
+    await screen.unmount();
 });
