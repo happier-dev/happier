@@ -18,6 +18,18 @@ function response(value: unknown, status = 200) {
 }
 
 describe('Discord Gateway Bot snapshot', () => {
+  it('retains a safe send failure cause without replaying an uncertain effect', async () => {
+    const privateDetails = 'private-token-and-message';
+    const warn = vi.fn();
+    const request = vi.fn(async () => { throw Object.assign(new Error(privateDetails), { code: 'ECONNRESET' }); });
+    const api = createDiscordBotApi({ token: privateDetails, http: { request }, logger: { warn } });
+    await expect(api.sendMessage({ channelId: '301', payload: { content: privateDetails, allowed_mentions: { parse: [] } } }))
+      .resolves.toEqual({ kind: 'outcomeUnknown' });
+    expect(request).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(privateDetails);
+  });
+
   it('pages every bot guild and discovers supported guild channels and active threads', async () => {
     const requests: URL[] = [];
     const api = createDiscordBotApi({ token: 'fixture-token', http: { async request(input) {

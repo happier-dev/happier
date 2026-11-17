@@ -204,7 +204,7 @@ async function createExactDiscordBotApi(
 ): Promise<DiscordBotApi | ConversationProviderFailureV1> {
   const token = await materializeExactDiscordBotToken(context, credentialRef);
   return typeof token === 'string'
-    ? createDiscordBotApi({ token, http: context.services.http })
+    ? createDiscordBotApi({ token, http: context.services.http, logger: context.services.logger })
     : token;
 }
 

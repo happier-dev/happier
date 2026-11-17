@@ -14,6 +14,7 @@ function boundary(options: { status?: number; body?: unknown; settings?: Record<
   const http = vi.fn(async (_input: Parameters<SendContext['services']['http']['request']>[0], _options?: { signal?: AbortSignal }) => ({ status: options.status ?? 200, finalUrl: 'https://receiver.example/', headers: {},
     body: new TextEncoder().encode(JSON.stringify(options.body ?? { status: 1 })) }));
   return { http, context: { signal: new AbortController().signal, services: {
+    logger: { warn: vi.fn() },
     http: createPluginHttpFixture({ request: http }), settings: { forScope: () => ({ get: async (id: string) => settings[id] ?? null }) },
     secrets: { status: async (id: string) => ({ state: id in secrets ? 'configured' as const : 'missing' as const, revision: '1' }),
       get: async (id: string) => { if (!(id in secrets)) throw new Error('secret unavailable'); return secrets[id]; } },
@@ -67,10 +68,13 @@ describe('outbound notification provider contracts', () => {
 
   it('does not replay an uncertain transport effect', async () => {
     const { http, context } = boundary();
-    http.mockRejectedValueOnce(new Error('secret in URL must not escape'));
+    const privateDetails = 'secret in URL must not escape';
+    http.mockRejectedValueOnce(Object.assign(new Error(privateDetails), { code: 'ECONNRESET' }));
     expect(await senders.teams(request, context)).toEqual({ deliveryId: request.deliveryId, channelId: request.channelId,
       status: 'outcomeUnknown', code: 'plugin_notification_outcome_unknown' });
     expect(http).toHaveBeenCalledTimes(1);
+    expect(context.services.logger.warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
+    expect(JSON.stringify(context.services.logger.warn.mock.calls)).not.toContain(privateDetails);
   });
 
   it('does not accept a Pushover application refusal returned with HTTP 200', async () => {

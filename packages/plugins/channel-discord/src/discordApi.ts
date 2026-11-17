@@ -1,4 +1,6 @@
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { rethrowConversationProviderLifecycleFailureV1 } from '@happier-dev/channels-protocol/v1';
 
 import {
@@ -359,6 +361,7 @@ function parseGuildRolePermissionEvidence(value: unknown): readonly DiscordGuild
 export function createDiscordBotApi(input: Readonly<{
   token: string;
   http: DiscordHttp;
+  logger?: Pick<PluginInvocationContext['services']['logger'], 'warn'>;
 }>): DiscordBotApi {
   const token = input.token.trim();
   if (!token) throw new Error('Discord bot token is required.');
@@ -383,6 +386,9 @@ export function createDiscordBotApi(input: Readonly<{
       }, options);
       return { status: response.status, body: parseJson(response.body) };
     } catch (error) {
+      input.logger?.warn('[Discord] request failed', {
+        failureCause: projectActionFailureCauseV1(error, 'discord.request', { allowUnknownErrorCode: false }),
+      });
       rethrowConversationProviderLifecycleFailureV1(error, options?.signal);
       return null;
     }

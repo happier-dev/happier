@@ -1,10 +1,12 @@
 import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { NotificationSendRequest, NotificationSendResult } from '@happier-dev/plugin-sdk/notifications';
 type Services = PluginInvocationContext['services'];
 export type SendContext = Readonly<{ signal: AbortSignal; services: {
   http: Pick<Services['http'], 'request'>;
   settings: { forScope(scope: { kind: 'account' }): { get(id: string, options?: { signal?: AbortSignal }): Promise<unknown> } };
   secrets: Pick<Services['secrets'], 'status' | 'get'>;
+  logger: Pick<Services['logger'], 'warn'>;
 } }>;
 
 type Provider = 'ntfy' | 'teams' | 'mattermost' | 'gotify' | 'pushover';
@@ -97,8 +99,12 @@ function sender(provider: Provider) {
         if (result.status !== 1) return { ...identity, status: 'failed', code: 'notification_provider_rejected', retryable: false };
       }
       return { ...identity, status: 'accepted', evidence: 'provider' };
-    } catch {
-      // After dispatch a lost response/cancel can follow an effect. Never expose provider errors or auto-retry.
+    } catch (error) {
+      // After dispatch a lost response/cancel can follow an effect. Retain only
+      // the safe cause, without provider payloads or an automatic retry.
+      context.services.logger.warn('[Notifications] send failed', {
+        failureCause: projectActionFailureCauseV1(error, 'notification.send', { allowUnknownErrorCode: false }),
+      });
       return { ...identity, status: 'outcomeUnknown', code: 'plugin_notification_outcome_unknown' };
     }
   };
