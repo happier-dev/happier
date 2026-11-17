@@ -1,4 +1,5 @@
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
+import { requiresAuthenticatedMachineAdmissionForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createUiPluginCollectionSharingActionDeps } from './pluginCollectionSharingActionDeps';
 import { requireActionSuccess } from './actionResult';
 import { createPrivateLabelActionOpener, createPrivateLabelActionPreparer } from '@/sync/ops/privateLabels/privateLabelClient';
@@ -4178,7 +4179,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const requiresReplyCustody = args.reply === 'wait' || args.reply === 'return' || args.wait === true;
       const authoredStructuredInput = args.authoredInput && 'message' in args.authoredInput ? args.authoredInput.structuredInput : undefined;
       const requiresTargetInputAdmission = authoredStructuredInput?.reviewComments !== undefined
-        || authoredStructuredInput?.sessionAttachments !== undefined;
+        || authoredStructuredInput?.sessionAttachments !== undefined
+        || args.inputAdmission !== undefined && requiresAuthenticatedMachineAdmissionForSessionInput(args.inputAdmission.request);
       const composerSubmission = opts?.sessionMessageComposerSubmission;
       if (composerSubmission && (!composerSubmission.isCurrent() || signal?.aborted)) {
         return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };

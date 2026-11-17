@@ -844,6 +844,66 @@ describe('default Action executor mode and catalog contracts', () => {
         status: { observedRevision: 'session-message-row-revision:v1:8' } });
     } finally { held.release(); held.restore(); await hook.unmount(); }
   });
+  it('delivers an attributed approval receipt through its Session machine admission', async () => {
+    installSession('receipt-session', { machineId: 'machine-a', path: '/repo' });
+    const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+    const machine = { ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' }),
+      installationId: 'receipt-installation', installationPublicKey: encodeBase64(installation.publicKey),
+      operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } }, operationProtocolCapabilitiesRevision: 1 };
+    homes.answer(serverId, '/v1/machines', { body: [machine] });
+    homes.answer(serverId, '/v1/machines/machine-a', { body: { machine } });
+    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+    const { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
+    const attribution = { requestRef: 'original-input', requester: { serverId: 'srv_mode_home', accountId: 'alice' },
+      persona: { serverId: 'srv_mode_home', sessionId: 'receipt-session' }, origin: null };
+    const approval = ApprovalRequestV2Schema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'agent', sessionId: 'receipt-session' }, requestedSurface: 'agent',
+      approval: { flow: 'deferred', result: 'optional' }, actionId: 'session.status.set_reason',
+      actionArgs: { reason: 'Completed' }, summary: 'Set status',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+        caller: { kind: 'session', sessionId: 'receipt-session', starterDepth: 0, turnDepth: 0 },
+        serverId, serverIdentityId: 'srv_mode_home', accountId: 'alice', machineId: 'machine-a',
+        actionId: 'session.status.set_reason', requestId: 'receipt-request', actionRequestAttributionV1: attribution },
+      decision: { kind: 'approve', decidedAtMs: 1, authority: 'present_user' },
+      execution: { executedAtMs: 2, ok: true, result: { ok: true, sessionId: 'receipt-session', reason: 'Completed', version: 2 } },
+    });
+    const artifactId = 'approved-receipt';
+    expect((await homes.artifacts(serverId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: artifactId,
+      header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER }) }))?.ok).toBe(true);
+    for (const actionId of ['action.spec.get', 'session.message.send'] as const) {
+      homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
+        const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        return { body: { v: 1, token: 'receipt-root', binding: { accountId: 'alice', authentication: { kind: 'account', tokenEpoch: 0 },
+          serverIdentityId: 'srv_mode_home', machineId: 'machine-a', installationId: 'receipt-installation', custodianAccountId: 'alice',
+          accountEncryptionMode: 'plain', actionId, requestId: authorized.envelope.requestId,
+          target: authorized.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(authorized.envelope) } } };
+      } });
+    }
+    homes.answer(serverId, '/v1/actions/action.spec.get', { select: body => {
+      const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      return { body: { v: 1, actionId: 'action.spec.get', requestId: authorized.envelope.requestId, execution: { ok: true,
+        result: { actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'mcp', includeOutputSchema: false }) } } } };
+    } });
+    homes.answer(serverId, '/v1/actions/session.message.send', { select: body => {
+      const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      expect(authorized.envelope).toMatchObject({ target: { kind: 'machine', machineId: 'machine-a' }, input: {
+        sessionId: 'receipt-session', localId: `approval-result:${artifactId}`, reply: 'none', requestedAction: { v: 1, kind: 'enqueue' },
+        message: expect.stringContaining(artifactId) } });
+      expect(openExternalActionRequesterAccountContextV1({ authorization: authorized.executionAuthorization,
+        purpose: { kind: 'external_action' }, machineId: 'machine-a', installationId: 'receipt-installation', serverIdentityId: 'srv_mode_home',
+        installationPrivateKey: installation.secretKey, includeInvocation: true })).toMatchObject({ invocation: {
+          caller: { kind: 'host' }, surface: 'mcp', authority: 'account_automation', actionRequestAttributionV1: attribution } });
+      return { body: { v: 1, actionId: 'session.message.send', requestId: authorized.envelope.requestId,
+        execution: { ok: true, result: { status: 'accepted', localId: `approval-result:${artifactId}` } } } };
+    } });
+    const result = await createDefaultActionExecutor().replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user',
+      currentAccount: { accountId: 'alice', serverId, serverIdentityId: 'srv_mode_home' } });
+    expect(homes.requestsFor('/v2/sessions/receipt-session/pending')).toHaveLength(0);
+    expect(homes.requestsFor('/v1/actions/session.message.send'), JSON.stringify(result)).toHaveLength(1);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+  });
   it.each(['ui', 'repeated_send', 'human_return', 'composer', 'composer_wait', 'composer_group', 'composer_presentation_retired', 'composer_account_retired', 'voice', 'legacy', 'schema_legacy', 'extended_send', 'triage_send', 'triage_schema_unavailable', 'native_command', 'schema_nested_legacy', 'schema_nested_legacy_none', 'review_send'] as const)('keeps an Ask on the canonical daemon send owner with its exact input and observation intent (%s)', async client => {
     const triage = client === 'triage_send' || client === 'triage_schema_unavailable';
     const surface = client === 'voice' ? 'voice' : triage ? 'plugin' : 'ui';
