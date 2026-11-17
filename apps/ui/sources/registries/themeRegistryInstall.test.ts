@@ -15,7 +15,7 @@ function document(id: string, css?: string) {
     return result.document;
 }
 
-function setup() {
+function setup(acquisitionGate?: Promise<void>) {
     // Persistence and selected registry acquisition are boundaries; MODEL logic remains real.
     const rows = new Map<string, { document: ReturnType<typeof document>; revision: number; headerVersion: number }>();
     const selection = { light: null as ThemeReference | null, dark: null as ThemeReference | null };
@@ -62,6 +62,7 @@ function setup() {
     const lifecycle = createThemeRegistryLifecycle({ withThemeProfileContext: operation => operation(context), readMode: () => 'dark',
         acquire: async (key, operation) => {
             acquisitions++;
+            await acquisitionGate;
             return { ...upstream, item: { ...upstream.item, summary: { ...upstream.item.summary, ...key } },
                 provenance: { ...upstream.provenance, sourceId: key.sourceId, itemId: key.itemId,
                     ...(operation.expectedScope?.accountId === 'account-b' ? { sourceUrl: 'https://themes.example.test/account-b/catalog' } : {}) } };
@@ -131,6 +132,22 @@ describe('Store theme lifecycle through the MODEL library', () => {
             origin: { kind: 'store', listing: state.listing, acquired } }, state.options);
         expect(kept.entry?.source).toMatchObject({ kind: 'store', contributionId: 'dark',
             provenance: { ref: { kind: 'version', version: '1.0.0' } } });
+        expect(state.counts().acquisitions).toBe(2);
+    });
+
+    it('does not retain an acquisition that finishes after its listing closes', async () => {
+        let finishAcquisition!: () => void;
+        const acquisitionGate = new Promise<void>(resolve => { finishAcquisition = resolve; });
+        const state = setup(acquisitionGate);
+        const controller = new AbortController();
+        const options = { ...state.options, signal: controller.signal };
+        const opening = state.lifecycle.get(state.listing, options);
+        controller.abort();
+        state.lifecycle.releaseOpened(state.listing, options);
+        finishAcquisition();
+        await opening;
+        state.publishVersion('2.0.0');
+        expect((await state.lifecycle.prepareStorePreview(state.listing, state.options)).item.payload.version).toBe('2.0.0');
         expect(state.counts().acquisitions).toBe(2);
     });
 

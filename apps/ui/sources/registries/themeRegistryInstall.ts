@@ -33,7 +33,7 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
     };
     const get = async (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions) => {
         const acquired = await acquire(listing, options);
-        opened = { acquired, expectedScope: options.expectedScope };
+        if (!options.signal?.aborted) opened = { acquired, expectedScope: options.expectedScope };
         return acquired;
     };
     const releaseOpened = (listing: ThemeRegistryItemKey, options: ThemeRegistryOperationOptions): void => {
