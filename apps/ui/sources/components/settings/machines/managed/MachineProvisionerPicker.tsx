@@ -218,6 +218,8 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
                 onPress: () => open(id, undefined), disabled: !catalog.isCurrentFor(id) || hostPending }
             : needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
                 onPress: () => showManagedGetTheAppModal(title) }
+            : readiness.homeUnreachable ? { kind: 'repair', label: t('homeGovernance.reach.setAddress'),
+                onPress: () => router.push(homeAdministrationReachPath(props.serverId) as never) }
             // Only the card's own failed check offers Retry here; a failed controller catalog is said once, by the
             // page line and its Retry, while each card keeps the step its own answer gives (Connect pairs with No account).
             : readiness.kind === 'unavailable' ? { kind: 'retry', label: t('common.retry'), onPress: catalog.refresh }

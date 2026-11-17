@@ -991,7 +991,7 @@ describe('provisioner picker demand', () => {
     { location: 'local', credentialFailure: false, caveat: true },
     { location: 'local', credentialFailure: false, nativeStatus: true },
   ] as const)(
-    'retains completed provider status without acquiring ($location, credential failure=$credentialFailure)',
+    'retains completed provider status without acquiring ($location, credential failure=$credentialFailure, caveat=$caveat)',
     async ({ location, credentialFailure, ...rest }) => {
       const checkFailure = 'checkFailure' in rest;
       const caveat = 'caveat' in rest;
@@ -1141,6 +1141,10 @@ describe('provisioner picker demand', () => {
         expect(screen.getTextContent()).not.toContain('This Home only offers a connection on the controller.');
         const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
         expect(cards[0].status).toEqual({ tone: 'attention', label: t('managedMachines.add.status.needsSetup') });
+        expect(cards[0].action.kind).toBe('repair');
+        routerPush.mockClear();
+        await act(async () => cards[0].action.onPress());
+        expect(routerPush).toHaveBeenCalledWith(`/settings/home/${serverId}/reach`);
         routerPush.mockClear();
         await act(async () => screen.pressByTestId('managed-picker.caveat-action'));
         expect(routerPush).toHaveBeenCalledWith(`/settings/home/${serverId}/reach`);
