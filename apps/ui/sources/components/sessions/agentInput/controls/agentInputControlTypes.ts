@@ -1,6 +1,6 @@
 import type { AgentInputActionBarLayout } from '@/components/sessions/agentInput/layout/actionBarLogic';
 import type { IconName } from '@/components/ui/icons/Icon';
-import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 
 export type AgentInputPlacementContext = 'session' | 'newSession' | 'workflow' | 'discussion';
 

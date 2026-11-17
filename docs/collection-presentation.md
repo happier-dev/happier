@@ -42,6 +42,29 @@ An unmeasured or offscreen row keeps Glint and Shimmer stopped, and entering the
 treatment. Dot, Accent and rows without a moving treatment acquire no visibility observation.
 The standalone `CollectionRowNeedsYouHighlight` continues to consume its caller's explicit `visible` fact.
 
+## Column preferences (unreleased 0.3 development)
+
+Collections opt in with `columns: { collectionId }`, using a stable table-kind id.
+`CollectionField.key` identifies each movable field; the primary title remains first
+and visible. `defaultHidden` is the sole default-visibility declaration. Unbound
+Collections preserve their declared fields and defaults.
+
+The presentation host supplies `collectionColumns.useShownFieldKeys` once at
+Collection entry. Core reads the Account `collectionColumnPreferencesV1` entry
+through its key-scoped settings subscription, then reuses navigation placement
+resolution and reorder with only pinned/hidden choices. The table and page-list
+consume the same projected fields. Phone bylines keep their existing fact owner.
+The table and its Columns menu share one upstream subscription for that collection;
+the subscription retires with its last reader. Selecting an unchanged collection
+entry does not rerender it when another entry changes, including Account merges
+that reconstruct equal sibling objects.
+
+`settings.get` on `appearance.collectionColumns` reads the keyed preference map.
+`settings.set` accepts `{ collectionId, preferences }`; `preferences: null` removes
+only that collection's override. The Columns controller uses that same Action
+writer for visibility, reorder and Reset. This built-in preference seam does not
+introduce a plugin fact declaration or Resource acquisition.
+
 ## Model and presentation
 
 Row secondary actions carry optional menu-selection context through Overlay,

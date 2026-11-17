@@ -11,7 +11,7 @@ import {
   resolveRightSidebarTabPlacement,
 } from './rightSidebarTabRegistry';
 import { resolveRightSidebarMobileProjection } from './rightSidebarMobileProjection';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/navigationPlacement';
 import { createPluginProjectContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 
 describe('right-sidebar catalog defaults', () => {

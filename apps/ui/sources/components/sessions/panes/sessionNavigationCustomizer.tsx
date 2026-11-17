@@ -24,7 +24,7 @@ import { Modal } from '@/modal';
 import {
   resolveNavigationPlacements,
   type NavigationPlacementPreferences,
-} from '@/sync/domains/settings/mobileSurfacePinning';
+} from '@/sync/domains/settings/navigationPlacement';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 

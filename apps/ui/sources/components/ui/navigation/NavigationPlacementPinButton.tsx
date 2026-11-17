@@ -3,7 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { updateNavigationPlacement, type NavigationPlacementPreferences, type NavigationPlacementAddress } from '@/sync/domains/settings/mobileSurfacePinning';
+import { updateNavigationPlacement, type NavigationPlacementPreferences, type NavigationPlacementAddress } from '@/sync/domains/settings/navigationPlacement';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useNavigationSurfacePlacementActionWriter } from './useNavigationSurfacePlacement';
 

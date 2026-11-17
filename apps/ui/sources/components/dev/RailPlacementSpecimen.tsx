@@ -19,7 +19,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationPlacementCustomizerView } from '@/components/ui/navigation/NavigationPlacementCustomizer';
 import { Text } from '@/components/ui/text/Text';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { t } from '@/text';
 
 const PAGES = ['channels', 'inspector', 'triage'].map((id, index): PluginPage => ({

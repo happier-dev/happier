@@ -40,7 +40,7 @@ import {
 import { Text } from '@/components/ui/text/Text';
 import { buildNavigationPlacementMenu, buildPlacementReorderBinding, type NavigationPlacementItem } from '@/components/ui/navigation/NavigationPlacementCustomizer';
 import { EntityFlatReorderList, EntityFlatReorderRow } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
-import { resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';

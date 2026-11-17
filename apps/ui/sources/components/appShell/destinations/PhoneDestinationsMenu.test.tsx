@@ -16,7 +16,7 @@ import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/Uni
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
-import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/navigationPlacement';
 import type { NavigationPlacementItem } from '@/components/ui/navigation/NavigationPlacementCustomizer';
 
 const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));

@@ -1,4 +1,4 @@
-import { normalizeProjectNavigationItemId } from '@/sync/domains/settings/mobileSurfacePinning';
+import { normalizeProjectNavigationItemId } from '@/sync/domains/settings/navigationPlacement';
 import { PluginUiDestinationReferenceV1Schema, type PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 import { parsePluginProjectPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import { buildPluginSurfaceDestinationId } from '@/components/plugins/surfaces/pluginSurfaceDestinations';

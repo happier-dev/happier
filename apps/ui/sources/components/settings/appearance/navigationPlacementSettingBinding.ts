@@ -1,6 +1,6 @@
 import type { SettingOperationResult, SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
-import { mergeNavigationSurfacePlacements, NavigationSurfacePlacementsV1Schema, readNavigationSurfacePlacements, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import { mergeNavigationSurfacePlacements, NavigationSurfacePlacementsV1Schema, readNavigationSurfacePlacements, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/navigationPlacement';
 
 /** The mounted detail owns its kind and lends the shared customizer to Settings. */
 export async function invokeNavigationPlacementCustomizer(): Promise<SettingOperationResult> {

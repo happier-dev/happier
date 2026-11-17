@@ -3,7 +3,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { PluginUiPageNavigationProjectionV1 } from '@happier-dev/protocol/plugins/ui/pageNavigation';
 import { resolveDetailNavigationItems, type DetailPageNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import { selectPresentedDetailNavigationItem, usePresentedDetailNavigation } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
-import type { DetailNavigationAddress } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { DetailNavigationAddress } from '@/sync/domains/settings/navigationPlacement';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

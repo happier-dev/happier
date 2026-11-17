@@ -17,7 +17,7 @@ import { Modal } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
-import { resolveNavigationOverflow, resolveNavigationPlacements, type DetailNavigationAddress, type NavigationDefaultPlacement, type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationOverflow, resolveNavigationPlacements, type DetailNavigationAddress, type NavigationDefaultPlacement, type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { PluginRightSidebarCountState, PluginRightSidebarCountsState, pluginRightSidebarCountHasContent, formatPluginRightSidebarCount,

@@ -1,7 +1,7 @@
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { dispatchKvFeedChanges } from '@/sync/engine/socket/kvUpdateDispatcher';
 import { buildSessionOrganizationLabelKey } from '@/sync/domains/session/organization/keys';
-import { readNavigationSurfacePlacements, readPhonePinnedBotSessionIds } from '@/sync/domains/settings/mobileSurfacePinning';
+import { readNavigationSurfacePlacements, readPhonePinnedBotSessionIds } from '@/sync/domains/settings/navigationPlacement';
 import { readSessionOrganizationWorkspaceLabel } from '@/sync/domains/session/organization/viewState';
 import { requireSessionOrganizationMutationScope, writeSessionOrganizationWorkspaceLabels } from '@/sync/ops/sessionOrganization';
 import { registerSyncRuntime } from './sync';

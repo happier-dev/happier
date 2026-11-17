@@ -3,7 +3,7 @@ import { PluginRightSidebarCountsState, formatPluginRightSidebarCount, type Plug
     type PluginRightSidebarLabelledCount } from '@/components/appShell/rightSidebar/rightSidebarPluginCount';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import type { ProjectPageDescriptor } from '@/components/projects/detail/projectPageCatalog';
-import { resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import type { ProjectPageCatalogModel } from './useProjectPageCatalog';
 
 /** Presentation of the count owner's ordered values, never a second numeric interpretation. */

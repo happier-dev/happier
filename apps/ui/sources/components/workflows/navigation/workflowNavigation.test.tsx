@@ -32,7 +32,7 @@ const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); });
 
 it.each(['workflowEditor', 'workflowRun'] as const)('reserves the %s primary on desktop and phone against saved hidden/More placements', async pageKind => {
-    const { resolveNavigationPlacements } = await import('@/sync/domains/settings/mobileSurfacePinning');
+    const { resolveNavigationPlacements } = await import('@/sync/domains/settings/navigationPlacement');
     const items = catalog.resolveDetailNavigationItems({ scope: pageKind });
     const primary = pageKind === 'workflowEditor' ? 'steps' : 'flow';
     for (const placement of ['hidden', 'overflow'] as const) {

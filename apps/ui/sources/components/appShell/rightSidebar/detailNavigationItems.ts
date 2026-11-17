@@ -4,7 +4,7 @@ import type { ResolveRightSidebarTabsInput } from './rightSidebarTabRegistry';
 import type { ProjectPageDescriptor } from '@/components/projects/detail/projectPageCatalog';
 import { t } from '@/text';
 import { getRightSidebarTabLabel } from './rightSidebarTabRegistry';
-import type { NavigationDefaultPlacement, NavigationPlacement, NavigationPlacementPolicy } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationDefaultPlacement, NavigationPlacement, NavigationPlacementPolicy } from '@/sync/domains/settings/navigationPlacement';
 import type { DetailNavigationDestination } from './rightSidebarBuiltinTabs';
 import { DEPLOYMENT_ENVIRONMENT_TABS_V1, type DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import type { PluginUiPageNavigationItemV1 } from '@happier-dev/protocol/plugins/ui/pageNavigation';

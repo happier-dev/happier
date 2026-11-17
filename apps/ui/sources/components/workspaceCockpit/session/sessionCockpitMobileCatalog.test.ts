@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 
 import {
     resolveSessionCockpitMobileCatalog,

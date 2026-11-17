@@ -8,7 +8,7 @@ import type { DetailNavigationCustomizerProps } from '@/components/ui/navigation
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { resolveNavigationPlacements, type DetailNavigationAddress } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements, type DetailNavigationAddress } from '@/sync/domains/settings/navigationPlacement';
 import { notifyShellColumnActionOwnersChanged, registerShellColumnActionOwner, type ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { t } from '@/text';
 import { resolveDetailPhoneNavigationItem, type DetailPageNavigationItem } from './detailNavigationItems';

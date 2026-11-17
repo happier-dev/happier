@@ -10,7 +10,7 @@ import {
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { createSessionFixture } from '@/dev/testkit';
 import { buildSessionOrganizationProjection, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/navigationPlacement';
 
 import {
     buildAppRailEntries,

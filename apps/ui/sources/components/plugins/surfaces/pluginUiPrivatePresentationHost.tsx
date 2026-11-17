@@ -1,3 +1,4 @@
+import { useCollectionShownFieldKeys } from '@/components/ui/lists/collection/useCollectionColumnPreferences';
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
 import type { HappierCodeEditorRequest } from '@happier-dev/plugin-ui/presentation';
 import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
@@ -383,6 +384,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
         },
     } satisfies HostTaskShareSheet,
     collectionAddMenu: CORE_COLLECTION_ADD_MENU_HOST,
+    collectionColumns: { useShownFieldKeys: useCollectionShownFieldKeys },
     renderExecutableParticipantPicker(input: ExecutableParticipantPickerProps) {
         return <ExecutableParticipantPickerPresentation {...input} />;
     },

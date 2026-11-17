@@ -111,6 +111,8 @@ export function DeploymentEnvironmentRows(
     openBackups?: boolean;
     /** On a Machine's own page: rows leave out the Machine they all run on (lab hereMachine). */
     hereMachine?: boolean;
+    /** Services Apps column identity; preferences stay with the host. */
+    columns?: DeploymentEnvironmentColumnsBinding;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -259,6 +261,7 @@ export function DeploymentEnvironmentRows(
         anatomy={anatomy}
         accessibilityLabel={props.accessibilityLabel}
         useRowActions={useEnvironmentRowActions}
+        columns={props.columns ?? SERVICES_APPS_COLUMNS_BINDING}
       />
     </EnvironmentRowMenuContext.Provider>
   );
@@ -331,6 +334,16 @@ export function deploymentEnvironmentRowLeadState<T extends Pick<Row, 'state'>>(
   return layout.columns ? null : row.state;
 }
 
+export const SERVICES_APPS_COLLECTION_ID = 'happier.services.apps';
+
+export type DeploymentEnvironmentColumnsBinding = Readonly<{
+  collectionId: string;
+  /** The columns the width admits now, for the Columns menu's "too narrow". */
+  onColumnsFit?: (fieldKeys: readonly string[]) => void;
+}>;
+
+const SERVICES_APPS_COLUMNS_BINDING: DeploymentEnvironmentColumnsBinding = { collectionId: SERVICES_APPS_COLLECTION_ID };
+
 /** Every band of a Services list stands on its one sheet, under the one bar that names the columns (lab envList). */
 export const SERVICES_ONE_SHEET = { key: 'services', title: '' } as const;
 
@@ -349,6 +362,7 @@ export function ServicesPageList<Item>(props: Readonly<{
   groupAction?: (groupKey: string) => CollectionGroupAction | null;
   /** A row's ⋯ (Collection `useRowActions`: one stable module-level hook). */
   useRowActions?: (item: Item) => CollectionRowActions;
+  columns?: DeploymentEnvironmentColumnsBinding;
   /** Rows by default; Monitoring can show its checks as the Collection's cards. */
   presentation?: 'list' | 'grid';
 }>) {
@@ -376,6 +390,7 @@ export function ServicesPageList<Item>(props: Readonly<{
             preferredListRatio={1}
             {...(props.groupAction ? { groupAction: props.groupAction } : {})}
             {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
+            {...(props.columns ? { columns: { collectionId: props.columns.collectionId } } : {})}
           />
         </CoreCollectionScope>
       </ItemGroup>

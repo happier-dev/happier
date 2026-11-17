@@ -11,7 +11,7 @@ import {
     type NavigationPlacementPreferences,
     type NavigationPlacementAddress,
     type NavigationSurfacePlacementsV1,
-} from '@/sync/domains/settings/mobileSurfacePinning';
+} from '@/sync/domains/settings/navigationPlacement';
 
 /** Every surface subscribes to device preferences; mounting only reads the current owner. */
 export function useNavigationSurfacePlacement(address: NavigationPlacementAddress, enabled = true): Readonly<{

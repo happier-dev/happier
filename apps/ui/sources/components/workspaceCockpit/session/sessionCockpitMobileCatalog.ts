@@ -5,10 +5,10 @@ import type { RightSidebarTabDefinition } from '@/components/appShell/rightSideb
 import type { RightSidebarPluginTabRuntimeAdmission } from '@/components/appShell/rightSidebar/rightSidebarPluginTabs';
 import type { ResolveRightSidebarTabsInput } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
-import { type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { resolveDetailPhoneBarFit, resolveDetailPhonePlacement } from '@/components/navigation/mobile/chrome/bars/detailPhoneNavigationProjection';
 
-export { SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS } from '@/sync/domains/settings/mobileSurfacePinning';
+export { SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS } from '@/sync/domains/settings/navigationPlacement';
 
 import {
     isSessionPluginMobileSurface,

@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 
 import { SessionCompanionPreferencesV1Schema } from '@/components/sessions/companion/state/sessionCompanionPreference';
-import { StoredNavigationSurfacePlacementsV1Schema } from '../../mobileSurfacePinning';
+import { StoredNavigationSurfacePlacementsV1Schema } from '../../navigationPlacement';
 import { DEFAULT_RIGHT_PREFERRED_PX, DEFAULT_SESSION_WIDTH_PX } from '@/components/ui/panels/paneBreakpoints';
 import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
 

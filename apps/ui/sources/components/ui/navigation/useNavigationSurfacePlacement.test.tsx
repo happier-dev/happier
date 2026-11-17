@@ -5,7 +5,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
-import { StoredNavigationSurfacePlacementsV1Schema } from '@/sync/domains/settings/mobileSurfacePinning';
+import { StoredNavigationSurfacePlacementsV1Schema } from '@/sync/domains/settings/navigationPlacement';
 import { navigationPlacementStorageBinding } from '@/components/settings/appearance/navigationPlacementSettingBinding';
 import { useNavigationSurfacePlacement } from './useNavigationSurfacePlacement';
 

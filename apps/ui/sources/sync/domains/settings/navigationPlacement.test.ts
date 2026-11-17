@@ -7,7 +7,7 @@ import {
     resolveNavigationPlacements,
     updateNavigationPlacement,
     NavigationSurfacePlacementsV1Schema,
-} from './mobileSurfacePinning';
+} from './navigationPlacement';
 
 describe('navigation placements', () => {
     it('stores one device-local Project layout, retains removed pages and clamps legal placement without rewriting intent', () => {

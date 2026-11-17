@@ -1,5 +1,5 @@
 import type { AgentInputControlDescriptor, AgentInputControlMenuMetadata, AgentInputControlPlacement, AgentInputHostControlId } from './agentInputControlTypes';
-import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 import { t, type TranslationKeyNoParams } from '@/text';
 import type { IconName } from '@/components/ui/icons/Icon';
 

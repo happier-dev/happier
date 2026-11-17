@@ -6,7 +6,7 @@ import { withTiming } from 'react-native-reanimated';
 import { renderScreen } from '@/dev/testkit';
 import { RightSidebarActionRail, RightSidebarActionRailView, type RightSidebarRailAction } from './RightSidebarActionRail';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { PaneActionRailContext } from '@/components/appShell/panes/PaneActionRailContext';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';

@@ -5,7 +5,7 @@ import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/
 import type { IconName } from '@/components/ui/icons/Icon';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
 import type { ProjectPageV1 } from '@/components/projects/detail/projectRouteState';
-import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 
 /** `discussion`: a Discussion page's own rail (who is in it, its agents, its settings), never mixed into a Session's. */
 export type RightSidebarScope = 'session' | 'project' | 'app' | 'discussion';

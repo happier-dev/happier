@@ -11,7 +11,7 @@ import {
     type CompactAppDestination,
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { t } from '@/text';
-import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';

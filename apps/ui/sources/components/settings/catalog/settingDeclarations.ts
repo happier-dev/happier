@@ -1,3 +1,4 @@
+import { collectionColumnsStorageBinding } from '@/components/ui/lists/collection/collectionColumnSettings';
 import { Platform } from 'react-native';
 import type { AccountSettingKey} from '@happier-dev/protocol/account/settings/accountSettings';
 import type { AutomationV3Settings} from '@happier-dev/protocol/automations/automationApiV3';
@@ -365,6 +366,7 @@ export function builtInSettingsPageSections(anchorPrefix: string): Record<string
 }
 
 function portableStorageBinding(declaration: PortableSettingDeclarationV1): SettingStorageBinding | undefined {
+    if (declaration.anchor === 'appearance.collectionColumns') return collectionColumnsStorageBinding;
     const binding = declaration.storage;
     if (!binding) return undefined;
     if (declaration.anchor === COLLECTION_RAIL_WIDTH_SETTING_ANCHOR && binding.owner === COLLECTION_RAIL_WIDTH_SETTING_OWNER) {
@@ -463,11 +465,9 @@ export function readBuiltInSettingUiRef(anchor: string, ownerBinding?: Readonly<
     if (!portable || !labels || portable.operation) return null;
     if (ownerBinding && portable.storage?.owner !== ownerBinding.owner) return null;
     const declaration = projectPortableDeclaration(anchor, ownerBinding ? { storage: ownerBinding.storage } : {});
-    const resolvedRailOwner = anchor === COLLECTION_RAIL_WIDTH_SETTING_ANCHOR
-        && portable.storage?.owner === COLLECTION_RAIL_WIDTH_SETTING_OWNER
-        && declaration.storage === collectionRailWidthStorageBinding;
-    if ((declaration.storage?.scope !== 'account' && declaration.storage?.scope !== 'local')
-        || !('key' in declaration.storage) && !ownerBinding && !resolvedRailOwner) return null;
+    // The storage owner already resolved its binding. Compound Account/device preferences
+    // use that same admitted owner even when they have no searchable Settings page row.
+    if (declaration.storage?.scope !== 'account' && declaration.storage?.scope !== 'local') return null;
     return { ...declaration, description: portable.description, anchor, sectionId: portable.sectionId,
         sectionTitleKey: labels.sectionTitleKey, featureId: labels.featureId };
 }

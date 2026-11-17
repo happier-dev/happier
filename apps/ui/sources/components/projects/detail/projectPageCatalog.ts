@@ -6,7 +6,7 @@ import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import { PROJECT_PAGES, type ProjectPageSelection, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { projectPageGlyph, projectPageLabel } from '@/components/projects/navigation/projectPageDisplay';
-import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 
 import { resolveDetailNavigationItems, type ProjectDetailNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import type { ResolveRightSidebarTabsInput } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';

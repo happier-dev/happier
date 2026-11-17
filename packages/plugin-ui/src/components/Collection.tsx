@@ -107,6 +107,7 @@ import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
 import { CollectionDetailHeadingFocusContext, useCollectionDetailHeadingFocusInternal } from './Focus.js';
 import { CollectionVirtualizerContext, type CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
+import { useCollectionShownFields, type CollectionColumnsBinding } from './collectionColumnChoice.js';
 import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
 
 /**
@@ -132,6 +133,11 @@ export type CollectionField<Item> = Readonly<{
   /** Lower drops first when the table is narrow. */
   priority: number;
   align?: 'start' | 'end';
+  /**
+   * An optional column (a plugin's Requests · 24 h): drawn only when the person shows it from the Columns menu
+   * (`CollectionProps.columns`). The collection's default stays the columns declared without it.
+   */
+  defaultHidden?: boolean;
   /**
    * The column stands right after the title, before the anatomy's slot columns (a task's status word before its
    * Where). Otherwise field columns follow the slots, and the table's trailing Age (and title meta) stay last.
@@ -464,6 +470,12 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
   detail?: HappierCollectionDetailContainer;
   /** A logical automatic landing previews only beside the list, never as a narrow push. Explicit opens remain open on resize. */
   detailOpenIntent?: 'explicit' | 'landing';
+  /**
+   * Offer the person the Columns choice for this table kind: the host's Columns menu shows, hides and orders the
+   * anatomy's fields (the title stays first), and the Collection draws that choice. Omitted: the declared default.
+   * Fixed for the mounted Collection.
+   */
+  columns?: CollectionColumnsBinding;
   /** The one detail component, in every container. */
   renderDetail?: (key: HappierCollectionKey, context: CollectionDetailRenderContext) => ReactNode;
   /**
@@ -2143,12 +2155,17 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // the chosen card with its ring (a visual picker's one mark), so it keeps its own glyph: a radio beside the
   // ring says the same fact twice.
   const ringMarksChoice = props.presentation === 'grid';
-  const anatomy = useMemo<CollectionAnatomy<Item>>(() => singleChoice === undefined ? props.anatomy : {
-    ...props.anatomy,
+  // The person's Columns choice picks and orders the fields once, here; the table, the list's end columns and the
+  // byline then draw the chosen fields unchanged, and the width owner still decides which of them fit.
+  const shownFields = useCollectionShownFields(props.anatomy.fields, props.columns);
+  const chosenAnatomy = useMemo<CollectionAnatomy<Item>>(() => shownFields === props.anatomy.fields ? props.anatomy
+    : { ...props.anatomy, fields: shownFields }, [props.anatomy, shownFields]);
+  const anatomy = useMemo<CollectionAnatomy<Item>>(() => singleChoice === undefined ? chosenAnatomy : {
+    ...chosenAnatomy,
     destination: undefined,
     ...(ringMarksChoice ? {} : { glyph: () => <CollectionChoiceMark /> }),
-    reason: (item) => singleChoice.unavailableReason?.(item) ?? props.anatomy.reason?.(item),
-  }, [props.anatomy, ringMarksChoice, singleChoice?.unavailableReason, singleChoice === undefined]);
+    reason: (item) => singleChoice.unavailableReason?.(item) ?? chosenAnatomy.reason?.(item),
+  }, [chosenAnatomy, ringMarksChoice, singleChoice?.unavailableReason, singleChoice === undefined]);
   const translate = usePluginTranslation();
   const accessibility = useHappierUiAccessibility();
   const platform = useOptionalHappierUiPlatform();

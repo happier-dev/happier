@@ -9,7 +9,7 @@ import { renderScreen as renderRealScreen } from '@/dev/testkit/render/renderScr
 import { createMachineFixture, createSessionFixture, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import type { ScmStatus } from '@/sync/domains/state/storageTypes';
 import { getUiListsModalMockRef, installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 

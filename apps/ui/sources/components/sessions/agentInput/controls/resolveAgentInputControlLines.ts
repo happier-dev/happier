@@ -4,7 +4,7 @@ import {
     resolveNavigationPlacements,
     type NavigationPlacementPreferences,
     type NavigationSurfacePlacementsV1,
-} from '@/sync/domains/settings/mobileSurfacePinning';
+} from '@/sync/domains/settings/navigationPlacement';
 
 import {
     type AgentInputResolvedControlLines,

@@ -324,6 +324,17 @@ export type PluginUiPresentationHost = Readonly<{
       children: ReactNode;
     }>>;
   }>;
+  /**
+   * The person's Columns choice for a Collection that opts in (`CollectionProps.columns`): the field keys it draws,
+   * in order, read from the host's one column-preference owner. `null` while the person has made no choice (or the
+   * host cannot read it): the Collection draws its declared default. Absent (a hosted-web realm), the same default.
+   */
+  collectionColumns?: Readonly<{
+    useShownFieldKeys(input: Readonly<{
+      collectionId: string;
+      fields: readonly Readonly<{ key: string; defaultHidden: boolean }>[];
+    }>): readonly string[] | null;
+  }>;
   /** The person's needs-you highlight facts for `CollectionRowNeedsYouHighlight`; read only by a row that needs them. */
   collectionRowNeedsYou?: Readonly<{ useFacts(): Readonly<{ preference: import('../presentation/collection/needsYouHighlight.js').HappierNeedsYouHighlightPreference; reducedMotion: boolean; presented: boolean }> }>;
   /** Thin presentation requests; the existing mounted host owns identity, gestures and Actions. */

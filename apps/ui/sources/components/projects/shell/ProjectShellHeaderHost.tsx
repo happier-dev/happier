@@ -18,7 +18,7 @@ import { type ProjectPageV1, type ProjectPageSelection } from '@/components/work
 import { ProjectPageCatalogProvider, useOptionalProjectPageCatalog, useProjectPageCatalog } from '../navigation/useProjectPageCatalog';
 import { ProjectPageChromeCounts } from '../navigation/ProjectPageChromeCounts';
 import { resolveProjectNavigationCustomizer } from '../navigation/projectNavigationCustomizer';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/navigationPlacement';
 import { useNavigationSurfacePlacement, useNavigationSurfacePlacementActionWriter } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { Modal } from '@/modal';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';

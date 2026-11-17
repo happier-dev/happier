@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 import type { AgentInputExtraActionChip } from './agentInputContracts';
 
 

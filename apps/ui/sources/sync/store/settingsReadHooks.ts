@@ -15,8 +15,42 @@ export function useSettings(): Settings {
   return getStorage()(useShallow((state) => state.settings ?? settingsDefaults));
 }
 
+type SharedSettingsSubscription = { listeners: Set<() => void>; stop: () => void };
+const sharedSettingsSubscriptions = new WeakMap<ReturnType<typeof getStorage>, Map<string, SharedSettingsSubscription>>();
+
+/** A mounted table and its menu share upstream demand; every selector keeps its own equality check. */
+function subscribeSettingsProjection(
+  storage: ReturnType<typeof getStorage>,
+  keys: readonly string[] | true,
+  sharedId: string | undefined,
+  listener: () => void,
+  subscribe: (notify: () => void) => () => void,
+): () => void {
+  if (sharedId === undefined) return subscribe(listener);
+  let subscriptions = sharedSettingsSubscriptions.get(storage);
+  if (!subscriptions) {
+    subscriptions = new Map();
+    sharedSettingsSubscriptions.set(storage, subscriptions);
+  }
+  const key = JSON.stringify([sharedId, keys]);
+  let entry = subscriptions.get(key);
+  if (!entry) {
+    const listeners = new Set<() => void>();
+    entry = { listeners, stop: subscribe(() => { for (const notify of listeners) notify(); }) };
+    subscriptions.set(key, entry);
+  }
+  entry.listeners.add(listener);
+  return () => {
+    entry.listeners.delete(listener);
+    if (entry.listeners.size !== 0) return;
+    entry.stop();
+    subscriptions.delete(key);
+    if (subscriptions.size === 0) sharedSettingsSubscriptions.delete(storage);
+  };
+}
+
 /** Explicit consumed keys route demand before projection; true opts dynamic callbacks into the whole snapshot. */
-export function useSettingsSelector<T>(selector: (settings: Settings) => T, keys: readonly string[] | true): T {
+export function useSettingsSelector<T>(selector: (settings: Settings) => T, keys: readonly string[] | true, sharedSubscription?: string): T {
   const stableKeys = useShallow((value: readonly string[] | true) => value)(keys);
   const source = React.useMemo(() => {
     const storage = getStorage();
@@ -35,19 +69,21 @@ export function useSettingsSelector<T>(selector: (settings: Settings) => T, keys
       getInitialState: getState,
       subscribe(listener: (state: typeof snapshot, previous: typeof snapshot) => void) {
         const notify = () => { const previous = snapshot; listener(getState(), previous); };
-        const stopStorage = storage.subscribe(notify, { settings: stableKeys, settingsScope: true });
-        const stopPreview = useSettingsPreviewStore.subscribe((state, previous) => {
-          const scope = storage.getState().settingsScope;
-          const account = settingsPreviewScopeMatches(scope, state.scope) ? state.account : undefined;
-          const previousAccount = settingsPreviewScopeMatches(scope, previous.scope) ? previous.account : undefined;
-          if (stableKeys !== true
-            ? stableKeys.some(key => account?.[key as keyof Settings] !== previousAccount?.[key as keyof Settings])
-            : !shallow(account ?? {}, previousAccount ?? {})) notify();
+        return subscribeSettingsProjection(storage, stableKeys, sharedSubscription, notify, publish => {
+          const stopStorage = storage.subscribe(publish, { settings: stableKeys, settingsScope: true });
+          const stopPreview = useSettingsPreviewStore.subscribe((state, previous) => {
+            const scope = storage.getState().settingsScope;
+            const account = settingsPreviewScopeMatches(scope, state.scope) ? state.account : undefined;
+            const previousAccount = settingsPreviewScopeMatches(scope, previous.scope) ? previous.account : undefined;
+            if (stableKeys !== true
+              ? stableKeys.some(key => account?.[key as keyof Settings] !== previousAccount?.[key as keyof Settings])
+              : !shallow(account ?? {}, previousAccount ?? {})) publish();
+          });
+          return () => { stopStorage(); stopPreview(); };
         });
-        return () => { stopStorage(); stopPreview(); };
       },
     };
-  }, [stableKeys]);
+  }, [stableKeys, sharedSubscription]);
   const select = React.useCallback(([settings, scope, preview]: ReturnType<typeof source.getState>) => {
     const held = settingsPreviewScopeMatches(scope, preview.scope)
       ? Object.fromEntries(Object.entries(preview.account).map(([key, entry]) => [key, entry?.value])) : {};

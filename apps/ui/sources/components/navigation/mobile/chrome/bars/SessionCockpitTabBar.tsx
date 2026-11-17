@@ -22,7 +22,7 @@ import {
     resolveSessionCockpitPhoneItems,
     type SessionCockpitMobileCatalogEntry,
 } from '@/components/workspaceCockpit/session/sessionCockpitMobileCatalog';
-import { type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { useDetailPageTabsPosition } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { SessionCollaborationRailBadge } from '@/components/sessions/collaboration/sessionConversationAttention';

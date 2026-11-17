@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { NavigationPlacementCustomizer, NavigationPlacementCustomizerView } from './NavigationPlacementCustomizer';
-import { resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { storage } from '@/sync/domains/state/storage';
@@ -18,7 +18,7 @@ import { resolveProjectPageCatalog } from '@/components/projects/detail/projectP
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { EntityFlatReorderList } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
 import { useNavigationSurfacePlacement, useNavigationSurfacePlacementActionWriter } from './useNavigationSurfacePlacement';
-import { navigationPlacementPatch, readNavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { navigationPlacementPatch, readNavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 const pointer = vi.hoisted(() => ({ coarse: false }));

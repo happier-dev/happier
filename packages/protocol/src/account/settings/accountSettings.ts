@@ -1,3 +1,4 @@
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
 export { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
 import { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS } from './idleCompactionPreferences.js';
@@ -897,6 +898,8 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     agentInputChipDensity: accountPreference(z.enum(['auto', 'labels', 'icons']), 'auto', 'composer presentation'),
     sessionListDensity: accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw): unknown => raw === 'compact' ? 'cozy' : raw), z.enum(['detailed', 'cozy', 'narrow'])), 'narrow', 'session list presentation'),
     collectionSpacesV1: accountPreference(CollectionSpacesV1Schema, { v: 1, spaces: [] }, 'collection saved filters', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
+    // Presentation host owns column policy; Account storage carries its keyed JSON preferences.
+    collectionColumnPreferencesV1: accountPreference(z.record(z.string(), StrictJsonValueSchema), {}, 'collection column presentation', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     collectionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     sessionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     workflowSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),

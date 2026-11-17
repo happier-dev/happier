@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { EntityFlatReorderList, EntityFlatReorderRow, type EntityFlatReorderBinding } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { t } from '@/text';
 
 import type { AgentInputPlacementDescriptor } from '../controls/agentInputControlTypes';

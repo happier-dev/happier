@@ -5,7 +5,7 @@ import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
 import { Text } from '@/components/ui/text/Text';
 import { buildNavigationPlacementMenu, type NavigationPlacementItem } from '@/components/ui/navigation/NavigationPlacementCustomizer';
 import { useNavigationSurfacePlacementActionWriter } from '@/components/ui/navigation/useNavigationSurfacePlacement';
-import type { NavigationPlacementAddress, NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementAddress, NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 
 /**
  * A held phone tab's placement menu: the desktop tab menu's rows and writer, anchored to the tab. The bar mounts

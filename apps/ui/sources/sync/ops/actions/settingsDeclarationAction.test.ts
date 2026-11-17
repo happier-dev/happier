@@ -109,7 +109,7 @@ import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { publishLocalDaemonStatus, readLocalDaemonSharedState } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/navigationPlacement';
 import { countStoreNotifications } from '@/dev/testkit/performance/counts';
 import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
 import { changeComputerUseSettings } from '@/sync/domains/computer/computerProviderSettings';
@@ -863,6 +863,28 @@ describe('scoped policy mutation results', () => {
         expect(await executor.execute('actions.policy.reset', target, context)).toMatchObject({ ok: true });
         expect(owner.account().actionsSettingsV1.scopedApprovalPreferences).toEqual([sibling]);
         expect(owner.account().actionsSettingsV1.actions).toEqual(policy.actions);
+    });
+});
+
+describe('Collection columns settings Actions', () => {
+    it.each(['ui', 'agent'] as const)('reads, sets and resets one collection through the same Action on %s', async surface => {
+        const sibling = { orderedIds: ['age'], placements: {} };
+        const owner = createOwner(undefined, true, true, settingsParse({ collectionColumnPreferencesV1: { sibling } }));
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface, authority: 'present_user', bypassApprovals: true } as const;
+        const anchor = 'appearance.collectionColumns';
+        const preferences = { orderedIds: ['state', 'lastDeploy'], placements: { lastDeploy: 'hidden' } };
+        const set = await executor.execute('settings.set', { anchor, value: { collectionId: 'services', preferences } }, context);
+        if (!set.ok) throw new Error(JSON.stringify(set));
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toMatchObject({ ok: true, result: { value: { sibling, services: preferences } } });
+        expect(await executor.execute('settings.set', { anchor, value: { collectionId: 'services', preferences: null } }, context))
+            .toMatchObject({ ok: true });
+        expect(owner.account().collectionColumnPreferencesV1).toEqual({ sibling });
+        expect(await executor.execute('settings.set', { anchor, value: { collectionId: 'services',
+            preferences: { orderedIds: [], placements: { state: 'overflow' } } } }, context))
+            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(owner.account().collectionColumnPreferencesV1).toEqual({ sibling });
     });
 });
 

@@ -18,7 +18,7 @@ import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/Uni
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { resolveSessionListDensityViewState } from '@/components/sessions/shell/resolveSessionListDensityViewState';
-import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/navigationPlacement';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));

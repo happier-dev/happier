@@ -20,7 +20,7 @@ import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { StyleSheet } from 'react-native-unistyles';
 import { sfSymbolForCockpitTabIcon } from '@/components/navigation/mobile/chrome/bars/cockpitTabSymbols';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
-import { isPhoneBotPlacementId, phoneBotPlacementId, readNavigationPlacementPreferences, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacement, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import { isPhoneBotPlacementId, phoneBotPlacementId, readNavigationPlacementPreferences, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacement, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/navigationPlacement';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { Modal } from '@/modal';

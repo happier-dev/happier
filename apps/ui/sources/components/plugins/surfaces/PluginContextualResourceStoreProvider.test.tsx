@@ -48,7 +48,7 @@ import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/u
 import { WidgetDefinitionV1Schema } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
 import { RightSidebarActionRail } from '@/components/appShell/rightSidebar/RightSidebarActionRail';
 import { Modal } from '@/modal';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import type { PluginUiPhysicalSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginSidebarResourceContext } from './pluginSurfaceMountBinding';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -556,7 +556,7 @@ it('reads only the exact count declaration on unrelated committed App publicatio
 });
 
 it('drives unopened static-renderer sidebar content and numeric leaves from one declared Resource lifecycle', async () => {
-    const placementOwner = await import('@/sync/domains/settings/mobileSurfacePinning');
+    const placementOwner = await import('@/sync/domains/settings/navigationPlacement');
     // Observe the real layout owner, without replacing its implementation.
     const placementComputations = vi.spyOn(placementOwner, 'resolveNavigationPlacements');
     const account = await createAccountLifetime({ accountId: 'account-a' });

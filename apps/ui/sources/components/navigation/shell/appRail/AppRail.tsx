@@ -19,7 +19,7 @@ import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { Modal } from '@/modal';
-import { resolveNavigationOverflow, resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationOverflow, resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { describeUpdatesEntry, UpdatesPopoverButton } from '@/components/updates/UpdatesPopoverButton';
 import { useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';

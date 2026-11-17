@@ -1,5 +1,5 @@
 import { resolveDetailPhoneNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
-import { resolveNavigationOverflow, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacementPolicy, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationOverflow, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacementPolicy, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 
 export type PhonePlacementItem = NavigationPlacementPolicy & Readonly<{
     id: string;

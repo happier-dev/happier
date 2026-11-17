@@ -11,7 +11,7 @@ import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18
 import { buildPluginComposerPlacementDefinitions } from '@/components/plugins/actions/pluginComposerPlacement';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { getPreferredLanguage, t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isPhoneHardware } from '@/utils/platform/isPhoneHardware';

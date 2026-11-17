@@ -3,7 +3,7 @@ import { createPluginPagePlacementFixture } from '@/dev/testkit/fixtures/pluginP
 import { PROJECT_PAGES } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { resolveProjectPageCatalog, resolveProjectPageCatalogState } from './projectPageCatalog';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/navigationPlacement';
 
 const target = { kind: 'project', workspaceRefId: 'checkout-a', serverId: 'home-a' } as const;
 const page = (localId: string, title: string) => createPluginPagePlacementFixture({ pluginId: 'acme.tools', localId, title });

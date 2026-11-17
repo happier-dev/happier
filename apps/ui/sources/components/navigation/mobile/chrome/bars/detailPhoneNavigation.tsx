@@ -11,7 +11,7 @@ import { NavigationPlacementPinButton } from '@/components/ui/navigation/Navigat
 import { NavigationPlacementTabMenu } from '@/components/ui/navigation/NavigationPlacementTabMenu';
 import { useDetailPageTabsPosition, useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import type { DetailNavigationCustomizerProps } from '@/components/ui/navigation/NavigationPlacementCustomizer';
-import { type NavigationPlacementAddress, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { type NavigationPlacementAddress, type NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { Modal } from '@/modal';

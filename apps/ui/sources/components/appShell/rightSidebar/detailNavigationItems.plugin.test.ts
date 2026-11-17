@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveDetailNavigationItems, resolveDetailNavigationProjection } from './detailNavigationItems';
 import { resolveDetailPhoneNavigationItem } from './detailNavigationItems';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/navigationPlacement';
 
 describe('plugin page Items through the detail navigation owner', () => {
     it('hides only the active both launcher and restores it without mutating its placement or catalog', () => {

@@ -10,7 +10,7 @@ import type {
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/navigationPlacement';
 
 const logSpy = vi.hoisted(() => vi.fn());
 

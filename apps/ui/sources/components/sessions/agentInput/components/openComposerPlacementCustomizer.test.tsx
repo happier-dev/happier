@@ -17,7 +17,7 @@ import type { IModal } from '@/modal';
 
 import { openComposerPlacementCustomizer } from './openComposerPlacementCustomizer';
 import type { ComposerPlacementPreview } from './ComposerPlacementPreview';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/navigationPlacement';
 import type { AgentInputPlacementContext, AgentInputPlacementDescriptor } from '../controls/agentInputControlTypes';
 import { buildAgentInputPlacementDescriptors } from '../controls/buildAgentInputPlacementDescriptors';
 
