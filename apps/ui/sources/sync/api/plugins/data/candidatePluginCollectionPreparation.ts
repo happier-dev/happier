@@ -175,7 +175,7 @@ export function createActivePluginCollectionCandidatePreparation(input: Readonly
         operation: PreparedCollectionOperation,
     ): PluginDataCollectionsCapabilities | undefined => {
         const featureSnapshot = getCachedServerFeaturesSnapshot({
-            serverId: operation.serverSnapshot.serverId,
+            serverId: operation.lifetime.scope.serverId,
         });
         return featureSnapshot?.status === 'ready'
             ? featureSnapshot.features.capabilities.pluginDataCollections

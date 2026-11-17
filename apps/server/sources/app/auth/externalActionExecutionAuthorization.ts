@@ -1,4 +1,13 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
+import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as collectionSharingIds,
+    isPluginCollectionSharingActionIdV1 } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
+import { PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1, PluginCollectionContractReadRequestV1Schema } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as collectionSharingPaths,
+    PluginCollectionSharingAddressV1Schema, PluginCollectionSharingGetRequestV1Schema,
+    PluginCollectionSharingListRequestV1Schema, PluginCollectionSharingPutRequestV1Schema,
+    PluginCollectionSharingSetGrantRequestV1Schema, PluginCollectionSharingRevokeGrantRequestV1Schema,
+    PluginCollectionSharingCensusRequestV1Schema, PluginCollectionSharingCommitKeysRequestV1Schema,
+} from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -3050,9 +3059,36 @@ async function isProjectSessionDefaultsHttpPurpose(verified: VerifiedSignedChild
     return teamId !== null && teamRead.data.teamId === teamId;
 }
 
+/** The keyholding client signs native codec phases; resource routes retain access and CAS. */
+function isCollectionSharingHttpPurpose(actionId: string, proof: ExternalActionExecutionRequestProof): boolean {
+    if (isAccountEncryptionCurrentnessHttpRead(proof))
+        return proof.routeInput === undefined || sameManagedInput(proof.routeInput, {});
+    if (proof.method.toUpperCase() !== 'POST'
+        || proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, proof.body)) return false;
+    const readsRow = actionId === collectionSharingIds.get || actionId === collectionSharingIds.put
+        || actionId === collectionSharingIds.setGrant;
+    const repairsRecipientKeys = actionId === collectionSharingIds.get || actionId === collectionSharingIds.list;
+    const schema = proof.path === PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1 ? PluginCollectionContractReadRequestV1Schema
+        : proof.path === collectionSharingPaths.get && readsRow ? PluginCollectionSharingGetRequestV1Schema
+        : proof.path === collectionSharingPaths.sharedWithMe && actionId === collectionSharingIds.list ? PluginCollectionSharingListRequestV1Schema
+        : proof.path === collectionSharingPaths.put && actionId === collectionSharingIds.put ? PluginCollectionSharingPutRequestV1Schema
+        : proof.path === collectionSharingPaths.grants && actionId === collectionSharingIds.listGrants ? PluginCollectionSharingAddressV1Schema
+        : proof.path === collectionSharingPaths.setGrant && actionId === collectionSharingIds.setGrant ? PluginCollectionSharingSetGrantRequestV1Schema
+        : proof.path === collectionSharingPaths.revokeGrant && actionId === collectionSharingIds.revokeGrant ? PluginCollectionSharingRevokeGrantRequestV1Schema
+        : proof.path === collectionSharingPaths.census && (repairsRecipientKeys || actionId === collectionSharingIds.setGrant)
+            ? PluginCollectionSharingCensusRequestV1Schema
+        // Existing E2EE editor reads repair missing recipient envelopes; this
+        // grants no writer claim or permission to replace row content/shares.
+        : proof.path === collectionSharingPaths.commitKeys && repairsRecipientKeys ? PluginCollectionSharingCommitKeysRequestV1Schema
+        : null;
+    return schema?.safeParse(proof.body).success === true;
+}
+
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
+    if (isPluginCollectionSharingActionIdV1(root))
+        return verified.effectActionId === root && isCollectionSharingHttpPurpose(root, proof);
     if (verified.signedChildPurpose.sibling.projectSetupSet) {
         // The keyholding host checked decoded root operands once before issuing
         // this signed child. Home keeps each Source/Artifact access decision.

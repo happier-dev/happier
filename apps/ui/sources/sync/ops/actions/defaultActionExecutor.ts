@@ -1,4 +1,5 @@
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
+import { createUiPluginCollectionSharingActionDeps } from './pluginCollectionSharingActionDeps';
 import { requireActionSuccess } from './actionResult';
 import { createPrivateLabelActionOpener, createPrivateLabelActionPreparer } from '@/sync/ops/privateLabels/privateLabelClient';
 import { openMachinePoolActionOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
@@ -3729,6 +3730,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         throw error;
       }
     },
+    ...(accountContext ? createUiPluginCollectionSharingActionDeps(accountContext) : {}),
     pluginPermissionGrantAction: async ({ actionId, input, signal }) => signal
       ? await executePluginPermissionGrantAction(actionId, input, { signal })
       : await executePluginPermissionGrantAction(actionId, input),

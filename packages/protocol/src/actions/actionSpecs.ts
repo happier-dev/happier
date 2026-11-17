@@ -14,6 +14,9 @@ import { CODE_INTELLIGENCE_ACTION_SPECS } from './codeIntelligenceActionFamily.j
 import { PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS } from './specs/pluginExecutionOrigin.js';
 import { NPM_REGISTRY_PROFILE_ACTION_SPECS_V1 } from './specs/npmRegistryProfiles.js';
 import { PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS } from './specs/pluginAccountAdministration.js';
+import { PLUGIN_COLLECTION_SHARING_ACTION_SPECS_V1 } from './specs/pluginCollectionSharing.js';
+import { PluginCollectionSharingActionInputSchemasV1, PluginCollectionSharingActionOutputSchemasV1 } from '../plugins/data/collectionSharingActionsV1.js';
+import type { PluginCollectionSharingActionIdV1 } from '../plugins/data/collectionSharingActionIdsV1.js';
 import { PluginAccountAdministrationActionInputSchemas, PluginAccountAdministrationActionOutputSchemas,
   type PluginAccountAdministrationActionId } from './pluginAccountAdministrationActionFamily.js';
 import { NpmRegistryProfileActionInputSchemasV1, NpmRegistryProfileActionOutputSchemasV1,
@@ -703,6 +706,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD: ReturnType<typeof defineActionS
   ReturnType<typeof createPluginDevLoopActionSpec>[],
   typeof NPM_REGISTRY_PROFILE_ACTION_SPECS_V1,
   typeof PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS,
+  typeof PLUGIN_COLLECTION_SHARING_ACTION_SPECS_V1,
   typeof CAPTURE_VIEW_ACTION_SPECS,
   ReturnType<typeof createPluginSettingsAdministrationActionSpec>[],
   ReturnType<typeof createPluginPermissionGrantActionSpec>[],
@@ -721,6 +725,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD: ReturnType<typeof defineActionS
   ...(PLUGIN_DEV_LOOP_ACTION_IDS_V1.map(createPluginDevLoopActionSpec) satisfies readonly PreNormalizedActionSpec[]),
   ...(NPM_REGISTRY_PROFILE_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...(PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...PLUGIN_COLLECTION_SHARING_ACTION_SPECS_V1,
   ...(CAPTURE_VIEW_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1.map(createPluginSettingsAdministrationActionSpec) satisfies readonly PreNormalizedActionSpec[]),
   ...(PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1.map(createPluginPermissionGrantActionSpec) satisfies readonly PreNormalizedActionSpec[]),
@@ -1256,7 +1261,7 @@ type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
   // These families have exact per-ID schema definitions below. Their generic
   // row factories must not reintroduce widened schema unions into the catalog.
   ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | SessionAgentTransitionActionId | SessionWorkspaceReturnActionIdV1 | ThemeActionId | MachineTerminalActionId | WorkspaceActionId | ProjectDefinitionActionId
-    | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1 | WidgetLayoutFragmentActionIdV1
+    | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1 | WidgetLayoutFragmentActionIdV1 | PluginCollectionSharingActionIdV1
     | ArtifactFolderActionIdV1 | ProfileActionIdV1 | ProviderActionIdV1 | RemoteHostActionIdV1 | HomeRuntimeActionIdV1 | ProjectActionIdV1 | WorkflowEffectActionIdV1 | UsageSourceActionId | AutomationOccurrenceActionId
     ? never
     : TSpec
@@ -1633,6 +1638,9 @@ export type CanonicalActionSpecDefinition =
   | { [Id in NpmRegistryProfileActionIdV1]: CanonicalActionSchemaDefinition<Id,
       (typeof NpmRegistryProfileActionInputSchemasV1)[Id], (typeof NpmRegistryProfileActionOutputSchemasV1)[Id], never, 'account_automation'>
     }[NpmRegistryProfileActionIdV1]
+  | { [Id in PluginCollectionSharingActionIdV1]: CanonicalActionSchemaDefinition<Id,
+      (typeof PluginCollectionSharingActionInputSchemasV1)[Id], (typeof PluginCollectionSharingActionOutputSchemasV1)[Id], never, 'account_automation'>
+    }[PluginCollectionSharingActionIdV1]
   | { [Id in PluginAccountAdministrationActionId]: CanonicalActionSchemaDefinition<Id,
       (typeof PluginAccountAdministrationActionInputSchemas)[Id], (typeof PluginAccountAdministrationActionOutputSchemas)[Id], never, 'account_automation'>
     }[PluginAccountAdministrationActionId]

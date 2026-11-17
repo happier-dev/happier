@@ -2196,12 +2196,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     return decoded;
                 };
 
-                const sharingClient = async (operationSignal?: AbortSignal) => {
+                const sharingClient = async (operationSignal?: AbortSignal, mutation = false) => {
                     const credentials = await currentCredentials(operationSignal);
                     const encryption = await currentEncryption(credentials, operationSignal);
                     const accountId = readAccountIdFromToken(credentials.token);
                     if (!accountId) throw dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Collection sharing requires an authenticated Account identity');
-                    await ensureWriterClaim(credentials, operationSignal);
+                    if (mutation) await ensureWriterClaim(credentials, operationSignal);
                     return createPluginCollectionSharingClientV1<PluginAccountCollectionValue<TDefinition>>({
                         accountId,
                         contract: collection.contract,
@@ -2237,12 +2237,12 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     });
                 };
                 const sharing: PluginCollectionSharing<PluginAccountCollectionValue<TDefinition>> = Object.freeze({
-                    async setGrant(rowId, input, options) { return await (await sharingClient(options?.signal)).setGrant(rowId, input); },
+                    async setGrant(rowId, input, options) { return await (await sharingClient(options?.signal, true)).setGrant(rowId, input); },
                     async listGrants(rowId, options) { return await (await sharingClient(options?.signal)).listGrants(rowId); },
-                    async revokeGrant(rowId, input, options) { return await (await sharingClient(options?.signal)).revokeGrant(rowId, input); },
+                    async revokeGrant(rowId, input, options) { return await (await sharingClient(options?.signal, true)).revokeGrant(rowId, input); },
                     async sharedWithMe(input, options) { return await (await sharingClient(options?.signal)).sharedWithMe(input); },
                     async get(address, options) { return await (await sharingClient(options?.signal)).get(address); },
-                    async put(input, options) { return await (await sharingClient(options?.signal)).put(input); },
+                    async put(input, options) { return await (await sharingClient(options?.signal, true)).put(input); },
                 });
 
                 const bound: PluginAccountCollectionForDefinition<TDefinition> = Object.freeze({

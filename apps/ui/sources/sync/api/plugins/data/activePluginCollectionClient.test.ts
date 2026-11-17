@@ -182,6 +182,7 @@ async function loadClient(options: ClientHarnessOptions = {}) {
         scope: lifetime.scope,
         context: {
             token: 'account-token',
+            targetServerUrl: 'https://server.example',
             ...(options.credentials ? { credentials: options.credentials } : {}),
         },
         request: transport,
@@ -303,7 +304,7 @@ async function loadCrossAccountLifetimeHarness() {
             scope: { accountId: string };
         }>) => ({
             scope: input.scope,
-            context: { token: `${input.scope.accountId}-token` },
+            context: { token: `${input.scope.accountId}-token`, targetServerUrl: 'https://server.example' },
             request: input.scope.accountId === 'account-a'
                 ? accountATransport
                 : accountBTransport,

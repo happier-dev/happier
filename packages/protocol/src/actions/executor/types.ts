@@ -3223,6 +3223,9 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
+  /** Logical Collection operations use the realm's existing Account-bound client. */
+  pluginCollectionSharingAction?: (args: import('../../plugins/data/collectionSharingActionsV1.js').PluginCollectionSharingActionRequestV1
+    & Readonly<{ context: ActionExecutorContext }>) => Promise<unknown>;
   /**
    * The keyholding client builds a credential-usage file from the Home's
    * recipient-only projection. Plain labels never enter the Action input.

@@ -21,6 +21,11 @@ export const PluginCollectionContractRefV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type PluginCollectionContractRefV1 = z.infer<typeof PluginCollectionContractRefV1Schema>;
 
+export function doesPluginCollectionContractMatchRefV1(contract: PluginCollectionContractRefV1, ref: PluginCollectionContractRefV1): boolean {
+  return contract.pluginId === ref.pluginId && contract.collectionId === ref.collectionId
+    && contract.schemaVersion === ref.schemaVersion && contract.contractDigest === ref.contractDigest;
+}
+
 export function pluginCollectionContractKeyV1(value: Pick<PluginCollectionContractRefV1, 'pluginId' | 'collectionId'>): string {
   return `${value.pluginId}\u0000${value.collectionId}`;
 }

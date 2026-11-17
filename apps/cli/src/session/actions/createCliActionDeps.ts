@@ -48,6 +48,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { createCliControlActionDeps } from '@/session/services/cliControlActionDeps';
 import { createCliPluginAdministrationActionDeps } from './cliActionDeps/pluginAdministration';
+import { createCliPluginCollectionSharingActionDeps } from './cliActionDeps/pluginCollectionSharing';
 import { createCliManagedMachineReferences, createCliMachineRebootReferenceReader } from './cliActionDeps/machineReferences';
 import { createCliSessionCatalogActionDeps } from '@/session/catalogControls/cliActionDeps';
 import { createCliPromptsActionDeps } from './cliActionDeps/prompts';
@@ -1739,6 +1740,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     pluginSettingsAdministrationAction: pluginAdministrationDeps.pluginSettingsAdministrationAction,
     pluginPermissionGrantAction: pluginAdministrationDeps.pluginPermissionGrantAction,
     pluginWebhookAction: pluginAdministrationDeps.pluginWebhookAction,
+    ...createCliPluginCollectionSharingActionDeps(params, { serverId: projectHomeId, serverHttpBaseUrl: todoHomeBaseUrl,
+      admitAccount: admitAccountStorage, resolveHeaders: resolveAccountStorageHeaders }),
 
     ...(automationEventAction ? {
       automationEventAction: async (args) => await automationEventAction(args),

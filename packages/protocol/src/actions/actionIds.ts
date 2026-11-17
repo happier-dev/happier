@@ -1,3 +1,4 @@
+import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_V1 } from '../plugins/data/collectionSharingActionIdsV1.js';
 import { PROJECT_STARTER_ACTION_IDS_V1 } from './specs/projectStartersActionIdsV1.js';
 import { PROJECT_SETUP_SET_ACTION_ID_V1 } from './projectActionIdsV1.js';
 import { SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1 } from './actionIdsSimulatorV1.js';
@@ -290,6 +291,7 @@ export function isSessionClientControlActionId(value: string): boolean {
 export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = [NOTIFICATION_NOTIFY_ME_ACTION_ID, 'review.start'];
 
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
+  plugin_collection_sharing: PLUGIN_COLLECTION_SHARING_ACTION_IDS_V1,
   deployments: DEPLOYMENT_ACTION_IDS_V1,
   deployment_suggestions: DEPLOYMENT_SUGGESTION_ACTION_IDS_V1,
   registries: REGISTRY_ACTION_IDS_V1,

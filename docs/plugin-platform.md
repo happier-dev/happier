@@ -6360,7 +6360,13 @@ E2EE first-share conversion and recipient wraps are described in
 The CLI, installed UI and hosted UI bind the same logical sharing client; the
 host retains credentials and keys. Plugin-owned pages list shared items through
 `sharing.sharedWithMe` and open them through the SDK themselves. Collection
-sharing ships with this SDK-only entry contract. Existing host surfaces that
+sharing also exposes logical reads, edits and grant management through the
+`plugins.collections.shared.*` Action family in 0.3 development source. These
+Actions run on the answering keyholding client with Account automation
+authority; reads are safe, while edits and grant mutations use the ordinary Ask
+policy. They consume the same logical sharing client as the SDK, so Action
+inputs and results contain logical values rather than encryption envelopes.
+Plugin-owned navigation remains with the plugin's page and SDK handle. Existing host surfaces that
 list plugin content retain their missing-plugin presentation naming `pluginId`
 when the plugin is absent or disabled. A future Inbox share notification with a
 host link is the missing consumer for host-address navigation; it is not part

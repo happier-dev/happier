@@ -9,9 +9,10 @@ import { ResourceAccessGrantRowV1Schema, ResourceCallerAccessV1Schema, ResourceA
   ResourceRecipientKeyEnvelopeInputV1Schema, ResourceRecipientKeyEnvelopesV1Schema,
   ResourceRecipientKeyEnvelopeCommitInputV1Schema, ResourceRecipientKeyEnvelopeCommitResponseV1Schema } from '../../teams/resourceGrantAccessV1.js';
 import { PluginCollectionContentEnvelopeV1Schema, PluginCollectionProjectionV1Schema, PluginCollectionRevisionV1Schema,
-  PluginCollectionRowV1Schema, PluginCollectionRowIdV1Schema, PluginCollectionContractRefV1Schema,
-  PluginCollectionReadErrorV1Schema, PluginCollectionMutationErrorV1Schema,
-  PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from './collectionsV1.js';
+  PluginCollectionRowV1Schema, PluginCollectionMutationErrorV1Schema } from './collectionRowV1.js';
+import { PluginCollectionRowIdV1Schema, PluginCollectionUiQueryErrorV1Schema as PluginCollectionReadErrorV1Schema } from './collectionUiQueryWireV1.js';
+import { PluginCollectionContractRefV1Schema } from './collectionContractRefV1.js';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from './collectionLimitsV1.js';
 
 export const PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 = {
   grants: '/v1/plugins/data/sharing/grants', census: '/v1/plugins/data/sharing/census',

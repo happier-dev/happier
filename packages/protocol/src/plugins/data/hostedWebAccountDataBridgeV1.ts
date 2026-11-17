@@ -18,6 +18,7 @@ import {
 } from './accountKvValueV1.js';
 import { TaskResourceAddressV1Schema } from '../../todos/taskResourceV1.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
+import { AccountDataCollectionValueV1Schema } from './collectionLogicalValueV1.js';
 import { isPluginCollectionQuerySelectionV1, pluginCollectionQueryShapeV1 } from './collectionQueryWireV1.js';
 import { PluginCollectionSharingSetGrantRequestV1Schema, PluginCollectionSharingRevokeGrantRequestV1Schema,
   PluginCollectionSharingAddressV1Schema, PluginCollectionSharingListRequestV1Schema } from './collectionSharingV1.js';
@@ -29,12 +30,6 @@ const PluginHostedWebAccountDataDefinitionV1Schema = PluginAccountCollectionCont
 
 const AccountDataExpectedRevisionV1Schema = lazyZodSchema(() => z.union([z.number().check(z.int(), z.nonnegative()), z.literal('absent')]));
 const AccountDataExpectedVersionV1Schema = lazyZodSchema(() => z.union([z.number().check(z.int(), z.nonnegative()), z.literal('absent')]));
-const AccountDataCollectionValueV1Schema = lazyZodSchema(() => z.record(
-  PluginCollectionMemberNameV1Schema,
-  PluginUiJsonValueV1Schema,
-).check(z.superRefine((value, context) => {
-  if (Object.keys(value).length === 0) context.addIssue({ code: 'custom', message: 'Collection values must contain at least one field.' });
-})));
 const AccountDataCollectionQueryV1Schema = lazyZodSchema(() => z.strictObject({
   index: PluginCollectionMemberNameV1Schema,
   ...pluginCollectionQueryShapeV1(),

@@ -7,7 +7,7 @@ import { deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMate
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { decodePluginCollectionLogicalRowV1, encodePluginCollectionLogicalValueV1, preparePluginCollectionLogicalMutationRequestV1, type PluginCollectionLogicalMutationRequestOutcomeV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
+import { doesPluginCollectionContractMatchRefV1 as contractMatchesRef, type PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
@@ -268,7 +268,7 @@ export type ActivePluginCollectionClientV1<
 /** Shared direct-UI Data operation foundation; only sibling Data owners import it. */
 export type PreparedCollectionOperation = Readonly<{
     lifetime: ActiveServerAccountScopeLifetime;
-    serverSnapshot: ReturnType<typeof getActiveServerSnapshot>;
+    serverSnapshot: ReturnType<typeof getActiveServerSnapshot> | null;
     authority: Awaited<ReturnType<typeof captureServerRequestAuthorityForServerAccountScope>>;
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
@@ -332,12 +332,14 @@ function rejected(
 
 function isScopeAndServerCurrent(
     lifetime: ActiveServerAccountScopeLifetime,
-    serverSnapshot: ReturnType<typeof getActiveServerSnapshot>,
+    serverSnapshot: ReturnType<typeof getActiveServerSnapshot> | null,
 ): ActivePluginCollectionUnavailableReasonV1 | null {
     if (!lifetime.isCurrent()) return 'account-scope-changed';
-    const current = getActiveServerSnapshot();
-    if (current.serverId !== serverSnapshot.serverId || current.generation !== serverSnapshot.generation) {
-        return 'server-generation-changed';
+    if (serverSnapshot) {
+        const current = getActiveServerSnapshot();
+        if (current.serverId !== serverSnapshot.serverId || current.generation !== serverSnapshot.generation) {
+            return 'server-generation-changed';
+        }
     }
     return null;
 }
@@ -373,16 +375,9 @@ export async function prepareCollectionOperation(
     const lifetime = accountLifetime ?? captureActiveServerAccountScopeLifetime();
     if (!lifetime) return unavailable('no-active-account-scope');
     if (!lifetime.isCurrent()) return unavailable('account-scope-changed');
-    const serverSnapshot = getActiveServerSnapshot();
-    if (serverSnapshot.serverId !== lifetime.scope.serverId) return unavailable('server-generation-changed');
-    const compatibility = resolveAccountStoredContentCompatibilityHeaders(
-        { 'Content-Type': 'application/json' },
-        {
-            serverUrl: serverSnapshot.serverUrl,
-            declaration: PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-        },
-    );
-    if (compatibility.status === 'unavailable') return compatibility;
+    // An explicit Account lifetime owns its Home independently of UI focus.
+    const serverSnapshot = accountLifetime ? null : getActiveServerSnapshot();
+    if (serverSnapshot && serverSnapshot.serverId !== lifetime.scope.serverId) return unavailable('server-generation-changed');
 
     const callerCancellation = mergeAbortSignals([options?.signal, invocationSignal]);
     const callerSignal = callerCancellation.signal;
@@ -407,6 +402,14 @@ export async function prepareCollectionOperation(
             activeRequest: (path, init, options) => apiSocket.request(path, init, options),
         });
         const capturedAuthority = authority;
+        const compatibility = resolveAccountStoredContentCompatibilityHeaders({ 'Content-Type': 'application/json' }, {
+            serverUrl: capturedAuthority.context.targetServerUrl,
+            declaration: PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+        });
+        if (compatibility.status === 'unavailable') {
+            await release();
+            return compatibility;
+        }
         const currentnessAfterAuthority = isScopeAndServerCurrent(lifetime, serverSnapshot);
         if (currentnessAfterAuthority) {
             await release();
@@ -735,15 +738,7 @@ function mapEncodeFailure(
         : rejected('collection_mutation_invalid');
 }
 
-export function contractMatchesRef(
-    contract: NormalizedPluginAccountCollectionContractV1,
-    ref: PluginCollectionContractRefV1,
-): boolean {
-    return contract.pluginId === ref.pluginId
-        && contract.collectionId === ref.collectionId
-        && contract.schemaVersion === ref.schemaVersion
-        && contract.contractDigest === ref.contractDigest;
-}
+export { doesPluginCollectionContractMatchRefV1 as contractMatchesRef } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 
 /**
  * Resolves one immutable release-admitted contract through the canonical Data
@@ -1121,11 +1116,7 @@ export function createActivePluginCollectionClient<
         const lifetime = params.accountLifetime ?? captureActiveServerAccountScopeLifetime();
         if (!lifetime) return unavailable('no-active-account-scope');
         if (!lifetime.isCurrent()) return unavailable('account-scope-changed');
-        const serverSnapshot = getActiveServerSnapshot();
-        if (serverSnapshot.serverId !== lifetime.scope.serverId) {
-            return unavailable('server-generation-changed');
-        }
-        return { status: 'ready', serverId: serverSnapshot.serverId };
+        return { status: 'ready', serverId: lifetime.scope.serverId };
     };
 
     const identityTag = async (

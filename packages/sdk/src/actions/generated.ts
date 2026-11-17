@@ -474,6 +474,9 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "plugins.account.hosting.remove",
   "plugins.account.hosting.set",
   "plugins.account.release.select",
+  "plugins.collections.shared.grants.revoke",
+  "plugins.collections.shared.grants.set",
+  "plugins.collections.shared.put",
   "plugins.dev.build",
   "plugins.dev.publication.prepare",
   "plugins.dev.publish",
@@ -2453,6 +2456,18 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly change: Readonly<{
       readonly status: (input: PublicActionInputById["plugins.change.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.change.status">>;
+    }> ;
+    readonly collections: Readonly<{
+      readonly shared: Readonly<{
+        readonly get: (input: PublicActionInputById["plugins.collections.shared.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.collections.shared.get">>;
+        readonly grants: Readonly<{
+          readonly list: (input: PublicActionInputById["plugins.collections.shared.grants.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.collections.shared.grants.list">>;
+          readonly revoke: (input: PublicActionInputById["plugins.collections.shared.grants.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.collections.shared.grants.revoke">>;
+          readonly set: (input: PublicActionInputById["plugins.collections.shared.grants.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.collections.shared.grants.set">>;
+        }> ;
+        readonly list: (input: PublicActionInputById["plugins.collections.shared.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.collections.shared.list">>;
+        readonly put: (input: PublicActionInputById["plugins.collections.shared.put"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.collections.shared.put">>;
+      }> ;
     }> ;
     readonly dev: Readonly<{
       readonly build: (input: PublicActionInputById["plugins.dev.build"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.dev.build">>;
@@ -5446,6 +5461,18 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
       change: {
         status: (input: PublicActionInputById["plugins.change.status"], options?: ActionExecutionOptions) => execute("plugins.change.status", input, options),
+      },
+      collections: {
+        shared: {
+          get: (input: PublicActionInputById["plugins.collections.shared.get"], options?: ActionExecutionOptions) => execute("plugins.collections.shared.get", input, options),
+          grants: {
+            list: (input: PublicActionInputById["plugins.collections.shared.grants.list"], options?: ActionExecutionOptions) => execute("plugins.collections.shared.grants.list", input, options),
+            revoke: (input: PublicActionInputById["plugins.collections.shared.grants.revoke"], options?: ActionExecutionOptions) => execute("plugins.collections.shared.grants.revoke", input, options),
+            set: (input: PublicActionInputById["plugins.collections.shared.grants.set"], options?: ActionExecutionOptions) => execute("plugins.collections.shared.grants.set", input, options),
+          },
+          list: (input: PublicActionInputById["plugins.collections.shared.list"], options?: ActionExecutionOptions) => execute("plugins.collections.shared.list", input, options),
+          put: (input: PublicActionInputById["plugins.collections.shared.put"], options?: ActionExecutionOptions) => execute("plugins.collections.shared.put", input, options),
+        },
       },
       dev: {
         build: (input: PublicActionInputById["plugins.dev.build"], options?: ActionExecutionOptions) => execute("plugins.dev.build", input, options),

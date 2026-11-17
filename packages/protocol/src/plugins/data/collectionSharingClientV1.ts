@@ -1,3 +1,5 @@
+import { PluginCollectionSharingClientErrorV1 } from './collectionSharingClientErrorV1.js';
+export { PluginCollectionSharingClientErrorV1 } from './collectionSharingClientErrorV1.js';
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import type { PrincipalRefV1 } from '../../teams/principal.js';
@@ -17,11 +19,7 @@ import {
 type OperationKind = 'read' | 'mutation';
 type OperationOutcome = 'refused' | 'failed' | 'uncertain';
 type OperationRefusal = ReturnType<typeof PluginCollectionSharingErrorV1Schema.parse>;
-export class PluginCollectionSharingClientErrorV1 extends Error {
-  constructor(readonly code: string, readonly outcome: OperationOutcome = 'refused', readonly details?: OperationRefusal) {
-    super(code); this.name = 'PluginCollectionSharingClientError';
-  }
-}
+
 
 /** Transport and key custody belong to each realm; logical sharing has one owner. */
 export type PluginCollectionSharingClientOptionsV1<TValue extends PluginCollectionLogicalValueV1> = Readonly<{

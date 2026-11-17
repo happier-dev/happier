@@ -204,7 +204,7 @@ async function loadPreparationHarness(options: PreparationHarnessOptions = {}) {
     vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', () => ({
         captureServerRequestAuthorityForServerAccountScope: async () => ({
             scope: account.lifetime.scope,
-            context: { token: 'account-token' },
+            context: { token: 'account-token', targetServerUrl: 'https://server.example' },
             request,
         }),
     }));

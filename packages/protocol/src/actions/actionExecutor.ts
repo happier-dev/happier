@@ -456,6 +456,9 @@ import { resolveMachinePoolWorkerCandidateV1 } from '../machines/pools/machinePo
 import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.js';
 import { EphemeralRunnerActionInputSchemasV1 } from '../ephemeralRunner/actionsV1.js';
 import { isHomeDomainActionIdV1 } from './homeDomainActionFamily.js';
+import { isPluginCollectionSharingActionIdV1 } from '../plugins/data/collectionSharingActionIdsV1.js';
+import type { PluginCollectionSharingActionRequestV1 } from '../plugins/data/collectionSharingActionsV1.js';
+import { PluginCollectionSharingClientErrorV1 } from '../plugins/data/collectionSharingClientErrorV1.js';
 import { isTeamMembershipHistoryActionIdV1, TeamMembershipHistoryInputV1Schema } from '../teams/membershipHistoryPreparationV1.js';
 import { ScopeActionIdSchema } from './scopeActionFamily.js';
 import { DiagnosticsActionIdSchema } from './diagnosticsActionFamily.js';
@@ -3931,7 +3934,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // A captured keyholder can execute this exact client Action locally.
       // Preserve generic reverse delivery only when that native port is absent.
       const hasNativeClientEffect = actionId === 'teams.credentials.usage.export' && deps.teamCredentialUsageExport !== undefined
-        || isMachineManagedInstallationActionIdV1(actionId) && deps.machineManagedInstallationRespond !== undefined;
+        || isMachineManagedInstallationActionIdV1(actionId) && deps.machineManagedInstallationRespond !== undefined
+        || isPluginCollectionSharingActionIdV1(actionId) && deps.pluginCollectionSharingAction !== undefined;
       if (admittedClientContext && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued
         && !hasNativeClientEffect) {
         const context = admittedClientContext;
@@ -5257,6 +5261,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'session.delete') {
         return await executeSessionDelete({ input: parsed.data as AdmittedActionInputById['session.delete'],
           context: ctx, deps, isDeferredApprovalResult });
+      }
+
+      if (isPluginCollectionSharingActionIdV1(actionId)) {
+        if (!deps.pluginCollectionSharingAction) return clientActionUnavailable(actionId);
+        try {
+          const request = { actionId, input: parsed.data, ...(ctx.signal ? { signal: ctx.signal } : {}) } as PluginCollectionSharingActionRequestV1;
+          const result = await deps.pluginCollectionSharingAction({ ...request, context: ctx });
+          return readActionFailureEnvelope(result) ?? { ok: true, result };
+        } catch (error) {
+          if (!(error instanceof PluginCollectionSharingClientErrorV1)) throw error;
+          return { ok: false, errorCode: error.code, error: error.code,
+            details: { ...error.details, outcome: error.outcome } };
+        }
       }
 
       if (isHomeDomainActionIdV1(actionId)) {

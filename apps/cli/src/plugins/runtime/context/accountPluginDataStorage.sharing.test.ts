@@ -4,6 +4,8 @@ import { createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFin
     normalizePluginAccountCollectionContractV1, type PluginCollectionRowV1 } from '@happier-dev/protocol';
 import { encodePluginCollectionLogicalValueV1, decodePluginCollectionLogicalRowV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import type { StoredCredentials } from '@/persistence';
 import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
@@ -100,16 +102,26 @@ describe('Collection resource keys through the CLI Account Data host', () => {
     it('binds sharing requests with owner addressing and surfaces revoked access', async () => {
         const principal = { kind: 'account', accountId: 'recipient' } as const;
         let revoked = false;
+        let claims = 0;
+        const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: contract.pluginId, version: '1.0.0',
+            displayName: 'Sharing', engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+            contributes: { accountCollections: [{ ...definition, migrations: [] }] } });
         const row = { rowId: initialValue.id, revision: 1, content: { t: 'plain', v: { note: initialValue.note } }, projection: { status: 'open' } };
         const address = { ownerAccountId: 'owner', pluginId: contract.pluginId, collectionId: contract.collectionId, rowId: row.rowId };
         const resource = { ...address, access: 'edit', encryptionMode: 'plain', encryptedDataKey: null, row };
         const host = createAccountPluginDataStorageHost({ contracts: [contract], readCredentials: async () => ({ ...credentials, encryption: null }),
+            resolveReleaseLessDeclaration: () => manifest,
             isCurrentAccount: () => true, resolveAccountScopeKey: () => 'sharing-owner', resolveBaseUrl: () => 'https://sharing.test',
             resolveAccountEncryptionCurrentness: async () => ({ mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null,
                 contentKeyFingerprint: null, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }),
             http: { get: async () => { throw new Error('Unexpected GET'); }, post: async (url, body) => {
                 const path = new URL(url).pathname;
                 const request = JSON.parse(body);
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim']) {
+                    claims += 1;
+                    return { status: 200, data: {} };
+                }
+                if (path.endsWith('/sharing/grants')) return { status: 200, data: { ...address, access: 'owner', grants: [] } };
                 if (path.endsWith('/census')) return { status: 200, data: { ...address, encryptionMode: 'plain', access: 'owner',
                     dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] } };
                 if (path.endsWith('/set-grant')) { expect(request).toMatchObject({ ...address, principal, accessLevel: 'edit', expectedRevision: 1 }); return { status: 200, data: { changed: true } }; }
@@ -125,7 +137,12 @@ describe('Collection resource keys through the CLI Account Data host', () => {
         const account = host.bind({ pluginId: contract.pluginId, occurrenceId: 'sharing', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
         if (!account) throw new Error('Missing Account binding');
         const collection = account.collection(definition);
+        await expect(collection.sharing.sharedWithMe()).resolves.toMatchObject({ rows: [{ ownerAccountId: 'owner', access: 'edit', value: initialValue }] });
+        await expect(collection.sharing.get({ ownerAccountId: 'owner', rowId: row.rowId })).resolves.toMatchObject({ value: initialValue });
+        await expect(collection.sharing.listGrants(row.rowId)).resolves.toMatchObject({ ownerAccountId: 'owner', grants: [] });
+        expect(claims).toBe(0);
         await expect(collection.sharing.setGrant(row.rowId, { principal, accessLevel: 'edit', expectedRevision: 1 })).resolves.toEqual({ changed: true });
+        expect(claims).toBe(1);
         await expect(collection.sharing.sharedWithMe()).resolves.toMatchObject({ rows: [{ ownerAccountId: 'owner', access: 'edit', value: initialValue }] });
         await expect(collection.sharing.get({ ownerAccountId: 'owner', rowId: row.rowId })).resolves.toMatchObject({ value: initialValue });
         await expect(collection.sharing.put({ ownerAccountId: 'owner', value: initialValue, expectedRevision: 1 })).rejects.toMatchObject({
@@ -134,6 +151,7 @@ describe('Collection resource keys through the CLI Account Data host', () => {
         });
         await collection.sharing.revokeGrant(row.rowId, { principal });
         await expect(collection.sharing.get({ ownerAccountId: 'owner', rowId: row.rowId })).rejects.toMatchObject({ code: 'collection_access_forbidden' });
+        expect(claims).toBe(1);
     });
 
     it('reads promoted rows through ordinary get/query', async () => {
