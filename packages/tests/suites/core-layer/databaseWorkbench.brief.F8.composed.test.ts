@@ -100,7 +100,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
         }), context);
         if (!authored.ok) throw new Error(`Task authoring refused (${authored.errorCode})`);
         const opened = SessionInputHandoffResultV1Schema.parse(authored.result);
-        expect(opened).toMatchObject({ kind: 'authoringResult', result: { kind: 'opened', destination: 'newSession' } });
+        expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'authoringResult', result: { kind: 'opened', destination: 'newSession' } });
         if (opened.kind !== 'authoringResult' || opened.result.kind !== 'opened') throw new Error('Task did not open an editable New draft');
         const taskComposer = createNewSessionComposerDocumentOwner({ scope,
           ref: { kind: 'newSession', draftId: opened.result.draftId } });
