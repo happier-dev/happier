@@ -1575,7 +1575,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     define: { ...SOURCE_RUNTIME_COMMONJS_DEFINE,
       ...(component === 'server' ? { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload'),
         __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev'),
-        __HAPPIER_DEV_GUEST_CLI_EXPORT_AVAILABLE__: 'true' } : {}) },
+        __HAPPIER_DEV_GUEST_CLI_EXPORT_AVAILABLE__: JSON.stringify((env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload') === 'home-payload') } : {}) },
     metafile: true, logLevel: 'silent', plugins: [
       ...(derivesDaemonProjections ? [createCliSourceProjectionResolver({projectionRoot: daemonProjectionRoot})] : []),
       plugin, createWorkspaceSourceResolver({workspacePackages, requireFromProject}),

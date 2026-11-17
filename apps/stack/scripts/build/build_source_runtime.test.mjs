@@ -53,7 +53,7 @@ test('server source builds select Home payloads and Docker builds select public 
   await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*'] }));
   await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
   await writeFile(join(server, 'tsconfig.json'), '{}');
-  await writeFile(join(server, 'sources/main.light.ts'), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__; export const channel = typeof __HAPPIER_GUEST_CLI_CHANNEL__ === "undefined" ? null : __HAPPIER_GUEST_CLI_CHANNEL__; ');
+  await writeFile(join(server, 'sources/main.light.ts'), 'export const source = typeof __HAPPIER_GUEST_CLI_SOURCE__ === "undefined" ? null : __HAPPIER_GUEST_CLI_SOURCE__; export const channel = typeof __HAPPIER_GUEST_CLI_CHANNEL__ === "undefined" ? null : __HAPPIER_GUEST_CLI_CHANNEL__; export const guestExportAvailable = typeof __HAPPIER_DEV_GUEST_CLI_EXPORT_AVAILABLE__ === "undefined" ? null : __HAPPIER_DEV_GUEST_CLI_EXPORT_AVAILABLE__; ');
   await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
     process.platform === 'win32' ? 'junction' : 'dir');
@@ -64,6 +64,7 @@ test('server source builds select Home payloads and Docker builds select public 
     const identity = await import(pathToFileURL(built.entrypoint));
     assert.equal(identity.source, source);
     assert.equal(identity.channel, channel);
+    assert.equal(identity.guestExportAvailable, source === 'home-payload');
   }
 });
 

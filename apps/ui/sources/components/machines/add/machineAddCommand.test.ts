@@ -45,7 +45,7 @@ describe('machine add commands', () => {
             expect(anotherMachine).not.toContain('https://happier.dev/install');
         }
     });
-    it.skipIf(process.platform !== 'linux')('runs copied setup from the server pin and rejects changed bytes before extraction', async () => {
+    it.skipIf(process.platform !== 'linux').each(['bash', 'dash'])('runs copied setup from the server pin and stops failed installs (%s)', async shell => {
         const fixture = await createCliPayloadFixture();
         const root = mkdtempSync(join(tmpdir(), 'machine-add-home-export-'));
         const calls = join(root, 'setup-args');
@@ -79,19 +79,31 @@ describe('machine add commands', () => {
             const tools = join(root, 'tools'); mkdirSync(tools);
             const actualTar = execFileSync('/bin/sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).trim();
             writeFileSync(join(tools, 'tar'), `#!/bin/sh\nprintf extracted > '${extracted}'\nexec '${actualTar}' "$@"\n`, { mode: 0o755 });
-            const run = (homeDir: string) => promisify(execFile)('/bin/sh', ['-c', command], {
+            const run = (homeDir: string) => promisify(execFile)(shell, ['-c', command], {
                 env: { ...process.env, HOME: homeDir, PATH: `${tools}:${process.env.PATH}` },
             });
             await run(join(root, 'first-home'));
             expect(readFileSync(calls, 'utf8')).toBe(`setup\n--home-url\n${homeUrl}\n`);
             expect(existsSync(extracted)).toBe(true);
             rmSync(calls); rmSync(extracted);
+            // A checked install subshell must propagate both extraction and promotion failures.
+            for (const step of ['tar', 'chmod']) {
+                writeFileSync(join(tools, step), step === 'tar'
+                    ? `#!/bin/sh\n'${actualTar}' "$@" || exit $?\nprintf extracted > '${extracted}'\nexit 42\n`
+                    : '#!/bin/sh\nexit 42\n', { mode: 0o755 });
+                await expect(run(join(root, `${step}-failure-home`))).rejects.toMatchObject({ code: 42 });
+                expect(existsSync(calls)).toBe(false);
+                expect(existsSync(extracted)).toBe(true);
+                rmSync(extracted);
+                if (step === 'chmod') rmSync(join(tools, step));
+                writeFileSync(join(tools, 'tar'), `#!/bin/sh\nprintf extracted > '${extracted}'\nexec '${actualTar}' "$@"\n`, { mode: 0o755 });
+            }
             // Reuse the copied command: a reload cannot silently change its pinned digest.
             archive = Buffer.concat([archive, Buffer.from([0])]);
             await expect(run(join(root, 'second-home'))).rejects.toThrow();
             expect(existsSync(calls)).toBe(false);
             expect(existsSync(extracted)).toBe(false);
-            expect(requests).toEqual(['/v1/runtime/guest-cli/payloads/linux/x64', '/v1/runtime/guest-cli/payloads/linux/x64']);
+            expect(requests).toEqual(Array(4).fill('/v1/runtime/guest-cli/payloads/linux/x64'));
         } finally {
             server.closeAllConnections();
             await new Promise<void>(resolve => server.close(() => resolve()));

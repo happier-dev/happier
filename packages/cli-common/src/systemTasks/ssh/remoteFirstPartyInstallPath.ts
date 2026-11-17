@@ -114,9 +114,9 @@ export function buildRemoteFirstPartyPromotionCommand(params: Readonly<{
     const binary = `${payloadRootExpression}${layout.binaryPath.slice(layout.currentPath.length)}`;
     return [
       'set -eu',
-      `test -f ${binary}`,
-      `chmod +x ${binary}`,
-      `${FIRST_PARTY_INSTALL_HOME_ENV_KEY}=${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} ${params.cliInstall.managedGuest ? 'HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION=1 ' : ''}${binary} self __install-payload --component ${params.cliInstall.componentId} --payload-root ${payloadRootExpression} --version ${params.cliInstall.versionId} --channel ${params.cliInstall.channel}${params.cliInstall.managedGuest ? ' --managed-guest' : ''}`,
+      `test -f ${binary} || exit $?`,
+      `chmod +x ${binary} || exit $?`,
+      `${FIRST_PARTY_INSTALL_HOME_ENV_KEY}=${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} ${params.cliInstall.managedGuest ? 'HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION=1 ' : ''}${binary} self __install-payload --component ${params.cliInstall.componentId} --payload-root ${payloadRootExpression} --version ${params.cliInstall.versionId} --channel ${params.cliInstall.channel}${params.cliInstall.managedGuest ? ' --managed-guest' : ''} || exit $?`,
     ].join('; ');
   }
   const versionsDir = quoteRemotePathWithHomeExpansion(layout.versionsDir);
@@ -128,17 +128,17 @@ export function buildRemoteFirstPartyPromotionCommand(params: Readonly<{
     'set -eu',
     buildRemoteFirstPartyProtectedVersionFunction(layout),
     // Validate before touching a version or either activation pointer.
-    `test -f ${payloadRootExpression}${layout.binaryPath.slice(layout.currentPath.length)}`,
-    `if is_protected_version ${versionDir}; then test -x ${versionBinaryPath}; else mkdir -p ${versionsDir}`,
-    `test ! -L ${versionsDir}`,
-    `rm -rf ${versionDir}`,
+    `test -f ${payloadRootExpression}${layout.binaryPath.slice(layout.currentPath.length)} || exit $?`,
+    `if is_protected_version ${versionDir}; then test -x ${versionBinaryPath} || exit $?; else mkdir -p ${versionsDir} || exit $?`,
+    `test ! -L ${versionsDir} || exit $?`,
+    `rm -rf ${versionDir} || exit $?`,
     // Both remote strategies stage under the install home; consume that extracted
     // tree without allocating a second full payload on the guest filesystem.
-    `mv ${payloadRootExpression} ${versionDir}`,
-    `chmod +x ${versionBinaryPath}`,
+    `mv ${payloadRootExpression} ${versionDir} || exit $?`,
+    `chmod +x ${versionBinaryPath} || exit $?`,
     'fi',
-    `if [ ! ${versionDir} -ef ${currentPath} ]; then if [ -L ${currentPath} ]; then prev="$(readlink ${currentPath} || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" ${previousPath}; fi; fi`,
-    `ln -sfn ${versionDir} ${currentPath}`,
+    `if [ ! ${versionDir} -ef ${currentPath} ]; then if [ -L ${currentPath} ]; then prev="$(readlink ${currentPath} || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" ${previousPath} || exit $?; fi; fi`,
+    `ln -sfn ${versionDir} ${currentPath} || exit $?`,
     'fi',
   ].join('; ');
 }
