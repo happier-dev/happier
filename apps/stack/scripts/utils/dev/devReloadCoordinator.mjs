@@ -4,6 +4,7 @@ import { readSourceComponentBuildInputs } from '../fs/workspaceBuildInputs.mjs';
 import { resolveDevReloadPollIntervalMs } from './reloadPollInterval.mjs';
 import { inspectDependencyRefresh, resolveDependencyRefreshMarkerPath } from '../proc/dependency_refresh.mjs';
 import { ensureDepsInstalled } from '../proc/pm.mjs';
+import { readCurrentDependencyGeneration } from '../proc/dependency_generations.mjs';
 import { diagnoseSourceReloadFailure, emitSourceReloadRefusal, formatSourceReloadRefusal, recordSourceReloadRefusal } from '../../runtime/shared/source_reload_refusal.mjs';
 
 import { watchDebounced } from '../proc/watch.mjs';
@@ -38,10 +39,20 @@ export {
 
 const RESTART_ORDER = ['dependencies', 'source-runtime', 'server', 'daemon', 'expo'];
 
-export async function createDevDependencyReload({ repoDir, env = process.env }) {
+export async function createDevDependencyReload({ repoDir, env = process.env, reloadExpo }) {
   const { inputPaths } = await inspectDependencyRefresh({ installDir: repoDir, env });
   const paths = [...new Set([...inputPaths, join(repoDir, 'patches')])].filter(path => existsSync(path));
   return {
+    // Installation publication replaces Metro's generation-bound file map.
+    // Output repairs retain their physical generation and serving process.
+    expo: reloadExpo ? {
+      descriptor: { id: 'expo:dependencies', target: 'expo',
+        paths: [resolveDependencyRefreshMarkerPath(repoDir)],
+        invalidatesGeneration: 'signature',
+        readSignatureAsync: async () => readCurrentDependencyGeneration(repoDir),
+      },
+      executor: { target: 'expo', restart: reloadExpo },
+    } : null,
     descriptor: { id: 'dependencies', target: 'dependencies', paths,
       // Wake for input events, but let the install owner decide what changed.
       // Non-install manifest fields and unregistered patches are source edits.

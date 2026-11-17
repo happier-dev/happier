@@ -672,8 +672,8 @@ async function main() {
     });
     return expoResEarly;
   };
-  // Dependency publication and plugin source refresh do not own Metro lifecycle.
-  // Keep the serving process until an explicit restart or the next startup.
+  // Dependency publication replaces Metro through the reload coordinator below.
+  // Other source refreshes keep the serving process until an explicit restart.
   // A cold or broken component must not gate admission of another component's
   // last-green output. Retain this single Expo operation for auth and UI readers.
   const expoStartup = startExpo ? ensureExpoAvailable().catch(error => {
@@ -908,9 +908,22 @@ async function main() {
     }
   }
 
-  const dependencyReload = await createDevDependencyReload({ repoDir, env: baseEnv });
+  const dependencyReload = await createDevDependencyReload({
+    repoDir, env: baseEnv,
+    reloadExpo: startExpo ? async () => {
+      await expoStartup;
+      // Retire the old crash supervisor before its child is replaced by the owner.
+      await expoResEarly?.close?.();
+      expoResEarly = null;
+      return await ensureExpoAvailable();
+    } : null,
+  });
   const reloadDescriptors = [dependencyReload.descriptor];
   const reloadExecutors = [dependencyReload.executor];
+  if (dependencyReload.expo) {
+    reloadDescriptors.push(dependencyReload.expo.descriptor);
+    reloadExecutors.push(dependencyReload.expo.executor);
+  }
   const localProducerProvider = resolveEffectiveDbProvider({ serverComponentName, env: serverEnv });
   const remoteProducerServer = remoteServerRuntimeConfig
     ?? resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light' });

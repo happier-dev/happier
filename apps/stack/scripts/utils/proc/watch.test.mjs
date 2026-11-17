@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
+import { writeFile, readFile, rename } from 'node:fs/promises';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
 import { watchDebounced } from './watch.mjs';
 
@@ -317,4 +319,37 @@ test('watchDebounced does not carry handled status into a later debounce window'
   watcher.close();
 
   assert.deepEqual(changes, [true, false]);
+});
+
+test('watchDebounced observes successive atomic file publications', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-watch-publication-' });
+  const file = fixture.path('ready');
+  await writeFile(file, 'initial');
+  const observed = [];
+  const watcher = watchDebounced({ paths: [file], debounceMs: 0, pollIntervalMs: 0,
+    onChange: async () => observed.push(await readFile(file, 'utf8')) });
+  t.after(() => watcher.close());
+  for (let index = 0; index < 3; index++) {
+    const next = fixture.path('next');
+    await writeFile(next, String(index));
+    await rename(next, file);
+    await t.waitFor(() => assert.equal(observed.at(-1), String(index)));
+  }
+});
+
+
+test('file publication watchers exclude sibling events from source observation', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-watch-siblings-' });
+  const file = fixture.path('ready');
+  await writeFile(file, 'initial');
+  let notify;
+  const observed = [];
+  const watcher = watchDebounced({ paths: [file], onChange() {},
+    onSourceEvent: event => observed.push(event.filename),
+    watchImpl(_path, _options, handler) { notify = handler; return { close() {} }; } });
+  t.after(() => watcher.close());
+  notify('change', 'sibling');
+  assert.deepEqual(observed, []);
+  notify('rename', 'ready');
+  assert.deepEqual(observed, ['ready']);
 });

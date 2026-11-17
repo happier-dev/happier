@@ -1,5 +1,5 @@
-import { watch, readFileSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { watch, readFileSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 function skipWatchSubpathError(error, watchPath, logger) {
   if (!['EACCES', 'ENOENT', 'EPERM'].includes(error?.code)) return false;
@@ -12,15 +12,30 @@ function skipWatchSubpathError(error, watchPath, logger) {
 }
 
 function safeWatch(path, handler, { watchImpl, ignorePath, logger, persistent, recursive }) {
+  // A file watch follows an inode and loses later atomic replacements. Watch
+  // its stable parent instead, without recursing or observing sibling writes.
+  let nativePath = path;
+  let nativeHandler = handler;
+  try {
+    if (statSync(path).isFile()) {
+      nativePath = dirname(path);
+      recursive = false;
+      nativeHandler = (eventType, filename) => {
+        if (filename == null || String(filename) === basename(path)) handler(eventType, filename);
+      };
+    }
+  } catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes(error?.code)) throw error;
+  }
   let watcher;
   try {
-    watcher = watchImpl(path, { recursive, persistent, ...(ignorePath ? { ignore: ignorePath } : {}) }, handler);
+    watcher = watchImpl(nativePath, { recursive, persistent, ...(ignorePath ? { ignore: ignorePath } : {}) }, nativeHandler);
   } catch (error) {
     // Retain the non-recursive fallback only for unsupported recursion or a skipped
     // descendant. Resource exhaustion and failure of the watched root are fatal.
     if (error?.code !== 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM' && !skipWatchSubpathError(error, path, logger)) throw error;
     try {
-      watcher = watchImpl(path, { persistent, ...(ignorePath ? { ignore: ignorePath } : {}) }, handler);
+      watcher = watchImpl(nativePath, { persistent, ...(ignorePath ? { ignore: ignorePath } : {}) }, nativeHandler);
     } catch (fallbackError) {
       if (!skipWatchSubpathError(fallbackError, path, logger)) throw fallbackError;
       return null;
