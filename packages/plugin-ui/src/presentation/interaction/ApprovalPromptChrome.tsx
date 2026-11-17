@@ -93,7 +93,9 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   const typography = props.typography === undefined ? environmentTypography : props.typography;
   const inset = props.spacing.medium;
   const step = props.spacing.small;
-  const textColumnStart = compact ? inset : inset + ICON_SIZE + ICON_TEXT_GAP;
+  // A card's facts sit on the card inset beside its decision (lab mbAppr), so a full-width band (a diff) is
+  // inset the same on both sides; a settled inline prompt keeps them under its title's text column.
+  const factsStart = inline ? inset + ICON_SIZE + ICON_TEXT_GAP : inset;
   const hasFooter = Boolean(props.footer);
   const bounded = typeof props.maxHeight === 'number';
   // Only a card with a decision to keep in view scrolls its facts under a bound. A failed or settled card
@@ -129,7 +131,7 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   // A settled (inline) prompt has no card to tint; only a card asks.
   const bodyStyle: HappierPortableStyle = compact
     ? { paddingHorizontal: inset, paddingBottom: hasFooter ? COMPACT_PART_GAP : step, gap: COMPACT_PART_GAP }
-    : { paddingLeft: textColumnStart, paddingRight: inset, paddingBottom: props.bodyBottomInset ?? step, gap: step };
+    : { paddingLeft: factsStart, paddingRight: inset, paddingBottom: props.bodyBottomInset ?? step, gap: step };
   // A compact card's fill is the host's; its mark already says it waits on the person.
   const toneSurface = !inline && !compact && props.tone ? resolveHappierWorkStatusSurfaceStyle(props.tone, props.colors.status) : null;
   return (

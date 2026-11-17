@@ -48,6 +48,18 @@ describe('HappierApprovalPromptChrome', () => {
     } finally { view.unmount(); }
   });
 
+  it('card: the facts sit on the card inset beside the decision, so a full-width band is inset the same on both sides', () => {
+    const view = mount();
+    try {
+      const card = view.container.querySelector<HTMLElement>('[data-testid="card"]')!;
+      const facts = view.container.querySelector<HTMLElement>('[data-testid="facts"]')!;
+      let body = facts.parentElement!;
+      while (getComputedStyle(body).paddingLeft === '0px' && body !== card) body = body.parentElement!;
+      const style = getComputedStyle(body);
+      expect([style.paddingLeft, style.paddingRight]).toEqual(['12px', '12px']);
+    } finally { view.unmount(); }
+  });
+
   it('keeps the decision outside the scrolling facts when the card is bounded', () => {
     const mounted = mount(240);
     try {
