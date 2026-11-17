@@ -76,6 +76,7 @@ export type PluginInvocationServicesSeed = Readonly<{
     readDataRole?: NonNullable<PluginServices['secrets']['readDataRole']>;
     /** Captured deployment-owner attachment; no public context or credential operand. */
     databaseEngines?: PluginServices['databaseEngines'];
+    worktreeEnvironment?: PluginServices['worktreeEnvironment'];
     deploymentDatabases?: PluginServices['deploymentDatabases'];
     /** Exact resource admission, captured by the host before the handler starts. */
     managedWorkloads?: PluginServices['managedServices']['observeWorkload'];

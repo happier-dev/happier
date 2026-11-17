@@ -358,7 +358,7 @@ export type PluginResourceDemandInvocation = Readonly<{
 type ResourceDemandHost = Readonly<{
     readDemandAccountId?(): string | null;
     bindDynamicResourceCustody?(binding: Parameters<BindDynamicResourceActions>[0]):
-        Pick<PluginDynamicResourceInvocationOptionsV1, 'secrets' | 'chosenMachine' | 'daemonStorage' | 'deploymentDatabases' | 'databaseEngines'> | undefined;
+        Pick<PluginDynamicResourceInvocationOptionsV1, 'secrets' | 'chosenMachine' | 'daemonStorage' | 'deploymentDatabases' | 'databaseEngines' | 'worktreeEnvironment'> | undefined;
     invokeDemand?(input: PluginResourceDemandInvocation): Promise<JsonValue>;
 }>;
 

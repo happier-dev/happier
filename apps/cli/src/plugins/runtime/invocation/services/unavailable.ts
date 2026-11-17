@@ -356,6 +356,11 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         createUnavailable(): PluginServices['databaseEngines'] { return undefined; },
         createAvailable({ seed }): PluginServices['databaseEngines'] | null { return seed.databaseEngines ?? null; },
     },
+    worktreeEnvironment: {
+        id: 'worktreeEnvironment', publicProperty: 'worktreeEnvironment', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
+        createUnavailable(): PluginServices['worktreeEnvironment'] { return undefined; },
+        createAvailable({ seed }): PluginServices['worktreeEnvironment'] | null { return seed.worktreeEnvironment ?? null; },
+    },
     deploymentDatabases: {
         id: 'deploymentDatabases', publicProperty: 'deploymentDatabases', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(): PluginServices['deploymentDatabases'] { return undefined; },

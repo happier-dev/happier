@@ -162,3 +162,33 @@ it('stores the worktree database agent level on this Machine: Read & write (asks
         } finally { if (retained.kind === 'replace') await retained.release(); }
     } finally { await kit.dispose(); }
 });
+
+it('resolves a selected env file target without a running service', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'dbw-env-file-'));
+    const path = '.env.local';
+    const dbPath = join(rootPath, 'selected.sqlite');
+    const target = { ...scope, workspace: { ...workspace, rootPath },
+        source: { kind: 'env_file', path, variable: 'DATABASE_URL' } } as const;
+    try {
+        openSqliteDatabaseSync(dbPath).close();
+        const targets = createWorktreeDatabaseTargets();
+        const request = { identity, storage: emptyStorage, requester: 'person' as const, access: 'read' as const,
+            input: { operation: 'describe' as const, target },
+            // The daemon's private prepared input is a system boundary for the plugin.
+            worktreeEnvironment: { async readDotenv() { return pathToFileURL(dbPath).href; } } };
+        expect(await targets.admit(request)).toMatchObject({ agentAccess: 'readWriteAsk' });
+        const resolved = await targets.resolve(request);
+        try {
+            expect(resolved.descriptor).toMatchObject({ engine: 'sqlite', target });
+        } finally { await resolved.connection.close(); }
+    } finally { await rm(rootPath, { recursive: true, force: true }); }
+});
+
+it('returns the typed unavailable refusal for a missing env file variable', async () => {
+    const targets = createWorktreeDatabaseTargets();
+    const target = { ...scope, source: { kind: 'env_file', path: '.env.local', variable: 'MISSING_DATABASE_URL' } } as const;
+    const request = { identity, storage: emptyStorage, requester: 'person' as const, access: 'read' as const,
+        input: { operation: 'describe' as const, target },
+        worktreeEnvironment: { async readDotenv() { return undefined; } } };
+    await expect(targets.admit(request)).rejects.toMatchObject({ code: 'database_target_unavailable' });
+});

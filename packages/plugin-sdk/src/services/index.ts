@@ -1,3 +1,4 @@
+import type { DatabaseWorktreeTargetV1 } from '@happier-dev/database-protocol';
 import type { DatabaseEnginesServiceV1 } from '../databaseEngines.js';
 /** @moduleRealm daemon */
 export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1, DeploymentTelemetryAssignmentV1, DeploymentTelemetryServiceV1 } from './deployments.js';
@@ -356,6 +357,7 @@ export type PluginServiceId =
     | 'deploymentDatabases'
     | 'deploymentTelemetry'
     | 'databaseEngines'
+    | 'worktreeEnvironment'
     | 'sessions'
     | 'resources'
     | 'mcp'
@@ -386,6 +388,11 @@ export interface PluginServices {
     readonly deploymentSource: DeploymentSourceMaterializationPortV1;
     readonly deploymentExecEnv: DeploymentExecEnvPortV1;
     readonly databaseEngines?: DatabaseEnginesServiceV1;
+    /** Private, requester-bound Project input on the executing daemon. Values must stay in-process. */
+    readonly worktreeEnvironment?: Readonly<{
+        readDotenv(input: Pick<DatabaseWorktreeTargetV1, 'workspace' | 'projectKey'> &
+            Readonly<{ path: string; variable: string }>): Promise<string | undefined>;
+    }>;
     readonly deploymentDatabases?: DeploymentDatabasesServiceV1;
     readonly deploymentTelemetry: DeploymentTelemetryServiceV1;
     readonly sessions: SessionsService;

@@ -118,15 +118,22 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
       if (descriptor.target.kind !== 'manual') throw new Error('DBW fixture Connect did not return its manual association');
       return { ...descriptor, target: descriptor.target };
     }
-    async function envTarget(path: string, url: string) {
-      await writeFile(join(machine.workspaceDir, path), `DATABASE_URL=${url}\n`, { mode: 0o600 });
+    const envPath = '.env.local';
+    const envBindings = {
+      DATABASE_URL: fixture.postgres.selectedDatabaseUrl,
+      NEIGHBOR_DATABASE_URL: fixture.postgres.neighborDatabaseUrl,
+      NO_EXTENSION_DATABASE_URL: fixture.postgres.noExtensionDatabaseUrl,
+    };
+    await writeFile(join(machine.workspaceDir, envPath),
+      Object.entries(envBindings).map(([name, url]) => `${name}=${url}\n`).join(''), { mode: 0o600 });
+    function envTarget(variable: keyof typeof envBindings) {
       return DatabaseWorktreeTargetV1Schema.parse({ kind: 'worktree', ...context,
-        source: { kind: 'env_file', path, variable: 'DATABASE_URL' } });
+        source: { kind: 'env_file', path: envPath, variable } });
     }
     const targets = {
-      selected: await envTarget('.env.dbw-selected', fixture.postgres.selectedDatabaseUrl),
-      neighbor: await envTarget('.env.dbw-neighbor', fixture.postgres.neighborDatabaseUrl),
-      noExtension: await envTarget('.env.dbw-no-extension', fixture.postgres.noExtensionDatabaseUrl),
+      selected: envTarget('DATABASE_URL'),
+      neighbor: envTarget('NEIGHBOR_DATABASE_URL'),
+      noExtension: envTarget('NO_EXTENSION_DATABASE_URL'),
     };
     const runtime = { homeId: fixture.serverId, serverPid: fixture.server.proc.child.pid,
       daemonPid: machine.daemon.state.pid, machineId: machine.target.machineId,

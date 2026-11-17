@@ -19,7 +19,7 @@ export type DatabaseDemandResolver = (input: Readonly<{
     requesterAccount: Readonly<{ accountId: string }>;
     secrets: Pick<SecretsService, 'readSavedSecret'>;
     signal: AbortSignal;
-}> & Pick<PluginDynamicResourceInvocationOptionsV1, 'chosenMachine' | 'daemonStorage' | 'agentCaller' | 'authority' | 'deploymentDatabases' | 'databaseEngines'>)
+}> & Pick<PluginDynamicResourceInvocationOptionsV1, 'chosenMachine' | 'daemonStorage' | 'agentCaller' | 'authority' | 'deploymentDatabases' | 'databaseEngines' | 'worktreeEnvironment'>)
     => Promise<Readonly<{ descriptor: DatabaseDescriptorV1; connection: Pick<DatabaseWorkbenchConnection, 'execute' | 'close'> }>>;
 
 function unavailable(): never {
@@ -45,6 +45,7 @@ export function createDatabaseConnectionResourceRuntime(options: Readonly<{
                 ...(context.daemonStorage ? { daemonStorage: context.daemonStorage } : {}),
                 ...(context.deploymentDatabases ? { deploymentDatabases: context.deploymentDatabases } : {}),
                 ...(context.databaseEngines ? { databaseEngines: context.databaseEngines } : {}),
+                ...(context.worktreeEnvironment ? { worktreeEnvironment: context.worktreeEnvironment } : {}),
                 ...(context.agentCaller === undefined ? {} : { agentCaller: context.agentCaller }),
                 ...(context.authority ? { authority: context.authority } : {}),
             });

@@ -1,3 +1,6 @@
+import { readProjectDotenvEnvironment } from '@/workspaces/projectSetup/projectDotenv';
+import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
+import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createDatabaseEnginesService } from './lifecycle/contributions/databaseEngines';
 import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { prepareServiceLaunchEnvironments } from './lifecycle/contributions/targetServiceLaunchEnvironments';
@@ -206,7 +209,7 @@ import {
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { materializePluginSessionAttachment } from '@/session/attachments/materializePluginSessionAttachment';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { carriesNonLocalRequesterAuthority, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -1433,6 +1436,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     ...(services.availability('storage').status === 'available' ? { daemonStorage: services.storage.daemon } : {}),
                     ...(services.availability('deploymentDatabases').status === 'available' ? { deploymentDatabases: services.deploymentDatabases } : {}),
                     ...(services.databaseEngines ? { databaseEngines: services.databaseEngines } : {}),
+                    ...(services.worktreeEnvironment ? { worktreeEnvironment: services.worktreeEnvironment } : {}),
                 });
             },
             invokeDemand: input => uiResourceWatches.invokeDemand(input),
@@ -4559,6 +4563,44 @@ export async function resolveExecutablePluginRuntimeRegistry(
         });
     };
     const databaseEngines = createDatabaseEnginesService({ targets: authoritativeContributes.activationTargets, registry: activatedRegistry });
+    function bindWorktreeEnvironment(seed: PluginInvocationServicesSeed): PluginInvocationServicesSeed['worktreeEnvironment'] {
+        const machineId = params?.resolveCurrentMachineId?.();
+        if (!machineId) return undefined;
+        const authorization = seed.approvalContext?.externalActionExecutionAuthorization
+            ?? seed.externalActionContext?.externalActionExecutionAuthorization;
+        return {
+            async readDotenv({ workspace, projectKey, path, variable }) {
+                seed.signal.throwIfAborted();
+                if (workspace.kind === 'managed' || workspace.machineId !== machineId) return undefined;
+                const context = seed.approvalContext;
+                const requesterAccountId = context?.machineAdmission?.actorAccountId ?? context?.runtimeAccountId;
+                const projection = authorization?.requesterAccountProjection;
+                if (!authorization && (!sessionCredentials || configuration.activeServerId !== sessionCredentialsServerId
+                    || carriesNonLocalRequesterAuthority(context)
+                    || (requesterAccountId && requesterAccountId !== readAccountIdFromToken(sessionCredentials.token))
+                    || (seed.requesterAccount && seed.requesterAccount.credentials.token !== sessionCredentials.token))) return undefined;
+                const serverId = projection?.serverId ?? sessionCredentialsServerId;
+                const serverHttpBaseUrl = authorization?.requesterHttpProjection?.serverHttpBaseUrl ?? notificationServerHttpBaseUrl;
+                const account = authorization ? projectRuntimeAccountRowsInput({ accountAuthorization: authorization })
+                    : sessionCredentials ? projectRuntimeAccountRowsInput({ credentials: sessionCredentials }) : undefined;
+                if (!account) return undefined;
+                try {
+                    const accepted = await resolveProjectSetupAcceptedWorkspace({
+                        ...account, address: workspace, serverId, serverHttpBaseUrl, signal: seed.signal,
+                    });
+                    if (accepted.project.projectId !== projectKey) return undefined;
+                    const input = await readProjectDotenvEnvironment({ root: accepted.workspace.rootPath, declaredNames: [variable] });
+                    seed.signal.throwIfAborted();
+                    if (input.kind === 'ready' && input.sources.some(source => source.name === variable && source.file === path)) {
+                        return input.environment[variable];
+                    }
+                } catch {
+                    seed.signal.throwIfAborted();
+                }
+                return undefined;
+            },
+        };
+    }
     const createCapturedPluginInvocationServices = createDeploymentDatabasesInvocationServicesForHost({
         contributes: authoritativeContributes, targetRegistrations: activatedRegistry.targetRegistrations,
         readHost: readDeploymentTargetRoleAdmissionHost,
@@ -4567,7 +4609,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         readCurrentOccurrenceId: readCurrentPluginOccurrenceId,
         readCurrentSourceCustody: readCurrentPluginSourceCustody,
-        createServices: (seed, ...args) => invocationServiceOwners.createServices({ ...seed, databaseEngines }, ...args),
+        createServices: (seed, ...args) => {
+            const worktreeEnvironment = bindWorktreeEnvironment(seed);
+            return invocationServiceOwners.createServices({ ...seed, databaseEngines, worktreeEnvironment }, ...args);
+        },
         resolveInvocationHostPolicy: invocationServiceOwners.resolveInvocationHostPolicy,
         beginDiagnosticScope: invocationServiceOwners.beginDiagnosticScope,
         completeDiagnosticScope: invocationServiceOwners.completeDiagnosticScope,

@@ -83,6 +83,13 @@ targets for the selected Account and worktree. It retains only the preparation's
 private reader until the service releases it; connection URLs do not enter target
 metadata or persistent associations. This is unreleased 0.3 source behavior.
 
+An explicit worktree dotenv target can also open before any service starts.
+The daemon resolves the requesting Account's accepted worktree and reads the
+selected variable through the same Project dotenv projection. The named file
+must match the variable's winning source among the four standard dotenv files.
+The private input is available to Actions and daemon resource demand. The
+descriptor carries only the source name, variable name and database capabilities.
+
 The optional `requestListenerPorts(keys)` operation returns Protocol's existing
 `WorktreePortsResultV1`. The host binds the admitted execution root and launch
 signal to B's worktree port owner. A contribution requests its own named listeners

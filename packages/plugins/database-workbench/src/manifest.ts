@@ -23,7 +23,8 @@ function manualTargets(context: PluginInvocationContext) {
 
 const worktreeTargets = createWorktreeDatabaseTargets();
 const worktreeRequest = (context: PluginInvocationContext) => ({ identity: context, storage: context.services.storage.daemon,
-    requester: resolveDatabaseRequesterKindV1(context), databaseEngines: context.services.databaseEngines, signal: context.signal });
+    requester: resolveDatabaseRequesterKindV1(context), databaseEngines: context.services.databaseEngines,
+    worktreeEnvironment: context.services.worktreeEnvironment, signal: context.signal });
 
 function deploymentTargets(context: Pick<PluginInvocationContext['services'], 'deploymentDatabases'>) {
     const service = context.deploymentDatabases;
@@ -130,7 +131,8 @@ export const plugin = definePlugin({
                         return deploymentTargets(context).resolve(context.input, 'read');
                     }
                     if (context.input.target.kind === 'worktree') return worktreeTargets.resolve({ input: context.input, access: 'read',
-                        identity: context, storage: context.daemonStorage, requester: resolveDatabaseRequesterKindV1(context), databaseEngines: context.databaseEngines, signal: context.signal });
+                        identity: context, storage: context.daemonStorage, requester: resolveDatabaseRequesterKindV1(context),
+                        databaseEngines: context.databaseEngines, worktreeEnvironment: context.worktreeEnvironment, signal: context.signal });
                     return createManualDatabaseTargets({ storage: context.daemonStorage, identity: context, databaseEngines: context.databaseEngines }).resolve({
                         input: context.input, access: 'read', requester: resolveDatabaseRequesterKindV1(context),
                         secrets: context.secrets, signal: context.signal,
