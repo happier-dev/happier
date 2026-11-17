@@ -2219,7 +2219,10 @@ continue to govern both bundled and installed plugins.
 In 0.3 development source, optional `activation.configuration` selects positive
 startup demand from `accountCollections: [{ pluginId, collectionId }]` or
 `automationEventSources: true` for the declaring plugin's enrolled Event sources.
-Either source suffices. The host reads only physical Collection presence across
+Either source suffices. The bundled Sentry and PostHog issue observers use
+`automationEventSources`, and Triage source attention uses its `source-instances`
+Collection, so a daemon with no configured source activates none of them at
+start (owner ruling D1, LEAN-DAEMON). The host reads only physical Collection presence across
 retained schema versions or the existing exact publisher/materialization source
 census; it does not load the plugin to discover configuration. Existing Account
 Collection and Automation source invalidations wake the same contribution-demand
