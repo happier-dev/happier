@@ -45,7 +45,7 @@ it.each(['claude', 'codex'] as const)('generates comparison outputs with explici
       ...process.env,
       HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(), HAPPIER_E2E_FAKE_CLAUDE_LOG: claudeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'scm-summary-json', ANTHROPIC_API_KEY: 'synthetic-comparison-key',
-      HAPPIER_CODEX_APP_SERVER_BIN: codex, HAPPIER_CODEX_EXECUTION_RUN_TRANSPORT: 'appServer',
+      HAPPIER_CODEX_PATH: codex, HAPPIER_CODEX_APP_SERVER_BIN: codex, HAPPIER_CODEX_EXECUTION_RUN_TRANSPORT: 'appServer',
     } });
     ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
     await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machine.target.machineId), { timeoutMs: 60_000 });

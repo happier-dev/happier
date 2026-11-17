@@ -5,8 +5,79 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
+import { existsSync } from 'node:fs';
+import { parseCodexCliStableVersion } from '../../../plugins/codex/src/agent/cli/detect';
+import { assertCodexToolRestrictionRuntimeSupported } from '../../../plugins/codex/src/agent/runtime/appServer/client/toolRestriction';
+import { buildCodexAppServerConfigOverrides } from '../../../plugins/codex/src/agent/runtime/appServer/config/overrides';
+import { connectManagedJsonRpcTestClient, createManagedJsonRpcTestClient } from '../../../../apps/cli/src/testkit/process/managedJsonRpc';
+import { waitFor } from './timing';
 
 describe('native Codex app-server boundary fixture', () => {
+  it('reports the native CLI version and tool-mode catalog required by confinement admission', async () => {
+    const { writeFakeCodexAppServerScript } = await import('./codexAppServerRemoteHarness');
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-version-'));
+    const scriptPath = await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath: join(testDir, 'requests.jsonl') });
+    const child = spawnChild(process.execPath, [scriptPath, '--version'], {
+      cwd: testDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    const [exitCode] = await once(child, 'exit');
+    expect(exitCode, stderr).toBe(0);
+    expect(() => assertCodexToolRestrictionRuntimeSupported(parseCodexCliStableVersion(stdout)?.value)).not.toThrow();
+    const catalog = spawnChild(process.execPath, [scriptPath, 'debug', 'models'], {
+      cwd: testDir, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let models = '';
+    catalog.stdout.setEncoding('utf8').on('data', chunk => { models += chunk; });
+    const [catalogExit] = await once(catalog, 'exit');
+    expect(catalogExit).toBe(0);
+    expect(JSON.parse(models)).toMatchObject({ models: [{ slug: 'gpt-5.4', tool_mode: 'code_mode_only' }] });
+  });
+
+  it.skipIf(process.platform === 'win32')('serves native initialization, confinement config and turns through Unix and raw proxy transports', async () => {
+    const { writeFakeCodexAppServerScript } = await import('./codexAppServerRemoteHarness');
+    const testDir = await mkdtemp(join(tmpdir(), 'cx-socket-'));
+    const scriptPath = await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath: join(testDir, 'requests.jsonl') });
+    const socketPath = join(testDir, 'private', 'app-server.sock');
+    const overrides = buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: [] });
+    const server = spawnChild(process.execPath, [scriptPath, 'app-server', '--listen', `unix://${socketPath}`,
+      ...overrides.flatMap(override => ['-c', override])], { cwd: testDir, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    server.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    try {
+      await waitFor(() => {
+        if (server.exitCode !== null) throw new Error(`Fake app-server exited ${server.exitCode}: ${stderr}`);
+        return existsSync(socketPath);
+      }, { failFast: true, context: 'fake native Unix control socket' });
+      for (const transport of ['unix', 'proxy'] as const) {
+        const connection = transport === 'unix'
+          ? await connectManagedJsonRpcTestClient({ cwd: testDir, socketPath })
+          : await createManagedJsonRpcTestClient({ cwd: testDir, command: process.execPath,
+            args: [scriptPath, 'app-server', 'proxy', '--sock', socketPath] });
+        try {
+          expect(await connection.client.request('initialize', {})).toMatchObject({ userAgent: expect.stringMatching(/^codex-cli\/\d+\.\d+\.\d+$/) });
+          await connection.client.notify('initialized');
+          expect(await connection.client.request('config/read', { includeLayers: false })).toMatchObject({
+            config: { features: { code_mode: { excluded_tool_namespaces: ['functions'] } }, mcp_servers: {} },
+          });
+          expect(await connection.client.request('thread/start', {})).toMatchObject({ threadId: 'thread-started' });
+          expect(await connection.client.request('turn/start', { threadId: 'thread-started', input: [{ type: 'text', text: 'explain' }] }))
+            .toMatchObject({ turn: { id: expect.stringMatching(/^turn-/) } });
+        } finally { await connection.dispose(); }
+      }
+    } finally {
+      if (server.exitCode === null && server.signalCode === null) {
+        const exited = once(server, 'exit');
+        server.kill();
+        await exited;
+      }
+    }
+  });
+
   it('rejects a resume request for the wrong native thread when the test requires an exact identity', async () => {
     const { writeFakeCodexAppServerScript } = await import('./codexAppServerRemoteHarness');
     const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-strict-resume-'));
@@ -42,9 +113,12 @@ describe('native Codex app-server boundary fixture', () => {
         error: expect.objectContaining({ code: -32602 }),
       });
     } finally {
-      child.kill();
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill();
+        await exited.catch(() => {});
+      }
       lines.close();
-      await once(child, 'exit').catch(() => {});
     }
   });
 
@@ -151,9 +225,12 @@ describe('native Codex app-server boundary fixture', () => {
       await writeFile(modelListStatePath, JSON.stringify({ error: true }));
       expect(await send(9, 'model/list')).toMatchObject({ error: { code: -32000 } });
     } finally {
-      child.kill();
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill();
+        await exited.catch(() => {});
+      }
       lines.close();
-      await once(child, 'exit').catch(() => {});
     }
   });
 
@@ -252,9 +329,12 @@ describe('native Codex app-server boundary fixture', () => {
         },
       });
     } finally {
-      child.kill();
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill();
+        await exited.catch(() => {});
+      }
       lines.close();
-      await once(child, 'exit').catch(() => {});
     }
   });
 
