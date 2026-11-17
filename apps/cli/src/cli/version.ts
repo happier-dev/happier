@@ -1,4 +1,4 @@
-import packageJson from '../../package.json';
+import packageJson from '../../package.json' with { type: 'json' };
 import { installConsoleWriteErrorGuards, shouldInstallConsoleWriteErrorGuards } from '../utils/writeConsoleBestEffort';
 
 export function isTopLevelVersionRequest(args: readonly string[]): boolean {

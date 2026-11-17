@@ -8,7 +8,7 @@ import { classifyPluginModuleFailure, readPluginModuleFailureCause } from '@/plu
 import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
 import { projectAgentAccountSettingsCatalogEntry } from '@/plugins/projection/registry/agentAccountSettingsCatalogEntry';
 import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, type AgentLaunchPayload } from './agentLaunchFrame';
-import packageJson from '../../../package.json';
+import packageJson from '../../../package.json' with { type: 'json' };
 
 /** Private same-build bundled code only; no Account credentials, store, or module locator crosses the frame. */
 export async function applyAgentLaunchAccountSettings(payload: AgentLaunchPayload, signal?: AbortSignal): Promise<void> {

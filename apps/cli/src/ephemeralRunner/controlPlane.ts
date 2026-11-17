@@ -20,7 +20,7 @@ import type { PluginRegistryProfileRequirement, PluginResourceSelection } from '
 import type { RunnerActivationProgressPhaseV1 } from '@happier-dev/protocol/ephemeralRunner/progress';
 import tweetnacl from 'tweetnacl';
 
-import packageJson from '../../package.json';
+import packageJson from '../../package.json' with { type: 'json' };
 import type { VerifiedEphemeralRunnerActivationFile } from './activationFile';
 import type { EphemeralRunnerLocalState } from './localState';
 

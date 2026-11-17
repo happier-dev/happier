@@ -10,7 +10,7 @@ import type { RunnerArtifactIdentityV1 } from '@happier-dev/protocol/ephemeralRu
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import tweetnacl from 'tweetnacl';
 
-import packageJson from '../../package.json';
+import packageJson from '../../package.json' with { type: 'json' };
 
 export type EphemeralRunnerActivationFileErrorCode =
   | 'RUNNER_ACTIVATION_FILE_INVALID'

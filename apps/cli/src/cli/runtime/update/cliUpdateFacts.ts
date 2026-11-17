@@ -14,7 +14,7 @@ import { getReleaseRingCatalogEntry, type PublicReleaseRingId } from '@happier-d
 
 import { configuration } from '@/configuration';
 
-import packageJson from '../../../../package.json';
+import packageJson from '../../../../package.json' with { type: 'json' };
 
 function comparablePath(path: string, platform: NodeJS.Platform): string {
   let resolved = path;

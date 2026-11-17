@@ -8,7 +8,7 @@ import { maybeAutoUpdateNotice } from '@/cli/runtime/update/autoUpdateNotice';
 import { maybeReexecToRuntime } from '@/cli/runtime/update/runtimeReexec';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import packageJson from '../../package.json';
+import packageJson from '../../package.json' with { type: 'json' };
 import { resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
 import { installAxiosProxySupport } from '@/utils/proxy/axiosProxy';
 import { ensureWindowsUtf8CodePage } from '@/utils/platform/windows/ensureWindowsUtf8CodePage';

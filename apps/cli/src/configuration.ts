@@ -16,7 +16,7 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime'
 import { CANONICAL_DAEMON_STATE_BASENAME } from './daemon/ownership/daemonOwnershipPaths'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId'
-import packageJson from '../package.json'
+import packageJson from '../package.json' with { type: 'json' }
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 import { resolveIntEnvWithBounds } from './configuration/resolveIntEnvWithBounds'
 import { resolveCliHappyHomeDir } from './configuration/resolveCliHappyHomeDir'

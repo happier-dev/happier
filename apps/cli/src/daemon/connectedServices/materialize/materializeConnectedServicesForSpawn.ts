@@ -3,7 +3,7 @@ import { resolveAgentAccountSettingsApplicationContext } from '@/plugins/runtime
 import { notifyProviderAccountSettingsMaterialization } from '@/daemon/lifecycle/providerAccountSettingsMaterializations';
 import { randomUUID } from 'node:crypto';
 import { PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
-import packageJson from '../../../../package.json';
+import packageJson from '../../../../package.json' with { type: 'json' };
 import type { AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, type AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { lstat, realpath, rm } from 'node:fs/promises';

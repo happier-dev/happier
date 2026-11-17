@@ -27,7 +27,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { NormalizedLocalServiceInventorySnapshot } from '../local/services/inventory/scanner';
 import type { LocalServicesDaemonRuntime } from '../local/services/runtime';
 import type { MachineResourceSummary } from '../resources/machineResourceSummary';
-import packageJson from '../../../package.json';
+import packageJson from '../../../package.json' with { type: 'json' };
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import type {
   ExternalSessionPersistedTakeoverAdmissionOwner,

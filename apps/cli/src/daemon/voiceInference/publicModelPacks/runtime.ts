@@ -20,7 +20,7 @@ import {
   type VoiceModelPackArtifactBindingV1,
 } from '@happier-dev/voice-modelpacks';
 
-import packageJson from '../../../../package.json';
+import packageJson from '../../../../package.json' with { type: 'json' };
 import { readInstalledPluginCatalogSnapshot } from '@/plugins/projection/catalog/installed';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { renameStoragePathNoReplace } from '@/storage/trash/renameStoragePath';

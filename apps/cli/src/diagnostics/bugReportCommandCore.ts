@@ -8,7 +8,7 @@ import { inferBugReportDeploymentTypeFromServerUrl as inferBugReportDeploymentTy
 import { searchBugReportSimilarIssues } from '@happier-dev/protocol/bugs/reports/similarIssues';
 import type { BugReportSimilarIssue, BugReportDeploymentType, BugReportEnvironmentPayload, BugReportFormPayload } from '@happier-dev/protocol';
 
-import packageJson from '../../package.json';
+import packageJson from '../../package.json' with { type: 'json' };
 import {
   collectBugReportDiagnosticsArtifacts,
   type CollectBugReportDiagnosticsArtifactsInput as CollectDiagnosticsInput,

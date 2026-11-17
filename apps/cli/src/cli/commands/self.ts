@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import packageJson from '../../../package.json';
+import packageJson from '../../../package.json' with { type: 'json' };
 import { configuration } from '@/configuration';
 import type { CommandContext } from '@/cli/commandRegistry';
 import {

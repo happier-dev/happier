@@ -9,7 +9,7 @@ import { BUG_REPORT_LOG_SOURCE_KINDS, resolveBugReportLogSelection, type BugRepo
 import type { BugReportAttachmentArg } from './bugReportCommandArgs';
 import type { BugReportArtifactPayload, BugReportEnvironmentPayload } from '@happier-dev/protocol';
 
-import packageJson from '../../package.json';
+import packageJson from '../../package.json' with { type: 'json' };
 import { readAccountChangesCursors, readServerProfileObservations, readSettings, readStoredCredentials } from '@/persistence';
 import { readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 import { collectBugReportMachineDiagnosticsOnHost } from '@/diagnostics/bugReportMachineDiagnosticsLocalDaemon';

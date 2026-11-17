@@ -9,7 +9,7 @@ import { deriveManagedDevcontainerChildProjectionV1, isManagedDevcontainerChildP
   managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readManagedMachineFull } from '@/machines/managed/readManagedMachine';
 import type { StoredCredentials } from '@/persistence';
-import packageJson from '../../../package.json';
+import packageJson from '../../../package.json' with { type: 'json' };
 
 export async function getPreferredHostName(): Promise<string> {
   return await readPreferredHostName();

@@ -72,7 +72,7 @@ import { readMachineProjectWorkspaceRefs } from '@/workspaces/readMachineProject
 import type { DaemonPublicVoiceModelPackRuntime } from './voiceInference/publicModelPacks/runtime';
 import type { BrowserRecordingDaemonRuntime } from './browser/recording/runtime';
 import { scmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
-import packageJson from '../../package.json';
+import packageJson from '../../package.json' with { type: 'json' };
 import { getEnvironmentInfo } from '@/ui/getEnvironmentInfo';
 import {
   buildHappyCliSubprocessLaunchSpec,

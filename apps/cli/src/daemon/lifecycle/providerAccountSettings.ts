@@ -12,7 +12,7 @@ import { getActiveAccountSettingsSnapshot, subscribeActiveAccountSettingsKeys } 
 import { listConnectedServiceMaterializedIdentityRoots } from '@/daemon/connectedServices/materialize/cleanup/ConnectedServiceMaterializedHomeCleanupScheduler';
 import { resolveConnectedServiceNativeHomeRoot } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
 import { subscribeProviderAccountSettingsMaterializations } from './providerAccountSettingsMaterializations';
-import packageJson from '../../../package.json';
+import packageJson from '../../../package.json' with { type: 'json' };
 
 export function createProviderAccountSettingsController(params: Readonly<{
   scopeKey: string;

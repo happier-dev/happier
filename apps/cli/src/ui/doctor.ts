@@ -15,7 +15,7 @@ import { readDaemonState } from '@/persistence'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import packageJson from '../../package.json'
+import packageJson from '../../package.json' with { type: 'json' }
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot'
 import { getEnvironmentInfo } from './getEnvironmentInfo'
 import { DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT, DIAGNOSTIC_RECENT_SESSION_LOG_COUNT } from '@/utils/logs/logRetention'
