@@ -43,6 +43,7 @@ it('L12.oppositeHome keeps qualified instructions and resumed turns on their own
     const focused = await other.createAccount('focused-person');
     const ownerId = readAccountIdFromToken(owner.auth.token);
     const focusedId = readAccountIdFromToken(focused.auth.token);
+    if (!ownerId || !focusedId) throw new Error('Cross-Home fixture Account identities unavailable');
     expect(focusedId).not.toBe(ownerId);
     const machine = await home.enrollDaemon(owner, { env: { HAPPIER_CLAUDE_PATH: agent.executablePath } });
     const session = await home.assertKnownGoodSessionControl(owner, machine);
