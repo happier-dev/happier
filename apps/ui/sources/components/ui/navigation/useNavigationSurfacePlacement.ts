@@ -31,7 +31,7 @@ export function useNavigationSurfacePlacement(address: NavigationPlacementAddres
 }
 
 export function useDetailPageTabsPosition(pageKind: string, enabled = true): 'top' | 'bottom' {
-    return useLocalSetting('navigationSurfacePlacementsV1', React.useCallback(value => enabled ? value.pageTabs?.[pageKind] ?? 'bottom' : 'bottom', [pageKind, enabled]));
+    return useLocalSetting('navigationSurfacePlacementsV1', React.useCallback((value: NavigationSurfacePlacementsV1) => enabled ? value.pageTabs?.[pageKind] ?? 'bottom' : 'bottom', [pageKind, enabled]));
 }
 
 export function useDetailPageTabsPositionActionWriter(pageKind: string) {
