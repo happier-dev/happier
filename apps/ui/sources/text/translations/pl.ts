@@ -18441,6 +18441,7 @@ settingsSession: {
             steps: ({ count }: { count: number }) => (count === 1 ? `1 krok` : `Kroki: ${count}`),
             step: ({ n }: { n: number }) => `Krok ${n}`,
             service: "Usługa",
+            plusShared: ({ name }: { name: string }) => `oraz ${name}`,
             pending: "Czeka na Twoje zatwierdzenie",
             failed: "Konfiguracja nie powiodła się. Przejrzyj wyjście, zanim przejdziesz dalej.",
             run: "Uruchom konfigurację",

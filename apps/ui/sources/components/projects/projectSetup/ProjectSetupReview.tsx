@@ -223,6 +223,8 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
     reviewedEffect?: unknown;
     /** Names each effect line's layer when the project's setup has more than the repository file (lab L6). */
     layerOf?: ((path: readonly string[]) => string | null) | null;
+    /** The attached shared setup, named after the project file in the provenance line ("plus Acme web setup"). */
+    sharedSetupName?: string | null;
     /** The effect rows on a sheet of their own (the pushed page); on a card they sit on the card. */
     framed?: boolean;
     onViewFile?: () => void;
@@ -263,6 +265,11 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
           {provenance ? (
             <Text testID={`${props.testID}.provenance`} style={[styles.meta, { color: theme.colors.text.tertiary }]}>
               {provenance}
+            </Text>
+          ) : null}
+          {props.sharedSetupName ? (
+            <Text testID={`${props.testID}.sharedProvenance`} style={[styles.meta, { color: theme.colors.text.tertiary }]}>
+              {` · ${t('projects.scripts.setup.plusShared', { name: props.sharedSetupName })}`}
             </Text>
           ) : null}
         </Text>
@@ -353,6 +360,7 @@ type ProjectSetupReviewBodyProps = Readonly<{
   sharedTrustDetail?: string | null;
   reviewedEffect?: unknown;
   layerOf?: ((path: readonly string[]) => string | null) | null;
+  sharedSetupName?: string | null;
   framed?: boolean;
   scope: ProjectSetupScope;
   onScopeChange: (scope: ProjectSetupScope) => void;
@@ -428,6 +436,7 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
     onRun: (scope: ProjectSetupScope) => void;
     reviewedEffect?: unknown;
     layerOf?: ((path: readonly string[]) => string | null) | null;
+    sharedSetupName?: string | null;
     /** The chosen scope belongs to the review's owner, so the card and the phone page share it. */
     scope: ProjectSetupScope;
     onScopeChange: (scope: ProjectSetupScope) => void;

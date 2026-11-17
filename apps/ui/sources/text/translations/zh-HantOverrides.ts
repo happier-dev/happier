@@ -14178,6 +14178,7 @@ settingsSession: {
                 steps: ({ count }: { count: number }) => (count === 1 ? `1 個步驟` : `${count} 個步驟`),
                 step: ({ n }: { n: number }) => `步驟 ${n}`,
                 service: "服務",
+                plusShared: ({ name }: { name: string }) => `加上 ${name}`,
                 pending: "等待你的核准",
                 failed: "設定失敗。繼續前請查看輸出。",
                 run: "執行設定",

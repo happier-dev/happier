@@ -624,6 +624,7 @@ function DeclaredScripts(
           testID={`${props.testID}.setup`}
           onViewFile={props.onEdit ? () => props.onEdit?.(false, 'raw') : null}
           layerOf={layers.sharedSourceId || layers.personalChanges > 0 ? layers.layerOf : null}
+          sharedSetupName={layers.sharedSourceId ? sharedName ?? t('projects.scripts.layers.sharedUnnamed') : null}
         />
       ) : null}
       {scripts.length === 0 ? (
@@ -833,6 +834,7 @@ function SetupRow(
     onViewFile: (() => void) | null;
     /** Each effect line's layer, when the project's setup has more than the repository file. */
     layerOf?: ((path: readonly string[]) => string | null) | null;
+    sharedSetupName?: string | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -1001,6 +1003,7 @@ function SetupRow(
             pending={pending}
             reviewedEffect={review.reviewedEffect}
             layerOf={props.layerOf ?? null}
+            sharedSetupName={props.sharedSetupName ?? null}
             scope={review.scope}
             onScopeChange={review.setScope}
             onRun={review.run}
@@ -1548,6 +1551,7 @@ function PhoneSetupReviewPage(
       onBack={props.onBack}
       onViewFile={props.onViewFile}
       layerOf={layers.sharedSourceId || layers.personalChanges > 0 ? layers.layerOf : null}
+      sharedSetupName={layers.sharedSourceId ? sharedName ?? t('projects.scripts.layers.sharedUnnamed') : null}
     />
   );
 }

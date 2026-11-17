@@ -18568,6 +18568,7 @@ settingsSession: {
             steps: ({ count }: { count: number }) => (count === 1 ? `1 шаг` : `Шагов: ${count}`),
             step: ({ n }: { n: number }) => `Шаг ${n}`,
             service: "Сервис",
+            plusShared: ({ name }: { name: string }) => `плюс ${name}`,
             pending: "Ожидает вашего одобрения",
             failed: "Настройка не удалась. Посмотрите вывод, прежде чем продолжить.",
             run: "Запустить настройку",

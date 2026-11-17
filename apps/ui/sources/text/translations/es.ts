@@ -18616,6 +18616,7 @@ settingsSession: {
             steps: ({ count }: { count: number }) => (count === 1 ? `1 paso` : `${count} pasos`),
             step: ({ n }: { n: number }) => `Paso ${n}`,
             service: "Servicio",
+            plusShared: ({ name }: { name: string }) => `más ${name}`,
             pending: "Esperando tu aprobación",
             failed: "La configuración falló. Revisa la salida antes de continuar.",
             run: "Ejecutar configuración",

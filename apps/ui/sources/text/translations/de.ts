@@ -18728,6 +18728,7 @@ settingsSession: {
                 steps: ({ count }: { count: number }) => (count === 1 ? `1 Schritt` : `${count} Schritte`),
                 step: ({ n }: { n: number }) => `Schritt ${n}`,
                 service: "Dienst",
+                plusShared: ({ name }: { name: string }) => `plus ${name}`,
                 pending: "Wartet auf deine Freigabe",
                 failed: "Einrichtung fehlgeschlagen. Prüfe die Ausgabe, bevor du fortfährst.",
                 run: "Einrichtung ausführen",

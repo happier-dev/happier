@@ -18529,6 +18529,7 @@ settingsSession: {
             steps: ({ count }: { count: number }) => (count === 1 ? `1 ステップ` : `${count} ステップ`),
             step: ({ n }: { n: number }) => `ステップ ${n}`,
             service: "サービス",
+            plusShared: ({ name }: { name: string }) => `＋ ${name}`,
             pending: "あなたの承認を待っています",
             failed: "セットアップに失敗しました。続ける前に出力を確認してください。",
             run: "セットアップを実行",

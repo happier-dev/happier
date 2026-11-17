@@ -18722,6 +18722,7 @@ settingsSession: {
             steps: ({ count }: { count: number }) => (count === 1 ? `1 etapa` : `${count} etapas`),
             step: ({ n }: { n: number }) => `Etapa ${n}`,
             service: "Serviço",
+            plusShared: ({ name }: { name: string }) => `mais ${name}`,
             pending: "Aguardando sua aprovação",
             failed: "A configuração falhou. Revise a saída antes de continuar.",
             run: "Executar configuração",

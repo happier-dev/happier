@@ -22025,6 +22025,7 @@ const enProjects = {
       steps: ({ count }: { count: number }) => (count === 1 ? `1 step` : `${count} steps`),
       step: ({ n }: { n: number }) => `Step ${n}`,
       service: "Service",
+      plusShared: ({ name }: { name: string }) => `plus ${name}`,
       pending: "Waiting for your approval",
       failed: "Setup failed. Review output before continuing.",
       run: "Run setup",

@@ -27,6 +27,8 @@ import { ProjectEffectiveDefinitionV1Schema } from '@happier-dev/protocol/worksp
 import { ProjectSharedSetupUpdateView, readProjectSharedSetupUpdateRows } from '@/components/projects/projectSetup/ProjectSharedSetupUpdateSheet';
 import type { ProjectSharedSetupReviewSnapshot } from '@/components/projects/projectSetup/projectSharedSetupReview';
 import type { ProjectSetupScope } from '@/components/projects/projectSetup/ProjectSetupReview';
+import { ProjectSetupReviewPage } from '@/components/projects/projectSetup/ProjectSetupReviewPage';
+import { readProjectSetupLayers } from '@/components/projects/projectSetup/projectSetupLayers';
 
 /**
  * Dev-only specimen of the Scripts page, project file editor and setup review (Lane 12 lab
@@ -192,6 +194,25 @@ function sharedUpdateSnapshot(state: string): ProjectSharedSetupReviewSnapshot |
   if (change.kind !== 'changed') return null;
   return { kind: 'ready', pending: false, change,
     request: { projectRef: { serverId: SERVER, projectKey: 'specimen' }, expectedRevision: 'absent', review: change } };
+}
+
+/** The phone's pushed setup review on the layered definition (lab L6 reviewp): each line names its layer. */
+function PhoneReviewFrame() {
+  const [scope, setScope] = React.useState<ProjectSetupScope>('thisTime');
+  const layers = React.useMemo(() => readProjectSetupLayers(LAYERED_DEFINITION, 'Acme web setup'), []);
+  const review: React.ComponentProps<typeof ProjectSetupReviewPage>['review'] = {
+    reviewing: true,
+    machine: { machineName: MACHINE, sharedRunAs: null, sharedTrustDetail: null },
+    pending: false,
+    reviewedEffect: undefined,
+    scope,
+    setScope,
+    run: () => {},
+    dismiss: () => {},
+  };
+  return <ProjectSetupReviewPage testID="scripts-specimen.reviewPage" manifest={LAYERED_DEFINITION.effectiveManifest ?? MANIFEST as never}
+    review={review} onBack={() => {}} onViewFile={() => {}} layerOf={layers.layerOf}
+    sharedSetupName="Acme web setup" />;
 }
 
 function SharedUpdateFrame(props: Readonly<{ state: string }>) {
@@ -401,6 +422,8 @@ export function ScriptsSpecimen(
   const body =
     frame === 'OUTPUT' ? (
       <OutputFrame />
+    ) : frame === 'REVIEWP' ? (
+      <PhoneReviewFrame />
     ) : frame === 'UPDATE' ? (
       <SharedUpdateFrame state={props.state ?? 'changed'} />
     ) : frame === 'SHARED' ? (
