@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -20,14 +21,6 @@ import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
 
 const run = createRunDirs({ runLabel: 'core' });
-
-function createAnyObjectSchema<T>(): { safeParse: (input: unknown) => { success: true; data: T } | { success: false } } {
-  return {
-    safeParse(input: unknown) {
-      return input && typeof input === 'object' ? { success: true, data: input as T } : { success: false };
-    },
-  };
-}
 
 function readPermissionRequestFromAgentState(agentState: unknown): Readonly<{
   requestId: string;
@@ -76,8 +69,10 @@ function requirePermissionRequest(
 describe('core e2e: execution runs (parent-session permission response)', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
+  let person: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
 
   afterAll(async () => {
+    await person?.close();
     await daemon?.stop().catch(() => {});
     await server?.stop();
   }, 60_000);
@@ -92,7 +87,7 @@ describe('core e2e: execution runs (parent-session permission response)', () => 
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
+    const secret = auth.accountSigningSeed;
     await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
@@ -198,16 +193,12 @@ describe('core e2e: execution runs (parent-session permission response)', () => 
         providerRequestId: resolvedPermissionRequest.requestId,
       });
 
-      const approved = await callLegacyEncryptedSessionRpc({
-        ui,
-        sessionId,
-        method: `${sessionId}:permission`,
-        req: { id: resolvedPermissionRequest.requestId, approved: true },
-        secret,
-        schema: createAnyObjectSchema<{ ok: boolean }>(),
-        timeoutMs: 45_000,
-      });
-      expect(approved).toMatchObject({ ok: true });
+      person = await connectUiPersonActionClient({ serverUrl: server.baseUrl, accountSecret: auth.accountSigningSeed });
+      const approved = await person.executeConfirmed('session.permission.respond', {
+        sessionId, requestId: resolvedPermissionRequest.requestId, decision: 'allow',
+      }, { surface: 'ui', authority: 'present_user', serverId: person.serverId,
+        actionCaller: { kind: 'host' } });
+      expect(approved).toMatchObject({ ok: true, result: { ok: true } });
 
       await waitFor(async () => {
         const session = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
@@ -233,6 +224,8 @@ describe('core e2e: execution runs (parent-session permission response)', () => 
         : {};
       expect(finalCompletedRequests[resolvedPermissionRequest.requestId]).toMatchObject({ status: 'approved' });
     } finally {
+      await person?.close();
+      person = undefined;
       ui.disconnect();
       await daemon?.stop().catch(() => {});
       await server?.stop().catch(() => {});

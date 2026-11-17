@@ -8,7 +8,9 @@ import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/acti
 import { findMachineAgentInventoryItemForTargetV1, MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 
 import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '../../../../apps/cli/src/mcp/runtime/sessionMcpLocalClient';
-import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
+import { connectUiActionClient, connectUiPersonActionClient } from '@happier-tests/ui-action-client';
+import { createTestTerminalAuth } from '../../src/testkit/auth';
+import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import {
   CLAUDE_CODE_E2E_OAUTH_SCOPE,
   CLAUDE_SUBSCRIPTION_SERVICE_ID,
@@ -34,6 +36,7 @@ let fixture: StartedConnectedServicesClaudeDaemonFixture | undefined;
 let vendor: ConnectedServiceRecoveryTokenServer | undefined;
 let ui: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
 let nativeMcp: Awaited<ReturnType<typeof connectSessionMcpClient>> | undefined;
+let postgres: Awaited<ReturnType<typeof startDatabaseWorkbenchPostgres>> | undefined;
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Expected object: ${JSON.stringify(value)}`);
@@ -54,7 +57,7 @@ afterEach(async () => {
   const errors: unknown[] = [];
   for (const cleanup of [() => nativeMcp?.close(), () => ui?.close(),
     () => fixture?.daemon.stop(), () => fixture?.homeRequests?.stop(),
-    () => fixture?.server.stop(), () => vendor?.stop()]) {
+    () => fixture?.server.stop(), () => vendor?.stop(), () => postgres?.stop()]) {
     try { await cleanup(); } catch (error) { errors.push(error); }
   }
   if (errors.length) throw new AggregateError(errors,
@@ -65,6 +68,7 @@ afterEach(async () => {
 // real. Only Claude and its OAuth endpoint are vendor boundary substitutes.
 it('starts selected-auth work once and delivers approved Project output to the ordinary Session', async () => {
   const testDir = run.testDir(`execution-runs-ordinary-session-${randomUUID()}`);
+  postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
   // Explicit source entrypoints consume the canonical authored workspace exports.
   const sourceNodeOptions = [process.env.NODE_OPTIONS, '--import',
     pathToFileURL(resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs')).href,
@@ -80,9 +84,10 @@ it('starts selected-auth work once and delivers approved Project output to the o
   } }) });
   fixture = await startConnectedServicesClaudeDaemon({
     testDir, testName: 'execution-runs-ordinary-session', tokenUrl: vendor.tokenUrl,
+    dbProvider: 'postgres',
     fakeClaudePath: fakeClaudeFixturePath(), fakeClaudeLogPath: resolve(testDir, 'fake-claude.jsonl'),
     // This suite uses both source entrypoints; package builds belong to lane preparation.
-    serverExtraEnv: { HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1', NODE_OPTIONS: sourceNodeOptions },
+    serverExtraEnv: { DATABASE_URL: postgres.homeDatabaseUrl, HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1', NODE_OPTIONS: sourceNodeOptions },
     terminalCredential: true,
     fakeClaudeScenario: 'delegate-json', accountSettings: { claudeUnifiedTerminalEnabled: false,
       actionsSettingsV1: { v: 1, actions: { 'projects.script.run': { enabled: true, disabledSurfaces: [],
@@ -176,7 +181,22 @@ it('starts selected-auth work once and delivers approved Project output to the o
   const pending = await nativeAction('projects.script.run', { workspace, selection: { kind: 'native', source } });
   expect(pending).toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
   const artifactId = pending.artifactId;
-  const approved = await execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
+  // A terminal sign-in cannot become the person merely by choosing UI context.
+  // Leave the same Ask open, then sign in through the real person's Account flow.
+  await ui.close();
+  const terminalAuth = await createTestTerminalAuth(fixture.serverBaseUrl, fixture.auth);
+  ui = await connectUiActionClient({ serverUrl: fixture.serverBaseUrl, credentials: {
+    token: terminalAuth.token, secret: Buffer.from(fixture.accountSecret).toString('base64'),
+  } });
+  const refused = await ui.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
+  expect(refused).toMatchObject({ ok: false, errorCode: 'present_user_required', effectAttempted: false });
+  expect(await ui.execute('approval.request.get', { artifactId }, context))
+    .toMatchObject({ ok: true, result: { request: { status: 'open' } } });
+  await expect(readFile(resolve(fixture.workspaceDir, 'keeper-result.txt'), 'utf8'))
+    .rejects.toMatchObject({ code: 'ENOENT' });
+  await ui.close();
+  ui = await connectUiPersonActionClient({ serverUrl: fixture.serverBaseUrl, accountSecret: fixture.auth.accountSigningSeed });
+  const approved = await ui.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
   expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true, result: { status: 'executed' } });
   await waitForFakeClaudeUserText(fixture.fakeClaudeLogPath, text => text.includes('L12_KEEPER_SCRIPT'));
   expect(await readFile(resolve(fixture.workspaceDir, 'keeper-result.txt'), 'utf8')).toBe('completed\n');
@@ -191,7 +211,7 @@ it('starts selected-auth work once and delivers approved Project output to the o
     happierInputRequestV1: { v: 1, producer: 'happierMcp' },
   } });
   // Rejoining a terminal approval must preserve its immutable input and not rerun the Script.
-  expect(await execute('approval.request.decide', { artifactId, decision: 'approve' }, context))
+  expect(await ui.execute('approval.request.decide', { artifactId, decision: 'approve' }, context))
     .toMatchObject({ ok: true, result: { status: 'executed' } });
   expect(await readFile(resolve(fixture.workspaceDir, 'keeper-result.txt'), 'utf8')).toBe('completed\n');
   expect((await fetchAllMessages(fixture.serverBaseUrl, fixture.auth.token, sessionId))

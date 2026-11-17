@@ -760,12 +760,13 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
   recordHomeRequests?: true;
   /** Exercise the current terminal sign-in boundary for daemon disk credentials. */
   terminalCredential?: true;
+  dbProvider?: Parameters<typeof startServerLight>[0]['dbProvider'];
 }>): Promise<StartedConnectedServicesClaudeDaemonFixture> {
   const startedAt = new Date().toISOString();
   const serverPort = params.terminalCredential ? await reserveAvailablePort() : undefined;
   const server = await startServerLight({
     testDir: params.testDir,
-    dbProvider: 'sqlite',
+    dbProvider: params.dbProvider ?? 'sqlite',
     port: serverPort,
     extraEnv: {
       ...(serverPort ? { HAPPIER_CANONICAL_SERVER_URL: `http://127.0.0.1:${serverPort}` } : {}),
