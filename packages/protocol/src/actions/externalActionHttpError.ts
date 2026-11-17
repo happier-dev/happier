@@ -59,9 +59,10 @@ export type ExternalActionHttpErrorCode = z.infer<typeof ExternalActionHttpError
 /**
  * One bounded vocabulary for failures that occur before a protected Action
  * request has been opened. HTTP adapters and the reserved daemon relay project
- * the same codes; authentication-only failures remain at their HTTP boundary.
+ * the same codes, including a refused root proof's invalid_token. Authentication
+ * service availability failures remain at their HTTP boundary.
  */
-export const ExternalActionPreOpenFailureCodeSchema = lazyZodSchema(() => (<const Values extends readonly string[], const Excluded extends readonly Values[number][]>(values: Values, excluded: Excluded) => { for (const value of excluded) if (!values.includes(value)) throw new Error(`Key ${value} not found in enum`); return z.enum(values.filter((value): value is Exclude<Values[number], Excluded[number]> => !excluded.some(item => item === value))); })(ExternalActionHttpErrorCodeSchema.options, EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES));
+export const ExternalActionPreOpenFailureCodeSchema = lazyZodSchema(() => (<const Values extends readonly string[], const Excluded extends readonly Values[number][]>(values: Values, excluded: Excluded) => { for (const value of excluded) if (!values.includes(value)) throw new Error(`Key ${value} not found in enum`); return z.enum(values.filter((value): value is Exclude<Values[number], Excluded[number]> => !excluded.some(item => item === value))); })(ExternalActionHttpErrorCodeSchema.options, EXTERNAL_ACTION_HTTP_AUTHENTICATION_ERROR_CODES.filter(code => code !== 'invalid_token')));
 export type ExternalActionPreOpenFailureCode = z.infer<
   typeof ExternalActionPreOpenFailureCodeSchema
 >;

@@ -909,6 +909,7 @@ describe('executeExternalAction', () => {
       const result = await run(principal);
       if (refused) {
         expect(result).toMatchObject({ kind: 'invalid_request', errorCode: refused, requestId: binding.requestId });
+        expect(parseExternalActionDaemonDispatchResult(result), 'known pre-effect refusals survive the reserved daemon relay').toEqual(result);
         expect(effects).toBe(0);
         return;
       }
