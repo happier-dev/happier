@@ -3594,6 +3594,7 @@ model ConnectedServiceAuthGroupMember {
 /// Disclosed, credential-free Source metadata; independent of private Project rows and Artifact grants.
 model ProjectSource {
     deploymentDefaults ProjectDeploymentDefaults?
+    sessionDefaults ProjectSourceSessionDefaults?
     deploymentEnvironments DeploymentEnvironment[]
     previewEnvironments DeploymentEnvironment[] @relation("DeploymentPreviewRepository")
     id String @id @default(cuid())
@@ -3612,6 +3613,16 @@ model ProjectSource {
     updatedAt DateTime @updatedAt
 
     @@index([createdByAccountId, id])
+}
+
+/// Non-secret project Session picks; Source admission owns every read and write.
+model ProjectSourceSessionDefaults {
+    sourceId String @id
+    source ProjectSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+    revision Int @default(1)
+    defaults Json?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 }
 
 /// One private defaults leaf; Project/Source remains the identity and authority owner.
