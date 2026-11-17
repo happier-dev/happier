@@ -1,8 +1,41 @@
 import { describe, expect, it } from 'vitest';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
+import { resolveExecutionRunLauncherProfileChoices } from '@/components/sessions/runs/launcher/resolveExecutionRunLauncherProfileChoices';
 import { extractExecutionRunProfilesFromMachineCapabilitiesState, resolveExecutionRunsCapabilityRead } from './extractExecutionRunsBackendsFromMachineCapabilities';
 
 describe('extractExecutionRunProfilesFromMachineCapabilitiesState', () => {
+    it('preserves declared option controls in the launcher profile choice', () => {
+        const optionsSchema = {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                configFiles: { type: 'array', items: { type: 'string' } },
+                gate: { type: 'string', enum: ['critical', 'major', 'minor', 'trivial', 'info'], default: 'major' },
+            },
+        } satisfies PluginJsonSchemaV2;
+        const profiles = extractExecutionRunProfilesFromMachineCapabilitiesState({
+            snapshot: { response: { results: { 'tool.executionRuns': { ok: true, data: {
+                executionRunProfiles: [{
+                    id: 'review.coderabbit/review',
+                    intent: 'review',
+                    title: 'CodeRabbit Review',
+                    compatibleAgents: ['coderabbit'],
+                    sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-3', installSource: 'archive' },
+                    available: true,
+                    defaults: { retention: 'resumable', runClass: 'bounded', io: 'streaming' },
+                    optionsSchema,
+                }],
+            } } } } },
+        });
+
+        expect(resolveExecutionRunLauncherProfileChoices({
+            intent: 'review',
+            profiles,
+            backendChoices: [{ backendId: 'coderabbit', disabled: false }],
+        })).toEqual([expect.objectContaining({ optionsSchema, compatibleAgentId: 'coderabbit', disabled: false })]);
+    });
+
     it('accepts only qualified profiles with canonical source custody', () => {
         const profiles = extractExecutionRunProfilesFromMachineCapabilitiesState({
             snapshot: { response: { results: { 'tool.executionRuns': { ok: true, data: {

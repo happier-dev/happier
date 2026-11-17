@@ -1,4 +1,5 @@
 import type { ExecutionRunsBackendSnapshotEntry } from '@/sync/domains/reviews/reviewEngineCatalog';
+import { PluginExecutionRunProfileContributionV2Schema, type PluginExecutionRunProfileContributionV2 } from '@happier-dev/protocol/plugins/contributions/executionRunProfiles';
 import { PluginSourceCustodyV1Schema, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 export type ExecutionRunProfileCapability = Readonly<{
@@ -9,6 +10,7 @@ export type ExecutionRunProfileCapability = Readonly<{
   sourceCustody: PluginSourceCustodyV1;
   available: boolean;
   unavailableCode?: string;
+  optionsSchema?: PluginExecutionRunProfileContributionV2['optionsSchema'];
   defaults: Readonly<{ retention: string; runClass: string; io: string }>;
 }>;
 
@@ -62,6 +64,7 @@ export function extractExecutionRunProfilesFromMachineCapabilitiesState(state: u
     const id = typeof raw.id === 'string' ? raw.id.trim() : '';
     const intent = typeof raw.intent === 'string' ? raw.intent.trim() : '';
     const sourceCustody = PluginSourceCustodyV1Schema.safeParse(raw.sourceCustody);
+    const optionsSchema = PluginExecutionRunProfileContributionV2Schema.shape.optionsSchema.safeParse(raw.optionsSchema);
     const compatibleAgentIds = Array.isArray(raw.compatibleAgents)
       ? raw.compatibleAgents.map((agentId) => typeof agentId === 'string' ? agentId.trim() : '').filter(Boolean)
       : [];
@@ -70,6 +73,7 @@ export function extractExecutionRunProfilesFromMachineCapabilitiesState(state: u
       !id.includes('/')
       || !intent
       || !sourceCustody.success
+      || !optionsSchema.success
       || compatibleAgentIds.length === 0
       || !defaults
       || typeof defaults.retention !== 'string'
@@ -83,6 +87,7 @@ export function extractExecutionRunProfilesFromMachineCapabilitiesState(state: u
       compatibleAgentIds: Object.freeze(compatibleAgentIds),
       sourceCustody: sourceCustody.data,
       available: raw.available === true,
+      ...(optionsSchema.data ? { optionsSchema: optionsSchema.data } : {}),
       ...(typeof raw.unavailableCode === 'string' && raw.unavailableCode.trim()
         ? { unavailableCode: raw.unavailableCode.trim() }
         : {}),

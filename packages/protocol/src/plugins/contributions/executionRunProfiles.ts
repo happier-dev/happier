@@ -4,10 +4,12 @@ import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
+import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import {
   PluginAvailabilityDescriptorV2Schema,
   PluginContributionReferenceV2Schema,
   PluginJsonValueV2Schema,
+  PluginJsonSchemaV2Schema,
   PluginLocalizedStringV2Schema,
 } from './publicTypes.js';
 
@@ -36,6 +38,10 @@ export const PluginExecutionRunProfileContributionV2Schema = lazyZodSchema(() =>
   }),
   compatibleAgents: z.array(asProtocolZod(PluginContributionReferenceV2Schema)).check(z.minLength(1)),
   actions: z.optional(z.array(PluginExecutionRunProfileActionReferenceV2Schema)),
+  optionsSchema: z.optional(PluginJsonSchemaV2Schema.check(z.refine(
+    (schema) => schema.type === 'object' && isRecursivelyClosedPluginJsonSchemaV2(schema),
+    'Execution-run options must declare a recursively closed object schema',
+  ))),
   availability: z.optional(PluginAvailabilityDescriptorV2Schema),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));
