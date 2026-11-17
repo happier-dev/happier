@@ -10,26 +10,19 @@ import { loadPersistedLinkedExternalSession } from '@/api/session/external/takeo
 import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { captureExternalSessionTakeoverStartInputV1, ExternalSessionTakeoverActionInputV1Schema, projectExternalSessionOperationActionResultV1 } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 
-/** Domain continuation after the canonical executor's policy/approval admission, never an MCP bypass. */
-export function createHostExternalSessionActionTransport(params: Readonly<{
+type HostExternalSessionAction = NonNullable<ActionExecutorDeps['hostExternalSessionAction']>;
+type PreparedHostExternalSessionAction = Parameters<HostExternalSessionAction>[0] & Readonly<{
+  semanticInput: unknown;
+  sessionId: string | null;
+  ownerMachineId?: string;
+}>;
+
+/** The local owner and remote transport share the same public Action semantics. */
+export function createHostExternalSessionActionAdapter(params: Readonly<{
   credentials: StoredCredentials;
-  serverId: string;
-  serverHttpBaseUrl: string;
-  resolveSessionMachineId: (sessionId: string, signal?: AbortSignal) => Promise<string | null>;
-}>): NonNullable<ActionExecutorDeps['hostExternalSessionAction']> {
+  execute: (input: PreparedHostExternalSessionAction) => ReturnType<HostExternalSessionAction>;
+}>): HostExternalSessionAction {
   return async ({ actionId, input, context, signal }) => {
-    // Restricted external callers need the daemon's proof-carrying local owner;
-    // never replace their credential with this ordinary Account transport.
-    if (context.externalActionCredential || context.externalActionExecutionAuthorization) {
-      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
-    }
-    if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) {
-      return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
-    }
-    if (actionId === EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID) {
-      return await executeBackgroundFollowTransport({ credentials: params.credentials, input, context,
-        serverHttpBaseUrl: params.serverHttpBaseUrl, ...(signal ? { signal } : {}) });
-    }
     const spec = getActionSpec(actionId);
     const semantic = spec.inputSchema.parse(input);
     // This family has either explicit Machine selectors or a canonical linked
@@ -40,7 +33,7 @@ export function createHostExternalSessionActionTransport(params: Readonly<{
     const sessionId = typeof nestedSessionId === 'string' ? nestedSessionId
       : typeof directSessionId === 'string' ? directSessionId : null;
     let transportValue: unknown = semantic;
-    let ownerMachineId: string | null | undefined;
+    let ownerMachineId: string | undefined;
     if (sessionId && (actionId === EXTERNAL_SESSION_STATUS_GET_ACTION_ID || actionId === EXTERNAL_SESSION_TAKEOVER_START_ACTION_ID)) {
       const linked = await loadPersistedLinkedExternalSession({ credentials: params.credentials, sessionId,
         ...(signal ? { signal } : {}) });
@@ -57,36 +50,69 @@ export function createHostExternalSessionActionTransport(params: Readonly<{
         if (!transportValue) return { ok: true, result: { ok: false,
           error: { code: 'source_unavailable', message: 'Linked session source is unavailable' } } };
       }
-    } else {
-      ownerMachineId = sessionId ? await params.resolveSessionMachineId(sessionId, signal) : undefined;
     }
-    if (sessionId && !ownerMachineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-    const target = resolveExternalActionMachineTarget({
-      actionId, rawInput: semantic, target: context.externalActionTarget,
-      ownerMachineId, fallbackMachineId: context.defaultSessionMachineId, context,
-    });
-    if (target.kind === 'rejected') return target.execution;
-    const method = spec.bindings?.rpcMethod;
-    if (!method) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-    const binding = spec.surfaceBindings?.rpc;
-    const transportInput = binding?.inputSchema.safeParse(transportValue);
-    if (transportInput && !transportInput.success) {
-      return { ok: false, errorCode: 'invalid_action_transport_input', error: 'invalid_action_transport_input' };
-    }
-    const response = await callExactMachineRpc({
-      credentials: params.credentials, serverUrl: params.serverHttpBaseUrl,
-      machineId: target.machineId, method, request: transportInput?.data ?? transportValue,
-      requireCurrentMachine: true, timeoutMs: null, ...(signal ? { signal } : {}),
-    });
+    const response = await params.execute({ actionId, input: transportValue, context,
+      semanticInput: semantic, sessionId, ...(ownerMachineId ? { ownerMachineId } : {}),
+      ...(signal ? { signal } : {}) });
+    if (!response.ok) return response;
     // The existing family projection owns RPC progress -> public reference,
     // including failures. Never expose the private transport progress shape.
     const projectOutput = spec.surfaceBindings?.plugin?.projectOutput;
     const result = actionId === EXTERNAL_SESSION_TAKEOVER_START_ACTION_ID && sessionId
-      ? projectExternalSessionOperationActionResultV1(response, sessionId)
-      : projectOutput ? await projectOutput(response, {
+      ? projectExternalSessionOperationActionResultV1(response.result, sessionId)
+      : projectOutput ? await projectOutput(response.result, {
       actionId, surface: 'rpc', caller: { kind: 'host' }, input: semantic,
       ...(signal ? { signal } : {}),
-    }) : response;
+    }) : response.result;
     return { ok: true, result };
+  };
+}
+
+/** Domain continuation after the canonical executor's policy/approval admission, never an MCP bypass. */
+export function createHostExternalSessionActionTransport(params: Readonly<{
+  credentials: StoredCredentials;
+  serverId: string;
+  serverHttpBaseUrl: string;
+  resolveSessionMachineId: (sessionId: string, signal?: AbortSignal) => Promise<string | null>;
+}>): HostExternalSessionAction {
+  const execute = createHostExternalSessionActionAdapter({ credentials: params.credentials,
+    execute: async ({ actionId, input, semanticInput, sessionId, ownerMachineId: linkedMachineId, context, signal }) => {
+      const ownerMachineId = linkedMachineId ?? (sessionId ? await params.resolveSessionMachineId(sessionId, signal) : undefined);
+      if (sessionId && !ownerMachineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      const target = resolveExternalActionMachineTarget({
+        actionId, rawInput: semanticInput, target: context.externalActionTarget,
+        ownerMachineId, fallbackMachineId: context.defaultSessionMachineId, context,
+      });
+      if (target.kind === 'rejected') return target.execution;
+      const spec = getActionSpec(actionId);
+      const method = spec.bindings?.rpcMethod;
+      if (!method) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+      const binding = spec.surfaceBindings?.rpc;
+      const transportInput = binding?.inputSchema.safeParse(input);
+      if (transportInput && !transportInput.success) {
+        return { ok: false, errorCode: 'invalid_action_transport_input', error: 'invalid_action_transport_input' };
+      }
+      const response = await callExactMachineRpc({
+        credentials: params.credentials, serverUrl: params.serverHttpBaseUrl,
+        machineId: target.machineId, method, request: transportInput?.data ?? input,
+        requireCurrentMachine: true, timeoutMs: null, ...(signal ? { signal } : {}),
+      });
+      return { ok: true, result: response };
+  } });
+  return async (args) => {
+    const { actionId, input, context, signal } = args;
+    // Restricted external callers need the daemon's proof-carrying local owner;
+    // never replace their credential with this ordinary Account transport.
+    if (context.externalActionCredential || context.externalActionExecutionAuthorization) {
+      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+    }
+    if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) {
+      return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+    }
+    if (actionId === EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID) {
+      return await executeBackgroundFollowTransport({ credentials: params.credentials, input, context,
+        serverHttpBaseUrl: params.serverHttpBaseUrl, ...(signal ? { signal } : {}) });
+    }
+    return await execute(args);
   };
 }

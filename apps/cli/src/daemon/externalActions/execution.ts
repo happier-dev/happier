@@ -36,6 +36,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveRuntimeActionExecutionFamily } from "@happier-dev/protocol/actions/executor/dispatch";
 import { callExactMachineRpc } from "@/session/transport/rpc/machineRpc";
 import { createClientActionReverseDispatcher } from "@/session/actions/clientActionReverseDispatch";
+import { createHostExternalSessionActionAdapter } from '@/session/actions/externalSessions/hostExternalSessionActionTransport';
 import type { ApiMachineClient } from "@/api/apiMachine";
 import { createProviderErrorV1 as createForegroundProviderError } from "@happier-dev/protocol/providers/errors";
 import { configuration } from "@/configuration";
@@ -382,8 +383,11 @@ resolveServerFeaturesSnapshot?: () =>
       // Machine-sync owners can be replaced after the control listener
       // starts. Resolve their exact current adapters at the request
       // boundary rather than retaining a stale one.
-      const hostExternalSessionAction =
+      const localExternalSessionAction =
         params.resolveExternalSessionHostAction?.();
+      const hostExternalSessionAction = localExternalSessionAction
+        ? createHostExternalSessionActionAdapter({ credentials, execute: localExternalSessionAction })
+        : undefined;
       const currentSessionSpawnDirectTargetTransport =
         params.resolveSessionSpawnDirectTargetTransport?.();
       // A fresh managed continuation has a real, newly enrolled target.

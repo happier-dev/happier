@@ -14,6 +14,8 @@ import { acknowledgeExternalSessionOperationProgressProjection, compactExternalS
 import { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
 import type { ActionOperationDomainOwner } from '@/daemon/actionOperations/actionOperationTypes';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { createHostExternalSessionActionAdapter } from '@/session/actions/externalSessions/hostExternalSessionActionTransport';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 const environment = vi.hoisted(() => ({ activeServerDir: '', accountId: 'account-1' as string | null,
   afterCredentialRead: null as (() => void) | null,
@@ -114,13 +116,70 @@ async function register(retainedDirectory?: string) {
   });
   registrations.push(registration);
   if (!installedOwner) throw new Error('External Action operation owner was not installed');
-  return { runtime, snapshots, owner: installedOwner, deleteSession: async () => {
+  return { runtime, snapshots, owner: installedOwner, hostActionExecutor: registration.hostExternalSessionActionExecutor, deleteSession: async () => {
     if (!onDeleted) throw new Error('Session deletion feed is not attached');
     await onDeleted({ sessionId: 'session-1', cursor: 1, accountScope: { activeServerDir: environment.activeServerDir, accountSubject: 'account-1' } });
   } };
 }
 
 describe('durable external operations in shared Action Operations', () => {
+  it('returns the interrupted import public reference through the local Action adapter', async () => {
+    const { hostActionExecutor } = await register();
+    const initial = ExternalSessionOperationRecordV1Schema.parse({ ...record(), revision: 2,
+      phase: 'staging', retryTargetPhase: 'staging',
+      error: { code: 'source_unavailable', message: 'Source is unavailable', retryable: true, occurredAtMs: Date.now() } });
+    await writeExternalSessionOperationRecord(environment.activeServerDir, initial);
+    const reference = { sessionId: initial.request.sessionId, operationId: initial.operationId, revision: initial.revision };
+    const actionId = 'sessions.external.operation.status.get';
+    const spec = getActionSpec(actionId);
+    const context = { surface: 'cli' as const };
+    // Control: the same registered owner serves the captured running-daemon
+    // RPC shape before the semantic Action consumer applies its stricter output.
+    const raw = await hostActionExecutor.execute(actionId, reference, context);
+    expect(raw.ok && spec.surfaceBindings?.rpc?.outputSchema.safeParse(raw.result).success).toBe(true);
+    expect(raw).toMatchObject({ ok: true, result: { ok: true, progress: {
+      operationId: initial.operationId, revision: 2, status: 'awaiting_user_resume', phase: 'staging',
+    } } });
+    const execute = createHostExternalSessionActionAdapter({
+      credentials: { token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null },
+      execute: ({ actionId, input, context }) => hostActionExecutor.execute(actionId, input, context),
+    });
+    const result = await execute({ actionId, input: reference, context });
+    expect(result).toEqual({ ok: true, result: { ok: true, operation: reference, presentation: {
+      v: 1, operationId: initial.operationId, revision: 2, kind: 'materialize',
+      status: 'awaiting_user_resume', phase: 'staging',
+    } } });
+    expect(result.ok && spec.outputSchema.safeParse(result.result).success).toBe(true);
+  });
+
+  it('reads semantic linked status through the same local transport owner', async () => {
+    const { hostActionExecutor } = await register();
+    const fields = buildSessionMetadataEnvelopeFields({
+      credentials: { token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null },
+      accountEncryptionMode: 'plain', storedContentMode: 'plain', agentState: null,
+      metadata: { machineId: 'machine-1', externalSessionV1: { v: 1, machineId: 'machine-1',
+        agentId: 'example', remoteSessionId: 'remote-1', source: { kind: 'jsonl' }, linkedAtMs: 1,
+        qualifiedIdentity: record().request.source.qualifiedIdentity } },
+    });
+    environment.session = { id: 'session-1', metadata: fields.sharedMetadata.ciphertext,
+      metadataVersion: 1, metadataLayoutVersion: 1, ownerMetadata: fields.ownerMetadata,
+      agentState: fields.agentState, agentStateVersion: 0, encryptionMode: 'plain' };
+    const actionId = 'sessions.external.status.get';
+    const context = { surface: 'cli' as const };
+    const transportInput = { sessionId: 'session-1', machineId: 'machine-1', agentId: 'example',
+      remoteSessionId: 'remote-1', source: { kind: 'jsonl' } };
+    const raw = await hostActionExecutor.execute(actionId, transportInput, context);
+    expect(raw).toMatchObject({ ok: true, result: { ok: true, machineOnline: true } });
+    const execute = createHostExternalSessionActionAdapter({
+      credentials: { token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null },
+      execute: ({ actionId, input, context }) => hostActionExecutor.execute(actionId, input, context),
+    });
+    const result = await execute({ actionId, input: { sessionId: 'session-1' }, context });
+    expect(result).toMatchObject({ ok: true, result: { ok: true, machineOnline: true,
+      canTakeOverDirect: false, canTakeOverPersist: false } });
+    expect(result.ok && getActionSpec(actionId).outputSchema.safeParse(result.result).success).toBe(true);
+  });
+
   it('keeps shared Stop in its admitted Account when the selected Account changes before local dispatch', async () => {
     const { owner } = await register();
     const initial = record();
