@@ -1469,6 +1469,25 @@ describe('workflow trigger editing lifetime', () => {
         }
     });
 
+    it('reports a failed Session lifetime read after a successful Account census and recovers through Retry', async () => {
+        let failSessionRead = false;
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => {
+            const sessionQuery = input !== null && typeof input === 'object' && 'scopeSessionId' in input;
+            return failSessionRead && sessionQuery ? { status: 503, body: { error: 'storage_unavailable' } }
+                : { body: selectWorkflowAutomationDetailsFixture([], input) };
+        } });
+        const hook = await renderHook(() => useSessionTriggers('session-a'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(hook.getCurrent().sets).toEqual([]);
+        failSessionRead = true;
+        await act(async () => hook.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('failed'));
+        failSessionRead = false;
+        await act(async () => hook.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(hook.getCurrent().sets).toEqual([]);
+    });
+
     it('shows a failed Account census in Session Habits while the Session query is pending, then retries into its targeted Account row', async () => {
         const example = WORKFLOW_STARTER_EXAMPLES_V1.find(value => value.key === 'daily-summary-in-session')!;
         const selection = materializeWorkflowStarterExample(example, { session: { sessionId: 'session-a', machineId: 'm1' } });

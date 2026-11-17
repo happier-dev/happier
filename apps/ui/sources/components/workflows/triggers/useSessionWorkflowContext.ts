@@ -19,7 +19,7 @@ export type SessionWorkflowContextRead = Readonly<{
     read: ReturnType<typeof useWorkflowTriggerSets>;
     /** Lifetime rows and Account-lifetime Automations whose accepted graph writes here. */
     sets: readonly WorkflowTriggerSetV1[];
-    /** The Account census establishes complete destination coverage; its failure stays actionable. */
+    /** The Account census establishes destination coverage; either read's failure stays actionable. */
     status: 'loading' | 'ready' | 'failed';
     machineId: string | null;
     pullRequestLinks: SessionTriggerPullRequestLinksV1 | Readonly<{ status: 'loading' }>;
@@ -74,7 +74,8 @@ export function useSessionWorkflowContext(sessionId: string | null, options: Rea
         };
     }, [lifetime, options.demanded, sessionId, scopeKey, attempt, read.retry]);
     const retry = React.useCallback(() => { read.retry(); accountRead.retry(); setAttempt(value => value + 1); }, [read.retry, accountRead.retry]);
-    return { read, sets, status: lifetime === null ? 'loading' as const : accountRead.status,
+    const status = read.status === 'failed' ? 'failed' : accountRead.status;
+    return { read, sets, status: lifetime === null ? 'loading' as const : status,
         machineId, pullRequestLinks: read.pullRequestLinks ?? LOADING_LINKS, retry,
         observationFailure: failure?.scopeKey === scopeKey ? failure.value : null };
 }
