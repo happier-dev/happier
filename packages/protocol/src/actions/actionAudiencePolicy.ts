@@ -85,7 +85,7 @@ export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: Ac
     if (change.kind === 'machine_default') {
       const { [change.machineId]: _prior, ...others } = normalized.machineApprovalProfiles ?? {};
       return { settings: { ...normalized, machineApprovalProfiles: change.id === null ? others
-        : { ...others, [change.machineId]: change.id } }, result: input };
+        : { ...others, [change.machineId]: change.id } }, result: { profileChange: change } };
     }
     if (change.kind !== 'delete') throw new Error('profile_artifact_mutation_required');
     const id = change.id;
@@ -93,9 +93,8 @@ export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: Ac
     const machineApprovalProfiles = change.kind === 'delete' && normalized.machineApprovalProfiles
       ? Object.fromEntries(Object.entries(normalized.machineApprovalProfiles).filter(([, profileId]) => profileId !== id))
       : normalized.machineApprovalProfiles;
-    return { settings: { ...normalized, approvalProfiles: change.kind === 'upsert'
-      ? [...remaining, change.profile] : remaining,
-      ...(machineApprovalProfiles ? { machineApprovalProfiles } : {}) }, result: input };
+    return { settings: { ...normalized, ...(machineApprovalProfiles ? { machineApprovalProfiles } : {}) },
+      result: { profileChange: { kind: 'delete', id, revision: change.expectedRevision } } };
   }
   if (!('change' in input)) {
     const scope = 'scope' in input ? input.scope : undefined;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ActionPolicyInputSchemas, ActionPolicyOutputSchemas } from './actionPolicyActionFamily.js';
+import { applyActionPolicyMutation } from './actionAudiencePolicy.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '../artifacts/artifactSharingV1.js';
 import { executeApprovalProfileArtifactChangeV1, bindApprovalProfileV1, listReadableApprovalProfilesV1,
@@ -8,6 +9,33 @@ import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.j
 import { createActionExecutor } from './actionExecutor.js';
 
 describe('Artifact-backed approval profile contract', () => {
+  it('clears only deleted-profile Machine defaults and returns its Artifact revision', () => {
+    const settings = normalizeActionsSettingsV1({ v: 1, machineApprovalProfiles: {
+      first: 'deleted-profile', second: 'kept-profile', third: 'deleted-profile',
+    }, actions: { 'session.stop': { enabled: false } } });
+    const expectedRevision = { headerVersion: 2, bodyVersion: 3 };
+    const result = applyActionPolicyMutation(settings, ActionPolicyInputSchemas['actions.policy.set'].parse({
+      profileChange: { kind: 'delete', id: 'deleted-profile', expectedRevision },
+    }));
+    expect(result.settings.machineApprovalProfiles).toEqual({ second: 'kept-profile' });
+    expect(result.settings.actions).toEqual(settings.actions);
+    expect(result.settings).not.toHaveProperty('approvalProfiles');
+    expect(ActionPolicyOutputSchemas['actions.policy.set'].parse(result.result)).toEqual({
+      profileChange: { kind: 'delete', id: 'deleted-profile', revision: expectedRevision },
+    });
+  });
+
+  it('sets and clears one Machine default through the profile result contract', () => {
+    const settings = normalizeActionsSettingsV1({ v: 1, machineApprovalProfiles: { neighbor: 'kept-profile' } });
+    for (const id of ['selected-profile', null]) {
+      const change = { kind: 'machine_default', machineId: 'target', id } as const;
+      const result = applyActionPolicyMutation(settings, ActionPolicyInputSchemas['actions.policy.set'].parse({ profileChange: change }));
+      expect(result.settings.machineApprovalProfiles).toEqual(id === null
+        ? { neighbor: 'kept-profile' } : { neighbor: 'kept-profile', target: id });
+      expect(ActionPolicyOutputSchemas['actions.policy.set'].parse(result.result)).toEqual({ profileChange: change });
+    }
+  });
+
   it('returns a visible admission refusal when a cold profile cannot be opened', async () => {
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
       targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
