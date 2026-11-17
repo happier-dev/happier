@@ -7,7 +7,7 @@ import { ActionIdSchema } from './actionIds.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from './actionSettings.js';
 import { executeActionOperationActionV1 } from './executor/actionOperationActions.js';
-import { ACTION_OPERATION_ACTION_IDS_V1 } from './operations/actionIdsV1.js';
+import { ACTION_OPERATION_ACTION_IDS_V1, ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from './operations/actionIdsV1.js';
 
 describe('operation and retained output Actions', () => {
   it('binds a plugin exact-request lookup to its mounted runtime without changing qualified operands', async () => {
@@ -77,7 +77,7 @@ describe('operation and retained output Actions', () => {
       const consequence = spec.sideEffectClass === 'write';
       const decision = resolveActionApprovalRouting({ actionId, spec, context });
       expect(decision.required, actionId).toBe(false);
-      expect(decision.uiConfirmationRequired === true, actionId).toBe(consequence);
+      expect(decision.uiConfirmationRequired === true, actionId).toBe(actionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1);
       for (const surface of ['agent', 'mcp'] as const) {
         expect(resolveActionApprovalRouting({ actionId, spec,
           context: { surface, authority: 'account_automation' } }).required, `${surface}:${actionId}`).toBe(consequence);
