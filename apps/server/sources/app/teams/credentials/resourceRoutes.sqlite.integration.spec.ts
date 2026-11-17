@@ -4239,10 +4239,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
         });
         const custodianCatalog = await post("/v1/teams/credential-resources/entitled/list", custodian.id, { teamId: team.id });
         expect(custodianCatalog.statusCode, custodianCatalog.body).toBe(200);
-        expect(custodianCatalog.json().resources).toContainEqual(expect.objectContaining({
-            id: resource.id,
-            readiness: { kind: "available" },
-        }));
+        // Own sources remain on the administration path, not the recipient catalog.
+        expect(custodianCatalog.json().resources).not.toContainEqual(expect.objectContaining({ id: resource.id }));
 
         const disclosedAccount = { service, accountId: "direct-member" };
         const credential = await db.serviceAccountToken.create({ data: {
@@ -4380,6 +4378,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             sourceOwnerDisplayName: null,
             id: resource.id,
             teamId: team.id,
+            sharedWithTeamScope: "team",
             displayName: projectTeamCredentialResourceDisplayNameForRecipient({ serialized: resource.displayName, recipientAccountId: recipient.id }),
             resourceRevision: resource.revision,
             readiness: { kind: "available" },
@@ -4439,6 +4438,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             sourceOwnerDisplayName: null,
             id: resource.id,
             teamId: team.id,
+            sharedWithTeamScope: "group",
             displayName: projectTeamCredentialResourceDisplayNameForRecipient({ serialized: resource.displayName, recipientAccountId: groupRecipient.id }),
             resourceRevision: resource.revision,
             readiness: { kind: "available" },
