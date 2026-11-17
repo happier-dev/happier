@@ -412,9 +412,14 @@ function postBoardEntry(repo, entry) {
 
 /** Each scope records its own last checked HEAD; the packages scope keeps its original file. */
 const rollingHeadPath = (state, scope) => join(state, scope === 'packages' ? ROLLING_HEAD : `${ROLLING_HEAD}-${scope.replaceAll('/', '__')}`);
-const rollingScopeDirs = ({ repo, base, head, scope }) => scope === 'packages'
-  ? commitTypecheckPackages({ repo, base, tree: head }).packages
-  : commitTypecheckApps({ repo, base, tree: head }).filter(dir => dir === scope);
+// Without a recorded baseline the whole scope compiles: a range-filtered first pass could record
+// an unchecked skip as the baseline (2026-11-17 08:33Z, apps/server).
+const rollingScopeDirs = ({ repo, base, head, scope, baseline = false }) => {
+  const from = baseline ? EMPTY_TREE : base;
+  return scope === 'packages'
+    ? commitTypecheckPackages({ repo, base: from, tree: head }).packages
+    : commitTypecheckApps({ repo, base: from, tree: head }).filter(dir => dir === scope);
+};
 
 /** The last checked HEAD; without a usable one (first run, rewritten history) the newest commit's parent. */
 function rollingBase(repo, recorded, head) {
@@ -451,7 +456,7 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     }
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} ROLLING-${verdict} scope=${scope} base=${base} head=${head} packages=${result.packages.join(',') || '-'} new=${result.fresh ?? result.attributions.reduce((sum, entry) => sum + entry.rows.length, 0)} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${((Date.now() - started) / 1000).toFixed(1)}s${result.attributions.map(entry => ` | ${entry.commit.slice(0, 11)}: ${entry.rows.length}`).join('')}\n`);
   };
-  const packages = rollingScopeDirs({ repo, base, head, scope });
+  const packages = rollingScopeDirs({ repo, base, head, scope, baseline: !recorded });
   result.packages = packages;
   if (!packages.length) { record('skipped'); return result; }
   const treeOf = commit => git(['rev-parse', `${commit}^{tree}`]).trim();
@@ -573,7 +578,7 @@ async function rolling(repo) {
               HAPPIER_COMMIT_TYPECHECK_LOCKED: '1', HAPPIER_COMMIT_TYPECHECK_SCOPE: scope };
             // A range with nothing to compile for this scope needs no admission slot.
             const current = head();
-            const idle = !rollingScopeDirs({ repo, base: rollingBase(repo, before, current), head: current, scope }).length;
+            const idle = !rollingScopeDirs({ repo, base: rollingBase(repo, before, current), head: current, scope, baseline: !before }).length;
             const command = admittedCommand(repo, payload, idle, scope === 'packages' ? undefined : scope);
             const result = spawnSync(command[0], command.slice(1), { cwd: worktree, env, stdio: 'inherit' });
             if (result.error) throw result.error;

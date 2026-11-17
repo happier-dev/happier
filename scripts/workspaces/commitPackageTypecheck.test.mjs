@@ -234,6 +234,25 @@ test('a red range records its verdict before attribution compiles any intermedia
   assert.equal(await attributeRollingRange(options), null, 'an attributed range is cleared');
 });
 
+test('a scope without a recorded baseline compiles its whole scope instead of recording an unchecked skip', async t => {
+  // 2026-11-17 08:33Z: apps/server's first rolling pass compared HEAD^..HEAD, which didn't touch the app,
+  // and recorded ROLLING-skipped as its baseline without ever compiling apps/server.
+  const { repo, commit } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  await commit('docs/notes.md', 'unrelated\n');
+  const compiled = [];
+  const record = fakeCompiler([]);
+  const compile = (worktree, dir, compileEnv) => { compiled.push(dir); return record(worktree, dir, compileEnv); };
+  const result = await rollingHeadTypecheckPass({ repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state }, scope: 'apps/cli',
+    compile, bootstrap: () => {}, post: () => {}, boardPaths: [], log: () => {} });
+  assert.deepEqual(result.packages, ['apps/cli']);
+  assert.ok(compiled.includes('apps/cli'), `apps/cli was not compiled: ${compiled}`);
+  assert.doesNotMatch(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-skipped/u);
+});
+
 test('apps/server, apps/cli and apps/ui are selected when the range touches the app or a package it depends on', async t => {
   const { repo, commit } = await workspace(t);
   const appSha = await commit('apps/cli/src/index.ts', 'export const value = 4;\n');
