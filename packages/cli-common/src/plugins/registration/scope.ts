@@ -70,6 +70,7 @@ const REGISTRATION_FAMILY = Object.freeze({
     captureSources: 'captureSources',
     secretSources: 'secretSources',
     projectNativeAdapters: 'projectNativeAdapters',
+    deploymentTargets: 'deploymentTargets',
     dragSources: 'dragSources',
     workItems: 'workItems',
     dropTargets: 'dropTargets',
@@ -494,6 +495,9 @@ export function createPluginRegistrationScope(
         }),
         projectNativeAdapters: Object.freeze({
             register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.projectNativeAdapters, id, runtime),
+        }),
+        deploymentTargets: Object.freeze({
+            register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.deploymentTargets, id, runtime),
         }),
     });
     const clientApi = Object.freeze({

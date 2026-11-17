@@ -12758,7 +12758,7 @@ remains linked; finding a resource does not acknowledge a Create.
 Unlink remains an association-only host Action. App confirmation composition
 and security review are required before the new provider deletion flow is shipped.
 
-In 0.3 development source, `deploymentTargets` is one descriptor-only family
+In 0.3 development source, `deploymentTargets` is one family
 with strict runtime and data alternatives. Runtime keeps its required Actions;
 data has optional closed `dataV1` groups/leaves, with missing capabilities
 unsupported and no runtime Actions required. Protocol owns strict manifest
@@ -12767,8 +12767,28 @@ closure, placement and effect metadata checks. Declaration and normalized
 catalogs share its role factories and kind-aware reference traversal. The SDK
 projects `definePlugin` author records into that family; CLI normalization and
 the canonical daemon projection retain the supplying occurrence and withdraw
-the entry when that occurrence retires. The family grants no runtime registration
-or invocation authority.
+the entry when that occurrence retires.
+
+A data target declaring `dataV1.database.engineId` also supplies its in-process
+`runtime.open` callback in SDK authoring. `definePlugin` removes the callback
+from the portable descriptor and registers it under the same target identity
+through `api.deploymentTargets`. Protocol derives that conditional daemon
+registration from the engine association; targets without a database association
+remain descriptor-only. The existing activation scope owns its withdrawal.
+The deployment host passes the admitted preparation, selected managed target and
+access class and captured execution placement with its Account invocation
+context. The same runtime's
+`listTargets` receives that admitted selection without a database name and
+discovers its databases only on demand. The callback returns
+the shared database descriptor and connection, including the actual transport's
+supported operations. Host admission remains authoritative for target and access;
+the callback adds no permission decision. Credentials and connection handles
+remain in-process. The optional `deploymentDatabases` host service exposes that
+same selection owner to the database workbench, whose public operations remain
+semantic `database.*` Actions. Operands and results derive from
+`@happier-dev/database-protocol`; no per-engine Action or connection registry is
+introduced. Matching unpublished SDK and host source reload together; the
+portable descriptor grammar and wire epoch are unchanged.
 
 Protocol's `deploymentTargetRolesV1` source owns the strict runtime and qualified
 data-role inputs and normalized runtime results. Data

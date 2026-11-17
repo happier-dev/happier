@@ -7,6 +7,7 @@ export { BackupDestinationOpenV1ProtocolSchema, BackupDestinationCredentialBindi
   SFTP_BACKUP_DESTINATION_REF_V1 } from './backupDestinations.js';
 export type {
     DeploymentTargetAuthorDefinitionV1, DeploymentTargetCommonV1, DeploymentTargetContributionV1,
+    DeploymentTargetDatabaseRuntimeV1, DeploymentDatabaseConnectionV1, DeploymentDatabaseResolutionV1,
     DeploymentTargetCredentialPrincipalV1,
     DeploymentTargetProviderIdentityV1, DeploymentTargetProviderEnvironmentV1,
     DeploymentTargetRepositoryAccessV1, DeploymentTargetRoleCommonInputV1,
@@ -171,6 +172,7 @@ export type { DefinedPluginManifest } from './definePlugin.js';
 export type { Disposable } from './lifecycle.js';
 export type {
     DeploymentSourceMaterializationPortV1,
+    DeploymentDatabasesServiceV1,
     DeploymentSourceMaterializationRequestV1,
     DeploymentSourceMaterializationV1,
     DeploymentTelemetryAssignmentV1,

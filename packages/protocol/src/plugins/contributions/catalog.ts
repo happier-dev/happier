@@ -212,7 +212,7 @@ type FamilyPolicy = Pick<PluginContributionCatalogEntryV2,
 const FAMILY_POLICIES = {
   storeKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'storeKinds', allowedRuntimeRegistration: null, consumer: 'store-kind-catalog', platforms: ALL_PLATFORMS },
   healthCheckKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'healthCheckKinds', allowedRuntimeRegistration: null, consumer: 'health-check-source-catalog', platforms: ALL_PLATFORMS },
-  deploymentTargets: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'deploymentTargets', allowedRuntimeRegistration: null, consumer: 'deployment-target-catalog', platforms: ALL_PLATFORMS },
+  deploymentTargets: { identityField: 'id', disposition: 'retained', activationDemand: 'conditional', projectionFamily: 'deploymentTargets', allowedRuntimeRegistration: 'deploymentTargets', registrationHost: 'daemon', consumer: 'deployment-target-catalog', platforms: ALL_PLATFORMS },
   machineRecipes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineRecipes', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
   machineSetupPresets: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineSetupPresets', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
   backupDestinations: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'backupDestinations', allowedRuntimeRegistration: null, consumer: 'backup-destination-catalog', platforms: ALL_PLATFORMS },
@@ -943,6 +943,10 @@ function requiresFamilyRegistration(family: string, value: Readonly<Record<strin
       || declaresAgentCliAuth(value);
   }
   if (family === 'events') return value.kind === 'subscription';
+  if (family === 'deploymentTargets') {
+    return value.role === 'data'
+      && (value.dataV1 as Readonly<{ database?: unknown }> | undefined)?.database !== undefined;
+  }
   // §3.6.1: only the dynamic arm of the discriminated resource family has a
   // runtime producer. A packaged resource is package bytes and gets no
   // registration right (§8.1).

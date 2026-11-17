@@ -2309,7 +2309,28 @@ const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
 const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures');
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
 const BACKUP_DESTINATIONS_ADAPTER = descriptorFamilyAdapter('backupDestinations');
-const DEPLOYMENT_TARGETS_ADAPTER = descriptorFamilyAdapter('deploymentTargets');
+const DEPLOYMENT_TARGETS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
+    authorKey: 'deploymentTargets',
+    runtimeReceiverPaths: [['*', 'dataV1', 'database', 'runtime']],
+    project(input) {
+        const definitions = input.deploymentTargets as Readonly<Record<string,
+            import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>> | undefined;
+        return { deploymentTargets: Object.entries(definitions ?? {}).map(([id, definition]) => {
+            if (definition.role !== 'data' || !definition.dataV1?.database) return { ...definition, id };
+            const { runtime: _runtime, ...database } = definition.dataV1.database;
+            return { ...definition, id, dataV1: { ...definition.dataV1, database } };
+        }) };
+    },
+    activate(input, api) {
+        const definitions = input.deploymentTargets as Readonly<Record<string,
+            import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>> | undefined;
+        for (const [id, definition] of Object.entries(definitions ?? {})) {
+            if (definition.role === 'data' && definition.dataV1?.database?.runtime) {
+                api.deploymentTargets.register(id, definition.dataV1.database.runtime);
+            }
+        }
+    },
+});
 const HEALTH_CHECK_KINDS_ADAPTER = descriptorFamilyAdapter('healthCheckKinds');
 const STORE_KINDS_ADAPTER = descriptorFamilyAdapter('storeKinds');
 const MACHINE_RECIPES_ADAPTER = descriptorFamilyAdapter('machineRecipes');
@@ -2520,7 +2541,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     atmospherePictures: { classification: 'descriptor-only', authorKey: 'atmospherePictures', inputShape: 'descriptor', adapter: ATMOSPHERE_PICTURES_ADAPTER },
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },
     backupDestinations: { classification: 'descriptor-only', authorKey: 'backupDestinations', inputShape: 'descriptor', adapter: BACKUP_DESTINATIONS_ADAPTER },
-    deploymentTargets: { classification: 'descriptor-only', authorKey: 'deploymentTargets', inputShape: 'descriptor', adapter: DEPLOYMENT_TARGETS_ADAPTER },
+    deploymentTargets: { classification: 'adapter', authorKey: 'deploymentTargets', inputShape: 'structured', adapter: DEPLOYMENT_TARGETS_ADAPTER },
     healthCheckKinds: { classification: 'descriptor-only', authorKey: 'healthCheckKinds', inputShape: 'descriptor', adapter: HEALTH_CHECK_KINDS_ADAPTER },
     storeKinds: { classification: 'descriptor-only', authorKey: 'storeKinds', inputShape: 'descriptor', adapter: STORE_KINDS_ADAPTER },
     machineRecipes: { classification: 'descriptor-only', authorKey: 'machineRecipes', inputShape: 'descriptor', adapter: MACHINE_RECIPES_ADAPTER },

@@ -2,6 +2,7 @@ import type { ActionHandler } from '../actions/service.js';
 import type { PluginCaptureSourceRuntime } from '../captureSources.js';
 import type { PluginSecretSourceRuntimeV1 } from '../secretSources.js';
 import type { PluginProjectNativeAdapterRuntimeV1 } from '../projectNativeAdapters.js';
+import type { DeploymentTargetDatabaseRuntimeV1 } from '../deploymentTargets.js';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '../entityDragDrop.js';
 import type { PluginWorkItemsRuntime } from '../workItems.js';
 import type {
@@ -67,6 +68,7 @@ export interface PluginRegistrationValueByFamily {
     captureSources: PluginCaptureSourceRuntime;
     secretSources: PluginSecretSourceRuntimeV1;
     projectNativeAdapters: PluginProjectNativeAdapterRuntimeV1;
+    deploymentTargets: DeploymentTargetDatabaseRuntimeV1;
     actions: CapturedActionHandler;
     agents: Readonly<{
         factory?: AgentRuntimeFactory;

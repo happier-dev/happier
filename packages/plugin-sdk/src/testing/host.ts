@@ -407,6 +407,7 @@ function createPluginServices(
 ): PluginServices {
     return Object.freeze({
         ...(fixture.machineConnectorSecrets ? { machineConnectorSecrets: fixture.machineConnectorSecrets } : {}),
+        ...(fixture.deploymentDatabases ? { deploymentDatabases: fixture.deploymentDatabases } : {}),
         availability(serviceId: PluginServiceId) {
             return (serviceId === 'actions' && actionService !== undefined)
                 || fixtureHasService(fixture, serviceId)

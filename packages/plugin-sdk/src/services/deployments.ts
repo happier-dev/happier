@@ -1,4 +1,8 @@
 /** @moduleRealm daemon */
+import type {
+    DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
+} from '@happier-dev/database-protocol';
+import type { DeploymentDatabaseResolutionV1 } from '../deploymentTargets.js';
 import type { DeploymentTelemetryAssignmentsV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 
 /** Exact deployment admitted by the host's target-role invocation. No paths or source overrides. */
@@ -39,4 +43,10 @@ export interface DeploymentTelemetryServiceV1 {
     subscribeAssignmentsChanged(refresh: () => Promise<void>): () => void;
     /** Runtime-only endpoint getter; launch never reads assignments or starts another listener. */
     exposeEndpoint(read: () => string | null): () => void;
+}
+
+/** Uses the existing deployment selection, admission and connection-custody owner. */
+export interface DeploymentDatabasesServiceV1 {
+    listTargets(input: DatabaseTargetsListInputV1): Promise<DatabaseTargetsListResultV1>;
+    resolve(input: DatabaseOperationInputV1, access: DatabaseOperationClassV1): Promise<DeploymentDatabaseResolutionV1>;
 }

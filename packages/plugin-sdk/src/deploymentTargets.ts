@@ -1,4 +1,10 @@
 import type { ReadonlyAuthorDeclaration } from './authorDeclaration.js';
+import type { PluginAccountActionContext } from './actions/contracts.js';
+import type {
+    DatabaseDescriptorV1, DatabaseEngineIdV1, DatabaseManagedDeploymentTargetV1,
+    DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1,
+    DatabaseTargetsListResultV1,
+} from '@happier-dev/database-protocol';
 import { PluginError } from './errors.js';
 import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
@@ -64,8 +70,45 @@ export type DeploymentTargetContributionV1 = ReadonlyAuthorDeclaration<Canonical
 export type DeploymentTargetCommonV1 = Pick<DeploymentTargetContributionV1,
     'id' | 'title' | 'description' | 'icon' | 'targetKind' | 'targetSchema' | 'linkSchema'>;
 
-export type DeploymentTargetAuthorDefinitionV1 = DeploymentTargetContributionV1 extends infer T
-    ? T extends unknown ? Omit<T, 'id'> : never : never;
+/** An in-process connection; credentials and native transports never enter Action JSON. */
+export interface DeploymentDatabaseConnectionV1 {
+    readonly engine: DatabaseEngineIdV1;
+    execute(input: DatabaseOperationInputV1, signal?: AbortSignal): Promise<DatabaseOperationResultV1>;
+    close(): Promise<void>;
+}
+
+export type DeploymentDatabaseResolutionV1 = Readonly<{
+    descriptor: DatabaseDescriptorV1;
+    connection: DeploymentDatabaseConnectionV1;
+}>;
+
+/** The deployment owner supplies its admitted selection and captured invocation custody. */
+export interface DeploymentTargetDatabaseRuntimeV1 {
+    listTargets(input: Readonly<{
+        preparation: DeploymentTargetPreparationBaseV1;
+        target: Omit<DatabaseManagedDeploymentTargetV1, 'database'>;
+        placement: DatabaseDescriptorV1['placement'];
+    }>, context: PluginAccountActionContext): Promise<DatabaseTargetsListResultV1>;
+    open(input: Readonly<{
+        preparation: DeploymentTargetPreparationBaseV1;
+        target: DatabaseManagedDeploymentTargetV1;
+        access: DatabaseOperationClassV1;
+        placement: DatabaseDescriptorV1['placement'];
+    }>, context: PluginAccountActionContext): Promise<DeploymentDatabaseResolutionV1>;
+}
+
+type DeploymentDataTargetDeclarationV1 = Extract<DeploymentTargetContributionV1, { role: 'data' }>;
+type DeploymentTargetDataV1 = NonNullable<DeploymentDataTargetDeclarationV1['dataV1']>;
+
+export type DeploymentTargetAuthorDefinitionV1 =
+    | Omit<Extract<DeploymentTargetContributionV1, { role: 'runtime' }>, 'id'>
+    | (Omit<DeploymentDataTargetDeclarationV1, 'id' | 'dataV1'> & Readonly<{
+        dataV1?: Omit<DeploymentTargetDataV1, 'database'> & Readonly<{
+            database?: NonNullable<DeploymentTargetDataV1['database']> & Readonly<{
+                runtime: DeploymentTargetDatabaseRuntimeV1;
+            }>;
+        }>;
+    }>);
 
 export { DeploymentDomainDnsRecordInputV1ProtocolSchema, DeploymentDomainDnsRecordResultV1ProtocolSchema,
     type DeploymentDomainDnsRecordInputV1, type DeploymentDomainDnsRecordResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';

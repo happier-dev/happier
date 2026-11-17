@@ -79,6 +79,7 @@ export type PluginTestkitRegistrationByFamily = Readonly<{
     captureSources: Parameters<PluginApi['captureSources']['register']>[1];
     secretSources: Parameters<PluginApi['secretSources']['register']>[1];
     projectNativeAdapters: Parameters<PluginApi['projectNativeAdapters']['register']>[1];
+    deploymentTargets: Parameters<PluginApi['deploymentTargets']['register']>[1];
     actions: Parameters<PluginApi['actions']['register']>[1];
     agents: Readonly<NonNullable<Parameters<PluginApi['agents']['register']>[2]> & {
         factory?: Parameters<PluginApi['agents']['register']>[1];

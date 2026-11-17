@@ -8,6 +8,7 @@ import { DeploymentTargetRoleInputProtocolSchemasV1,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
     hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { HEALTH_CHECK_KINDS_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { createPluginTestkit } from './testing/host.js';
 
 it('publishes the canonical finite health kinds without a second schema owner', () => {
     expect(Reflect.get(publicAuthoring, 'HEALTH_CHECK_KINDS_V1')).toBe(HEALTH_CHECK_KINDS_V1);
@@ -37,6 +38,32 @@ it('preserves an external data capability without authoring runtime Actions', ()
     expect(parsed.ok, parsed.ok ? undefined : JSON.stringify(parsed.diagnostics)).toBe(true);
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
     expect(parsed.manifest.contributes.deploymentTargets).toEqual([{ id: 'database', ...definition }]);
+});
+
+it('keeps managed database callbacks private and binds them to the declared target activation', async () => {
+    const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+    const runtime = {
+        async listTargets() { throw new Error('Discovery is demand-owned'); },
+        async open() { throw new Error('Connection acquisition is host-owned'); },
+    };
+    const plugin = definePlugin({
+        id: 'com.example.database-transport', version: '1.0.0',
+        deploymentTargets: { database: {
+            role: 'data', title: 'Database', targetKind: 'external', icon: 'server-outline',
+            targetSchema: closed, linkSchema: closed,
+            dataV1: { database: { engineId: 'postgresql', runtime } },
+        } },
+    });
+    expect(plugin.manifest.contributes.deploymentTargets?.[0]).toMatchObject({
+        id: 'database', dataV1: { database: { engineId: 'postgresql' } },
+    });
+    const descriptor = plugin.manifest.contributes.deploymentTargets?.[0];
+    expect(descriptor && 'dataV1' in descriptor && descriptor.dataV1?.database).not.toHaveProperty('runtime');
+    const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+    expect(testkit.registration('deploymentTargets', 'database')).toBe(runtime);
+    await testkit.dispose();
+    await expect(createPluginTestkit({ manifest: plugin.manifest, module: { activate() {} } }))
+        .rejects.toThrow(/missing registration/);
 });
 
 it('preserves an external author runtime target through SDK projection and canonical admission', () => {

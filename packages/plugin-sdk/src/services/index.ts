@@ -1,6 +1,8 @@
 /** @moduleRealm daemon */
 export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1, DeploymentTelemetryAssignmentV1, DeploymentTelemetryServiceV1 } from './deployments.js';
 import type { DeploymentSourceMaterializationPortV1, DeploymentTelemetryServiceV1 } from './deployments.js';
+export type { DeploymentDatabasesServiceV1 } from './deployments.js';
+import type { DeploymentDatabasesServiceV1 } from './deployments.js';
 import type { PluginOperationAvailability } from '../availability.js';
 import type { BackgroundServicesService } from '../backgroundServices.js';
 export type { BackgroundServiceDemandHandle, BackgroundServicesService } from '../backgroundServices.js';
@@ -350,6 +352,7 @@ export type PluginServiceId =
     | 'machineProvisioners'
     | 'deploymentSource'
     | 'deploymentExecEnv'
+    | 'deploymentDatabases'
     | 'deploymentTelemetry'
     | 'sessions'
     | 'resources'
@@ -380,6 +383,7 @@ export interface PluginServices {
     readonly machineProvisioners: MachineProvisionersService;
     readonly deploymentSource: DeploymentSourceMaterializationPortV1;
     readonly deploymentExecEnv: DeploymentExecEnvPortV1;
+    readonly deploymentDatabases?: DeploymentDatabasesServiceV1;
     readonly deploymentTelemetry: DeploymentTelemetryServiceV1;
     readonly sessions: SessionsService;
     readonly resources: ResourcesService;
