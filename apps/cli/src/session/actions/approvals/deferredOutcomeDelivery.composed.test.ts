@@ -1,11 +1,10 @@
 import axios from 'axios';
-import nacl from 'tweetnacl';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { AccountSettingsSchema, ApprovalRequestV2Schema, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { buildTrustedHostSessionInputAdmissionV1, readSessionInputRequestV1, settleSessionInputRequestV1, withSessionInputAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -16,17 +15,15 @@ import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externa
 import { executeExternalAction, type VerifyExternalActionExecutionAuthorization } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
+import { createDeferredOutcomeDeliveryBoundary } from './deferredOutcomeDelivery.testkit';
+import { UserMessageSchema } from '@/api/types';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { configuration } from '@/configuration';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { socketRpcCodec } from '@happier-dev/sync-client';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { encryptWithDataKey } from '@/api/encryption';
-import { encryptSessionPayload, openSessionMessageContent, sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
+import { encryptSessionPayload, sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -63,10 +60,11 @@ it.each(([
   const sessionCrypto = mode === 'plain' ? { mode, ctx: null } as const
     : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } } as const;
   let sessionActive = true;
-  let retainedContent: ReturnType<typeof SessionMessageContentSchema.parse> | undefined;
-  const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
-  const currentness = await createRequesterCurrentnessSocketHarness();
-  onTestFinished(() => currentness.close());
+  const origin = await createDeferredOutcomeDeliveryBoundary({ accountId, serverId, serverIdentityId: serverId,
+    machineId, sessionId, sessionCrypto, callerAuthority: authenticationKind === 'terminal' ? 'account_automation' : 'present_user',
+    readReceiver: () => receiver });
+  const { installation, currentness, admittedInputs, delivered } = origin;
+  onTestFinished(() => origin.close());
   const lifetime = new AbortController();
   onTestFinished(() => lifetime.abort());
   vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
@@ -86,6 +84,7 @@ it.each(([
     } } };
     if (url.endsWith('/v1/artifacts/approval')) return { status: 200, data: artifact };
     if (url.endsWith(`/messages/by-local-id/${encodeURIComponent('approval-result:approval')}`)) {
+      const retainedContent = origin.readRetainedContent('approval-result:approval');
       if (!retainedContent) throw Object.assign(new axios.AxiosError('Message not found'), {
         response: { status: 404, data: { error: 'Message not found' } },
       });
@@ -98,9 +97,6 @@ it.each(([
         : encryptSessionPayload({ ctx: sessionCrypto.ctx, payload: { machineId } }) }) } };
     throw new Error(`Unexpected HTTP path: ${new URL(url).pathname}`);
   });
-  const delivered = new Set<string>();
-  const admittedInputs: unknown[] = [];
-  let machineAdmissionRequests = 0;
   const transportFailures: unknown[] = [];
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
     try {
@@ -174,39 +170,10 @@ it.each(([
   const receiver = createActionExecutor(createCliActionDeps({ credentials, token, ...sessionCrypto,
     sessionId: '', serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'https://approval-home.test',
     externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: installation.secretKey,
-    machineAdmissionTransport: async request => {
-      machineAdmissionRequests++;
-      const content = SessionMessageContentSchema.parse(request.content);
-      const authored = UserMessageSchema.parse(openSessionMessageContent({ ...sessionCrypto, content }));
-      expect(request).toMatchObject({ sessionId, localId: 'approval-result:approval', requestedAction: { v: 1, kind: 'enqueue' } });
-      if (authored.content.type !== 'text') throw new Error('Expected outcome text');
-      expect(JSON.parse(authored.content.text)).toMatchObject({ actionId, status: failed ? 'failed' : 'executed' });
-      admittedInputs.push(authored);
-      const originalRequest = readSessionInputRequestV1(authored.meta);
-      if (!originalRequest) throw new Error('Expected protected outcome input');
-      const authority = settleSessionInputRequestV1({ request: originalRequest,
-        currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' } });
-      retainedContent = sealSessionStoredContent({ ...sessionCrypto, payload: { ...authored,
-        meta: { ...withSessionInputAuthorityV1(authored.meta, authority), happierProvenanceV1: authored.meta?.happierProvenanceV1 } } });
-      delivered.add(request.localId);
-      return { status: 'accepted', localId: request.localId };
-    },
+    machineAdmissionTransport: origin.machineAdmissionTransport,
   }));
   const receivingExecute = vi.spyOn(receiver, 'execute');
-  const outcomeReplayArtifacts: unknown[] = [];
-  currentness.server.on('connection', socket => socket.on('rpc-call', async (
-    packet: { method: string; params: unknown }, acknowledge: (value: unknown) => void,
-  ) => {
-    const content = { mode: 'plain' } as const;
-    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
-    expect(packet.method).toBe(`${machineId}:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}`);
-    expect(decoded.params).toEqual({ artifactId: 'approval' });
-    outcomeReplayArtifacts.push(decoded.params);
-    const outcome = await receiver.replayApprovedApprovalRequest({ artifactId: 'approval',
-      currentAccount: { accountId, serverId, serverIdentityId: serverId },
-      callerAuthority: authenticationKind === 'terminal' ? 'account_automation' : 'present_user' });
-    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, outcome, decoded.callId) });
-  }));
+  const outcomeReplayArtifacts = origin.replayArtifacts;
   const executor = 'standaloneCredential' in scenario
     ? createCliActionExecutorFromCredentials({ credentials, serverId, serverIdentityId: serverId,
       serverApiUrl: 'https://approval-home.test',
@@ -229,8 +196,12 @@ it.each(([
       ? { ok: true, result: { status } }
       : { ok: false, errorCode: 'session_input_target_unavailable' });
   }
+  for (const authored of admittedInputs) {
+    if (authored.content.type !== 'text') throw new Error('Expected outcome text');
+    expect(JSON.parse(authored.content.text)).toMatchObject({ actionId, status: failed ? 'failed' : 'executed' });
+  }
   expect([...delivered]).toEqual(canRelay ? ['approval-result:approval'] : []);
-  expect(machineAdmissionRequests).toBe(canRelay ? 1 : 0);
+  expect(origin.readMachineAdmissionRequests()).toBe(canRelay ? 1 : 0);
   if ('standaloneCredential' in scenario) {
     // Each standalone rejoin reaches the same origin publisher, regardless of
     // principal, instead of minting another attributed input at the CLI.
@@ -249,19 +220,19 @@ it.each(([
   if (mode === 'e2ee') {
     const originalInput = UserMessageSchema.parse(admittedInputs[0]);
     // A matching localId is insufficient when the retained result differs.
-    retainedContent = sealSessionStoredContent({ ...sessionCrypto, payload: {
+    origin.setRetainedContent('approval-result:approval', sealSessionStoredContent({ ...sessionCrypto, payload: {
       ...originalInput, content: { type: 'text', text: 'different outcome' },
-    } });
+    } }));
     expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
     })).toMatchObject({ ok: false, errorCode: 'session_input_idempotency_conflict' });
     // Never reinterpret a plain envelope as the E2EE Session's retained input.
-    retainedContent = { t: 'plain', v: originalInput };
+    origin.setRetainedContent('approval-result:approval', { t: 'plain', v: originalInput });
     expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
     })).toMatchObject({ ok: false });
     expect(admittedInputs).toEqual([originalInput]);
-    expect(machineAdmissionRequests).toBe(1);
+    expect(origin.readMachineAdmissionRequests()).toBe(1);
   }
   });
 });
