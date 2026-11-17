@@ -4,12 +4,47 @@ import { getActionSpec } from './actionSpecs.js';
 import { parseThemeProfileDocument } from '../account/settings/themeProfiles.js';
 import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, ThemeActionInputSchemas, ThemeActionOutputSchemas } from './themeActionFamily.js';
 import { actionInputValidationFailure } from './executor/actionInputValidation.js';
-import { isAgentInitiatedApprovalRequiredByDefault } from './actionApprovalPolicy.js';
+import { isAgentInitiatedApprovalRequiredByDefault, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
-it('keeps destructive deletion and plugin authoring on Ask while ordinary theme changes stay Direct', () => {
+it('asks Agent and MCP for author CSS while colour-only and trusted user/plugin effects stay Direct', () => {
+  const raw = { schemaVersion: 1, id: 'theme_css_approval', name: 'CSS approval',
+    createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z',
+    base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+  for (const css of [undefined, '', '[data-surface="card"] { display: none }']) {
+    const parsed = parseThemeProfileDocument({ ...raw, ...(css === undefined ? {} : { css }) });
+    if (!parsed.ok) throw new Error(parsed.error);
+    for (const actionId of [THEME_ACTION_IDS.tryOn, THEME_ACTION_IDS.save]) {
+      const input = ThemeActionInputSchemas[actionId].parse({ document: parsed.document,
+        ...(actionId === THEME_ACTION_IDS.tryOn ? { mode: 'dark', origin: { kind: 'agent' } } : {}) });
+      for (const surface of ['agent', 'mcp', 'ui', 'plugin'] as const) {
+        const routing = resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), input,
+          context: { surface, authority: 'present_user', actionCaller: { kind: 'host' } } });
+        expect(routing.required, `${actionId}:${surface}:${css ?? 'colour-only'}`)
+          .toBe(Boolean(css) && (surface === 'agent' || surface === 'mcp'));
+      }
+    }
+  }
+  const actionId = THEME_ACTION_IDS.apply;
+  expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+    input: { ref: { kind: 'artifact', id: 'previously-saved-css' }, mode: 'dark' },
+    context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(false);
+});
+
+it('keeps deletion, Store install and plugin authoring on the declared static Agent Ask default', () => {
   for (const actionId of THEME_ACTION_ID_LIST) {
     expect(isAgentInitiatedApprovalRequiredByDefault(actionId), actionId)
-      .toBe(actionId === THEME_ACTION_IDS.delete || actionId === THEME_ACTION_IDS.uninstall || actionId === THEME_ACTION_IDS.sharePlugin);
+      .toBe(actionId === THEME_ACTION_IDS.delete || actionId === THEME_ACTION_IDS.uninstall
+        || actionId === THEME_ACTION_IDS.sharePlugin || actionId === THEME_ACTION_IDS.install);
+  }
+});
+
+it('asks Agent and MCP for every Store install while user and trusted plugin installs stay Direct', () => {
+  const actionId = THEME_ACTION_IDS.install;
+  for (const surface of ['agent', 'mcp', 'ui', 'plugin'] as const) {
+    expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+      input: { listing: { sourceId: 'catalog', itemId: 'colour-only-or-css' } },
+      context: { surface, authority: 'present_user', actionCaller: { kind: 'host' } } }).required, surface)
+      .toBe(surface === 'agent' || surface === 'mcp');
   }
 });
 
@@ -71,7 +106,7 @@ it('admits selected Store acquisition and face retry inputs while uninstall keep
     const spec = getActionSpec(id);
     expect(spec.inputSchema.safeParse(input).success, suffix).toBe(true);
     expect(spec.inputSchema.safeParse({ ...input, url: 'https://unselected.example.test/theme' }).success, suffix).toBe(false);
-    expect(isAgentInitiatedApprovalRequiredByDefault(id), suffix).toBe(suffix === 'uninstall');
+    expect(isAgentInitiatedApprovalRequiredByDefault(id), suffix).toBe(suffix === 'uninstall' || suffix === 'install');
     const unavailable = await createActionExecutor({}).execute(id, input,
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
     expect(unavailable).toMatchObject({ ok: false, errorCode: 'client_not_connected' });

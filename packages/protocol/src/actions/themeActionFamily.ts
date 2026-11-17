@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
+import { readRecord } from '../inputs/inputRecords.js';
 import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, type ThemeActionId } from './themeActionIdsV1.js';
 import { ThemeProfileSourceSchema, ThemeReferenceSchema, ThemeMiniatureDataSchema,
   parseThemeProfileDocument, type ThemeProfileDocument } from '../account/settings/themeProfiles.js';
@@ -171,13 +172,22 @@ function themeSharePluginReviewedChildren(input: unknown): HostReviewedChildrenP
     { action: 'plugins.pack', role: THEME_SHARE_PLUGIN_CHILD_ROLES.pack, input: children.pack },
   ];
 }
+function hasThemeAuthorCss(input: unknown): boolean {
+  const document = readRecord(readRecord(input).document);
+  const css = readRecord(document.profile).css;
+  return typeof css === 'string' && css.length > 0;
+}
 function createThemeActionSpecs() {
   return THEME_ACTION_ID_LIST.map((id): Omit<PreNormalizedActionSpec, 'id'> & { id: ThemeActionId } => ({
     id, title: titles[id], description: 'Use the answering client’s shared theme library and temporary preview owner. Try on before Keep; immutable themes must be duplicated before editing. Connected client routing never queues offline effects.',
     approval: { result: 'required' },
     approvalPolicy: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.uninstall || id === THEME_ACTION_IDS.sharePlugin
       ? { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] }
-      : { uiConfirmation: 'direct' },
+      : id === THEME_ACTION_IDS.install
+        ? { uiConfirmation: 'direct', agentDefault: 'authority' }
+        : { uiConfirmation: 'direct',
+          ...(id === THEME_ACTION_IDS.tryOn || id === THEME_ACTION_IDS.save
+            ? { agentDefaultForInput: hasThemeAuthorCss } : {}) },
     safety: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.uninstall ? 'danger' : 'safe',
     ...(id === THEME_ACTION_IDS.sharePlugin ? { hostReviewedChildren: themeSharePluginReviewedChildren } : {}),
     sideEffectClass: id === THEME_ACTION_IDS.list || id === THEME_ACTION_IDS.get || id === THEME_ACTION_IDS.storeGet || id === THEME_ACTION_IDS.export ? 'read' : 'write',
