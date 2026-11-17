@@ -1,0 +1,101 @@
+import * as React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import { act, renderScreen, renderSettingsView } from '@/dev/testkit';
+import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
+
+// The web code field reads the page's editor global; a bare window stands in for the browser host.
+(globalThis as unknown as { window: Window & typeof globalThis }).window ??= {
+  innerWidth: 1440,
+} as Window & typeof globalThis;
+
+vi.mock(
+  'expo-router',
+  async () =>
+    (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
+);
+vi.mock('react-native', async () =>
+  (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
+);
+vi.mock('react-native-unistyles', async () =>
+  (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+);
+
+vi.mock('reanimated-color-picker', async () =>
+  (await import('@/dev/testkit/mocks/reanimatedColorPicker')).createReanimatedColorPickerMock(),
+);
+
+const { ThemeLibrarySpecimen } =
+  await import('@/components/dev/themes/ThemeLibrarySpecimen');
+
+type MenuAction = Readonly<{
+  id: string;
+  destructive?: boolean;
+  onSelect: () => unknown;
+}>;
+const menuActions = (
+  screen: Pick<Awaited<ReturnType<typeof renderScreen>>, 'findAllByProps'>,
+  testID: string,
+): readonly MenuAction[] =>
+  screen
+    .findAllByProps({ testID })
+    .flatMap(
+      (node: { props: { actions?: readonly MenuAction[] } }) =>
+        node.props.actions ?? [],
+    );
+
+describe('theme library and editor views', () => {
+  it("offers Share as plugin and, last and destructive, Delete on your own theme's menu", async () => {
+    const screen = await renderSettingsView(<ThemeLibrarySpecimen scene="A1" />);
+    // The grid windows through the shared Collection: give the page and the grid a measured size first.
+    await act(async () => {
+      for (const node of screen.tree.root.findAll((candidate) => typeof candidate.type === 'string'
+        && typeof candidate.props.onLayout === 'function'
+        && ['settings-theme-profiles-screen', 'settings-theme-light-library', 'settings-theme-light-library:stage'].includes(candidate.props.testID))) {
+        node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 900 } } });
+      }
+    });
+    await measureMountedCollections(screen, { width: 960, height: 900 });
+    const ids = menuActions(screen, 'settings-theme-tile-menu-notebook').map(
+      (action) => action.id,
+    );
+    expect(ids).toEqual([
+      'edit',
+      'duplicate',
+      'export',
+      'share-plugin',
+      'delete',
+    ]);
+    expect(
+      menuActions(screen, 'settings-theme-tile-menu-notebook').at(-1)
+        ?.destructive,
+    ).toBe(true);
+  });
+
+  it('says a partly shown theme once under both slots, with its repair', async () => {
+    const screen = await renderScreen(<ThemeLibrarySpecimen scene="E3" />);
+    expect(
+      screen.findAllByProps({ testID: 'settings-theme-notice' }),
+    ).toHaveLength(1);
+  });
+
+  it('puts Share as plugin right after Export file in the editor menu', async () => {
+    const screen = await renderScreen(<ThemeLibrarySpecimen scene="D3" />);
+    const ids = menuActions(screen, 'settings-theme-profile-menu').map(
+      (action) => action.id,
+    );
+    expect(ids.indexOf('share-plugin')).toBe(ids.indexOf('export') + 1);
+  });
+
+  it('lists the web-only rules only after Which is pressed', async () => {
+    // The web code field reads the page's editor global; a bare window stands in for the browser host.
+    (globalThis as unknown as { window?: object }).window ??= { innerWidth: 1440 };
+    const screen = await renderScreen(<ThemeLibrarySpecimen scene="D4" />);
+    expect(
+      screen.findByTestId('settings-theme-profile-css-web-only'),
+    ).toBeNull();
+    await screen.pressByTestIdAsync('settings-theme-profile-css-which');
+    expect(
+      screen.findByTestId('settings-theme-profile-css-web-only'),
+    ).not.toBeNull();
+  });
+});

@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import type {
   ThemeMiniatureData,
   ThemeProfileMode,
@@ -43,7 +44,32 @@ export type ThemeLibraryTile = Readonly<{
   sourceLabel: string;
   preview: ThemeLibraryPreview;
   menu: readonly ThemeLibraryMenuItem[];
+  /** Share as plugin (the selected Machine's scaffold and pack), when this theme can be shared. */
+  onShare?: () => void;
+  /** Delete this theme (your own themes only; the Action asks first). */
+  onDelete?: () => void;
 }>;
+
+/**
+ * Facts about the themes in use that need the person, each with its one repair. The view owns the words;
+ * the controller passes the theme model's and the CSS owner's facts.
+ */
+export type ThemeLibraryFact =
+  | Readonly<{
+      /** E3: a theme from a newer Happier; its colors show, newer parts don't. */
+      kind: 'partial';
+      name: string;
+      requiresAppVersion?: string;
+      onUpdate?: () => void;
+    }>
+  | Readonly<{
+      /** E4: a theme's CSS hides part of the app on this device. */
+      kind: 'hides';
+      name: string;
+      /** Readable names of the hidden areas (the surface reference's labels). */
+      areas: readonly string[];
+      onUseBuiltIn: () => void;
+    }>;
 
 /** A fact that needs the person, with its one repair (a partly shown or hiding theme). */
 export type ThemeLibraryNotice = Readonly<{
@@ -60,6 +86,7 @@ export type ThemeLibrarySlot = Readonly<{
   showing: boolean;
   /** Present when the in-use theme can be sent to other connected devices (the shared device picker). */
   onUseOtherDevices?: () => void;
+  devicesAnchorRef?: React.RefObject<unknown>;
 }>;
 
 export type ThemeLibraryViewProps = Readonly<{
@@ -72,8 +99,10 @@ export type ThemeLibraryViewProps = Readonly<{
   tiles: readonly ThemeLibraryTile[];
   /** False shows the in-place invitation to make one. */
   hasOwnThemes: boolean;
-  /** One line under both slots (E3 partly shown, E4 a theme hides part of the app). */
+  /** One line under both slots for a failed read or apply, with Retry. */
   notice?: ThemeLibraryNotice;
+  /** E3/E4 facts about the themes in use, each said once under both slots. */
+  facts?: readonly ThemeLibraryFact[];
   /** The Add theme menu: New theme · Import theme. */
   addMenu: readonly ThemeLibraryMenuItem[];
   onNewTheme: () => void;

@@ -1,3 +1,4 @@
+import type { BundledTypefaceChoice } from '@/constants/bundledFonts';
 import type * as React from 'react';
 import type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
 
@@ -52,6 +53,8 @@ export type ThemeProfileEditorViewProps = Readonly<{
     /** Absent on a theme that cannot be edited here (built-in, Store, plugin). */
     save?: Readonly<{ disabled: boolean; onPress: () => void }>;
     menu: readonly PageHeaderMenuAction[];
+    /** Share as plugin, drawn in the "…" after Export file (present when the theme can be shared). */
+    onShare?: () => void;
   }>;
   readonly: boolean;
   view: ThemeEditorView;
@@ -96,13 +99,18 @@ export type ThemeProfileEditorViewProps = Readonly<{
   }>;
   preview: ThemeLibraryPreview;
   /** Pick a colour from the app (present where the app can be pointed at). */
-  picker?: Readonly<{ active: boolean; onToggle: () => void }>;
+  picker?: Readonly<{
+    active: boolean;
+    onToggle: () => void;
+    /** What the last pick found: the surface and the colour role it paints with (its id shows only here). */
+    target?: Readonly<{ surfaceLabel: string; roleLabel: string; roleId: string }> | null;
+  }>;
   style: Readonly<{
     radius: ThemeRadiusScaleName;
     onRadiusChange: (radius: ThemeRadiusScaleName) => void;
     radiusPreview: (radius: ThemeRadiusScaleName) => ThemeLibraryPreview;
     /** Bundled typefaces, when the font catalog offers a choice. */
-    typefaces?: readonly Readonly<{ id: string; label: string }>[];
+    typefaces?: readonly BundledTypefaceChoice[];
     typeface?: string | null;
     onTypefaceChange?: (id: string | null) => void;
   }>;
@@ -114,7 +122,10 @@ export type ThemeProfileEditorViewProps = Readonly<{
     /** The compiled coverage of the draft's CSS (present once the CSS owner reports it). */
     /** The CSS owner's counts for the draft (`ThemeCssCoverage`): rules in all, rules phones apply, web-only rules. */
     coverage?: Readonly<{ total: number; native: number; webOnly: number }>;
-    onShowWebOnly?: () => void;
+    /** The rules phones skip (web and desktop only), each with its line, for "Which N?". */
+    webOnlyRules?: readonly Readonly<{ line: number; selector: string }>[];
+    /** Moves the code field to a rule's line. */
+    onRevealLine?: (line: number) => void;
     surfaces?: readonly ThemeSurfaceReferenceEntry[];
   }>;
 }>;

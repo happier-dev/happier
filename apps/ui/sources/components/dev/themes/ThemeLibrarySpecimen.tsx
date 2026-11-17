@@ -63,6 +63,8 @@ const LIGHT: readonly ThemeLibraryTile[] = [
     sourceLabel: 'Made by you',
     preview: mini('light', '#EFE6D8', '#FBF7F0', '#3B332B', '#B4572E', 'round'),
     menu: MENU,
+    onShare: NOOP,
+    onDelete: NOOP,
   },
   {
     key: 'linen',
@@ -70,6 +72,8 @@ const LIGHT: readonly ThemeLibraryTile[] = [
     sourceLabel: 'Made by you',
     preview: mini('light', '#E9EAE4', '#F8F8F5', '#2F3530', '#4C8A62'),
     menu: MENU,
+    onShare: NOOP,
+    onDelete: NOOP,
   },
   {
     key: 'kraft',
@@ -77,6 +81,8 @@ const LIGHT: readonly ThemeLibraryTile[] = [
     sourceLabel: 'Made by you',
     preview: mini('light', '#E2D4BC', '#F1E7D6', '#3E3426', '#9A5B2A'),
     menu: MENU,
+    onShare: NOOP,
+    onDelete: NOOP,
   },
   {
     key: 'harbor',
@@ -128,6 +134,8 @@ const DARK: readonly ThemeLibraryTile[] = [
     sourceLabel: 'Made by you',
     preview: mini('dark', '#1A1714', '#221E1A', '#EDE5D8', '#D08B5B', 'round'),
     menu: MENU,
+    onShare: NOOP,
+    onDelete: NOOP,
   },
   {
     key: 'dark',
@@ -174,20 +182,10 @@ function LibraryScene(props: Readonly<{ scene: string }>) {
     tiles,
     hasOwnThemes: !empty,
     ...(props.scene === 'E3'
-      ? {
-          notice: {
-            text: 'Notebook was made for a newer Happier, so its corners and part of its CSS aren’t shown here.',
-            action: { title: 'Update Happier', onPress: NOOP },
-          },
-        }
+      ? { facts: [{ kind: 'partial' as const, name: 'Notebook', requiresAppVersion: '0.3.4', onUpdate: NOOP }] }
       : {}),
     ...(props.scene === 'E4'
-      ? {
-          notice: {
-            text: 'Notebook hides the sidebar on this device.',
-            action: { title: 'Use a built-in theme', onPress: NOOP },
-          },
-        }
+      ? { facts: [{ kind: 'hides' as const, name: 'Notebook', areas: ['the sidebar'], onUseBuiltIn: NOOP }] }
       : {}),
     addMenu: [
       {
@@ -279,10 +277,10 @@ function EditorScene(props: Readonly<{ scene: string }>) {
       ],
       mark: preview,
       save: { disabled: false, onPress: NOOP },
+      onShare: NOOP,
       menu: [
         { id: 'duplicate', title: 'Duplicate theme', onSelect: NOOP },
         { id: 'export', title: 'Export file', onSelect: NOOP },
-        { id: 'share', title: 'Share as plugin', onSelect: NOOP },
         {
           id: 'delete',
           title: 'Delete theme',
@@ -341,6 +339,7 @@ function EditorScene(props: Readonly<{ scene: string }>) {
     picker: {
       active: picking,
       onToggle: () => setPicking((current) => !current),
+      target: picking ? { surfaceLabel: 'Composer', roleLabel: 'Base surface', roleId: 'surface.base' } : null,
     },
     style: {
       radius,
@@ -357,7 +356,8 @@ function EditorScene(props: Readonly<{ scene: string }>) {
         native: 3,
         webOnly: 1,
       },
-      onShowWebOnly: NOOP,
+      webOnlyRules: [{ line: 8, selector: '[data-surface="composer"]' }],
+      onRevealLine: NOOP,
       surfaces: [
         { id: 'session-row', label: 'Session row', parts: ['root'] },
         { id: 'user-bubble', label: 'Your message', parts: ['root'] },

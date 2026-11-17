@@ -27,6 +27,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -59,6 +60,16 @@ export const ThemeProfileEditorView = React.memo(
   function ThemeProfileEditorView(props: ThemeProfileEditorViewProps) {
     const phone = useDeviceType() === 'phone';
     const { header } = props;
+  const onShare = header.onShare;
+  // Share as plugin follows Export file; destructive rows stay last.
+  const headerMenu = React.useMemo(() => {
+    if (!onShare) return header.menu;
+    const share = { id: 'share-plugin', title: t('settingsAppearance.themeProfiles.shareAsPlugin'), onSelect: onShare };
+    const exportIndex = header.menu.findIndex((action) => action.id === 'export');
+    const firstDestructive = header.menu.findIndex((action) => action.destructive === true);
+    const at = exportIndex >= 0 ? exportIndex + 1 : firstDestructive >= 0 ? firstDestructive : header.menu.length;
+    return [...header.menu.slice(0, at), share, ...header.menu.slice(at)];
+  }, [header.menu, onShare]);
     const views = React.useMemo(
       () => [
         {
@@ -138,7 +149,7 @@ export const ThemeProfileEditorView = React.memo(
           actions={
             <PageHeaderMenu
               testID="settings-theme-profile-menu"
-              actions={header.menu}
+              actions={headerMenu}
             />
           }
         />
@@ -154,14 +165,19 @@ export const ThemeProfileEditorView = React.memo(
           <>
             {props.view === 'colors' ? (
               <ItemGroup surface="none">
-                <View
-                  style={[
-                    stylesheet.preview,
-                    { aspectRatio: PREVIEW_ASPECT.phone },
-                  ]}
-                >
-                  <EditorPreview preview={props.preview} form="window" />
+                <View style={stylesheet.phoneStrip}>
+                  <View
+                    style={[
+                      stylesheet.preview,
+                      stylesheet.phoneStripPreview,
+                      { aspectRatio: PREVIEW_ASPECT.phone },
+                    ]}
+                  >
+                    <EditorPreview preview={props.preview} form="window" />
+                  </View>
+                  {props.picker ? <PickButton picker={props.picker} /> : null}
                 </View>
+                {props.picker?.active ? <PickBar picker={props.picker} /> : null}
               </ItemGroup>
             ) : null}
             {body}
@@ -210,21 +226,62 @@ function PreviewAside(
         <EditorPreview preview={props.preview} form="window" />
       </View>
       <View style={stylesheet.previewCaption}>
-        <Text variant="meta" style={stylesheet.quiet}>
-          {t('settingsAppearance.themeProfiles.previewLive')}
+        <Text variant="meta" style={[stylesheet.quiet, stylesheet.captionText]}>
+          {props.picker?.active
+            ? props.picker.target
+              ? t('settingsAppearance.themeProfiles.pickTarget', {
+                  surface: props.picker.target.surfaceLabel,
+                  role: props.picker.target.roleLabel,
+                })
+              : t('settingsAppearance.themeProfiles.pickInstructionPointer')
+            : t('settingsAppearance.themeProfiles.previewLive')}
         </Text>
-        {props.picker ? (
-          <IconButton
-            testID="settings-theme-profile-pick"
-            iconName="crosshair"
-            variant="plain"
-            selected={props.picker.active}
-            accessibilityLabel={t('settingsAppearance.themeProfiles.pickColor')}
-            tooltip={t('settingsAppearance.themeProfiles.pickColor')}
-            onPress={props.picker.onToggle}
-          />
-        ) : null}
+        {props.picker ? <PickButton picker={props.picker} /> : null}
       </View>
+      {props.picker?.active && props.picker.target ? (
+        <Text variant="micro" style={[stylesheet.quiet, stylesheet.mono]}>
+          {props.picker.target.roleId}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/** Pick a colour from the app: one pressed toggle beside the preview, the same on every view. */
+function PickButton(props: Readonly<{ picker: NonNullable<ThemeProfileEditorViewProps['picker']> }>) {
+  return (
+    <IconButton
+      testID="settings-theme-profile-pick"
+      iconName="crosshair"
+      variant="plain"
+      selected={props.picker.active}
+      accessibilityLabel={t('settingsAppearance.themeProfiles.pickColor')}
+      tooltip={t('settingsAppearance.themeProfiles.pickColor')}
+      onPress={props.picker.onToggle}
+    />
+  );
+}
+
+/**
+ * A phone has nothing to hover: while picking, one bar says how it works (tap a part of the app) and,
+ * after a tap, what that part paints with; Done ends picking and returns to the colours.
+ */
+function PickBar(props: Readonly<{ picker: NonNullable<ThemeProfileEditorViewProps['picker']> }>) {
+  const { target } = props.picker;
+  return (
+    <View testID="settings-theme-profile-pick-bar" accessibilityRole="summary" style={stylesheet.pickBar}>
+      <Text variant="body" style={stylesheet.pickBarText}>
+        {target
+          ? t('settingsAppearance.themeProfiles.pickTarget', { surface: target.surfaceLabel, role: target.roleLabel })
+          : t('settingsAppearance.themeProfiles.pickInstructionTouch')}
+      </Text>
+      <TextLinkButton
+        testID="settings-theme-profile-pick-done"
+        size="row"
+        tone="strong"
+        label={t('common.done')}
+        onPress={props.picker.onToggle}
+      />
     </View>
   );
 }
@@ -518,6 +575,7 @@ function StyleView(props: ThemeProfileEditorViewProps) {
 }
 
 function CssView(props: ThemeProfileEditorViewProps) {
+  const [whichOpen, setWhichOpen] = React.useState(false);
   const { css } = props;
   const coverage = css.coverage;
   return (
@@ -537,16 +595,32 @@ function CssView(props: ThemeProfileEditorViewProps) {
               total: coverage.total,
             })}
           </Text>
-          {coverage.webOnly > 0 && css.onShowWebOnly ? (
+          {coverage.webOnly > 0 && css.webOnlyRules?.length ? (
             <TextLinkButton
+              testID="settings-theme-profile-css-which"
               size="meta"
               tone="strong"
+              expanded={whichOpen}
               label={t('settingsAppearance.themeProfiles.cssWhich', {
                 count: coverage.webOnly,
               })}
-              onPress={css.onShowWebOnly}
+              onPress={() => setWhichOpen((open) => !open)}
             />
           ) : null}
+        </View>
+      ) : null}
+      {whichOpen && css.webOnlyRules?.length ? (
+        <View testID="settings-theme-profile-css-web-only" style={stylesheet.webOnlyList}>
+          {css.webOnlyRules.map((rule) => (
+            <TextLinkButton
+              key={`${rule.line}:${rule.selector}`}
+              size="meta"
+              tone="quiet"
+              label={t('settingsAppearance.themeProfiles.cssWebOnlyRule', { line: rule.line, selector: rule.selector })}
+              onPress={() => css.onRevealLine?.(rule.line)}
+              disabled={!css.onRevealLine}
+            />
+          ))}
         </View>
       ) : null}
       <SectionContentRow>
@@ -639,6 +713,40 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   quiet: {
     color: theme.colors.text.secondary,
+  },
+  phoneStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
+  },
+  phoneStripPreview: {
+    flex: 1,
+    width: undefined,
+  },
+  pickBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s12,
+    marginTop: theme.space.s12,
+    paddingVertical: theme.space.s10,
+    paddingHorizontal: theme.space.s16,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface.selected,
+  },
+  pickBarText: {
+    flex: 1,
+    color: theme.colors.text.primary,
+  },
+  captionText: {
+    flex: 1,
+  },
+  mono: {
+    ...Typography.mono(),
+  },
+  webOnlyList: {
+    alignItems: 'flex-start',
+    gap: theme.space.s4,
+    paddingBottom: theme.space.s8,
   },
   coverage: {
     flexDirection: 'row',

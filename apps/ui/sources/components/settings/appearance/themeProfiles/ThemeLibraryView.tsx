@@ -33,7 +33,9 @@ import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { THEMES_SETTINGS } from './themesSettings';
 import type {
+  ThemeLibraryFact,
   ThemeLibraryMenuItem,
+  ThemeLibraryNotice,
   ThemeLibraryPreview,
   ThemeLibraryTile,
   ThemeLibraryViewProps,
@@ -138,6 +140,9 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
             />
           </SettingAnchor>
         </SettingAnchor>
+        {props.facts?.map((fact) => (
+          <LibraryNoticeLine key={`${fact.kind}:${fact.name}`} notice={factNotice(fact)} />
+        ))}
         {props.notice ? <LibraryNoticeLine notice={props.notice} /> : null}
       </ItemGroup>
 
@@ -243,6 +248,22 @@ function SlotFooter(
   );
 }
 
+/** The words for a fact about a theme in use, and its one repair. */
+function factNotice(fact: ThemeLibraryFact): ThemeLibraryNotice {
+  if (fact.kind === 'partial') {
+    return {
+      text: fact.requiresAppVersion
+        ? t('settingsAppearance.themeProfiles.partlyShownVersion', { name: fact.name, version: fact.requiresAppVersion })
+        : t('settingsAppearance.themeProfiles.partlyShown', { name: fact.name }),
+      ...(fact.onUpdate ? { action: { title: t('settingsAppearance.themeProfiles.updateHappier'), onPress: fact.onUpdate } } : {}),
+    };
+  }
+  return {
+    text: t('settingsAppearance.themeProfiles.hidesPart', { name: fact.name, areas: fact.areas.join(', ') }),
+    action: { title: t('settingsAppearance.themeProfiles.useBuiltInTheme'), onPress: fact.onUseBuiltIn },
+  };
+}
+
 /** One fact under both slots, with its one repair. */
 function LibraryNoticeLine(
   props: Readonly<{ notice: NonNullable<ThemeLibraryViewProps['notice']> }>,
@@ -280,6 +301,13 @@ function TileMenu(props: Readonly<{ tile: ThemeLibraryTile }>) {
       })),
     [props.tile.menu],
   );
+  const { onShare, onDelete } = props.tile;
+  // Share as plugin after the file export; Delete last, in the danger tone (its Action asks first).
+  const verbs = React.useMemo(() => [
+    ...actions,
+    ...(onShare ? [{ id: 'share-plugin', title: t('settingsAppearance.themeProfiles.shareAsPlugin'), onSelect: onShare }] : []),
+    ...(onDelete ? [{ id: 'delete', title: t('settingsAppearance.themeProfiles.deleteTheme'), destructive: true, onSelect: onDelete }] : []),
+  ], [actions, onShare, onDelete]);
   return (
     <View style={stylesheet.tileMenu}>
       <PageHeaderMenu
@@ -288,7 +316,7 @@ function TileMenu(props: Readonly<{ tile: ThemeLibraryTile }>) {
           'settingsAppearance.themeProfiles.themeActionsFor',
           { name: props.tile.name },
         )}
-        actions={actions}
+        actions={verbs}
       />
     </View>
   );
