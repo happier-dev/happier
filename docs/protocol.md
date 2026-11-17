@@ -229,6 +229,9 @@ row owner, whether or not the row is loaded, and then placed in place. The row's
 `viewer.relevance.relevant`, `viewer.attention.needsAttention` and owner-or-direct
 relevance reasons are the Home's own `my_work`, `needs_my_attention` and ordinary
 corpus decisions (parity: `personal/listMembershipParity.sqlite.integration.spec.ts`).
+Native approval and user-input summaries contribute to viewer attention while
+the Session runtime is running. Shared Action confirmations can still require
+attention after the runtime detaches and clear when the confirmation settles.
 Lists that select only scope (`my_work` or `all_accessible`), storage, attention
 and liveness insert, move or remove the row by `meaningfulActivityAt` then id,
 descending. A row older than every loaded row stays with an unread page. A Space

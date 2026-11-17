@@ -2,8 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, createSessionViewerFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
+import { buildSessionListAttentionPlacement } from '@/sync/domains/session/listing/sessionListAttentionPlacement';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useActivityOverviewSummary, useHomeCompletedBots } from './useActivityOverview';
@@ -41,6 +42,51 @@ describe('shared Activity summary and pending navigation at a thousand Sessions'
         standardCleanup();
         storage.setState(initialState, true);
         vi.useRealTimers();
+    });
+
+    it('updates Needs you and Next when the Home retires a native approval', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const id = 'approval-session';
+        const source = [{ type: 'session' as const, serverId, sessionId: id, groupKey: 'project-a' }];
+        const pending = createSessionFixture({
+            id, serverId, active: true, createdAt: NOW_MS - 1000, updatedAt: NOW_MS - 1000, activeAt: NOW_MS - 1000,
+            latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: NOW_MS - 1000,
+            pendingPermissionRequestCount: 1, pendingRequestObservedAt: NOW_MS - 1000,
+            viewer: createSessionViewerFixture({
+                relevance: { relevant: true, reasons: ['owned_by_me'] },
+                attention: { needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' },
+            }),
+        });
+        await act(async () => {
+            const state = storage.getState();
+            state.applyServerScopedSessionListRows(serverId, [buildSessionListRenderableFromSession(pending)], {
+                source: 'ordinary', mode: 'replace',
+            });
+            state.applySessions([pending]);
+            state.applyReady();
+        });
+        let nextCount: number | undefined;
+        function Next() {
+            nextCount = usePendingNavigationOverview(null, true).count;
+            return null;
+        }
+        await renderScreen(<Next />);
+        const readSidebar = () => buildSessionListAttentionPlacement({
+            source, options: { mode: 'global' }, nowMs: NOW_MS,
+            resolveSessionRow: (home, sessionId) => home ? storage.getState().sessionListRowsByServerId[home]?.[sessionId] ?? null : null,
+        });
+        expect(readSidebar()?.attentionItems).toContainEqual(expect.objectContaining({
+            sessionId: id, attentionPlacementReason: 'permission_required',
+        }));
+        expect(nextCount).toBe(1);
+
+        await act(async () => storage.getState().applySessions([{
+            ...pending, active: false, presence: NOW_MS - 1000, updatedAt: NOW_MS,
+            latestTurnStatus: 'cancelled', latestTurnStatusObservedAt: NOW_MS,
+            viewer: createSessionViewerFixture({ relevance: { relevant: true, reasons: ['owned_by_me'] } }),
+        }]));
+        expect(readSidebar()).toBeNull();
+        expect(nextCount).toBe(0);
     });
 
     it('muse.experience.pc13 re-reads only the changed Session and commits no attention reader for an unrelated update', async () => {

@@ -31,6 +31,7 @@ import {
     type SessionPersonalDiscussionFacts,
 } from "./discussionFacts";
 import { projectSessionFollowFacts } from "./followFacts";
+import { readLiveNativeRequestCounts } from "./pendingRequestAttention";
 import { loadSessionRuleReadStatesInTx, type SessionRuleReadStates } from "./readState";
 import { mapPendingActivationAuthorization } from "@/app/session/pending/pendingActivationAuthorization";
 
@@ -38,6 +39,7 @@ import { mapPendingActivationAuthorization } from "@/app/session/pending/pending
 export function createSessionPersonalProjectionSelect(accountId: string, context: SessionAccessProjectionContext = {}) {
     return {
         ...buildSessionAccessProjectionSelect(accountId, context),
+        active: true,
         archivedAt: true,
         responsibleAccountId: true,
         latestReadyEventSeq: true,
@@ -79,6 +81,7 @@ export function createSessionPersonalAttentionProjectionSelectForAccounts(accoun
     const ids = [...new Set(accountIds)];
     return {
         ...buildSessionAccessProjectionSelectForAccounts(ids),
+        active: true,
         archivedAt: true,
         responsibleAccountId: true,
         latestReadyEventSeq: true,
@@ -207,6 +210,7 @@ function projectSessionViewerAttentionState(params: Readonly<{
     const ownedByMe = row.accountId === viewerAccountId;
     const responsible = row.responsibleAccountId === viewerAccountId;
     const live = resolveSessionTranscriptPublicationCeiling(row) === null;
+    const nativeRequests = readLiveNativeRequestCounts(row, live);
     const issue = live ? parseStoredSessionRuntimeIssue(row.lastRuntimeIssue) : null;
     const hasPrimarySessionFailure = row.latestTurnStatus === "failed" && issue?.scope === "primary_session" && issue.status === "failed";
     const latestFailureSeq = hasPrimarySessionFailure && params.latestFailureSeq !== null
@@ -222,8 +226,8 @@ function projectSessionViewerAttentionState(params: Readonly<{
         // input remains queued. The activation owner clears this fact on recovery.
         pendingBlockedCount: live ? row.pendingBlockedCount
             + (mapPendingActivationAuthorization(row)?.status === 'failed' ? 1 : 0) : 0,
-        pendingPermissionRequestCount: live ? row.pendingPermissionRequestCount + row.pendingSharedActionConfirmationCount : 0,
-        pendingUserActionRequestCount: live ? row.pendingUserActionRequestCount : 0,
+        pendingPermissionRequestCount: nativeRequests.permission + (live ? row.pendingSharedActionConfirmationCount : 0),
+        pendingUserActionRequestCount: nativeRequests.userAction,
         capabilities: {
             canSubmitAgentInput: access?.capabilities.submitAgentInput === true,
             canApprovePermissions: access?.capabilities.approveRuntimePermissions === true,

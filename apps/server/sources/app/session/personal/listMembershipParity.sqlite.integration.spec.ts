@@ -25,6 +25,46 @@ describe("viewer projection equals list membership (SQLite)", () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
+    it("retires a canceled native approval with a retained summary from viewer attention and list membership", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const now = new Date();
+        const { id: sessionId } = await db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), encryptionMode: "plain", metadata: "{}",
+            active: true, lastActiveAt: now, latestTurnStatus: "in_progress",
+            pendingPermissionRequestCount: 1, pendingRequestObservedAt: now,
+        } });
+        const readAttention = async () => {
+            const viewer = await loadSessionViewerProjection({ accountId: account.id, sessionId, authentication });
+            const admitted = await inTx(async tx => {
+                const query = createSessionPersonalAttentionQueryInTx(tx, { accountId: account.id });
+                const rows = await tx.session.findMany({
+                    where: { AND: [{ id: sessionId }, query.candidateWhere] },
+                    select: createSessionPersonalAttentionProjectionSelect(account.id),
+                });
+                return (await query.admitRows(rows)).length > 0;
+            });
+            return { attention: viewer?.attention, admitted };
+        };
+
+        const pending = await readAttention();
+        expect(pending.attention).toMatchObject({ needsAttention: true, primary: "permission_required" });
+        expect(pending.admitted).toBe(true);
+
+        // The publisher can disappear with a canceled turn and a retained native summary.
+        await db.session.update({ where: { id: sessionId }, data: { active: false, latestTurnStatus: "cancelled" } });
+        const canceled = await readAttention();
+        expect(canceled.attention).toMatchObject({ needsAttention: false, reasons: [] });
+        expect(canceled.admitted).toBe(false);
+
+        // A shared Action confirmation has a separate settlement lifecycle.
+        await db.session.update({ where: { id: sessionId }, data: { pendingSharedActionConfirmationCount: 1 } });
+        const shared = await readAttention();
+        expect(shared.attention).toMatchObject({ needsAttention: true, primary: "permission_required" });
+        expect(shared.admitted).toBe(true);
+        await db.session.update({ where: { id: sessionId }, data: { pendingSharedActionConfirmationCount: 0 } });
+        expect(await readAttention()).toMatchObject({ attention: { needsAttention: false, reasons: [] }, admitted: false });
+    });
+
     it("matches my_work and needs_my_attention for every relevance and attention case", async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID() } });
         const viewer = await db.account.create({ data: { publicKey: randomUUID() } });

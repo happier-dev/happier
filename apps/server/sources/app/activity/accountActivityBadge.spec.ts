@@ -162,6 +162,17 @@ describe("didSessionActivityBadgeSignalChange", () => {
         expect(didSessionActivityBadgeSignalChange(before, { ...before, pendingBlockedCount: 1 })).toBe(true);
     });
 
+    it("refreshes native request attention on publisher loss without refreshing quiet Sessions", () => {
+        const waiting = badgeInputs({ pendingPermissionRequestCount: 1 });
+        const detached = { ...waiting, active: false };
+        expect(computeSessionContributesToActivityBadge(waiting)).toBe(true);
+        expect(didSessionActivityBadgeSignalChange(waiting, detached)).toBe(true);
+        expect(computeSessionContributesToActivityBadge(detached)).toBe(false);
+
+        const quiet = badgeInputs();
+        expect(didSessionActivityBadgeSignalChange(quiet, { ...quiet, active: false })).toBe(false);
+    });
+
     it("ignores the shared read cursor, which no longer decides another Account's badge", () => {
         const before = badgeInputs();
         expect(didSessionActivityBadgeSignalChange(before, { ...before, lastViewedSessionSeq: 0 })).toBe(false);

@@ -11,6 +11,7 @@ import {
     type SessionPersonalAttentionAccountAdmission,
 } from "@/app/session/personal/queries";
 import { backgroundDeliveryAuthentication, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
+import { readLiveNativeRequestCounts } from "@/app/session/personal/pendingRequestAttention";
 import { parseStoredSessionRuntimeIssue } from "@/app/session/turns/parseSessionTurnState";
 import {
     applySessionTranscriptPublicationCeilingToProjection,
@@ -84,6 +85,7 @@ export function resolveSessionViewerActivityAttention(
         return QUIET_SESSION_PERSONAL_ATTENTION_V1;
     }
     const hasLiveFacts = resolveSessionTranscriptPublicationCeiling(session) === null;
+    const nativeRequests = readLiveNativeRequestCounts(session, hasLiveFacts);
     const projection = applySessionTranscriptPublicationCeilingToProjection({
         seq: typeof session.seq === "number" ? session.seq : 0,
         latestReadyEventSeq: typeof session.latestReadyEventSeq === "number" ? session.latestReadyEventSeq : null,
@@ -103,8 +105,8 @@ export function resolveSessionViewerActivityAttention(
         hasPrimarySessionFailure: hasLiveFacts && hasCanonicalPrimarySessionFailure(session),
         latestFailureSeq: hasLiveFacts ? session.latestFailureSeq ?? null : null,
         pendingBlockedCount: hasLiveFacts ? normalizeCount(session.pendingBlockedCount) : 0,
-        pendingPermissionRequestCount: hasLiveFacts ? normalizeCount(session.pendingPermissionRequestCount) : 0,
-        pendingUserActionRequestCount: hasLiveFacts ? normalizeCount(session.pendingUserActionRequestCount) : 0,
+        pendingPermissionRequestCount: normalizeCount(nativeRequests.permission),
+        pendingUserActionRequestCount: normalizeCount(nativeRequests.userAction),
         capabilities,
         responsible: session.responsible ?? false,
         discussion: session.discussion ?? { hasUnread: false, hasMention: false },
@@ -129,6 +131,7 @@ export function didSessionActivityBadgeSignalChange(
 ): boolean {
     const signal = (session: SessionActivityBadgeInputs) => {
         const hasLiveFacts = resolveSessionTranscriptPublicationCeiling(session) === null;
+        const nativeRequests = readLiveNativeRequestCounts(session, hasLiveFacts);
         const projection = applySessionTranscriptPublicationCeilingToProjection({
             seq: typeof session.seq === "number" ? session.seq : 0,
             latestReadyEventSeq: typeof session.latestReadyEventSeq === "number" ? session.latestReadyEventSeq : null,
@@ -138,8 +141,8 @@ export function didSessionActivityBadgeSignalChange(
             typeof projection.latestReadyEventSeq === "number" ? projection.latestReadyEventSeq : -1,
             hasLiveFacts && hasCanonicalPrimarySessionFailure(session) ? 1 : 0,
             hasLiveFacts && normalizeCount(session.pendingBlockedCount) > 0 ? 1 : 0,
-            hasLiveFacts && normalizeCount(session.pendingPermissionRequestCount) > 0 ? 1 : 0,
-            hasLiveFacts && normalizeCount(session.pendingUserActionRequestCount) > 0 ? 1 : 0,
+            normalizeCount(nativeRequests.permission) > 0 ? 1 : 0,
+            normalizeCount(nativeRequests.userAction) > 0 ? 1 : 0,
         ].join(":");
     };
     return signal(before) !== signal(after);
