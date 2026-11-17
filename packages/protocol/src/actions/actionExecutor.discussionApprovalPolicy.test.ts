@@ -594,7 +594,10 @@ describe('Discussion participant publication policy', () => {
       // V2 creation, decision/CAS and terminal retry use the real owners.
       sessionMessageReply: async request => {
         observedStatuses.push(h.stored()?.status);
-        settlements.push(request);
+        // Retried executions rebuild host callbacks; compare the authenticated
+        // caller and the exact HTTP settlement, not callback identity.
+        settlements.push({ ...request, context: { authority: request.context.authority,
+          runtimeAccountId: request.context.runtimeAccountId, actionCaller: request.context.actionCaller } });
         if (loseReplyResponse) {
           loseReplyResponse = false;
           return { ok: false, errorCode: 'server_unreachable', error: 'server_unreachable' };

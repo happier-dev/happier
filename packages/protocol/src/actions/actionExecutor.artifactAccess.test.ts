@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { createArtifactAccessActionsV1 } from './executor/artifactAccessActions.js';
 import type { ArtifactAccessGrantRowV1 } from '../artifacts/artifactAccessV1.js';
+import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
 
@@ -11,6 +12,12 @@ function createFixture(executorDeps: Pick<ActionExecutorDeps, 'readActionsSettin
   let grants: ArtifactAccessGrantRowV1[] = [];
   let removed = false;
   let readFailure: Error | undefined;
+  let approval: ApprovalRequest | undefined;
+  const approvalStorage: Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'> = {
+    approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'grant-approval' }; },
+    approvalsGet: async () => approval ?? null,
+    approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
+  };
   const projection = () => ({ artifactId: 'artifact-1', ownerAccountId: 'owner', access: 'owner' as const, grants });
   const artifactAccessAction = createArtifactAccessActionsV1({
     read: async () => {
@@ -32,7 +39,11 @@ function createFixture(executorDeps: Pick<ActionExecutorDeps, 'readActionsSettin
       remove: async () => { grants = []; return { ...projection(), changed: true }; },
     },
   });
-  return { executor: createActionExecutor({ artifactAccessAction, ...executorDeps } as unknown as ActionExecutorDeps),
+  return { executor: createActionExecutor({ artifactAccessAction,
+    ...approvalStorage,
+    isApprovalExecutionOriginCurrent: async () => true,
+    ...executorDeps } as unknown as ActionExecutorDeps),
+    readApproval: () => approval,
     readGrants: () => grants, removeArtifact: () => { removed = true; }, failRead: (error: Error) => { readFailure = error; } };
 }
 
@@ -62,13 +73,26 @@ describe('Artifact access Action family', () => {
     expect(readGrants()).toEqual([]);
   });
 
-  it('admits an account-automation caller like Session access grants (agents reach it through the shared approval policy)', async () => {
-    const { executor, readGrants } = createFixture();
-    const result = await executor.execute('artifact.access.grants.set', { artifactId: 'artifact-1', principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view' }, {
-      ...context, authority: 'account_automation',
+  it('admits account automation through the shared approval policy and changes grants only after the person decides', async () => {
+    const { executor, readGrants, readApproval } = createFixture();
+    const input = { artifactId: 'artifact-1', principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view' };
+    const result = await executor.execute('artifact.access.grants.set', input, {
+      ...context, authority: 'account_automation', runtimeAccountId: 'owner', serverId: 'home-1',
+      actionRequestId: 'share-artifact',
     });
-    expect(result).toMatchObject({ ok: true, result: { changed: true } });
-    expect(readGrants()).toHaveLength(1);
+    expect(result).toEqual({ ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'grant-approval', actionId: 'artifact.access.grants.set' } });
+    expect(readGrants()).toEqual([]);
+    expect(readApproval()).toMatchObject({ status: 'open', approval: { flow: 'deferred' },
+      actionId: 'artifact.access.grants.set', actionArgs: input });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'grant-approval', decision: 'approve' }, {
+      ...context, runtimeAccountId: 'owner', serverId: 'home-1',
+    })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { changed: true } } } });
+    expect(readGrants()).toMatchObject([{ principal: input.principal, accessLevel: 'view' }]);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'grant-approval', decision: 'approve' }, {
+      ...context, runtimeAccountId: 'owner', serverId: 'home-1',
+    })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { changed: true } } } });
+    expect(readGrants()).toMatchObject([{ principal: input.principal, accessLevel: 'view' }]);
   });
 
   it('does not allow prepared envelopes through public semantic Action inputs', async () => {
