@@ -2,27 +2,22 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
-import { useThemeProfiles, useThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
-import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 export { commitThemeSelection } from '@/theme/profiles/themeProfileRuntime';
 
-/** Admit the complete selection; its existing local owner applies storage, transition and runtime. */
+/** The declared mode owner applies preference storage, transition and runtime. */
 export function useApplyThemeSelection(beforeCommit?: () => void): (
     nextThemePreference: ThemePreference,
-    nextThemeProfiles: ThemeProfilesLocalStateV1,
-    capturedLegacyProfileIds?: Readonly<Record<string, string>>,
 ) => Promise<boolean> {
     const { setSetting } = useSettingActionFeedback({ beforeLocalCommit: beforeCommit });
-    const { legacyProfileIds } = useThemeProfilesSnapshot();
-    return React.useCallback(async (nextThemePreference, nextThemeProfiles, capturedLegacyProfileIds = legacyProfileIds) => {
+    return React.useCallback(async nextThemePreference => {
         beforeCommit?.();
         return await setSetting({ anchor: 'appearance.themeMode' }, SettingsDeclarationValueV1Schema.parse({
-            themePreference: nextThemePreference, themeProfiles: nextThemeProfiles, legacyProfileIds: capturedLegacyProfileIds,
+            themePreference: nextThemePreference,
         }));
-    }, [beforeCommit, legacyProfileIds, setSetting]);
+    }, [beforeCommit, setSetting]);
 }
 
 /** The theme mode a stored preference means; anything unrecognised follows the system. */
@@ -37,10 +32,9 @@ export function resolveThemeMode(themePreference: unknown): ThemePreference {
  */
 export function useToggleThemeMode(): () => Promise<void> {
     const { theme } = useUnistyles();
-    const themeProfiles = useThemeProfiles();
     const applyThemeSelection = useApplyThemeSelection();
     const screenDark = theme.dark;
     return React.useCallback(async () => {
-        await applyThemeSelection(screenDark ? 'light' : 'dark', themeProfiles);
-    }, [applyThemeSelection, screenDark, themeProfiles]);
+        await applyThemeSelection(screenDark ? 'light' : 'dark');
+    }, [applyThemeSelection, screenDark]);
 }

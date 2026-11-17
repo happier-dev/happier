@@ -13,7 +13,6 @@ import { SEGMENTED_TAB_ICON_SIZE_PX } from '@/components/ui/navigation/Segmented
 import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { useLocalSetting, useLocalSettingMutable, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
 
 /**
  * What notifications do on this device, in a few words: whether push is on and whether quiet hours
@@ -44,7 +43,6 @@ export const HubQuickSettingsSection = React.memo(function HubQuickSettingsSecti
     const router = useRouter();
     const { theme } = useUnistyles();
     const [themePreference] = useLocalSettingMutable('themePreference');
-    const themeProfiles = useThemeProfiles();
     const applyThemeSelection = useApplyThemeSelection();
     const notificationsSummary = useNotificationsSummary();
     const iconColor = theme.colors.text.secondary;
@@ -62,7 +60,7 @@ export const HubQuickSettingsSection = React.memo(function HubQuickSettingsSecti
                 title={t('settingsAppearance.theme')}
                 options={themeOptions}
                 value={resolveThemeMode(themePreference)}
-                onChange={(next) => applyThemeSelection(next, themeProfiles)}
+                onChange={(next) => applyThemeSelection(next)}
             />
             <Item
                 testID="settings-overview-notifications"

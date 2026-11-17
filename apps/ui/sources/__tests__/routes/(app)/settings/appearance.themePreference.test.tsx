@@ -39,9 +39,9 @@ let transitionDom: JSDOM | undefined;
 async function renderAppearance(element: React.ReactElement, options?: Parameters<typeof renderSettingsView>[1]) {
     await act(async () => {
         storage.setState({
-            localSettings: localSettingsParse(shared.settingsState),
             settings: settingsParse(shared.settingsState),
         });
+        storage.getState().applyLocalSettings(localSettingsParse(shared.settingsState));
     });
     return renderSettingsView(element, options);
 }
@@ -221,7 +221,8 @@ describe('Appearance settings theme preference', () => {
 
     it('switching mode keeps the theme already assigned to that mode', async () => {
         shared.settingsState.themePreference = 'light';
-        shared.settingsState.themeProfiles = { activeProfileIds: { light: null, dark: 'premiumDark' }, profiles: [] };
+        const selection = { light: null, dark: { kind: 'built-in', presetId: 'premiumDark' } };
+        shared.settingsState.themeProfileSelection = selection;
         const mod = await import('@/app/(app)/settings/appearance');
         const screen = await renderAppearance(React.createElement(mod.default), {
             flushOptions: { cycles: 0 },
@@ -232,9 +233,9 @@ describe('Appearance settings theme preference', () => {
         });
 
         await vi.waitFor(() => {
-            const { themeProfiles, themePreference } = storage.getState().localSettings;
+            const { themeProfileSelection, themePreference } = storage.getState().localSettings;
             expect(themePreference).toBe('dark');
-            expect(themeProfiles.activeProfileIds).toEqual({ light: null, dark: 'premiumDark' });
+            expect(themeProfileSelection).toEqual(selection);
         });
     });
 

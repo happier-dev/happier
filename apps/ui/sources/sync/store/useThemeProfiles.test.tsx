@@ -4,12 +4,13 @@ import { act, flushHookEffects, renderHook, renderScreen, standardCleanup } from
 import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiThemeProjection } from '@/sync/domains/plugins/ui/projection';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
+import { findActiveThemeProfileForMode } from '@/theme/profiles/themeProfilePersistence';
 import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createArtifactInventoryDemandHarness, initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { storage } from '@/sync/domains/state/storageStore';
-import { readThemeLibrarySnapshot, readThemeProfilesSnapshot, useThemeLibraryEntries, useThemeLibraryEntry, useThemeLibraryInventory, useThemeProfileDocument, useThemeProfileReferenceSelection } from './useThemeProfiles';
+import { readThemeLibrarySnapshot, readSelectedThemeProfiles, useThemeLibraryEntries, useThemeLibraryEntry, useThemeLibraryInventory, useThemeProfileDocument, useThemeProfileReferenceSelection } from './useThemeProfiles';
 
 
 async function home(suffix: string) {
@@ -72,8 +73,8 @@ describe('Artifact-backed theme source', () => {
         const fixture = await home('captured');
         storage.getState().applyArtifacts([fixture.row(0)]);
         storage.getState().applyLocalSettings({ themeProfileSelection: { light: null, dark: { kind: 'artifact', id: 'theme-0' } } });
-        expect(readThemeProfilesSnapshot(fixture.scope).themeProfiles.activeProfileIds.dark).toBe('theme-0');
-        expect(readThemeProfilesSnapshot({ ...fixture.scope, accountId: 'another' }).themeProfiles.profiles).toEqual([]);
+        expect(findActiveThemeProfileForMode(readSelectedThemeProfiles(fixture.scope), 'dark')?.name).toBe('Theme 0');
+        expect(readSelectedThemeProfiles({ ...fixture.scope, accountId: 'another' }).profiles).toEqual([]);
     });
 
     it('keeps all forty header entries visible and stable through unrelated Artifact publications', async () => {

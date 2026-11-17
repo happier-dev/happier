@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
+import { useSelectedThemeProfiles } from '@/sync/store/useThemeProfiles';
 import { findActiveThemeProfileForMode } from './profiles/themeProfilePersistence';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { applyThemeRuntimeSelection } from './profiles/themeProfileRuntime';
@@ -17,7 +17,7 @@ function ThemeProfileRuntimeObserver() {
     const owner = getThemeTryOnOwner();
     const preview = React.useSyncExternalStore(owner.subscribe, owner.read, owner.read);
     const themePreference = useLocalSetting('themePreference');
-    const themeProfiles = useThemeProfiles();
+    const themeProfiles = useSelectedThemeProfiles();
     const light = findActiveThemeProfileForMode(themeProfiles, 'light');
     const dark = findActiveThemeProfileForMode(themeProfiles, 'dark');
     const finish = useLocalSetting('uiSurfaceFinish');

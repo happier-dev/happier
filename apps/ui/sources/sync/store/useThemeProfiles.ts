@@ -16,7 +16,7 @@ import { DEFAULT_THEME_PROFILES_LOCAL_STATE, readThemeProfileReferenceSelection 
 import { projectPluginThemeLibraryEntries, projectPluginThemeProfileDocument, projectThemeLibraryEntries } from '@/theme/profiles/themeProfilePresentation';
 import { readPluginThemeList, type PluginThemeListItem } from '@/theme/profiles/pluginThemeCatalog';
 import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
-import type { ThemeProfilesLocalStateV1, ThemeProfilesStateSnapshot } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 
 export const THEME_PROFILE_ARTIFACT_KINDS: readonly string[] = Object.freeze([THEME_ARTIFACT_KIND]);
 const NO_ARTIFACT_KINDS: readonly string[] = Object.freeze([]);
@@ -129,30 +129,37 @@ export function useThemeProfileDocument(reference: ThemeReference | null, enable
         document, failure: read.failure, retry: read.retry };
 }
 
-function snapshot(documents: readonly (ThemeProfileDocument | null)[]): ThemeProfilesStateSnapshot {
-    const [light, dark] = documents;
-    const profiles = documents.flatMap(document => document ? [document.profile] : []);
-    return { themeProfiles: { activeProfileIds: { light: light?.profile.id ?? null, dark: dark?.profile.id ?? null },
-        profiles: profiles.filter((profile, index) => profiles.findIndex(candidate => candidate.id === profile.id) === index) }, legacyProfileIds: {} };
+function selectedProfiles(documents: readonly (ThemeProfileDocument | null)[], references: readonly (ThemeReference | null)[]): ThemeProfilesLocalStateV1 {
+    // This paint-only adapter keys profiles by the admitted reference namespace;
+    // plugin-local document ids can coincide across contributions or with an Artifact.
+    const [light, dark] = documents.map((document, index) => {
+        const reference = references[index];
+        return document && reference
+            ? { ...document.profile, id: JSON.stringify(reference, Object.keys(reference).sort()) } : null;
+    });
+    const profiles = [light, dark].flatMap(profile => profile ? [profile] : []);
+    return { activeProfileIds: { light: light?.id ?? null, dark: dark?.id ?? null },
+        profiles: profiles.filter((profile, index) => profiles.findIndex(candidate => candidate.id === profile.id) === index) };
 }
 
 /** Runtime demands only the two selected documents; browsing uses the header hook above. */
-export function useThemeProfilesSnapshot(): ThemeProfilesStateSnapshot {
+export function useSelectedThemeProfiles(): ThemeProfilesLocalStateV1 {
     const input = getStorage()(useShallow(state => ({ selection: state.localSettings.themeProfileSelection, scope: state.settingsScope })), selectionScope);
     const references = React.useMemo(() => readThemeProfileReferenceSelection(input.selection), [input.selection]);
     const light = useThemeProfileDocument(references.light).document;
     const dark = useThemeProfileDocument(references.dark).document;
-    return React.useMemo(() => snapshot([light, dark]), [light, dark]);
+    return React.useMemo(() => selectedProfiles([light, dark], [references.light, references.dark]), [light, dark, references]);
 }
 
 /** Event-time reads never acquire bodies or disclose another Account's projection. */
-export function readThemeProfilesSnapshot(expectedScope?: AccountSettingsScope | null): ThemeProfilesStateSnapshot {
+export function readSelectedThemeProfiles(expectedScope?: AccountSettingsScope | null): ThemeProfilesLocalStateV1 {
     const state = getStorage().getState();
     if (expectedScope !== undefined && !areAccountSettingsScopesEqual(expectedScope, state.settingsScope)) {
-        return { themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE, legacyProfileIds: {} };
+        return DEFAULT_THEME_PROFILES_LOCAL_STATE;
     }
     const references = readThemeProfileReferenceSelection(state.localSettings.themeProfileSelection);
-    return snapshot([references.light, references.dark].map(reference => {
+    const selectedReferences = [references.light, references.dark];
+    return selectedProfiles(selectedReferences.map(reference => {
         if (reference?.kind === 'built-in') return getBuiltInThemeProfileDocument(reference.presetId);
         if (reference?.kind === 'plugin') {
             const item = readPluginThemeList().find(candidate => candidate.pluginId === reference.pluginId && candidate.contributionId === reference.contributionId);
@@ -161,9 +168,5 @@ export function readThemeProfilesSnapshot(expectedScope?: AccountSettingsScope |
         if (reference?.kind !== 'artifact' || !state.settingsScope) return null;
         const row = state.artifacts[reference.id];
         return row ? readThemeProfileArtifactDocument(row, state.settingsScope)?.document ?? null : null;
-    }));
-}
-
-export function useThemeProfiles(): ThemeProfilesLocalStateV1 {
-    return useThemeProfilesSnapshot().themeProfiles;
+    }), selectedReferences);
 }

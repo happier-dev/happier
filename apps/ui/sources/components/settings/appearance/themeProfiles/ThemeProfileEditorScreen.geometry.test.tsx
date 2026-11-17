@@ -3,7 +3,13 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
+import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
+import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 
 const route = vi.hoisted(() => ({ profileId: 'new' }));
@@ -23,6 +29,10 @@ vi.mock('react-native-reanimated', async () => {
 // The native gesture canvas is a third-party boundary; it is closed during
 // this editor/focus layout check. Keep the real input, swatch and popover owner.
 vi.mock('reanimated-color-picker', async () => (await import('@/dev/testkit/mocks/reanimatedColorPicker')).createReanimatedColorPickerMock());
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { ThemeProfileEditorScreen } = await import('./ThemeProfileEditorScreen');
@@ -34,7 +44,8 @@ it('fits the entire new theme draft at 390px before and after initial Name focus
     Object.defineProperties(window, { innerWidth: { configurable: true, value: 390 }, innerHeight: { configurable: true, value: 844 } });
     window.dispatchEvent(new Event('resize'));
     const store = getStorage();
-    const localSettings = store.getState().localSettings;
+    const originalState = store.getState();
+    const localSettings = originalState.localSettings;
     store.setState({ localSettings: { ...localSettings, themePreference: 'light' } });
     const host = document.createElement('div');
     host.style.height = '844px';
@@ -73,9 +84,19 @@ it('fits the entire new theme draft at 390px before and after initial Name focus
             'light', token.id, 'rgba(255, 128, 64, 0.75)', now);
         route.profileId = draft.id;
         await act(async () => {
-            store.setState({ localSettings: { ...localSettings, themePreference: 'light', themeProfiles: {
-                activeProfileIds: { light: null, dark: null }, profiles: [draft],
-            } } });
+            const parsed = parseThemeProfileDocument(draft);
+            if (!parsed.ok) throw new Error(parsed.error);
+            const entry = projectThemeLibraryEntry(parsed.document);
+            const scope = { serverId: 'geometry-home', accountId: 'geometry-owner' };
+            const row = { id: draft.id, sourceServerId: scope.serverId, ownerAccountId: scope.accountId,
+                access: 'owner', isDecrypted: true, title: entry.name, headerVersion: 1, bodyVersion: 1,
+                seq: 1, createdAt: 0, updatedAt: 0, body: JSON.stringify(parsed.document.raw),
+                rawHeader: { v: 1, kind: 'theme_profile.v1', title: entry.name, mode: entry.mode,
+                    themeSource: entry.source, compatibility: entry.compatibility, palette: projectThemeMiniaturePalette(draft) },
+            } satisfies DecryptedArtifact;
+            store.setState({ settingsScope: scope, localSettings: { ...localSettings, themePreference: 'light',
+                themeProfileSelection: { light: null, dark: null } } });
+            store.getState().applyArtifacts([row], {}, ['theme_profile.v1']);
             root.render(<ThemeProfileEditorScreen key={draft.id} />);
         });
         expect(host.querySelector(`[data-testid="settings-theme-color-reset-light-${token.id}"]`)).not.toBeNull();
@@ -89,7 +110,7 @@ it('fits the entire new theme draft at 390px before and after initial Name focus
         expect(input.right).toBeLessThanOrEqual(390);
     } finally {
         await act(async () => root.unmount());
-        store.setState({ localSettings });
+        store.setState(originalState, true);
         host.remove();
         route.profileId = 'new';
     }

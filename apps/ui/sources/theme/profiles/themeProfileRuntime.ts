@@ -422,20 +422,3 @@ export const commitThemeSelection = (input: CommitThemeSelectionInput): Promise<
         },
     });
 };
-
-export const resolveActivationModes = (input: Readonly<{
-    profileMode?: ThemeProfileMode | 'all';
-    themePreference?: ThemePreference;
-}>): readonly ThemeProfileMode[] => {
-    if (input.profileMode === 'light' || input.profileMode === 'dark') {
-        return [input.profileMode];
-    }
-    if (input.profileMode === 'all') {
-        return ['light', 'dark'];
-    }
-    const themePreference = input.themePreference;
-    if (themePreference === 'light' || themePreference === 'dark') {
-        return [themePreference];
-    }
-    return ['light', 'dark'];
-};

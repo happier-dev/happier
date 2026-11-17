@@ -2746,10 +2746,11 @@ An existing destination pending theme snapshot and checkpoint take precedence
 over an older server-identity alias; the alias is a fallback, so explicit
 deletions in the current snapshot cannot be resurrected by a union.
 
-The retained `yourThemes` settings Action is an adapter to the facade while its
-callers transition to theme Actions. Its read returns the canonical header
-inventory and tagged selection, loading headers on demand through the same
-Artifact owner. A missing Account context or failed load returns unavailable;
+The retained `yourThemes` settings declaration is read-only. Its read returns the
+canonical header inventory and tagged selection, loading headers on demand
+through the same Artifact owner. Import, duplicate, save and Save and Use enter
+the theme Actions, whose approval owner handles CSS-bearing agent input; generic
+Settings writes cannot replace the library or activate a document. A missing Account context or failed load returns unavailable;
 the read does not enumerate bodies. Older 0.2 clients cannot edit the new Artifact
 format. Upgrade preserves their saved input without an ongoing bidirectional
 settings/Artifact mirror.

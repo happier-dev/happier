@@ -9,15 +9,16 @@ import { Item } from '@/components/ui/lists/Item';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
-import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { useThemeActionExecution } from './useThemeActionExecution';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { isActionApprovalDeclinedErrorCode, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { getSupportedThemeProfileImportFormats, importThemeProfileFromJson } from '@/theme/profiles/themeProfileImportExport';
 import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
 import { nowThemeProfileTimestamp } from './themeProfileScreenUtils';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { THEMES_SETTINGS } from './themesSettings';
 
 async function readPickedThemeFile(entry: NativePickedFile): Promise<string> {
     if (entry.kind === 'web') {
@@ -30,7 +31,7 @@ async function readPickedThemeFile(entry: NativePickedFile): Promise<string> {
 export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const { setSetting } = useSettingActionFeedback();
+    const executeTheme = useThemeActionExecution();
     const [json, setJson] = React.useState('');
     const [pickedFiles, setPickedFiles] = React.useState<readonly NativePickedFile[]>([]);
     const pickedFile = pickedFiles[0];
@@ -67,13 +68,17 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
             return;
         }
         setError(null);
-        if (!await setSetting(THEMES_SETTINGS.settings.yourThemes,
-            SettingsDeclarationValueV1Schema.parse({ saveDocument: result.document.raw }))) return;
+        try { await executeTheme(THEME_ACTION_IDS.save, { document: result.document }); }
+        catch (error) {
+            if (!isActionApprovalDeclinedErrorCode(readActionErrorCodeV1(error)))
+                setError(resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
+            return;
+        }
         setWarnings(result.warnings.length);
         if (result.warnings.length === 0) {
             router.back();
         }
-    }, [json, pickedFile, pickedFiles, router, setSetting]);
+    }, [executeTheme, json, pickedFile, pickedFiles, router]);
 
     const pickFile = React.useCallback(async () => {
         try {

@@ -160,7 +160,7 @@ describe('theme profile library Action ingress', () => {
                 .rejects.toThrow('Artifact Account scope changed');
         } finally { standardCleanup(); await account.dispose(); }
     });
-    it('saves and selects a legacy activation beyond fifty profiles without removing siblings', async () => {
+    it('saves and selects an addressed theme beyond fifty profiles without removing siblings', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
             approvalWaivedSurfaces: { 'settings.set': ['ui'] },
         } }) });
@@ -168,13 +168,14 @@ describe('theme profile library Action ingress', () => {
             const existing = [document(firstId, 'Custom theme'), document(siblingId, 'Sibling theme'),
                 ...Array.from({ length: 48 }, (_, index) => document(`aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, '0')}`, `Theme ${index}`))];
             await seedLibrary(account, existing);
-            const profiles = existing.map(value => value.profile);
             const extra = document('theme-extra', 'Extra theme');
-            const result = await createFrontDoorActionExecute()('settings.set', { anchor: 'appearance.themeMode', value: {
-                activation: { profileId: extra.profile.id, profileMode: 'light', nextThemePreference: 'light', profile: extra.profile,
-                    before: { profiles, activeProfileIds: { light: null, dark: null } } }, reduceMotion: true,
-            } }, { surface: 'ui' });
-            requireActionSuccess(result, 'settings.set');
+            const execute = createFrontDoorActionExecute();
+            const saved = await execute(THEME_ACTION_IDS.save, { document: extra }, { surface: 'ui' });
+            requireActionSuccess(saved, THEME_ACTION_IDS.save);
+            const entriesBeforeSelect = await sync.withThemeProfileLibrary(library => library.list(), { expectedScope: account.scope });
+            const entry = entriesBeforeSelect.find(entry => entry.name === 'Extra theme')!;
+            const selected = await execute(THEME_ACTION_IDS.apply, { ref: entry.reference, mode: 'light' }, { surface: 'ui' });
+            requireActionSuccess(selected, THEME_ACTION_IDS.apply);
             const reference = storage.getState().localSettings.themeProfileSelection?.light;
             expect(reference?.kind).toBe('artifact');
             const entries = await sync.withThemeProfileLibrary(library => library.list(), { expectedScope: account.scope });
@@ -193,13 +194,11 @@ describe('theme profile library Action ingress', () => {
             const before = account.request.mock.calls.length;
             const saved = document(firstId, 'Save and activate');
             const execute = createFrontDoorActionExecute();
-            const result = await execute('settings.set', { anchor: 'appearance.themeMode', value: {
-                activation: { profileId: firstId, profileMode: 'light', nextThemePreference: 'light', saveDocument: saved.raw },
-                reduceMotion: true,
-            } }, { surface: 'ui' });
+            requireActionSuccess(await execute(THEME_ACTION_IDS.save, { document: saved }, { surface: 'ui' }), THEME_ACTION_IDS.save);
+            const result = await execute(THEME_ACTION_IDS.apply, { ref: { kind: 'artifact', id: firstId }, mode: 'light' }, { surface: 'ui' });
             expect(account.request.mock.calls.slice(before).filter(([url, init]) =>
                 new URL(String(url)).pathname === '/v1/artifacts' && (!init?.method || init.method === 'GET'))).toEqual([]);
-            requireActionSuccess(result, 'settings.set');
+            requireActionSuccess(result, THEME_ACTION_IDS.apply);
             expect(storage.getState().localSettings.themeProfileSelection?.light).toEqual({ kind: 'artifact', id: firstId });
             expect(account.settingsWrites).toEqual([]);
         } finally { standardCleanup(); await account.dispose(); }
@@ -256,6 +255,25 @@ describe('theme profile library Action ingress', () => {
             expect(storage.getState().localSettings.uiFontScale).toBe(1.15);
             expect(account.artifacts.readPlainBody(siblingId)).toBe(siblingBefore);
             expect(account.settingsWrites).toEqual([]);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
+    it('keeps generic theme settings readable while writes use the theme Action owner', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+        try {
+            await seedLibrary(account);
+            const execute = createFrontDoorActionExecute();
+            const anchor = 'appearance.themes.yourThemes';
+            const read = await execute('settings.get', { anchor }, { surface: 'ui' });
+            expect(read).toMatchObject({ ok: true, result: { anchor } });
+            const before = account.artifacts.readPlainBody(firstId);
+            for (const css of ['', '[data-surface="composer"] { display: none }']) {
+                const value = document(firstId, 'Generic write');
+                const result = await execute('settings.set', { anchor,
+                    value: { saveDocument: { ...value.raw, css } } }, { surface: 'ui' });
+                expect(result).toMatchObject({ ok: false, errorCode: 'setting_read_only' });
+                expect(account.artifacts.readPlainBody(firstId)).toBe(before);
+            }
         } finally { standardCleanup(); await account.dispose(); }
     });
 

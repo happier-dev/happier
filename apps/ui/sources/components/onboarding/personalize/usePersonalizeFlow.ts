@@ -12,7 +12,6 @@ import { personalizeProgressState, readPersonalizeProgress, useStoredPersonalize
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { readThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
 
 import { createPersonalizeFlowActions, type PersonalizeFlowPorts } from './personalizeFlowController';
 import {
@@ -40,10 +39,7 @@ export function usePersonalizeFlowActions(assertCurrent: () => void) {
             readAccount: () => storage.getState().settings,
             readLocal: () => storage.getState().localSettings,
             writeSetting: (write) => { assertCurrent(); return setSetting(write, write.value); },
-            applyTheme: (mode) => {
-                const snapshot = readThemeProfilesSnapshot();
-                return applyThemeSelection(mode, snapshot.themeProfiles, snapshot.legacyProfileIds);
-            },
+            applyTheme: mode => applyThemeSelection(mode),
             readProgress: () => normalizePersonalizeProgress(readPersonalizeProgress()),
             writeProgress: (progress) => {
                 assertCurrent();

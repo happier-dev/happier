@@ -19,6 +19,7 @@ import { parseThemeProfilesLocalState, readThemeProfileReferenceSelection } from
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { THEME_ARTIFACT_KIND, ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { ThemeProfileRuntimeSync } from '@/theme/ThemeProfileRuntimeSync';
 import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import { getThemePresetSourceReferenceId } from './themeProfilePresetOptions';
 import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
@@ -267,14 +268,14 @@ const findHeaderMenuAction = async (screen: Awaited<ReturnType<typeof renderSett
 );
 
 async function renderProfilesScreen() {
-    const screen = await renderSettingsView(React.createElement(ThemeProfilesSettingsScreen), { flushOptions: { cycles: 0 } });
+    const screen = await renderSettingsView(React.createElement(React.Fragment, null, React.createElement(ThemeProfileRuntimeSync), React.createElement(ThemeProfilesSettingsScreen)), { flushOptions: { cycles: 0 } });
     await measureMountedCollections(screen, { width: 1200, height: 6000 });
     return screen;
 }
 
 async function renderEditorScreen(profileId: string) {
     shared.params = { profileId };
-    return renderSettingsView(React.createElement(ThemeProfileEditorScreen), { flushOptions: { cycles: 0 } });
+    return renderSettingsView(React.createElement(React.Fragment, null, React.createElement(ThemeProfileRuntimeSync), React.createElement(ThemeProfileEditorScreen)), { flushOptions: { cycles: 0 } });
 }
 
 async function renderImportScreen() {
@@ -510,7 +511,7 @@ describe('Theme profile settings screen', () => {
 
     it('starts a duplicated theme from the theme it was duplicated from', async () => {
         shared.params = { profileId: 'new', from: 'paperLight' };
-        const screen = await renderSettingsView(React.createElement(ThemeProfileEditorScreen), { flushOptions: { cycles: 0 } });
+        const screen = await renderSettingsView(React.createElement(React.Fragment, null, React.createElement(ThemeProfileRuntimeSync), React.createElement(ThemeProfileEditorScreen)), { flushOptions: { cycles: 0 } });
 
         expect(screen.findByTestId('settings-theme-profile-start:paperLight')?.props.accessibilityState?.selected).toBe(true);
     });
@@ -536,7 +537,7 @@ describe('Theme profile editor', () => {
         vi.stubGlobal('document', dom.window.document);
         onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
         shared.params = { profileId: 'new', from: 'paperLight', view: 'css' };
-        const screen = await renderSettingsView(React.createElement(ThemeProfileEditorScreen), { flushOptions: { cycles: 0 } });
+        const screen = await renderSettingsView(React.createElement(React.Fragment, null, React.createElement(ThemeProfileRuntimeSync), React.createElement(ThemeProfileEditorScreen)), { flushOptions: { cycles: 0 } });
         expect(screen.findByTestId('settings-theme-profile-css')).not.toBeNull();
     });
 
@@ -572,32 +573,29 @@ describe('Theme profile editor', () => {
         expect(saved().seeds).toEqual({ futureTone: 0.4 });
         expect(saved().futurePresentation).toEqual(raw.futurePresentation);
     });
-    it('saves its addressed draft while preserving preferences and a theme arriving during activation', async () => {
+    it('saves its addressed draft without animating its live preview or replacing unrelated arrivals', async () => {
         const edited = baseProfile('ocean', { light: {}, dark: { 'background.canvas': '#123456' } });
         setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [edited] });
         const screen = await renderEditorScreen('ocean');
         shared.setRootViewBackgroundColor.mockClear();
         shared.setStatusBarStyle.mockClear();
-        // Keep the real document beneath the animation boundary: the save spinner
-        // legitimately injects its shared style sheet while the transition waits.
         const { JSDOM } = await import('jsdom');
-        const dom = new JSDOM();
+        const dom = new JSDOM('', { pretendToBeVisual: true });
+        const transition = vi.fn();
         Object.assign(dom.window.document.documentElement, { animate: vi.fn() });
-        Object.assign(dom.window.document, {
-            startViewTransition: (update: () => Promise<void>) => ({
-                ready: Promise.resolve().then(async () => {
-                    storage.getState().applyLocalSettings({ themePreference: 'dark', uiFontScale: 1.2 });
-                    setThemeProfiles({ activeProfileIds: getThemeProfiles().activeProfileIds,
-                        profiles: [{ ...edited, overrides: { light: {}, dark: { 'background.canvas': '#654321' } } }, baseProfile('arrived-during-transition')] });
-                    await update();
-                }),
-            }),
-        });
+        Object.assign(dom.window.document, { startViewTransition: transition });
         vi.stubGlobal('document', dom.window.document);
         onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
+        await act(async () => {
+            storage.getState().applyLocalSettings({ themePreference: 'dark', uiFontScale: 1.2 });
+            setThemeProfiles({ activeProfileIds: getThemeProfiles().activeProfileIds,
+                profiles: [{ ...edited, overrides: { light: {}, dark: { 'background.canvas': '#654321' } } }, baseProfile('arrived-during-transition')] });
+        });
+        await vi.waitFor(() => expect(getThemeTryOnOwner().read()).not.toBeNull());
 
         await saveEditor(screen);
 
+        expect(transition).not.toHaveBeenCalled();
         expect(getThemeProfiles().profiles.map(profile => profile.id)).toEqual(['ocean', 'arrived-during-transition']);
         expect(storage.getState().localSettings).toMatchObject({ themePreference: 'dark', uiFontScale: 1.2 });
         expect(shared.setTheme).toHaveBeenLastCalledWith('dark');
@@ -956,7 +954,7 @@ describe('Theme profile editor', () => {
         expect(shared.routerBack).toHaveBeenCalled();
     });
 
-    it('saves and activates through the runtime profile activation path', async () => {
+    it('saves and keeps its addressed theme through the shared runtime owner', async () => {
         setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderEditorScreen('ocean');
 
@@ -1141,7 +1139,6 @@ describe('Theme profile import and export screens', () => {
         });
     });
 
-
     it('imports a theme JSON file picked from disk', async () => {
         const json = exportThemeProfileToJson(baseProfile('shared', { light: { 'background.canvas': '#123456' }, dark: {} }));
         shared.nativePickFiles.mockResolvedValueOnce([{ kind: 'web', file: new File([json], 'theme.json', { type: 'application/json' }) }]);
@@ -1179,7 +1176,6 @@ describe('Theme profile import and export screens', () => {
         expect(getThemeProfiles().profiles).toHaveLength(0);
         expect(shared.routerBack).not.toHaveBeenCalled();
     });
-
 
     it('shows the supported import formats hint on the import screen', async () => {
         const screen = await renderImportScreen();

@@ -1,5 +1,5 @@
 import { BotMotionSchema } from '@happier-dev/protocol/account/settings/accountSettings';
-import { useThemeLibraryEntries, useThemeProfiles } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryEntries, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -51,7 +51,6 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ItemDensityChoiceRow } from '@/components/settings/appearance/ItemDensityPreview';
-import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
 import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -107,10 +106,8 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const [showChatCodeBlockWrapControls, setShowChatCodeBlockWrapControls] = useSettingMutable('showChatCodeBlockWrapControls');
     const [wrapChatCodeBlocks, setWrapChatCodeBlocks] = useSettingMutable('wrapChatCodeBlocks');
     const [themePreference] = useLocalSettingMutable('themePreference');
-    const themeProfiles = useThemeProfiles();
     const entries = useThemeLibraryEntries();
-    const [storedSelection] = useLocalSettingMutable('themeProfileSelection');
-    const selection = React.useMemo(() => readThemeProfileReferenceSelection(storedSelection), [storedSelection]);
+    const selection = useThemeProfileReferenceSelection();
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const previewUiFontScale = useLocalSettingPreview('uiFontScale');
     const [uiContentWidthMode, setUiContentWidthMode] = useLocalSettingMutable('uiContentWidthMode');
@@ -141,7 +138,9 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     // library screen owns choosing them.
     const themesSummary = React.useMemo(() => {
         const options = buildThemePresetSourceOptions(entries);
-        const nameFor = (profileId: string | null) => {
+        const nameFor = (mode: 'light' | 'dark') => {
+            const reference = selection[mode];
+            const profileId = reference ? getThemePresetSourceReferenceId(reference) : null;
             const option = profileId ? options.find((candidate) => candidate.id === profileId) : null;
             return option?.title ?? t('common.default');
         };
@@ -150,7 +149,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
             slots: <Text style={styles.themesSummary}>{t('settingsAppearance.themesSummary', {
                 light: '{light}', dark: '{dark}',
             }).split(/(\{light\}|\{dark\})/).map((part, index) => part === '{light}' || part === '{dark}'
-                ? <Text key={index} style={styles.themeName}>{nameFor(selection[part === '{light}' ? 'light' : 'dark'] ? getThemePresetSourceReferenceId(selection[part === '{light}' ? 'light' : 'dark']!) : null)}</Text>
+                ? <Text key={index} style={styles.themeName}>{nameFor(part === '{light}' ? 'light' : 'dark')}</Text>
                 : part)}</Text>,
             count: t('settingsAppearance.themesCount', { builtIn: options.length - custom, custom }),
         };
@@ -339,9 +338,9 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         value={themeModeValue}
                         onChange={(next) => {
                             if (next === 'adaptive') {
-                                return applyThemeSelection('adaptive', themeProfiles);
+                                return applyThemeSelection('adaptive');
                             } else if (next === 'light' || next === 'dark') {
-                                return applyThemeSelection(next, themeProfiles);
+                                return applyThemeSelection(next);
                             }
                         }}
                         options={[

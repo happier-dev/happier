@@ -62,6 +62,11 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 }).module);
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    return { ...original, createFrontDoorActionExecute:
+        (await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary')).createFrontDoorActionExecuteForVitest(original) };
+});
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 // Load the real screen after transport installation, before a control interaction's deadline.
@@ -613,7 +618,7 @@ describe('declared setting Action writer', () => {
             expect(account.settingsWrites).toEqual([]);
         } finally { await screen.unmount(); await account.dispose(); }
     });
-    it('admits device-local compound theme selection without losing Reset profile semantics', async () => {
+    it('admits device-local mode selection without replacing tagged theme references', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
         }) });
@@ -621,20 +626,20 @@ describe('declared setting Action writer', () => {
         let write: ReturnType<typeof useSettingActionWriter> | undefined;
         function Probe() { apply = useApplyThemeSelection(); write = useSettingActionWriter(); return null; }
         try {
-            const initialSelection = { light: null, dark: 'nightDark' };
+            const initialSelection = { light: null, dark: { kind: 'artifact' as const, id: 'unloaded-theme' } };
             storage.getState().applyLocalSettings({ themePreference: 'light', themeProfileSelection: initialSelection });
             await renderScreen(<Probe />);
-            await act(async () => { await apply!('dark', DEFAULT_THEME_PROFILES_LOCAL_STATE); });
+            await act(async () => { await apply!('dark'); });
             expect(storage.getState().localSettings.themePreference).toBe('light');
             expect(storage.getState().localSettings.themeProfileSelection).toEqual(initialSelection);
             await act(async () => { account.replaceSettings(settingsParse({})); });
-            await act(async () => { await apply!('dark', DEFAULT_THEME_PROFILES_LOCAL_STATE); });
+            await act(async () => { expect(await apply!('dark')).toBe(true); });
             expect(storage.getState().localSettings).toMatchObject({ themePreference: 'dark',
-                themeProfileSelection: DEFAULT_THEME_PROFILES_LOCAL_STATE.activeProfileIds });
+                themeProfileSelection: initialSelection });
             await act(async () => {
                 // Scalar consumers remain supported; structured input is strict and does not weaken neighbors.
                 expect(await write!({ anchor: 'appearance.themeMode' }, 'light')).toMatchObject({ ok: true });
-                for (const value of ['invalid', { themePreference: 'dark', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE, extra: true },
+                for (const value of ['invalid', { themePreference: 'dark', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE }, { themePreference: 'dark', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE, extra: true },
                     { themePreference: 'dark', themeProfiles: { ...DEFAULT_THEME_PROFILES_LOCAL_STATE, extra: true } }]) {
                     expect(await write!({ anchor: 'appearance.themeMode' }, SettingsDeclarationValueV1Schema.parse(value)))
                         .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
@@ -656,10 +661,10 @@ describe('declared setting Action writer', () => {
         const screen = await renderScreen(<AuthProvider initialCredentials={null}><Probe /></AuthProvider>);
         expect(getCurrentAuth()).toMatchObject({ credentialAuthorityKind: 'none', isAuthenticated: false });
         const retained = apply!;
-        await act(async () => { await retained('dark', DEFAULT_THEME_PROFILES_LOCAL_STATE); });
+        await act(async () => { await retained('dark'); });
         expect(storage.getState().localSettings.themePreference).toBe('dark');
         await screen.unmount();
-        await retained('light', DEFAULT_THEME_PROFILES_LOCAL_STATE);
+        await retained('light');
         expect(storage.getState().localSettings.themePreference).toBe('dark');
     });
     it('rechecks the theme caller guard at persistence after approval', async () => {
@@ -668,23 +673,26 @@ describe('declared setting Action writer', () => {
         } }) });
         let current = true;
         const assertCurrent = () => { if (!current) throw new Error('retired theme editor'); };
+        let answer: ((accepted: boolean) => void) | undefined;
+        vi.mocked(Modal.confirm).mockClear();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise<boolean>(resolve => { answer = resolve; }));
         let apply: ReturnType<typeof useApplyThemeSelection> | undefined;
         function Probe() { apply = useApplyThemeSelection(assertCurrent); return null; }
         try {
             storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE });
             await renderScreen(<Probe />);
             let pending!: Promise<boolean>;
-            await act(async () => { pending = apply!('dark', DEFAULT_THEME_PROFILES_LOCAL_STATE); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
+            await act(async () => { pending = apply!('dark'); });
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
+            expect(account.artifacts.list()).toEqual([]);
             current = false;
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
-            await pending;
+            await act(async () => { answer!(true); expect(await pending).toBe(false); });
             expect(storage.getState().localSettings.themePreference).toBe('light');
         } finally { standardCleanup(); await account.dispose(); }
     });
     it('retains an uncommitted theme editor draft when activation is Off', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
-            actions: { 'settings.set': { disabledSurfaces: ['ui'] } },
+            actions: { 'appearance.themes.keep': { disabledSurfaces: ['ui'] } },
         } }) });
         try {
             storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE });
@@ -699,8 +707,11 @@ describe('declared setting Action writer', () => {
     });
     it('keeps theme activation in originating custody and retains a declined draft', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
-            actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } },
+            actions: { 'appearance.themes.keep': { approvalRequiredSurfaces: ['ui'] } },
         } }) });
+        let answer: ((accepted: boolean) => void) | undefined;
+        vi.mocked(Modal.confirm).mockClear();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise<boolean>(resolve => { answer = resolve; }));
         try {
             storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE });
             routeParams.current = { profileId: 'new' };
@@ -709,14 +720,11 @@ describe('declared setting Action writer', () => {
             await act(async () => { screen.tree.changeTextByTestId('settings-theme-profile-name', 'Pending theme'); });
             let saving!: Promise<void>;
             await act(async () => { saving = pressTestInstanceAsync(screen.findByTestId('settings-theme-profile-save')!); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            const request = JSON.parse(account.artifacts.readPlainBody(account.artifacts.list()[0]!.id)!);
-            expect(request).toMatchObject({ approval: { flow: 'blocking' }, actionId: 'settings.set',
-                actionArgs: { anchor: 'appearance.themeMode', value: { activation: { profile: { name: 'Pending theme' } } } } });
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
+            expect(account.artifacts.list()).toEqual([]);
             expect(storage.getState().localSettings.themeProfiles.profiles).toEqual([]);
             vi.mocked(Modal.alert).mockClear();
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
-            await saving;
+            await act(async () => { answer!(false); await saving; await flushHookEffects(); });
             expect(storage.getState().localSettings.themeProfiles.profiles).toEqual([]);
             expect(screen.findByTestId('settings-theme-profile-name')?.props.value).toBe('Pending theme');
             expect(Modal.alert).not.toHaveBeenCalled();

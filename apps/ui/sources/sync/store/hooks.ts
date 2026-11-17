@@ -16,7 +16,7 @@ export {
   useLocalSetting,
 } from './settingsReadHooks';
 import { useAiLaunchProfiles } from './useAiLaunchProfiles';
-export { useThemeProfiles, useThemeProfilesSnapshot } from './useThemeProfiles';
+export { useSelectedThemeProfiles, useThemeProfileReferenceSelection } from './useThemeProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { sync } from '@/sync/sync';
 import type { PeripheralFeed } from '@/sync/engine/viewDemandSync';

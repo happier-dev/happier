@@ -22,7 +22,7 @@ const { getThemeTryOnOwner, getThemeRegistryLifecycle } = await import('@/theme/
 const { storage } = await import('@/sync/domains/state/storage');
 const { useRegistryItems } = await import('@/registries/useRegistryItems');
 const { storeKinds } = await import('./catalog/storeKinds');
-const { readThemeLibrarySnapshot, readThemeProfilesSnapshot } = await import('@/sync/store/useThemeProfiles');
+const { readThemeLibrarySnapshot, readSelectedThemeProfiles } = await import('@/sync/store/useThemeProfiles');
 const { projectInstalledStoreThemeRows } = await import('./catalog/storeThemes');
 const { presentInventoryRow } = await import('./inventory/inventoryRows');
 const { readStoreListingRoute } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
@@ -171,5 +171,5 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     expect(view()?.onUninstall).toBeUndefined();
     // The library retains the preference; a missing selected Artifact renders the mode's base.
     expect(storage.getState().localSettings.themeProfileSelection.light).toEqual(selected);
-    expect(readThemeProfilesSnapshot(scope).themeProfiles.activeProfileIds.light).toBeNull();
+    expect(readSelectedThemeProfiles(scope).activeProfileIds.light).toBeNull();
 });

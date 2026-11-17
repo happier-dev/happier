@@ -47,10 +47,10 @@ installDisconnectedServerSocketBoundary();
 
 const { useToggleThemeMode, useApplyThemeSelection } = await import('./useApplyThemeSelection');
 
-const CUSTOM_PROFILES = { activeProfileIds: { light: null, dark: 'nightDark' }, profiles: [] };
+const CUSTOM_SELECTION = { light: null, dark: { kind: 'artifact' as const, id: 'unloaded-theme' } };
 
 async function toggleFrom(params: Readonly<{ preference: 'adaptive' | 'light' | 'dark'; screenDark: boolean; systemScheme: 'light' | 'dark' }>) {
-    storage.getState().applyLocalSettings({ themePreference: params.preference, themeProfiles: CUSTOM_PROFILES });
+    storage.getState().applyLocalSettings({ themePreference: params.preference, themeProfileSelection: CUSTOM_SELECTION });
     shared.screenDark = params.screenDark;
     shared.systemScheme = params.systemScheme;
     const hook = await renderHook(() => useToggleThemeMode());
@@ -71,11 +71,18 @@ afterEach(async () => {
 });
 
 describe('useToggleThemeMode', () => {
+    it('does not acquire selected theme bodies for the mounted mode control', async () => {
+        storage.getState().applyLocalSettings({ themeProfileSelection: CUSTOM_SELECTION });
+        account.request.mockClear();
+        await renderHook(() => useToggleThemeMode());
+        const artifactReads = account.request.mock.calls.filter(([url]) => String(url).includes('/artifacts/'));
+        expect(artifactReads).toHaveLength(0);
+    });
     it('returns the commit Promise and propagates a refused settings write', async () => {
-        storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: CUSTOM_PROFILES });
+        storage.getState().applyLocalSettings({ themePreference: 'light', themeProfileSelection: CUSTOM_SELECTION });
         const failure = new Error('settings scope changed');
         const hook = await renderHook(() => useApplyThemeSelection(() => { throw failure; }));
-        await expect(hook.getCurrent()('dark', CUSTOM_PROFILES)).rejects.toBe(failure);
+        await expect(hook.getCurrent()('dark')).rejects.toBe(failure);
         expect(storage.getState().localSettings.themePreference).toBe('light');
         expect(shared.setTheme).not.toHaveBeenCalled();
     });
@@ -91,9 +98,16 @@ describe('useToggleThemeMode', () => {
     it('flips an explicit mode and keeps the theme each mode uses', async () => {
         const fromDark = await toggleFrom({ preference: 'dark', screenDark: true, systemScheme: 'light' });
         expect(fromDark.themePreference).toBe('light');
-        expect(fromDark.themeProfiles).toEqual(CUSTOM_PROFILES);
-        expect(fromDark.themeProfileSelection).toEqual(CUSTOM_PROFILES.activeProfileIds);
+        expect(fromDark.themeProfileSelection).toEqual(CUSTOM_SELECTION);
 
         expect((await toggleFrom({ preference: 'light', screenDark: false, systemScheme: 'dark' })).themePreference).toBe('dark');
+    });
+});
+
+// The old whole-library settings payloads no longer have a producer: editors use addressed Actions.
+describe('theme settings input ownership', () => {
+    it('rejects whole-library replacement through the mode setting', async () => {
+        const { themeModeStorageBinding } = await import('./themeModeSettingBinding');
+        expect(themeModeStorageBinding.parse({ themePreference: 'dark', themeProfiles: { profiles: [], activeProfileIds: { light: null, dark: null } } })).toEqual({ success: false });
     });
 });
