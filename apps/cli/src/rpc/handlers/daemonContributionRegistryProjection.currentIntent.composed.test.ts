@@ -8,8 +8,7 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
-import { buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedActionContribution } from '@/plugins/projection/registry/types';
@@ -32,6 +31,8 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 
 const sockets = vi.hoisted(() => ({ io: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: sockets.io }));
@@ -53,6 +54,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
         const plugin = definePlugin({ id: 'acme.rpc-environment-scope', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
             actions: { publish: { title: 'Publish preview', scopes: ['global'], surfaces: ['ui'],
+                placementBindings: ['composer.primary'],
                 dangerLevel: 'writesRemote', approvalScope: 'environment', confirmation: { title: 'Publish preview status?' },
                 inputSchema: { type: 'object', properties: { serverId: { type: 'string' }, environmentId: { type: 'string' } },
                     required: ['serverId', 'environmentId'], additionalProperties: false },
@@ -92,18 +94,23 @@ describe('plugin Action current intent through the registered daemon ingress', (
             return { status: 200, data: { ok: true, environment, targetLinks: [] } };
         });
         const client = new ApiMachineClient(token, { id: 'machine-1', encryptionMode: 'plain', metadata: null,
-            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
+            resolveCurrentServerIdentityId: () => serverId,
+        });
         const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
         if (!(manager instanceof RpcHandlerManager)) throw new Error('missing_machine_rpc_owner');
         const request = { machineId: 'machine-1', expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId?.(plugin.manifest.id),
-            qualifiedActionId: `${plugin.manifest.id}/publish`, input: { serverId, environmentId: environment.id }, executionSurface: 'ui' };
+            qualifiedActionId: `${plugin.manifest.id}/publish`, input: { serverId, environmentId: environment.id }, executionSurface: 'ui',
+            invocation: { kind: 'hostPresentedComposer', currentComposerIntent: {
+                composer: { kind: 'newSession', instanceId: 'environment-confirmation' }, revision: 1 } } };
         try {
             expect(await manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, request))
                 .toMatchObject({ ok: false, code: 'plugin_action_current_intent_unavailable', actionHandlerInvocation: 'notStarted' });
             expect(effects).toEqual([]);
             expect(reads).toHaveBeenCalledTimes(1);
             expect(await manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-                { ...request, presentUserIntent: 'confirmed' })).toMatchObject({ ok: true, result: { published: true } });
+                { ...request, presentUserIntent: 'confirmed' }, { verifiedPeerAuthority: 'present_user' }))
+                .toMatchObject({ ok: true, result: { published: true } });
             expect(effects).toEqual([request.input]);
             expect(reads).toHaveBeenCalledTimes(2);
         } finally { await client.shutdown(); await fixture.dispose(); }
@@ -117,11 +124,14 @@ describe('plugin Action current intent through the registered daemon ingress', (
         const pluginId = 'acme.production-intent';
         const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
             plugins: [{ manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { actions: [{
-                id: 'apply', title: 'Apply', scopes: ['global'], surfaces: ['agent', 'cli', 'mcp'],
-                dangerLevel: 'writesLocal', confirmation: { title: 'Apply change?' },
+                id: 'apply', title: 'Apply', scopes: ['global'], surfaces: ['agent', 'cli', 'mcp', 'plugin'],
+                dangerLevel: 'writesLocal', confirmation: { title: 'Apply change?' }, confirmationWhen: { presentUserUi: true, cli: true },
                 execution: { target: 'daemon' }, inputSchema: { type: 'object', properties: { enabled: { type: 'boolean' } }, required: ['enabled'], additionalProperties: false },
                 resultSchema: { type: 'object', properties: { applied: { type: 'boolean' } }, required: ['applied'], additionalProperties: false },
-            }] } }), files: { 'daemon.mjs': "export function activate(api) { api.actions.register('apply', input => ({ applied: input.enabled })); }" } }],
+            }, { id: 'invoke', title: 'Client caller', scopes: ['global'], surfaces: ['cli'],
+                dangerLevel: 'safe', execution: { target: 'client',
+                    client: { artifactId: 'client-caller', exportName: 'activate' }, platforms: ['web'] } }] } }),
+            files: { 'daemon.mjs': "export function activate(api) { api.actions.register('apply', input => ({ applied: input.enabled })); }" } }],
             runtimeOptions: { resolveCurrentMachineId: () => 'machine-1',
                 resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_production_intent', machineId: 'machine-1' }) },
         });
@@ -132,8 +142,10 @@ describe('plugin Action current intent through the registered daemon ingress', (
         });
         vi.spyOn(runtimeLease, 'acquireAuthoritativePluginRuntimeRegistryLease').mockImplementation(async () => ({
             registry: fixture.registry, source: 'ephemeral', durableRevision: -1, release: async () => {},
+            resolveCurrentPluginMaterializationRef: fixture.lease.resolveCurrentPluginMaterializationRef,
         }));
         const stored: TargetActionApprovalRequestV1[] = [];
+        const rows = new Map<string, Record<string, unknown>>();
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
             requests.push(path);
@@ -141,27 +153,41 @@ describe('plugin Action current intent through the registered daemon ingress', (
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path.startsWith('/v1/artifacts/')) {
+                const row = rows.get(path.split('/').at(-1)!);
+                return { status: row ? 200 : 404, data: row ?? {} };
+            }
             throw new Error(`Unexpected approval read: ${path}`);
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
             requests.push(new URL(String(url)).pathname);
             expect(String(url)).toMatch(/\/v1\/artifacts$/u);
-            const envelope = decodePlainArtifactStoredContent(input.body);
+            const mutation = readCarrierMutation(input);
+            if (typeof mutation.id !== 'string' || typeof mutation.body !== 'string') throw new Error('invalid_approval_body');
+            const envelope = decodePlainArtifactStoredContent(mutation.body);
             if (!envelope || typeof envelope !== 'object' || !('body' in envelope) || typeof envelope.body !== 'string') throw new Error('invalid_approval_body');
             stored.push(TargetActionApprovalRequestV1Schema.parse(JSON.parse(envelope.body)));
-            return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
+            rows.set(mutation.id, { ...mutation, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
+                publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+            return { status: 200, data: { id: mutation.id, headerVersion: 1, bodyVersion: 1 } };
         });
         const client = new ApiMachineClient(token, { id: 'machine-1', encryptionMode: 'plain', metadata: null,
-            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
+            resolveCurrentServerIdentityId: () => 'srv_production_intent',
+        });
         const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
         if (!(manager instanceof RpcHandlerManager)) throw new Error('missing_machine_rpc_owner');
         try {
-            expect(await fixture.registry.resolveCurrentPluginApprovalReplayPlacement?.(pluginId)).toEqual({
+            expect(await fixture.registry.resolveCurrentPluginApprovalReplayPlacement?.(pluginId)).toMatchObject({
                 serverId: configuration.activeServerId, machineId: 'machine-1',
             });
             const result = await manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, {
                 machineId: 'machine-1', expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId?.(pluginId),
                 qualifiedActionId: `${pluginId}/apply`, input: { enabled: false }, executionSurface: 'cli',
+                invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId, contributionLocalId: 'invoke',
+                    occurrenceId: fixture.registry.readPluginOccurrenceId?.(pluginId),
+                    sourceCustody: fixture.registry.readPluginSourceCustody?.(pluginId),
+                    materializationRef: fixture.registry.resolveCurrentPluginMaterializationRef?.(pluginId) } },
             });
             expect(result, JSON.stringify({ result, unavailableReasons, requests })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } });
             expect(stored).toHaveLength(1);
@@ -185,24 +211,29 @@ describe('plugin Action current intent through the registered daemon ingress', (
         const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
         const sourceCustody = { kind: 'development' as const, registeredRootId: 'intent-root' };
         const confirmation = { title: 'Apply this change?' };
+        const confirmationWhen = { presentUserUi: true, cli: true };
         const inputSchema = { type: 'object', properties: { value: { type: 'string' }, releaseTag: { type: 'string' }, requestId: { type: 'string' } }, required: ['value', 'releaseTag', 'requestId'], additionalProperties: false };
         const resultSchema = { type: 'object', properties: { applied: { type: 'string' } }, required: ['applied'], additionalProperties: false };
         let applied: unknown;
         let decision: 'approve' | 'reject' = 'approve';
         let stored: TargetActionApprovalRequestV1 | null = null;
+        const createdApprovals: TargetActionApprovalRequestV1[] = [];
         let nextRequestId = 0;
         let artifactId = '';
         const action = { provenance: 'external', source: { kind: 'path' }, pluginId,
-            definition: { kindVersion: 1, id: 'apply', title: 'Apply', description: null, safety: 'safe', dangerLevel: 'writesLocal', confirmation,
+            definition: { kindVersion: 1, id: 'apply', title: 'Apply', description: null, safety: 'safe', dangerLevel: 'writesLocal', confirmation, confirmationWhen,
                 execution: { target: 'daemon' }, scopes: ['global'], placements: [], slash: null, bindings: null, examples: null,
                 ...(tracked ? { operation: { version: 1 as const, visibility: 'activity' as const, progress: 'reported' as const, presentation: { onStart: 'detail' as const } } } : {}),
-                surfaces: { ui: true, agent: true, mcp: true, cli: true, voice: false, rpc: false, api: false, plugin: false },
+                surfaces: { ui: true, agent: true, mcp: true, cli: true, voice: false, rpc: false, api: false, plugin: true },
                 inputHints: null, inputSchema, outputSchema: resultSchema, contributionSurfaces: ['ui'], placementBindings: [] },
         } satisfies ResolvedActionContribution;
-        const contributes = createResolvedContributionRegistry({ agents: [], actions: [action], occurrenceIdsByPluginId: { [pluginId]: occurrenceId } });
+        const contributes = createResolvedContributionRegistry({ agents: [], actions: [action, {
+            ...action, definition: { ...action.definition, id: 'invoke', dangerLevel: 'safe', confirmation: undefined, confirmationWhen: undefined,
+                execution: { target: 'client', client: { artifactId: 'client-caller', exportName: 'activate' }, platforms: ['web'] } },
+        }], occurrenceIdsByPluginId: { [pluginId]: occurrenceId } });
         const targetActionInvocations = createTargetActionInvocationRegistry({
             actions: [{ pluginId, pluginVersion: '1.0.0', occurrenceId, sourceCustody, localId: 'apply',
-                definition: { id: 'apply', dangerLevel: 'writesLocal', confirmation, scopes: ['global'], surfaces: ['ui', 'agent', 'mcp', 'cli'], inputSchema, resultSchema,
+                definition: { id: 'apply', dangerLevel: 'writesLocal', confirmation, confirmationWhen, scopes: ['global'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], inputSchema, resultSchema,
                     ...(confidential ? { secretInputPaths: ['releaseTag'], secretInputLabels: { releaseTag: 'Release credential' } } : {}) },
                 inputParser: input => ({ success: true, data: {
                     value: `${String(Reflect.get(input as object, 'value'))}-normalized`,
@@ -233,6 +264,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
         // Only credential files, HTTP persistence and socket transport are replaced.
         // The production credentialed approval factory, Artifact codecs and strict reader stay real.
         const rows = new Map<string, Record<string, unknown>>();
+        let onApprovalPublished: ((artifactId: string) => void) | undefined;
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token, encryption: null });
         vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue({ token, encryption: null });
@@ -252,9 +284,11 @@ describe('plugin Action current intent through the registered daemon ingress', (
             if (url.endsWith('/v1/artifacts') && typeof mutation.id === 'string') {
                 expect(applied).toBeUndefined();
                 stored = next;
+                createdApprovals.push(next);
                 artifactId = mutation.id;
                 rows.set(artifactId, { ...mutation, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
                     publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                onApprovalPublished?.(artifactId);
                 return { status: 200, data: { id: artifactId, headerVersion: 1, bodyVersion: 1 } };
             }
             const row = rows.get(artifactId);
@@ -273,25 +307,44 @@ describe('plugin Action current intent through the registered daemon ingress', (
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             const row = rows.get(url.split('/').at(-1)!);
-            if (!row || !stored) throw new Error('unexpected_artifact_read');
-            const decided = stored.status === 'open' ? TargetActionApprovalRequestV1Schema.parse({ ...stored,
-                status: decision === 'approve' ? 'approved' : 'rejected',
-                decision: { kind: decision, decidedAtMs: Date.now() } }) : stored;
-            return { status: 200, data: { ...row,
-                header: encodePlainArtifactStoredContent(buildTargetActionApprovalArtifactHeaderV1(decided)),
-                body: encodePlainArtifactStoredContent({ body: JSON.stringify(decided) }) } };
+            return { status: row ? 200 : 404, data: row ?? {} };
         });
         let client: ApiMachineClient | undefined;
         try {
             client = new ApiMachineClient(token, {
                 id: 'machine-1', encryptionMode: 'plain', metadata: null, metadataVersion: 0,
                 daemonState: null, daemonStateVersion: 0,
-            });
+            }, undefined, { resolveCurrentServerIdentityId: () => 'srv_current_intent' });
             const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
             if (!(manager instanceof RpcHandlerManager)) throw new Error('missing_machine_rpc_owner');
-            const handler: RpcHandler = input => manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, input);
+            const handler: RpcHandler = input => manager.invokeLocal(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, input,
+                executionSurface === 'ui' ? { verifiedPeerAuthority: 'present_user' } : undefined);
+            const approvalStore = createCliApprovalsArtifactStore({ credentials: { token, encryption: null } });
+            const decideApproval = createTargetActionApprovalDecision({
+                read: artifactId => approvalStore.targetActionApprovalsGet({ artifactId }),
+                update: approvalStore.targetActionApprovalsUpdate,
+            });
+            // Artifact observation is history; the real person-decision owner supplies the live witness.
+            const invoke = async (input: unknown) => {
+                if (!confidential) return handler(input);
+                const published = new Promise<string>(resolve => { onApprovalPublished = resolve; });
+                const pending = handler(input);
+                const next = await Promise.race([
+                    published.then(artifactId => ({ kind: 'published' as const, artifactId })),
+                    pending.then(result => ({ kind: 'completed' as const, result })),
+                ]);
+                onApprovalPublished = undefined;
+                if (next.kind === 'completed') return next.result;
+                expect(applied).toBeUndefined();
+                expect(await decideApproval({ artifactId: next.artifactId, decision,
+                    context: { surface: 'ui', authority: 'present_user', runtimeAccountId: 'account-1' } }))
+                    .toMatchObject({ ok: true });
+                return pending;
+            };
             const request = { machineId: 'machine-1', expectedContributorOccurrenceId: occurrenceId,
-                qualifiedActionId: `${pluginId}/apply`, input: { value: 'approved' }, executionSurface };
+                qualifiedActionId: `${pluginId}/apply`, input: { value: 'approved' }, executionSurface,
+                invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId,
+                    contributionLocalId: 'invoke', occurrenceId, sourceCustody } } };
             if (executionSurface === 'ui') {
                 expect(await handler(request)).toMatchObject({ ok: false,
                     code: 'plugin_action_current_intent_unavailable', actionHandlerInvocation: 'notStarted' });
@@ -304,7 +357,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
                 expect(stored).toBeNull();
                 return;
             }
-            const result = await handler(request);
+            const result = await invoke(request);
             if (confidential) expect(result, JSON.stringify({ result, unavailableReasons })).toEqual({ ok: true, result: { applied: 'approved-normalized' } });
             else {
                 expect(result, JSON.stringify({ result, unavailableReasons })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId, actionId: 'action.invoke' } });
@@ -321,7 +374,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
                 expect(await replay({ artifactId, decision: 'approve' })).toMatchObject({ ok: true,
                     result: { status: 'executed', execution: { ok: true } } });
             }
-            expect(stored).toMatchObject({ kind: 'plugin_target_action', requestedSurface: executionSurface,
+            expect(createdApprovals[0]).toMatchObject({ kind: 'plugin_target_action', requestedSurface: executionSurface,
                 qualifiedActionId: `${pluginId}/actions/apply`, input: {
                     value: 'approved-normalized', releaseTag: confidential ? '[REDACTED]' : 'v1.2.3-public-release',
                     requestId: expect.stringMatching(/^request-\d+$/),
@@ -329,7 +382,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
             expect(applied).toMatchObject({ value: 'approved-normalized', releaseTag: 'v1.2.3-public-release',
                 requestId: expect.stringMatching(/^request-\d+$/) });
             if (confidential) {
-                expect(stored).toMatchObject({ approvalInputCustody: 'live_only',
+                expect(stored).toMatchObject({ status: 'executed', input: null, execution: { ok: true }, approvalInputCustody: 'live_only',
                     replayPlacement: { serverId: 'server-1', machineId: 'machine-1' } });
                 expect(JSON.stringify(stored)).not.toContain('v1.2.3-public-release');
             } else { expect(applied).toEqual(stored?.input); }
@@ -337,16 +390,19 @@ describe('plugin Action current intent through the registered daemon ingress', (
             // Confidential invocation exercises blocking settlement; public inputs
             // above prove deferred replay through the same handler and parser.
             if (confidential) {
-                const blocked = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(await handler({ ...request, input: { value: 'blocked' } }));
+                const blocked = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(await invoke({ ...request, input: { value: 'blocked' } }));
                 expect(blocked).toMatchObject({
                     ok: false, code: 'integration_account_needs_reauth',
                     message: expect.stringContaining('Reconnect the integration account before continuing.'),
                 });
                 expect(JSON.stringify(blocked)).not.toContain('token-secret-must-not-cross');
                 expect(JSON.stringify(blocked)).not.toContain('/home/private/operator/credential.json');
+                expect(stored).toMatchObject({ status: 'failed', input: null,
+                    execution: { ok: false, errorCode: 'integration_account_needs_reauth' } });
                 applied = undefined;
                 decision = 'reject';
-                expect(await handler({ ...request, input: { value: 'rejected' } })).toMatchObject({ ok: false, code: 'plugin_action_current_intent_rejected' });
+                expect(await invoke({ ...request, input: { value: 'rejected' } })).toMatchObject({ ok: false, code: 'plugin_action_current_intent_rejected' });
+                expect(stored).toMatchObject({ status: 'rejected', input: null, decision: { kind: 'reject' } });
             } else {
                 expect(await handler({ ...request, input: { value: 'rejected' } })).toMatchObject({ ok: true,
                     result: { kind: 'approval_request_created', artifactId } });
@@ -369,6 +425,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
                 const unbound = new Map<string, RpcHandler>();
                 registerDaemonContributionRegistryProjectionHandler({ registerHandler: (method, handler) => { unbound.set(method, handler); } }, {
                     resolveRuntimeRegistry: async () => registry, resolveGeneration: async () => 7, resolveInstalledPackages: async () => [],
+                    resolvePluginProjectionExecutionOriginContext: async () => ({ serverIdentityId: 'srv_current_intent', machineId: 'machine-1' }),
                 });
                 expect(await unbound.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)?.(request))
                     .toMatchObject({ ok: false, code: 'plugin_action_current_intent_unavailable' });
