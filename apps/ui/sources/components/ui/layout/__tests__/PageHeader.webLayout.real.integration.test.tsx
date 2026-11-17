@@ -4,7 +4,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Text, View } from 'react-native';
 import { expect, it, vi } from 'vitest';
-import { HAPPIER_PAGE_METRICS, HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
+import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
 import { PageHeaderMenu } from '../PageHeaderEntityParts';
 
@@ -75,15 +77,29 @@ it.each([560, 760, 1100])('never reflows the title when the status line changes 
 });
 
 it('keeps wrapped inline actions on the content\'s right edge, never floating mid-column (DESIGN-9 N47)', async () => {
-    const layout = await measureStatusHeader(460, 'Unsaved changes · Save · 2 things to fix before this can run');
-    const row = layout.rect('header-title-row');
-    const name = layout.rect('name');
-    const controls = layout.rect('controls');
-    // Too narrow for both: the actions wrap beneath the identity...
-    expect(controls.top).toBeGreaterThanOrEqual(name.bottom);
-    // ...and keep the sheets' and fields' edge, just outside the title's text edge (fb7ec10d1ac).
-    const controlEdge = row.right + HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx;
-    expect(Math.abs(controls.right - controlEdge)).toBeLessThanOrEqual(1);
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<ItemList>
+            <HappierPageHeader testID="header" actionsLayout="inline"
+                title={<Text testID="name" style={{ fontSize: 32, lineHeight: 38 }}>QA header with a fairly long name</Text>}
+                leading={<View style={{ width: 40, height: 40 }} />}
+                actions={<View testID="controls" style={{ width: 190, height: 32 }} />}
+                status={<Text style={{ fontSize: 13, lineHeight: 18, textAlign: 'right' }}>Unsaved changes · Save · 2 things to fix before this can run</Text>} />
+            <ItemGroup><View testID="sheet-content" style={{ height: 40 }} /></ItemGroup>
+        </ItemList>));
+        const layout = await measureWebLayout(host, { viewport: { width: 460, height: 900 } });
+        const name = layout.rect('name');
+        const controls = layout.rect('controls');
+        // Too narrow for both: the actions wrap beneath the identity...
+        expect(controls.top).toBeGreaterThanOrEqual(name.bottom);
+        // ...and keep the actual sheet's trailing edge below them (fb7ec10d1ac).
+        expect(Math.abs(controls.right - layout.rect('sheet-content').right)).toBeLessThanOrEqual(1);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
 });
 
 it('draws the header overflow with the shared keyboard focus ring, not the browser default', async () => {

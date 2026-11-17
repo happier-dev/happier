@@ -170,9 +170,13 @@ it('starts a wrapped line link\'s words on the line\'s text edge in a narrow sid
         });
         const words = layout.rect('line-title');
         const label = layout.rect('line-link:label');
+        const link = layout.rect('line-link');
+        const row = layout.rect('line');
         // Wrapped beneath the words, the link's own words start where the line's words start.
         expect(label.top).toBeGreaterThanOrEqual(words.bottom - 1);
         expect(Math.abs(label.left - words.left)).toBeLessThanOrEqual(0.5);
+        expect(link.right).toBeLessThanOrEqual(row.right);
+        expect(link.clipped).toBe(false);
     } finally {
         await act(async () => root.unmount());
         host.remove();
