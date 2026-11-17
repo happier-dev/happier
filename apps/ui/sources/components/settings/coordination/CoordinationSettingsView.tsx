@@ -201,7 +201,11 @@ function RoleRow(props: Readonly<{ popoverBoundaryRef: React.RefObject<ScrollVie
                     title: t(SETTINGS.newCoordinatorRole.titleKey),
                     subtitle: t('settingsCoordination.roleDescription'),
                     showSelectedSubtitle: false,
-                    detailFormatter: () => selected?.role.name ?? (catalog.status === 'ready' ? t('common.unavailable') : t('common.loading')),
+                    detailFormatter: () => selected?.role.name ?? (
+                        catalog.status === 'loading' ? t('common.loading')
+                            : catalog.status === 'failed' ? t('roles.settings.loadFailed')
+                                : t('common.unavailable')
+                    ),
                     field: selected ? { leading: mark(selected.role, 16, selected.roleId) } : undefined,
                     itemProps: { subtitleLines: 0 },
                 }}

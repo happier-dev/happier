@@ -278,7 +278,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const contributionCatalogIsStale = contributionCatalog.state === 'stale';
     const describeProjectedMetadata = React.useCallback((description: string) => (
         contributionCatalogIsStale
-            ? [description, t('status.offline')].filter(Boolean).join(' · ')
+            ? [description, t('common.unavailable')].filter(Boolean).join(' · ')
             : description
     ), [contributionCatalogIsStale]);
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};

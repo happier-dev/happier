@@ -88,6 +88,7 @@ installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
 let projection: PluginProjectionV2 | null = null;
 let projectionPending = false;
+let projectionFailure = false;
 let accountRestored = false;
 
 function viewSettings() {
@@ -124,7 +125,7 @@ async function renderView(element: React.ReactElement) {
     await restoreViewAccount();
     storage.getState().applyLocalSettings({ filesImageBackgroundByKind: imageBackgroundState.value });
     const screen = await renderSettingsScreen(element);
-    if (!projectionPending && screen.findRowByTitle('settingsSourceControl.page.commitStrategy.title')) await vi.waitFor(() => {
+    if (!projectionPending && !projectionFailure && screen.findRowByTitle('settingsSourceControl.page.commitStrategy.title')) await vi.waitFor(() => {
         expect(readObservedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.serverId,
             accountLifetime: captureActiveServerAccountScopeLifetime() })?.kind).toBe(projection ? 'ready' : 'unsupported');
     });
@@ -190,10 +191,12 @@ describe('SourceControlSettingsView', () => {
         imageBackgroundState.value = {};
         projection = null;
         projectionPending = false;
+        projectionFailure = false;
         accountRestored = false;
         rpc.reset();
         rpc.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async () => {
             if (projectionPending) return new Promise<never>(() => {});
+            if (projectionFailure) throw new Error('Projection read failed');
             if (!projection) throw new RpcError('Unsupported projection', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
             return { protocolVersion: 1, projection };
         });
@@ -370,7 +373,8 @@ describe('SourceControlSettingsView', () => {
         expect(routing.tabs.map((tab) => tab.id)).toContain('happier.scm.backend.git/git');
     });
 
-    it('retains projected SCM metadata read-only while the authoritative daemon projection is loading', async () => {
+    it.each(['loading', 'failed'] as const)('retains projected SCM metadata without claiming offline while the authoritative daemon projection is %s', async (phase) => {
+        scmGitRepoPreferredBackendQualifiedIdValue = 'acme.scm/stale';
         await primeRetainedProjection(PluginProjectionV2Schema.parse({
                     v: 2,
                     generation: 40,
@@ -395,13 +399,23 @@ describe('SourceControlSettingsView', () => {
                     },
                 }));
 
-        const screen = await renderView(React.createElement(SourceControlSettingsView));
+        if (phase === 'failed') {
+            projectionPending = false;
+            projectionFailure = true;
+        }
 
-        const retainedRow = screen.findRowByTitle('settingsSourceControl.page.routing.rowTitle');
+        const screen = await renderView(React.createElement(SourceControlSettingsView));
+        if (phase === 'failed') await vi.waitFor(() => {
+            expect(readObservedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.serverId,
+                accountLifetime: captureActiveServerAccountScopeLifetime() })?.kind).toBe('error');
+        });
+
+        const retainedRow = screen.findAllByType(Item).find(node => node.props.title === 'settingsSourceControl.page.routing.rowTitle') ?? null;
         const retained = segmentedControl(retainedRow);
         expect(retained.tabs.map((tab) => tab.label)).toEqual(['Acme Stale SCM']);
         expect(retained.disabled).toBe(true);
         expect(retainedRow?.props.disabled).toBe(true);
+        expect(retainedRow?.props.subtitle).toBe('common.unavailable');
     });
 
     it('says what the backend choice waits for instead of rendering an empty section', async () => {

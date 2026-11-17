@@ -8,7 +8,7 @@ import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUt
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
-import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse, createEmptyAccountMigrationCensusHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { renderHook } from '@/dev/testkit';
@@ -88,6 +88,40 @@ async function renderEnabledPreferencesSection(serverUrl: string) {
     await flushAsyncWork();
     return home;
 }
+
+it('settles a failed coordinator Role catalog read as failure and recovers through Retry', async () => {
+    const home = await renderEnabledPreferencesSection('https://coordinator-role-read-failure.example');
+    let failRoles = false;
+    network.setHttpResponder(async (url, init) => {
+        const pathname = new URL(String(url)).pathname;
+        if (pathname === '/v1/artifacts') return failRoles
+            ? Response.json({ error: 'artifact_content_unavailable' }, { status: 503 })
+            : Response.json({ items: [], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } });
+        if (pathname === '/v1/features') return globalThis.fetch(url, init);
+        if (pathname === preferencesPath) return Response.json({ assigned: true, direct: false, team: false, group: false });
+        return createEmptyAccountMigrationCensusHttpResponse(pathname, init)
+            ?? createEmptyAccountBootstrapHttpResponse(pathname, init);
+    });
+    // Control: the same real Role Action and Artifact transport can read this Account.
+    const control = await createDefaultActionExecutor().execute('roles.list', {}, { surface: 'ui', serverId: home.id,
+        authority: 'present_user', actionCaller: { kind: 'host' } });
+    expect(control, JSON.stringify(control)).toMatchObject({ ok: true });
+    failRoles = true;
+    const screen = await renderSettingsView(<CoordinationSettingsView />);
+    const role = () => screen.findAll(node => node.props.testID === 'settings-coordination-role'
+        && typeof node.props.onSelect === 'function')[0]!;
+    const { t } = await import('@/text');
+    await vi.waitFor(() => expect(role().props.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'retry' }),
+    ])));
+    expect(role().props.itemTrigger.detailFormatter()).toBe(t('roles.settings.loadFailed'));
+    failRoles = false;
+    act(() => role().props.onSelect('retry'));
+    await vi.waitFor(() => expect(role().props.items.some((item: Readonly<{ id: string }>) => item.id === 'retry')).toBe(false));
+    expect(role().props.itemTrigger.detailFormatter()).not.toBe(t('common.loading'));
+    expect(role().props.itemTrigger.detailFormatter()).not.toBe(t('roles.settings.loadFailed'));
+    await screen.unmount();
+});
 
 it.each(['managerPolicy', 'runReportPolicy', 'discussionReceivePolicy'] as const)('reads and writes the declared %s through the real Settings and Follow Actions', async field => {
     const home = await renderEnabledPreferencesSection(`https://preferences-setting-${field}.example`);
