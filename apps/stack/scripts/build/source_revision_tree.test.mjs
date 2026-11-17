@@ -456,6 +456,14 @@ test('a base derives generated server clients from its revision schema; a commit
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
   await writeFile(join(repoDir, '.gitignore'), 'node_modules\napps/server/generated/\n');
   await installServerGeneratorFixture(repoDir);
+  // nl3 reload 170d: Prisma 7 is installed at the server workspace, not the root.
+  // The third-party generator boundary must resolve its tools from that workspace.
+  const generatorPath = join(repoDir, 'apps/server/scripts/generateClients.ts');
+  await writeFile(generatorPath, `import { createRequire } from 'node:module';
+createRequire(import.meta.url)('prisma/build/index.js');
+` + await readFile(generatorPath, 'utf8'));
+  await mkdir(join(repoDir, 'apps/server/node_modules/prisma/build'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/node_modules/prisma/build/index.js'), 'module.exports = {};');
   await gitIn('add', '.gitignore', 'apps/server/scripts/generateClients.ts', 'apps/server/prisma');
   await gitIn('commit', '--quiet', '-m', 'schema');
   // Another lane's uncommitted schema edit, generated into the shared checkout.

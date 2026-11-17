@@ -417,15 +417,21 @@ async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal
   // into the checkout for a write.
   // The tools are borrowed for this run only: a revision base mounts its pinned
   // installation snapshot afterwards and must not keep links into the checkout.
-  const tools = { sourceModules: join(sourceDir, 'node_modules'), targetModules: join(captureDir, 'node_modules') };
-  await mountInstalledNodeModules({ ...tools, excludedNames: ['@happier-dev'] });
+  const tools = ['', 'apps/server'].map(workspace => ({
+    sourceModules: join(sourceDir, workspace, 'node_modules'),
+    targetModules: join(captureDir, workspace, 'node_modules'),
+  }));
+  for (const modules of tools) {
+    // Generated clients are capture-owned outputs, never borrowed tool links.
+    await mountInstalledNodeModules({ ...modules, excludedNames: ['@happier-dev', '.prisma'] });
+  }
   try {
     await run(process.execPath, sourceBuildNodeArgs({ repoDir: captureDir, scriptPath: join(captureDir, 'apps/server/scripts/generateClients.ts') }), {
       cwd: join(captureDir, 'apps/server'), signal, stdio: ['ignore', 'ignore', 'inherit'], captureFailureDiagnostic: true,
       // Schema sync only checks: the capture's schemas are the revision's bytes.
       env: { ...env, HAPPIER_BUILD_DB_PROVIDERS: 'all', HAPPIER_DEV_TARGET_EXECUTION: '1' } });
   } finally {
-    await unmountInstalledNodeModules(tools);
+    for (const modules of tools.toReversed()) await unmountInstalledNodeModules(modules);
   }
   const remaining = readStaleCapturedClients(captureDir);
   if (remaining.length) throw new Error(`[source-revision] generated server clients still differ from the captured schema: ${remaining.join(', ')}`);
