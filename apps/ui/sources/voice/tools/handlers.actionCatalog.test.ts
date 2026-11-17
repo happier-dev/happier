@@ -310,7 +310,7 @@ describe('Voice Action reference catalog', () => {
               props: { artifactId: asks[0]!.id, serverId }, chrome: { testID: 'approvals.in-place.modal' } }));
           }
           if (source === 'mcp-dismissed') {
-            review?.onRequestClose?.();
+            if (review?.type === 'custom') review.onRequestClose?.();
             expect(await pending).toMatchObject({ ok: false, errorCode: 'cancelled' });
             expect(hiddenReviews).toEqual(['voice-action-review']);
             expect(ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(asks[0]!.id)!)))
