@@ -2899,6 +2899,7 @@ export const fr: TranslationStructure = {
   },
 
   common: {
+    apply: "Appliquer",
     hide: "Masquer",
     stop: "Arrêter",
     unknown: 'Inconnu',

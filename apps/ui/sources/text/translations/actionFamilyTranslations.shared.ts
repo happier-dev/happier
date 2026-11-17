@@ -60,6 +60,7 @@ export const surfaceFamilyLabels = {
 // Friends already owns a localized title; the family-title key owner reuses it.
 export const english = {
     actionFamilies: {
+        themes: 'Themes',
         bot_templates: 'Bot templates',
         client_files: 'Client files',
         project_readiness: 'Project readiness',

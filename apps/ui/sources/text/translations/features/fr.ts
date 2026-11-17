@@ -2709,6 +2709,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { fr: translated({
         actionFamilies: {
+            themes: 'Thèmes',
             bot_templates: "Modèles de bots",
             client_files: "Fichiers du client",
             project_readiness: "Préparation du projet",

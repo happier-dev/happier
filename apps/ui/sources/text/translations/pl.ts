@@ -2900,6 +2900,7 @@ export const pl: TranslationStructure = {
   },
 
   common: {
+    apply: "Zastosuj",
     hide: "Ukryj",
     stop: "Zatrzymaj",
     unknown: 'Nieznane',

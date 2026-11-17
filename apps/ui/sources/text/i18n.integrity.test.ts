@@ -18,6 +18,7 @@ import { ja } from './translations/ja';
 
 import { SUPPORTED_LANGUAGE_CODES } from './_all';
 import { BUNDLED_PLUGIN_TRANSLATIONS } from './bundledPluginTranslations.generated';
+import { registriesTranslations } from './translations/registriesTranslations';
 
 import { auditTranslations, findMissingKeys, flattenTranslationLeaves } from '../../tools/i18n/translationAudit';
 
@@ -1245,6 +1246,20 @@ describe('i18n integrity', () => {
                 expect(typeof label, `${code}: ${key}`).toBe('string');
                 expect(label, `${code}: ${key}`).not.toBe('');
             }
+        }
+    });
+    it('resolves theme registry copy and its Apply action in every supported locale', () => {
+        for (const [code, root] of Object.entries({ en, ca, de, es, fr, it: itLocale, ja, pl, pt, ru, zhHans, zhHant })) {
+            expect(readTranslationLeaf(root, 'common.apply'), code).toBeTypeOf('string');
+        }
+        for (const [code, registry] of Object.entries(registriesTranslations)) {
+            for (const count of [1, 2, 5]) {
+                const label = registry.itemCount({ kind: 'theme', count });
+                expect(label, code).not.toContain('undefined');
+                expect(label, code).toMatch(/\S/);
+                expect(registry.add.found({ kind: 'theme', count }), code).not.toContain('undefined');
+            }
+            expect(registry.view.purpose({ kind: 'theme' }), code).not.toContain('undefined');
         }
     });
     it('provides the desktop window Action family label in every supported locale', () => {

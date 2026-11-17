@@ -3064,6 +3064,7 @@ export const es: TranslationStructure = {
   },
 
   common: {
+    apply: "Aplicar",
     hide: "Ocultar",
     stop: "Detener",
     unknown: 'Desconocido',

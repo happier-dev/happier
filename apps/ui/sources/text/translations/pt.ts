@@ -3097,6 +3097,7 @@ export const pt: TranslationStructure = {
   },
 
   common: {
+    apply: "Aplicar",
     hide: "Ocultar",
     stop: "Parar",
     unknown: 'Desconhecido',

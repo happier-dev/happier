@@ -2602,6 +2602,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { 'zh-Hans': translated({
         actionFamilies: {
+            themes: '主题',
             bot_templates: "机器人模板",
             client_files: "客户端文件",
             project_readiness: "项目就绪状态",

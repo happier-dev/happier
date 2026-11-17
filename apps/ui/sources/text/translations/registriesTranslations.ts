@@ -20,6 +20,8 @@ const kindNoun = (kind: Kind['kind'], plural: boolean): string => {
       return plural ? 'apps' : 'app';
     case 'browserExtension':
       return plural ? 'browser extensions' : 'browser extension';
+    case 'theme':
+      return plural ? 'themes' : 'theme';
     case 'starter':
       return plural ? 'starters' : 'starter';
   }
@@ -510,6 +512,7 @@ const pickForm = (
 // Catalan
 // ---------------------------------------------------------------------------------------------------------------
 const caNouns = pairNouns({
+  theme: ["tema", "temes"],
   browserExtension: ['extensió del navegador', 'extensions del navegador'],
   skill: ['habilitat', 'habilitats'],
   mcpServer: ['servidor MCP', 'servidors MCP'],
@@ -748,6 +751,7 @@ const caSkillAdd: SkillAddTranslation = {
 // German
 // ---------------------------------------------------------------------------------------------------------------
 const deNouns = pairNouns({
+  theme: ["Design", "Designs"],
   browserExtension: ['Browser-Erweiterung', 'Browser-Erweiterungen'],
   skill: ['Skill', 'Skills'],
   mcpServer: ['MCP-Server', 'MCP-Server'],
@@ -995,6 +999,7 @@ const deSkillAdd: SkillAddTranslation = {
 // Spanish
 // ---------------------------------------------------------------------------------------------------------------
 const esNouns = pairNouns({
+  theme: ["tema", "temas"],
   browserExtension: ['extensión del navegador', 'extensiones del navegador'],
   skill: ['habilidad', 'habilidades'],
   mcpServer: ['servidor MCP', 'servidores MCP'],
@@ -1235,6 +1240,7 @@ const esSkillAdd: SkillAddTranslation = {
 // ---------------------------------------------------------------------------------------------------------------
 const frNouns = pairNouns(
   {
+  theme: ["thème", "thèmes"],
     browserExtension: ['extension de navigateur', 'extensions de navigateur'],
     skill: ['skill', 'skills'],
     mcpServer: ['serveur MCP', 'serveurs MCP'],
@@ -1478,6 +1484,7 @@ const frSkillAdd: SkillAddTranslation = {
 // Italian
 // ---------------------------------------------------------------------------------------------------------------
 const itNouns = pairNouns({
+  theme: ["tema", "temi"],
   browserExtension: ['estensione del browser', 'estensioni del browser'],
   skill: ['skill', 'skill'],
   mcpServer: ['server MCP', 'server MCP'],
@@ -1715,6 +1722,7 @@ const itSkillAdd: SkillAddTranslation = {
 // Japanese
 // ---------------------------------------------------------------------------------------------------------------
 const jaNouns = bareNouns({
+  theme: "テーマ",
   browserExtension: 'ブラウザー拡張機能',
   skill: 'スキル',
   mcpServer: 'MCP サーバー',
@@ -1951,6 +1959,7 @@ const jaSkillAdd: SkillAddTranslation = {
 // ---------------------------------------------------------------------------------------------------------------
 const plNouns = slavicNouns(
   {
+    theme: {"one": "motyw", "few": "motywy", "many": "motywów", "plural": "motywy", "object": "motywów"},
     browserExtension: {
       one: 'rozszerzenie przeglądarki',
       few: 'rozszerzenia przeglądarki',
@@ -2239,6 +2248,7 @@ const plSkillAdd: SkillAddTranslation = {
 // Portuguese (Brazil)
 // ---------------------------------------------------------------------------------------------------------------
 const ptNouns = pairNouns({
+  theme: ["tema", "temas"],
   browserExtension: ['extensão do navegador', 'extensões do navegador'],
   skill: ['habilidade', 'habilidades'],
   mcpServer: ['servidor MCP', 'servidores MCP'],
@@ -2479,6 +2489,7 @@ const ptSkillAdd: SkillAddTranslation = {
 // ---------------------------------------------------------------------------------------------------------------
 const ruNouns = slavicNouns(
   {
+    theme: {"one": "тема", "few": "темы", "many": "тем", "plural": "темы", "object": "тем"},
     browserExtension: {
       one: 'расширение браузера',
       few: 'расширения браузера',
@@ -2783,6 +2794,7 @@ const ruSkillAdd: SkillAddTranslation = {
 // Chinese (Simplified)
 // ---------------------------------------------------------------------------------------------------------------
 const zhHansNouns = bareNouns({
+  theme: "主题",
   browserExtension: '浏览器扩展',
   skill: '技能',
   mcpServer: 'MCP 服务器',
@@ -3010,6 +3022,7 @@ const zhHansSkillAdd: SkillAddTranslation = {
 // Chinese (Traditional)
 // ---------------------------------------------------------------------------------------------------------------
 const zhHantNouns = bareNouns({
+  theme: "主題",
   browserExtension: '瀏覽器擴充功能',
   skill: '技能',
   mcpServer: 'MCP 伺服器',

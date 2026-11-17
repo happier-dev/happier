@@ -3410,6 +3410,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
       common: {
+        apply: "套用",
         hide: "隱藏",
         decrease: "減少",
         increase: "增加",

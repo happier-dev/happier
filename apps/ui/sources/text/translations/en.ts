@@ -3095,6 +3095,7 @@ const enWebCryptoGate = {
 };
 
 const enCommon = {
+  apply: "Apply",
   hide: "Hide",
   stop: "Stop",
   unknown: 'Unknown',

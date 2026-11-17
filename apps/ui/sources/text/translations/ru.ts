@@ -2903,6 +2903,7 @@ export const ru: TranslationStructure = {
   },
 
   common: {
+    apply: "Применить",
     hide: "Скрыть",
     stop: "Остановить",
     unknown: 'Неизвестно',

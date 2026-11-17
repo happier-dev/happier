@@ -2877,6 +2877,7 @@ export const it: TranslationStructure = {
   },
 
   common: {
+    apply: "Applica",
     hide: "Nascondi",
     stop: "Interrompi",
     unknown: 'Sconosciuto',

@@ -2652,6 +2652,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { ja: translated({
         actionFamilies: {
+            themes: 'テーマ',
             bot_templates: "ボットテンプレート",
             client_files: "クライアントのファイル",
             project_readiness: "プロジェクトの準備状況",

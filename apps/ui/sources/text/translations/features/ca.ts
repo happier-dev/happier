@@ -2691,6 +2691,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { ca: translated({
         actionFamilies: {
+            themes: 'Temes',
             bot_templates: "Plantilles de bots",
             client_files: "Fitxers del client",
             project_readiness: "Preparació del projecte",

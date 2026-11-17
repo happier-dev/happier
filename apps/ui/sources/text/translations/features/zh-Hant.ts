@@ -2602,6 +2602,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { 'zh-Hant': translated({
         actionFamilies: {
+            themes: '主題',
             bot_templates: "機器人範本",
             client_files: "用戶端檔案",
             project_readiness: "專案就緒狀態",

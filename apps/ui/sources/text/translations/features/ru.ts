@@ -2696,6 +2696,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { ru: translated({
         actionFamilies: {
+            themes: 'Темы',
             bot_templates: "Шаблоны ботов",
             client_files: "Файлы клиента",
             project_readiness: "Готовность проекта",

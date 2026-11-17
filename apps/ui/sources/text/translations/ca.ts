@@ -2887,6 +2887,7 @@ export const ca: TranslationStructure = {
     },
 
     common: {
+        apply: "Aplica",
         hide: "Amaga",
         stop: "Atura",
         unknown: 'Desconegut',

@@ -3043,6 +3043,7 @@ export const ja: TranslationStructure = {
   },
 
   common: {
+    apply: "適用",
     hide: "非表示",
     stop: "停止",
     unknown: '不明',
