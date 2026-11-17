@@ -145,6 +145,8 @@ describe('happier attach', () => {
       readTerminalAttachmentInfoFn: async () => null,
       runProviderAttachFn: vi.fn(async () => false),
       runTmuxAttachFn: vi.fn(async () => 0),
+      // The machine check is under test, not this computer's tmux install.
+      isTmuxAvailableFn: async () => true,
     })).rejects.toThrow('process.exit(1)');
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Session belongs to another machine and cannot be attached from this computer.'));

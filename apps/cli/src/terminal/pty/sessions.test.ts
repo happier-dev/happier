@@ -1911,6 +1911,32 @@ describe('TerminalPtySessionManager', () => {
     expect(pty.resizes).toEqual([{ cols: 120, rows: 40 }]);
   });
 
+  it('sizes the terminal for the most recently active viewer and keeps the size when a viewer leaves', async () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), env: { SHELL: '/bin/sh' }, platform: 'linux' });
+    try {
+      const ensured = await manager.ensure({ terminalKey: 'viewers', cwd: '/tmp', cols: 80, rows: 24 });
+      if (!ensured.ok) throw new Error('ensure failed');
+      const pty = provider.spawned[0]!.pty;
+      const terminalId = ensured.terminalId;
+      expect(manager.resize({ terminalId, cols: 200, rows: 50, viewerId: 'wide' })).toEqual({ ok: true });
+      expect(manager.resize({ terminalId, cols: 90, rows: 30, viewerId: 'narrow' })).toEqual({ ok: true });
+      // The wide viewer types: the terminal takes its size again before its input.
+      expect(await manager.inputEvent({ terminalId, event: { t: 'text', text: 'w' } }, { viewerId: 'wide' })).toEqual({ ok: true });
+      // Input at the current size, and input without a viewer (the controller), change nothing.
+      expect(await manager.input({ terminalId, data: 'x' }, { viewerId: 'wide' })).toEqual({ ok: true });
+      expect(await manager.input({ terminalId, data: 'y' })).toEqual({ ok: true });
+      expect(pty.resizes).toEqual([{ cols: 200, rows: 50 }, { cols: 90, rows: 30 }, { cols: 200, rows: 50 }]);
+      expect(pty.writes).toEqual(['w', 'x', 'y']);
+      // The wide viewer leaves: the size stays; the narrow viewer's next input restores its own.
+      manager.forgetViewer({ terminalId, viewerId: 'wide' });
+      expect(await manager.input({ terminalId, data: 'n' }, { viewerId: 'narrow' })).toEqual({ ok: true });
+      expect(pty.resizes).toEqual([{ cols: 200, rows: 50 }, { cols: 90, rows: 30 }, { cols: 200, rows: 50 }, { cols: 90, rows: 30 }]);
+      expect(await manager.input({ terminalId, data: 'g' }, { viewerId: 'wide' })).toEqual({ ok: true });
+      expect(pty.resizes).toHaveLength(4);
+    } finally { manager.dispose(); }
+  });
+
   it('rejects semantic mouse input instead of writing unsafe escape sequences without renderer mode state', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({

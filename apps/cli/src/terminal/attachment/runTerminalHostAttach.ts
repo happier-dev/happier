@@ -1,6 +1,7 @@
 import type { TerminalAttachmentInfo } from './terminalAttachmentInfo';
 import type { runZellijAttach } from './zellijAttach';
 import type { runHerdrAttach } from './herdrAttach';
+import type { runPtyAttach } from './ptyAttach';
 
 type Terminal = NonNullable<TerminalAttachmentInfo['terminal']>;
 type RunTmuxAttach = (params: Readonly<{
@@ -13,6 +14,7 @@ export type TerminalHostAttachRunners = Readonly<{
   runTmuxAttachFn: RunTmuxAttach;
   runZellijAttachFn: typeof runZellijAttach;
   runHerdrAttachFn: typeof runHerdrAttach;
+  runPtyAttachFn: typeof runPtyAttach;
 }>;
 
 /** The one dispatch for local terminal-host attachment, including foreground startup. */
@@ -35,6 +37,10 @@ export async function runTerminalHostAttach(
   }
   if (params.terminal.mode === 'herdr') {
     return await runners.runHerdrAttachFn({ terminal: params.terminal });
+  }
+  // The Session's Agent terminal on the PTY host, through the process holding the Session.
+  if (params.terminal.mode === 'pty') {
+    return await runners.runPtyAttachFn({ sessionId: params.sessionId });
   }
   return null;
 }

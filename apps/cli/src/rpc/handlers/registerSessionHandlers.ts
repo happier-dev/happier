@@ -20,6 +20,7 @@ import { registerWorkspaceFileReplaceHandlers } from './workspaceFileReplace';
 import { registerDifftasticHandler } from './difftastic';
 import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
 import { registerSessionControlHandlers, type SessionRuntimeControls } from './sessionControls';
+import { registerSessionAgentTerminalHandlers } from './sessionAgentTerminal';
 import { registerSessionPermissionRpcHandlers } from './sessionPermissions';
 import {
     registerDaemonContributionRegistryProjectionHandler,
@@ -314,6 +315,7 @@ export function registerSessionHandlers(
         waitForSessionRuntimeControls: opts?.waitForSessionRuntimeControls,
         notifyUsageLimitWaitResumeCancelled: opts?.notifyUsageLimitWaitResumeCancelled ?? null,
     });
+    if (opts?.sessionId) registerSessionAgentTerminalHandlers(authorizedSessionRpcHandlerManager, { sessionId: opts.sessionId });
     registerSessionTranscriptRpcHandlers({
         rpcHandlerManager: authorizedSessionRpcHandlerManager,
         ...(opts?.transcriptActionExecutor ? { actionExecutor: opts.transcriptActionExecutor } : {}),

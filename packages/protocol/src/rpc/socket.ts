@@ -674,6 +674,11 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW]: { authority: 'submitAgentInput', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT]: { authority: 'submitAgentInput', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR]: 'submitAgentInput',
+  // A raw terminal on the Agent (keystrokes reach its TUI, including its own prompts): the Session owner only.
+  [SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN]: 'sessionOwner',
+  [SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_READ]: 'sessionOwner',
+  [SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_INPUT]: 'sessionOwner',
+  [SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_DETACH]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_INPUT_CANCEL_EXACT_TURN_V1]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_REVIEW_START_INLINE]: { authority: 'submitAgentInput', startsAgentWork: true },

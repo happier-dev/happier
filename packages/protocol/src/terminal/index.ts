@@ -29,9 +29,19 @@ export {
   TerminalInputEventSchema,
   TerminalStreamInputRequestSchema,
   TerminalStreamInputResponseSchema,
+  SessionAgentTerminalOpenRequestSchema,
+  SessionAgentTerminalOpenResponseSchema,
+  SessionAgentTerminalInputRequestSchema,
+  SessionAgentTerminalDetachRequestSchema,
+  SessionAgentTerminalDetachResponseSchema,
   type TerminalInputEvent,
   type TerminalStreamInputRequest,
   type TerminalStreamInputResponse,
+  type SessionAgentTerminalOpenRequest,
+  type SessionAgentTerminalOpenResponse,
+  type SessionAgentTerminalInputRequest,
+  type SessionAgentTerminalDetachRequest,
+  type SessionAgentTerminalDetachResponse,
 } from './input.js';
 
 export {

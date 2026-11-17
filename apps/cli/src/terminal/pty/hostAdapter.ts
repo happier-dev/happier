@@ -141,6 +141,8 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   const heldAgent = sessionTarget !== null || !params?.ptyProvider;
   // Launches may run outside the registering Session's scope (its environment, placement, identity).
   const startHeldAgent = bindToHostedSessionScope(startHeldAgentPtyProcess);
+  // Attach viewers find the Agent terminal by the Session it belongs to.
+  const registeringScope = readHostedSessionScope();
   // One owner of PTY sessions per process (spawn or adopt, ring, readers, input, resize).
   const terminals: TerminalPtySessionManager = params?.terminals ?? (params?.ptyProvider
     ? createTerminalPtySessionManager({ ptyProvider: params.ptyProvider, config: readDaemonTerminalPtyConfig(process.env).sessionManager })
@@ -285,8 +287,10 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       const term = spawnEnv.TERM ?? 'xterm-256color';
       const screen = createTerminalScreen(await loadTerminalScreenModel(), { cols, rows });
       const session: PtyTerminalHostSession = { terminalId: '', screen, ended: false };
+      const sessionId = readHostedSessionScope()?.sessionId ?? registeringScope?.sessionId;
       const opened = await terminals.ensure({
         terminalKey: opts.sessionName,
+        ...(sessionId ? { sessionId } : {}),
         cwd: opts.workingDirectory,
         cols,
         rows,

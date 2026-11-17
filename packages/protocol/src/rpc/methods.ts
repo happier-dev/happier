@@ -662,6 +662,11 @@ export const SESSION_RPC_METHODS = {
   SESSION_USAGE_LIMIT_CHECK_NOW: 'session.usageLimit.checkNow',
   SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT: 'session.usageLimit.consumeResetCredit',
   SESSION_TERMINAL_COMPOSER_CLEAR: 'session.terminalComposer.clear',
+  /** `happier attach` viewers of the Session's Agent terminal (PTY terminal host); see protocol `terminal/input`. */
+  SESSION_AGENT_TERMINAL_OPEN: 'session.agentTerminal.open',
+  SESSION_AGENT_TERMINAL_READ: 'session.agentTerminal.read',
+  SESSION_AGENT_TERMINAL_INPUT: 'session.agentTerminal.input',
+  SESSION_AGENT_TERMINAL_DETACH: 'session.agentTerminal.detach',
   SESSION_PENDING_INPUT_INTERRUPT_AND_RUN: 'session.pendingInput.interruptAndRun',
   /** Cancels only the active turn admitted from the exact supplied Session input. */
   SESSION_INPUT_CANCEL_EXACT_TURN_V1: 'session.input.cancelExactTurn.v1',

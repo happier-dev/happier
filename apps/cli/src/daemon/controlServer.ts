@@ -10,6 +10,7 @@ import { parseSessionTrackingKey, type SessionTrackingKey, type TrackedSessionMa
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type preHandlerAsyncHookHandler } from 'fastify';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
+import { SESSION_AGENT_TERMINAL_PATH, SessionAgentTerminalRouteRequestSchema, type SessionAgentTerminalRouteRequest } from './sessionAgentTerminalRoute';
 import { SessionFollowOccurrenceNotificationSchema, type SessionFollowOccurrenceNotification } from './sessions/sessionActivityChangedContract';
 import { SessionActivityChangedResponseSchema, projectSessionFollowOccurrenceDiagnostic, type SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
 import { SessionInputLiveWorkSchema } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
@@ -763,6 +764,7 @@ export function createDaemonControlApp({
   handleSessionRunnerRestartAll,
   handleSessionRunnerStatusGet,
   handleSessionRunnerStatusV2Get,
+  handleSessionAgentTerminal,
   handleConnectedServiceTurnLifecycle,
   handleConnectedServiceUsageLimitWaitResumeCancel,
   handleConnectedServiceQuotaRecoveryCreditConsume,
@@ -899,6 +901,8 @@ export function createDaemonControlApp({
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
   handleSessionRunnerStatusGet?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStateV1>;
   handleSessionRunnerStatusV2Get?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStatusV2>;
+  /** `happier attach` on a Session's Agent terminal: forwarded to the process holding the Session (its session RPC). */
+  handleSessionAgentTerminal?: (request: SessionAgentTerminalRouteRequest, signal: AbortSignal) => Promise<unknown>;
   handleConnectedServiceQuotaRecoveryCreditConsume?: (
     input: ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
   ) => Promise<unknown>;
@@ -1994,6 +1998,34 @@ export function createDaemonControlApp({
       };
     }
     return await handleSessionRunnerStatusV2Get({ sessionId: request.body.sessionId });
+  });
+
+  typed.post(SESSION_AGENT_TERMINAL_PATH, {
+    schema: {
+      body: SessionAgentTerminalRouteRequestSchema,
+      response: {
+        200: z.unknown(),
+        401: authSchema401,
+        501: z.object({ ok: z.literal(false), code: z.literal('unsupported_daemon_version'), message: z.string() }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!handleSessionAgentTerminal) {
+      reply.code(501);
+      return { ok: false as const, code: 'unsupported_daemon_version' as const, message: 'This daemon cannot attach to Agent terminals' };
+    }
+    // A held read lives as long as the attaching terminal's request.
+    const lifetime = new AbortController();
+    const end = () => { if (!reply.raw.writableEnded) lifetime.abort(); };
+    request.raw.once('aborted', end);
+    reply.raw.once('close', end);
+    try {
+      return await handleSessionAgentTerminal(request.body, lifetime.signal);
+    } finally {
+      request.raw.removeListener('aborted', end);
+      reply.raw.removeListener('close', end);
+    }
   });
 
   typed.post(SESSION_RUNNER_RESTART_ADMISSION_CURRENT_PATH, {
@@ -4600,6 +4632,7 @@ export function startDaemonControlServer({
   handleSessionRunnerRestartAll,
   handleSessionRunnerStatusGet,
   handleSessionRunnerStatusV2Get,
+  handleSessionAgentTerminal,
   handleConnectedServiceTurnLifecycle,
   handleConnectedServiceUsageLimitWaitResumeCancel,
   handleConnectedServiceQuotaRecoveryCreditConsume,
@@ -4736,6 +4769,8 @@ export function startDaemonControlServer({
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
   handleSessionRunnerStatusGet?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStateV1>;
   handleSessionRunnerStatusV2Get?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStatusV2>;
+  /** `happier attach` on a Session's Agent terminal: forwarded to the process holding the Session (its session RPC). */
+  handleSessionAgentTerminal?: (request: SessionAgentTerminalRouteRequest, signal: AbortSignal) => Promise<unknown>;
   handleConnectedServiceQuotaRecoveryCreditConsume?: (
     input: ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
   ) => Promise<unknown>;
@@ -4817,6 +4852,7 @@ export function startDaemonControlServer({
       handleSessionRunnerRestartAll,
       handleSessionRunnerStatusGet,
       handleSessionRunnerStatusV2Get,
+      handleSessionAgentTerminal,
 	      handleConnectedServiceTurnLifecycle,
 	      handleConnectedServiceUsageLimitWaitResumeCancel,
 	      handleConnectedServiceQuotaRecoveryCreditConsume,

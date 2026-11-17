@@ -346,6 +346,7 @@ import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCo
 import { settleComposerStagedMediaAdmissionV1 } from '@/session/media/settleComposerStagedMediaAdmission';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
+import { SESSION_AGENT_TERMINAL_OPS } from '@/daemon/sessionAgentTerminalRoute';
 import type { MachineRpcHandlerDeps } from '@/api/machine/rpcHandlers';
 import { withTrackedSessionRpcContext } from '../sessionEncryption/withTrackedSessionRpc';
 
@@ -14606,6 +14607,17 @@ export async function startDaemonSessionControlRuntime(
           sessionId: request.sessionId,
         });
       },
+      // `happier attach` on a Holder-PTY Session: the Session's own RPC, served by the process
+      // holding its holder connection (the local channel on POSIX, the server on Windows).
+      handleSessionAgentTerminal: async ({ sessionId, op, request }, signal) =>
+        await withSessionAccountContext(sessionId, async accountContext =>
+          await withSessionAccountHome(accountContext, async () => {
+            const credentials = accountContext?.bootstrap.credentials ?? params.credentials;
+            await assertSessionAccountCurrent(sessionId, accountContext);
+            return await callSessionRpc({ token: credentials.token, sessionId,
+              method: `${sessionId}:${SESSION_AGENT_TERMINAL_OPS[op]}`, request, timeoutMs: null, signal,
+              ...deferSessionRpcEncryption({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal }) });
+          }), undefined, signal),
       handleConnectedServiceRuntimeAuthFailure:
         runConnectedServiceRuntimeAuthFailureRecovery,
       handleConnectedServiceUsageLimitWaitResumeCancel: async (input) =>

@@ -96,7 +96,11 @@ export type TerminalPtyMachineCustody = TerminalPtyCustodyBase & Readonly<{
 }>;
 export type TerminalPtyCustody = TerminalPtyProjectCustody | TerminalPtySessionCustody | TerminalPtyMachineCustody;
 
-type TerminalPtyInputOptions = Readonly<{ signal?: AbortSignal }>;
+type TerminalPtyInputOptions = Readonly<{
+  signal?: AbortSignal;
+  /** A viewer that types takes the size it last asked for (the most recently active viewer sets the size). */
+  viewerId?: string;
+}>;
 
 export type TerminalPtyEnsureInput = Readonly<{
   terminalKey: string;
@@ -233,7 +237,10 @@ export type TerminalPtySessionManager = Readonly<{
   acknowledgeByteStream: (input: TerminalByteStreamAckRequest) => TerminalByteStreamAckResponse;
   inputEvent: (input: TerminalStreamInputRequest, options?: TerminalPtyInputOptions) => Promise<TerminalStreamInputResponse>;
   input: (input: Readonly<{ terminalId: string; data: string }>, options?: TerminalPtyInputOptions) => Promise<SimpleOk | ErrorResult>;
-  resize: (input: Readonly<{ terminalId: string; cols: number; rows: number }>) => SimpleOk | ErrorResult;
+  /** With `viewerId`, the size is that viewer's until another viewer resizes or types. */
+  resize: (input: Readonly<{ terminalId: string; cols: number; rows: number; viewerId?: string }>) => SimpleOk | ErrorResult;
+  /** A viewer left; the terminal keeps its current size. */
+  forgetViewer: (input: Readonly<{ terminalId: string; viewerId: string }>) => void;
   close: (input: Readonly<{ terminalId: string }>) => SimpleOk | ErrorResult;
   dispose: () => void;
   restart: (input: TerminalPtyEnsureInput) => Promise<EnsureOk | ErrorResult>;
@@ -381,6 +388,8 @@ type PtySession = {
   nativeLaunch?: ReturnType<typeof createTerminalNativeLaunch>;
   nativeExecutionIdentity?: AgentIsolationMemberNativeIdentity;
   agent?: TerminalPtyAgentLaunch;
+  /** The size each viewer last asked for. */
+  viewerSizes: Map<string, Readonly<{ cols: number; rows: number }>>;
 };
 
 function splitByApproxBytesUtf8(input: string, maxBytes: number): string[] {
@@ -817,6 +826,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
       controlFrames: [],
       nextControlFrameSeq: 0,
       rendererAcks: new Map(),
+      viewerSizes: new Map(),
     };
     if (session.byteMode.kind === 'legacyOnly') {
       metrics.recordLegacyOnlyProvider();
@@ -1307,6 +1317,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
     }
     if (options?.signal?.aborted) return okDisabled('terminal_forbidden');
     if (!session || sessionsById.get(input.terminalId) !== session || session.ended) return okDisabled('terminal_not_found');
+    const viewerSize = options?.viewerId ? session.viewerSizes.get(options.viewerId) : undefined;
+    if (viewerSize && (viewerSize.cols !== session.cols || viewerSize.rows !== session.rows)) {
+      const resized = applySize(session, viewerSize.cols, viewerSize.rows);
+      if (!resized.ok) return resized;
+    }
     try {
       session.pty.write(String(input.data ?? ''));
     } catch {
@@ -1328,7 +1343,8 @@ export function createTerminalPtySessionManager(params: Readonly<{
       return { ok: true };
     }
     if (action.kind === 'resize') {
-      const result = resize({ terminalId: input.terminalId, cols: action.cols, rows: action.rows });
+      const result = resize({ terminalId: input.terminalId, cols: action.cols, rows: action.rows,
+        ...(options?.viewerId ? { viewerId: options.viewerId } : {}) });
       return result.ok
         ? { ok: true }
         : { ok: false, code: result.errorCode, message: result.error };
@@ -1339,15 +1355,13 @@ export function createTerminalPtySessionManager(params: Readonly<{
       : { ok: false, code: result.errorCode, message: result.error };
   };
 
-  const resize = (input: Readonly<{ terminalId: string; cols: number; rows: number }>): SimpleOk | ErrorResult => {
-    const session = sessionsById.get(input.terminalId);
-    if (!session) return okDisabled('terminal_not_found');
-    if (session.ended) return okDisabled('terminal_not_found');
+  /** The one place a terminal takes a size: the PTY, then the host's screen model. */
+  const applySize = (session: PtySession, cols: number, rows: number): SimpleOk | ErrorResult => {
     try {
-      session.pty.resize(input.cols, input.rows);
-      session.cols = input.cols;
-      session.rows = input.rows;
-      session.agent?.onResize(input.cols, input.rows);
+      session.pty.resize(cols, rows);
+      session.cols = cols;
+      session.rows = rows;
+      session.agent?.onResize(cols, rows);
       return { ok: true };
     } catch (error) {
       if (isTerminalResizeUnavailableError(error)) {
@@ -1355,6 +1369,14 @@ export function createTerminalPtySessionManager(params: Readonly<{
       }
       return okDisabled('terminal_not_found');
     }
+  };
+
+  const resize = (input: Readonly<{ terminalId: string; cols: number; rows: number; viewerId?: string }>): SimpleOk | ErrorResult => {
+    const session = sessionsById.get(input.terminalId);
+    if (!session) return okDisabled('terminal_not_found');
+    if (session.ended) return okDisabled('terminal_not_found');
+    if (input.viewerId) session.viewerSizes.set(input.viewerId, { cols: input.cols, rows: input.rows });
+    return applySize(session, input.cols, input.rows);
   };
 
   const close = (input: Readonly<{ terminalId: string }>): SimpleOk | ErrorResult => sessionsById.get(input.terminalId)?.serviceOwned
@@ -1641,6 +1663,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     inputEvent,
     input: inputData,
     resize,
+    forgetViewer: ({ terminalId, viewerId }) => { sessionsById.get(terminalId)?.viewerSizes.delete(viewerId); },
     close,
     dispose,
     metrics: () => metrics.snapshot(sessionsById.size),

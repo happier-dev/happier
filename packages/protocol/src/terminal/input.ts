@@ -55,3 +55,51 @@ export const TerminalStreamInputResponseSchema = lazyZodSchema(() => z.union([
   }),
 ]));
 export type TerminalStreamInputResponse = z.infer<typeof TerminalStreamInputResponseSchema>;
+
+/**
+ * `happier attach` on a Session's Agent terminal (the PTY terminal host): session RPCs served by
+ * the process holding the Session's holder connection, addressed by the Session (never a client
+ * connection to the holder). Reads use the terminal stream read shapes; resize is an input event.
+ * The most recently active viewer sets the terminal size.
+ */
+const SessionAgentTerminalViewerIdSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(200)));
+const SessionAgentTerminalRefusalSchema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(false),
+  code: z.string().check(z.minLength(1), z.maxLength(200)),
+  message: z.string().check(z.minLength(1), z.maxLength(2000)),
+}));
+
+export const SessionAgentTerminalOpenRequestSchema = lazyZodSchema(() => z.strictObject({
+  viewerId: SessionAgentTerminalViewerIdSchema,
+}));
+export type SessionAgentTerminalOpenRequest = z.infer<typeof SessionAgentTerminalOpenRequestSchema>;
+
+export const SessionAgentTerminalOpenResponseSchema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    terminalId: TerminalIdSchema,
+    /** The live end of the output: a viewer starts here, not at the retained history. */
+    byteOffset: z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)),
+  }),
+  SessionAgentTerminalRefusalSchema,
+]));
+export type SessionAgentTerminalOpenResponse = z.infer<typeof SessionAgentTerminalOpenResponseSchema>;
+
+export const SessionAgentTerminalInputRequestSchema = lazyZodSchema(() => z.strictObject({
+  terminalId: TerminalIdSchema,
+  viewerId: SessionAgentTerminalViewerIdSchema,
+  event: TerminalInputEventSchema,
+}));
+export type SessionAgentTerminalInputRequest = z.infer<typeof SessionAgentTerminalInputRequestSchema>;
+
+export const SessionAgentTerminalDetachRequestSchema = lazyZodSchema(() => z.strictObject({
+  terminalId: TerminalIdSchema,
+  viewerId: SessionAgentTerminalViewerIdSchema,
+}));
+export type SessionAgentTerminalDetachRequest = z.infer<typeof SessionAgentTerminalDetachRequestSchema>;
+
+export const SessionAgentTerminalDetachResponseSchema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true) }),
+  SessionAgentTerminalRefusalSchema,
+]));
+export type SessionAgentTerminalDetachResponse = z.infer<typeof SessionAgentTerminalDetachResponseSchema>;

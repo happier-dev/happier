@@ -40,6 +40,7 @@ import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { openServiceShellTerminal } from './serviceShellTerminal';
 import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager, type TerminalPtyCustody } from '@/terminal/pty/sessions';
+import { byteStreamHoldEndsAtMs, readByteStreamHeld } from '@/terminal/pty/byteStreamHold';
 import { createNodePtyProvider } from '@/terminal/pty/provider';
 import { resolveTerminalShell } from '@/terminal/pty/shells';
 import { getSharedTerminalProcessRegistry, type TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
@@ -145,12 +146,6 @@ function terminalStreamInvalidRequest(): { ok: false; code: 'terminal_invalid_re
     code: 'terminal_invalid_request',
     message: 'terminal_invalid_request',
   };
-}
-
-function isIdleByteStreamRead(response: TerminalStreamReadResponse): boolean {
-  // Unread bytes with no credit are flow control, not idleness: the viewer owns that wait.
-  return response.ok && response.frames.length === 0 && !response.done
-    && response.availableByteOffset <= response.nextByteOffset;
 }
 
 function terminalStreamDisabled(): { ok: false; code: 'terminal_disabled'; message: string } {
@@ -841,30 +836,22 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       return terminalStreamUnavailable();
     }
     const { holdForOutput, ...request } = parsed.data;
-    // Read and subscribe synchronously: an await between an empty snapshot and
-    // registering its wake would miss output produced in that microtask turn.
-    let response = manager.readByteStream(request);
     const canHold = holdForOutput === true && context?.machineAdmission && manager.waitForByteStreamChange;
+    let response: TerminalStreamReadResponse;
     // Machine admission owns access-loss retirement. An unbounded RPC keeps
     // that same cancellable lifetime instead of manufacturing an idle deadline.
     if (canHold && context) {
       const retirement = new AbortController();
       const reader = { terminalId: request.terminalId, retire: () => retirement.abort() };
-      const signal = AbortSignal.any([context.signal, retirement.signal]);
-      // Half the caller's RPC budget leaves the idle reply its way back.
-      const holdEndsAtMs = context.deadlineAtMs === undefined ? undefined
-        : Date.now() + (context.deadlineAtMs - Date.now()) / 2;
       heldByteStreamReaders.add(reader);
       try {
-        const { ackedByteOffset: _applied, ...reread } = request;
-        while (isIdleByteStreamRead(response)) {
-          const outcome = await canHold({ terminalId: request.terminalId, signal,
-            ...(holdEndsAtMs === undefined ? {} : { remainingMs: Math.max(0, holdEndsAtMs - Date.now()) }) });
-          if (outcome === 'aborted') return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
-          if (outcome === 'deadline') break;
-          response = manager.readByteStream(reread);
-        }
+        const held = await readByteStreamHeld(manager, request, { signal: AbortSignal.any([context.signal, retirement.signal]),
+          ...(context.deadlineAtMs === undefined ? {} : { endsAtMs: byteStreamHoldEndsAtMs(context.deadlineAtMs) }) });
+        if (held === 'aborted') return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
+        response = held;
       } finally { heldByteStreamReaders.delete(reader); }
+    } else {
+      response = manager.readByteStream(request);
     }
     // Older strict clients never opted in, so their response shape is unchanged.
     return TerminalStreamReadResponseSchema.parse(response.ok && canHold ? { ...response, holdForOutput: true } : response);

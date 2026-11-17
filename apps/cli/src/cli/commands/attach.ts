@@ -44,6 +44,7 @@ import { isTmuxAvailable, normalizeExitCode } from '@/integrations/tmux';
 import { focusWindowsTerminalWindow } from '@/terminal/attachment/windowsTerminalAttach';
 import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleAttach';
 import { runHerdrAttach } from '@/terminal/attachment/herdrAttach';
+import { runPtyAttach } from '@/terminal/attachment/ptyAttach';
 import { runZellijAttach } from '@/terminal/attachment/zellijAttach';
 import { runTerminalHostAttach } from '@/terminal/attachment/runTerminalHostAttach';
 import { buildTerminalMetadataFromHostHandle } from '@/terminal/runtime/terminalMetadata';
@@ -106,6 +107,7 @@ type AttachCommandDeps = Readonly<{
     terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
   }) => Promise<number>;
   runHerdrAttachFn?: typeof runHerdrAttach;
+  runPtyAttachFn?: typeof runPtyAttach;
   runZellijAttachFn?: typeof runZellijAttach;
   runProviderAttachFn?: (params: {
     agentId: CatalogAgentId;
@@ -375,6 +377,7 @@ export async function handleAttachCommand(
   const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;
   const runWindowsConsoleAttachFn = deps.runWindowsConsoleAttachFn ?? defaultRunWindowsConsoleAttach;
   const runHerdrAttachFn = deps.runHerdrAttachFn ?? runHerdrAttach;
+  const runPtyAttachFn = deps.runPtyAttachFn ?? runPtyAttach;
   const runZellijAttachFn = deps.runZellijAttachFn ?? runZellijAttach;
   const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ backendId, sessionId, metadata, managedObservation }) => {
     const providerAttachSurface = (await getSessionHostBridge().resolveExecutionSurfaces(backendId)).attach;
@@ -525,7 +528,7 @@ export async function handleAttachCommand(
       && recorded?.paneId?.trim() && runnerPresence?.state === 'runner_absent') {
       const exitCode = await runTerminalHostAttach({ sessionId: resolvedSessionId, terminal: recordedTerminal.data,
         refreshRemoteControl: shouldRefreshRemoteControlOnAttach(context.metadata) },
-      { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn });
+      { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn, runPtyAttachFn });
       if (exitCode === null) throw new Error('The recorded restoration terminal is not attachable.');
       if (exitCode !== 0) process.exit(exitCode);
       return;
@@ -602,7 +605,7 @@ export async function handleAttachCommand(
     if (eligibility.attachStrategy === 'managed_provider_attach') {
       const terminal = await restoreManagedTerminal();
       const exitCode = await runTerminalHostAttach({ sessionId: resolvedSessionId, terminal, refreshRemoteControl: true },
-        { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn });
+        { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn, runPtyAttachFn });
       if (exitCode === null) throw new Error('The restored managed terminal is not attachable.');
       if (exitCode !== 0) process.exit(exitCode);
       return;
@@ -621,7 +624,7 @@ export async function handleAttachCommand(
       sessionId: resolvedSessionId,
       terminal,
       refreshRemoteControl: shouldRefreshRemoteControlOnAttach(eligibility.metadata),
-    }, { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn });
+    }, { runTmuxAttachFn, runZellijAttachFn, runHerdrAttachFn, runPtyAttachFn });
     let exitCode = hostExitCode ?? 0;
     if (hostExitCode === null) {
       switch (terminal.mode) {
@@ -655,6 +658,7 @@ export async function handleAttachCommand(
     runTmuxAttachFn,
     runZellijAttachFn,
     runHerdrAttachFn,
+    runPtyAttachFn,
   });
   let exitCode = hostExitCode ?? 0;
   if (hostExitCode === null) {
