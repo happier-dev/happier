@@ -47,7 +47,6 @@ export type {
   SavedSecretResourceSourceV1,
   SavedSecretResourceStoredContentV1,
 };
-export { canShareSavedSecretResourceContentV1 } from './savedSecretResourceContentSchemaV1.js';
 export { describeSavedSecretResourceContentV1, SavedSecretStorageDescriptorV1Schema,
   type SavedSecretStorageDescriptorV1 } from './savedSecretResourceContentSchemaV1.js';
 

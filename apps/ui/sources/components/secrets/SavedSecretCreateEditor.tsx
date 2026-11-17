@@ -29,6 +29,7 @@ import {
     savedSecretGrantInputs,
 } from '@/components/sharing/secrets/savedSecretGrantDraft';
 import { SavedSecretShareSheet } from '@/components/sharing/secrets/SavedSecretShareSheet';
+import { savedSecretShareDisclosureMessage } from '@/components/sharing/secrets/savedSecretShareDisclosure';
 
 const SECRET_KINDS = ['apiKey', 'token', 'password', 'other'] as const satisfies readonly SavedSecret['kind'][];
 
@@ -74,12 +75,11 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     const sharedAvailable = props.scope !== null && props.sharedAvailable !== false;
     const personalAvailable = Boolean(props.onCreatePersonal);
     const [chosenStorage, setChosenStorage] = React.useState<SecretStorage>('personal');
-    const sources = useSavedSecretSources(props.scope, personalAvailable);
+    const sources = useSavedSecretSources(props.scope, personalAvailable || sharedAvailable);
     const [chosenOrigin, setChosenOrigin] = React.useState<string>(VALUE_ORIGIN);
     // A source that is no longer installed falls back to a typed value rather than a form that cannot succeed.
     const linkedSource = sources.find(source => source.key === chosenOrigin) ?? null;
-    // Linked secrets are personal-only: the Machine that uses one reads it from the owner's vault.
-    const storage: SecretStorage = linkedSource ? 'personal' : !personalAvailable ? 'shared' : !sharedAvailable ? 'personal' : chosenStorage;
+    const storage: SecretStorage = !personalAvailable ? 'shared' : !sharedAvailable ? 'personal' : chosenStorage;
     const [name, setName] = React.useState('');
     // A suggested name makes Name optional: an empty field saves under the suggestion.
     const suggestedName = props.initialName?.trim() ?? '';
@@ -88,7 +88,9 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     const [linkAccount, setLinkAccount] = React.useState('');
     const [linkReference, setLinkReference] = React.useState('');
     // A source that lists its vault is browsed rather than typed; one that can also store offers a new item.
-    const browseable = Boolean(linkedSource?.capabilities?.list && props.onLinkVault);
+    // The native bulk-link and new-item ports create private resources. Shared references
+    // use the grant-aware resource writer with the person's explicit account and field.
+    const browseable = Boolean(storage === 'personal' && linkedSource?.capabilities?.list && props.onLinkVault);
     const storable = browseable && linkedSource?.capabilities?.store === true;
     const [chosenVaultMode, setVaultMode] = React.useState<VaultMode>('existing');
     const vaultMode: VaultMode | null = !browseable ? null : storable ? chosenVaultMode : 'existing';
@@ -214,11 +216,13 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     const submitShared = React.useCallback(async (trimmedName: string) => {
         const scope = props.scope;
         if (!scope) return;
+        const source = linkedSource ? { kind: 'external' as const, contribution: linkedSource.contribution,
+            account: linkAccount.trim(), reference: linkReference.trim() } : undefined;
         const grantCount = grants.length;
         if (grantCount > 0) {
             const confirmed = await Modal.confirm(
                 t('secrets.catalog.shareDisclosureTitle'),
-                t('secretsSettings.sharingDescription'),
+                savedSecretShareDisclosureMessage(source, linkedSource?.title),
                 {
                     cancelText: t('common.cancel'),
                     confirmText: t('secrets.catalog.shareDisclosureConfirm', {
@@ -236,7 +240,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 scope,
                 name: trimmedName,
                 kind,
-                value,
+                ...(source ? { source } : { value }),
                 ...savedSecretGrantInputs(grants),
                 onApprovalSucceeded: ({ resourceRef }) => finishCreated(resourceRef, scopeKey, 'shared'),
                 onApprovalFailed: () => {
@@ -265,7 +269,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
             setSubmitting(false);
             setFailure(t('secrets.catalog.operationFailed'));
         }
-    }, [finishCreated, grants, kind, props.requestApproval, props.scope, scopeKey, value]);
+    }, [finishCreated, grants, kind, linkAccount, linkReference, linkedSource, props.requestApproval, props.scope, scopeKey, value]);
 
     const submit = React.useCallback(async () => {
         const trimmedName = effectiveName;
@@ -410,7 +414,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                         />
                     </FieldItem>
                 ) : null}
-                {personalAvailable && sharedAvailable && !linkedSource ? (
+                {personalAvailable && sharedAvailable ? (
                     <FieldItem
                         label={t('secretsSettings.keepTitle')}
                         supportingText={storage === 'personal'

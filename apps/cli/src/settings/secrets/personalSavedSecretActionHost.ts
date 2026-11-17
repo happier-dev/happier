@@ -4,7 +4,7 @@ import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/prot
 import { formatSharedSavedSecretRefV1, projectSavedSecretUsedByV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { prepareSavedSecretResourceUpdateContentV1, sealSavedSecretResourceStoredContentV1, type SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import { admitSavedSecretExternalSourceAudienceV1, admitSavedSecretResourceAudienceV1, listAccountSettingsSavedSecretReferences } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { listAccountSettingsSavedSecretReferences } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { PluginSecretSourceStoreResultV1Schema, type PluginSecretSourceListResultV1, type PluginSecretSourceStoreResultV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -105,11 +105,6 @@ async function updateOwnedSavedSecretResource(owner: OwnedSavedSecretOperation, 
         resourceDataKey: resource.resourceDataKey, nextName: input.nextName, nextValue: input.nextValue, nextSource: input.nextSource });
     if (!prepared) refusal('secret_unavailable');
     const { content, mode: nextMode } = prepared;
-    const audience = admitSavedSecretResourceAudienceV1(content, resource.audience && {
-        ...resource.audience, accounts: resource.audience.accounts.map(account => account.accountId),
-    }, accountId);
-    if (audience === 'audience_unavailable') refusal('secret_unavailable');
-    if (audience === 'recipient_mode_unsupported') refusal('recipient_mode_unsupported');
     const convertingToE2ee = nextMode === 'e2ee' && resource.encryptionMode === 'plain';
     const conversion = convertingToE2ee
         ? (await import('./hydrateSavedSecretCatalog')).prepareSavedSecretResourceCreateForOperation({
@@ -291,11 +286,6 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
                         const opened = materializer().resolveContent(identity.secretRef);
                         if (opened.status !== 'ready') refusal('secret_unavailable');
                         if (opened.content.v !== 1) refusal('unsupported_source');
-                        const audience = admitSavedSecretExternalSourceAudienceV1(resource.audience && {
-                            ...resource.audience, accounts: resource.audience.accounts.map(account => account.accountId),
-                        }, accountId);
-                        if (audience === 'audience_unavailable') refusal('secret_unavailable');
-                        if (audience === 'recipient_mode_unsupported') refusal('recipient_mode_unsupported');
                         const nextSource = await store(args.target, opened.content.name, opened.content.value);
                         const receipt = await updateOwnedSavedSecretResource(owner, { ...params, resourceId: resource.resourceId,
                             expectedRevision: resource.revision, nextSource, signal: context.signal,

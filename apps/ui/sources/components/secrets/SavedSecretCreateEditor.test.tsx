@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { IModal } from '@/modal';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -10,7 +11,7 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const confirmDisclosure = vi.hoisted(() => vi.fn(async () => true));
+const confirmDisclosure = vi.hoisted(() => vi.fn<IModal['confirm']>(async () => true));
 
 installSettingsViewCommonModuleMocks({
     storage: 'real',
@@ -361,7 +362,7 @@ describe('SavedSecretCreateEditor', () => {
         expect(screen.findByTestId('saved-secret-create-kind:token')).toBeFalsy();
     });
 
-    it('links a personal secret to a field in an installed secret source instead of storing a value', async () => {
+    it.each(['personal', 'shared'] as const)('links a %s reference to an installed vault without copying its value', async storage => {
         const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
         const contribution = { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' };
         // Account availability is the declaration owner; a Machine materialization carries the admitted manifest.
@@ -372,10 +373,11 @@ describe('SavedSecretCreateEditor', () => {
                 uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
                 declaredManifest: PluginManifestV2Schema.parse({ schemaVersion: 2, id: contribution.pluginId, version: '0.0.0', displayName: '1Password',
                     engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
-                    contributes: { secretSources: [{ id: contribution.localId, title: '1Password' }] } }),
+                    contributes: { secretSources: [{ id: contribution.localId, title: '1Password', capabilities: { list: true, store: true } }] } }),
             }],
         } });
         const onCreatePersonal = vi.fn(async () => 'personal-linked');
+        const onLinkVault = vi.fn(async () => { throw new Error('A Team-shared reference must not use the private bulk-link port'); });
         const onCreated = vi.fn(async () => {});
         const requestApproval = vi.fn();
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
@@ -383,6 +385,7 @@ describe('SavedSecretCreateEditor', () => {
             <SavedSecretCreateEditor
                 scope={scopeA}
                 onCreatePersonal={onCreatePersonal}
+                onLinkVault={storage === 'shared' ? onLinkVault : undefined}
                 approvalPending={false}
                 requestApproval={requestApproval}
                 onCancel={vi.fn()}
@@ -392,23 +395,40 @@ describe('SavedSecretCreateEditor', () => {
 
         const sourceTab = 'saved-secret-create-origin:happier.secret-source.onepassword/onepassword';
         await vi.waitFor(() => expect(screen.findByTestId(sourceTab)).toBeTruthy());
+        if (storage === 'shared') await screen.pressByTestIdAsync('saved-secret-create-storage:shared');
         await screen.pressByTestIdAsync(sourceTab);
-        // A linked secret has no value to type and stays personal.
+        // A linked reference has no value to type; the shared writer carries its chosen audience.
         expect(screen.findByTestId('saved-secret-create-value')).toBeFalsy();
-        expect(screen.findByTestId('saved-secret-create-storage:shared')).toBeFalsy();
+        if (storage === 'shared') {
+            await startAdding(screen);
+            await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-candidate-team:team-a')).toBeTruthy());
+            await screen.pressByTestIdAsync('saved-secret-access-candidate-team:team-a');
+        }
         screen.changeTextByTestId('saved-secret-create-name', 'Deploy token');
         screen.changeTextByTestId('saved-secret-create-link-account', ' my-team.1password.com ');
         screen.changeTextByTestId('saved-secret-create-link-reference', 'op://Deploy/Token/credential');
         await flushHookEffects();
         await screen.pressByTestIdAsync('saved-secret-create-submit');
 
-        expect(onCreatePersonal).toHaveBeenCalledWith(
-            { name: 'Deploy token', source: { kind: 'external', contribution,
-                account: 'my-team.1password.com', reference: 'op://Deploy/Token/credential' } },
-            expect.objectContaining({ onApprovalPending: requestApproval }),
-        );
-        expect(createWrites()).toHaveLength(0);
-        expect(onCreated).toHaveBeenCalledWith('personal-linked', 'personal');
+        const source = { kind: 'external', contribution,
+            account: 'my-team.1password.com', reference: 'op://Deploy/Token/credential' };
+        if (storage === 'personal') {
+            expect(onCreatePersonal).toHaveBeenCalledWith({ name: 'Deploy token', source },
+                expect.objectContaining({ onApprovalPending: requestApproval }));
+            expect(createWrites()).toHaveLength(0);
+            expect(onCreated).toHaveBeenCalledWith('personal-linked', 'personal');
+        } else {
+            await vi.waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+            expect(onCreatePersonal).not.toHaveBeenCalled();
+            expect(onLinkVault).not.toHaveBeenCalled();
+            expect(confirmDisclosure).toHaveBeenCalledOnce();
+            expect(confirmDisclosure.mock.calls[0]?.[1]).toContain('my-team.1password.com');
+            expect(confirmDisclosure.mock.calls[0]?.[1]).toContain('op://Deploy/Token/credential');
+            expect(createdInput()).toMatchObject({ teamGrants: ['team-a'],
+                storedContent: { t: 'plain', v: { v: 2, name: 'Deploy token', source } } });
+            expect(Reflect.get(createdInput().storedContent, 'v')).not.toHaveProperty('value');
+            expect(onCreated).toHaveBeenCalledWith(createdRef(), 'shared');
+        }
     });
 
     it('offers no link choice when no secret source is installed', async () => {

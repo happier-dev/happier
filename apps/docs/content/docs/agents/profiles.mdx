@@ -287,8 +287,14 @@ through its local 1Password CLI setup. Opening the secret list or creating the
 link does not read the value. A later operation reads it again, so a rotated
 value is used on the next acquisition.
 
-Linked secrets are personal-only and cannot be shared with a Team. A read on a
-shared Machine requires **Manage** access. For unattended use, link an inline
+Linked references can be shared through Saved Secret sharing in **unreleased 0.3
+development source**. Choose shared storage to enter a reference and select its
+audience. Native vault browsing and new-item creation initially create personal
+secrets; share those afterward through **Manage access**. Sharing exposes the vault account, field reference and any
+vault, item or field names to recipients. Each recipient needs their own native
+1Password access on the executing Machine; Happier does not fall back to the
+sharer's or Machine owner's vault identity. A read on a shared Machine requires
+**Manage** access. For unattended use, link an inline
 Saved Secret containing the service-account token to the 1Password plugin's
 **Service account token** setting. The token must be stored in Happier rather
 than linked back to a vault. If a read needs an unlock or sign-in, repair the

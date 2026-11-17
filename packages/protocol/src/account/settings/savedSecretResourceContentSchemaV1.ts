@@ -116,11 +116,6 @@ export function describeSavedSecretResourceContentV1(content: SavedSecretResourc
     : { kind: 'external', provider: content.source.contribution };
 }
 
-/** External descriptors are acquired by their owner; they cannot delegate vault access. */
-export function canShareSavedSecretResourceContentV1(content: SavedSecretResourceContentV1): boolean {
-  return content.v === 1 || content.source.kind !== 'external';
-}
-
 const CanonicalPaddedBase64Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(SAVED_SECRET_RESOURCE_MAX_CIPHERTEXT_BASE64_LENGTH_V1), z.refine((value) => {
   try {
     const decoded = decodeBase64(value, 'base64');

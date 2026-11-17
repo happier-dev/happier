@@ -239,7 +239,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             .toMatchObject({ storage: { kind: 'value' }, revision: 2 });
     });
 
-    it('keeps Plain external references personal at create and grant mutation', async () => {
+    it('shares only external references at Plain create, grant, promotion and update boundaries', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
         const recipient = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
         await db.userRelationship.createMany({ data: [
@@ -252,25 +252,32 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         const input = { accountId: owner.id, resourceId: 'external-personal', displayName: 'Vault token', kind: 'token' as const,
             encryptionMode: 'plain' as const, storedContent };
         expect(await inTx(tx => createSavedSecretResourceInTx(tx, { ...input, resourceId: 'external-shared', accountGrants: [recipient.id] })))
-            .toEqual({ ok: false, error: 'recipient_mode_unsupported' });
+            .toEqual({ ok: true, value: { resourceId: 'external-shared', revision: 1 } });
         expect(await inTx(tx => createSavedSecretResourceInTx(tx, input))).toEqual({ ok: true, value: { resourceId: input.resourceId, revision: 1 } });
         expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, { accountId: owner.id, resourceId: input.resourceId,
             expectedRevision: 1, accountGrants: [recipient.id], teamGrants: [], groupGrants: [] })))
-            .toEqual({ ok: false, error: 'recipient_mode_unsupported' });
-        expect(await db.savedSecretAccountGrant.count({ where: { resourceId: input.resourceId } })).toBe(0);
-        await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, { ...input, resourceId: 'external-promote',
+            .toEqual({ ok: true, value: { resourceId: input.resourceId, revision: 2 } });
+        expect(await db.savedSecretAccountGrant.count({ where: { resourceId: input.resourceId } })).toBe(1);
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, { ...input, resourceId: 'external-promote',
             accountGrants: [recipient.id], nextSettings: null,
             referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: {} },
-            profileMutations: [] }))).rejects.toMatchObject({ error: 'recipient_mode_unsupported' });
+            profileMutations: [] }))).toMatchObject({ ok: true, value: { resourceId: 'external-promote' } });
         const inlineShared = { ...input, resourceId: 'inline-shared', accountGrants: [recipient.id],
             storedContent: { t: 'plain' as const, v: { v: 1 as const, name: input.displayName, kind: input.kind, value: 'inline' } } };
         expect(await inTx(tx => createSavedSecretResourceInTx(tx, inlineShared))).toMatchObject({ ok: true });
         expect(await inTx(tx => updateSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId: inlineShared.resourceId,
             expectedRevision: 1, displayName: input.displayName, kind: input.kind, storedContent })))
-            .toEqual({ ok: false, error: 'recipient_mode_unsupported' });
+            .toEqual({ ok: true, value: { resourceId: inlineShared.resourceId, revision: 2 } });
         expect(await inTx(tx => updateSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId: input.resourceId,
-            expectedRevision: 1, displayName: input.displayName, kind: input.kind, storedContent })))
-            .toEqual({ ok: true, value: { resourceId: input.resourceId, revision: 2 } });
+            expectedRevision: 2, displayName: input.displayName, kind: input.kind, storedContent })))
+            .toEqual({ ok: true, value: { resourceId: input.resourceId, revision: 3 } });
+        const received = await inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, recipient.id));
+        expect(received).toHaveLength(4);
+        for (const resource of received) {
+            expect(resource).toMatchObject({ encryptionMode: 'plain', storedContent,
+                entry: { relationship: 'recipient', materialStatus: 'ready' } });
+            expect(resource).not.toHaveProperty('value');
+        }
     });
 
     it.each(['plain', 'e2ee'] as const)('creates and retries a resource-only external-reference batch in a %s Account without changing Settings or catalogs', async mode => {
@@ -315,9 +322,8 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         expect(await db.userKVStore.count({ where: { accountId: owner.id } })).toBe(0);
     });
 
-    it.each(['invalid', 'collision', 'granted'] as const)('rolls back a resource-only batch when its second external reference is %s', async failure => {
+    it.each(['invalid', 'collision'] as const)('rolls back a resource-only batch when its second external reference is %s', async failure => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const recipient = failure === 'granted' ? await db.account.create({ data: { encryptionMode: 'plain' } }) : null;
         const resource = (resourceId: string) => ({ resourceId, displayName: 'Vault field', kind: 'token' as const,
             encryptionMode: 'plain' as const, storedContent: { t: 'plain' as const, v: { v: 2 as const,
                 name: 'Vault field', kind: 'token' as const, source: { kind: 'external' as const,
@@ -329,12 +335,11 @@ describe("Saved Secret resource service (SQLite integration)", () => {
                 displayName: 'Existing field', storedContent: { ...second.storedContent, v: { ...second.storedContent.v, name: 'Existing field' } } })))
                 .toMatchObject({ ok: true });
         }
-        const candidate = failure === 'invalid' ? { ...second, displayName: 'Mismatched field' }
-            : recipient ? { ...second, accountGrants: [recipient.id] } : second;
+        const candidate = failure === 'invalid' ? { ...second, displayName: 'Mismatched field' } : second;
         await expect(inTx(tx => promoteSavedSecretResourceInTx(tx, { accountId: owner.id, ...first,
             additionalSavedSecretResources: [candidate], nextSettings: null, profileMutations: [],
             referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: {} } }))).rejects.toMatchObject({
-            error: failure === 'invalid' ? 'invalid_resource' : failure === 'collision' ? 'resource_changed' : 'recipient_mode_unsupported',
+            error: failure === 'invalid' ? 'invalid_resource' : 'resource_changed',
         });
         expect(await db.savedSecretResource.findUnique({ where: { id: first.resourceId } })).toBeNull();
         expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(failure === 'collision' ? 1 : 0);

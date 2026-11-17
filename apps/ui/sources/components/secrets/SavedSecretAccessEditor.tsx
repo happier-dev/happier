@@ -31,6 +31,9 @@ import {
 import { SavedSecretShareSheet } from '@/components/sharing/secrets/SavedSecretShareSheet';
 import { savedSecretAudiencePresentations } from '@/components/sharing/secrets/useSavedSecretShareController';
 import { announceShareGrantRemovals } from '@/components/sharing/shareAnnouncements';
+import { savedSecretShareDisclosureMessage } from '@/components/sharing/secrets/savedSecretShareDisclosure';
+import { withProfileAccount } from '@/sync/api/account/apiProfileCatalog';
+import { readSavedSecretContentsInContext } from '@/sync/api/account/apiSavedSecretCatalog';
 
 /**
  * Who a Saved Secret reaches — for a secret that is already shared, and for one
@@ -207,14 +210,27 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
             + (entry?.audience?.teams.length ?? 0)
             + (entry?.audience?.groups.length ?? 0);
         const nextGrantCount = draft.length;
+        setSaving(true);
+        setFailure(null);
+        try {
         // Sharing a personal secret is itself the first
         // disclosure, so it is confirmed exactly like the first
         // external grant on an already-shared one.
         if ((currentGrantCount === 0 && nextGrantCount > 0) || target.kind === 'personal') {
+            // Open the selected content at the disclosure boundary; the catalog's storage
+            // descriptor is presentation metadata and cannot decide what will be shared.
+            const referenceDisclosure = entry
+                ? await withProfileAccount(props.scope, undefined, context => readSavedSecretContentsInContext(context,
+                    [entry.ref], undefined, { expectedRevision: basis ?? entry.revision!, requireManage: true,
+                        isCurrent: () => currentTargetKey.current === requestedTargetKey }))
+                : null;
+            if (referenceDisclosure && !referenceDisclosure.ok) { setFailure(referenceDisclosure.reason); return; }
+            const content = referenceDisclosure?.ok ? referenceDisclosure.contents.get(entry!.ref)?.content : undefined;
+            const source = content?.v === 2 && content.source.kind === 'external' ? content.source : undefined;
             const target = t('secrets.catalog.shareDisclosureTargetCount', { count: nextGrantCount });
             const confirmed = await Modal.confirm(
                 t('secrets.catalog.shareDisclosureTitle'),
-                t('secretsSettings.sharingDescription'),
+                savedSecretShareDisclosureMessage(source, entry?.storage?.kind === 'external' ? entry.storage.providerLabel : undefined),
                 {
                     cancelText: t('common.cancel'),
                     confirmText: t('secrets.catalog.shareDisclosureConfirm', { target }),
@@ -222,10 +238,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
             );
             if (!confirmed || currentTargetKey.current !== requestedTargetKey) return;
         }
-        setSaving(true);
-        setFailure(null);
         const encryption = getSyncSingleton().encryption;
-        try {
         const announceSavedAudience = () => announceShareGrantRemovals(
             Object.values(savedSecretAudiencePresentations(entry?.audience, props.scope.accountId, null)), draft);
         const finishApproved = async () => {

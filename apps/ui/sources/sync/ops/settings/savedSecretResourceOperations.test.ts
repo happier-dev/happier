@@ -639,7 +639,7 @@ describe('Saved Secret operations through their real Account and Action owners',
     it.each(['stored', 'locked', 'native-missing', 'shared', 'external', 'passkey'] as const)('vault export converts the original resource only after successful native store (%s)', async scenario => {
         const account = await openAccount();
         const resourceId = 'exportable-resource';
-        const stored = scenario === 'stored';
+        const stored = scenario === 'stored' || scenario === 'shared';
         const nonInline = scenario === 'external' || scenario === 'passkey';
         const originalContent: SavedSecretResourceContentV1 = scenario === 'external' ? { v: 2, name: 'Existing source', kind: 'other',
             source: { kind: 'external', contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
@@ -684,12 +684,11 @@ describe('Saved Secret operations through their real Account and Action owners',
             expect(result.results).toEqual([stored ? { secretId: resourceId,
                 secretRef: `happier:shared-secret:v1:${resourceId}`, status: 'exported', updatedAt: 4 }
                 : { secretId: resourceId, secretRef: `happier:shared-secret:v1:${resourceId}`,
-                    status: 'failed', ...(scenario === 'shared' ? { code: 'recipient_mode_unsupported' }
-                        : nonInline ? { code: 'unsupported_source' }
+                    status: 'failed', ...(nonInline ? { code: 'unsupported_source' }
                         : scenario === 'native-missing' ? { code: 'native_unavailable', repair: 'install' }
                         : { code: 'authentication_required', repair: 'unlock' }) }]);
-            expect(operands).toHaveLength(scenario === 'shared' || nonInline ? 0 : 1);
-            if (scenario !== 'shared' && !nonInline) expect(operands[0]).toMatchObject({ operation: 'store', value: 'vault-export-private-marker', title: 'Account API token' });
+            expect(operands).toHaveLength(nonInline ? 0 : 1);
+            if (!nonInline) expect(operands[0]).toMatchObject({ operation: 'store', value: 'vault-export-private-marker', title: 'Account API token' });
             expect(account.writes).toHaveLength(stored ? 1 : 0);
             expect(account.materialReadPaths.every(path => path.includes('resourceId=exportable-resource'))).toBe(true);
             const row = account.resources.get(resourceId)!;
@@ -3471,17 +3470,14 @@ describe('Saved Secret operations through their real Account and Action owners',
         key?.fill(0);
     });
 
-    it.each(['plain', 'e2ee'] as const)('keeps an external source personal through the %s mutation owner', async mode => {
+    it.each(['plain', 'e2ee'] as const)('shares a value-free vault reference through the %s mutation owner', async mode => {
         const account = await openAccount(mode);
-        const source = { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' };
+        const source = { kind: 'external' as const, contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' }, account: 'account', reference: 'op://vault/item/token' };
         account.setEffect((_path, body) => Response.json({ resourceId: SharedSavedSecretCreateInputV1Schema.parse(body).resourceId, revision: 1 }));
         const shared = await createSavedSecretResource({ scope: account.scope, name: 'Key', kind: 'token', source,
             accountGrants: ['account-b'], teamGrants: [], groupGrants: [] });
-        expect(shared).toMatchObject({ ok: false, reason: 'recipient_mode_unsupported' });
-        expect(account.writes).toHaveLength(0);
-        const created = await createSavedSecretResource({ scope: account.scope, name: 'Key', kind: 'token', source,
-            accountGrants: [], teamGrants: [], groupGrants: [] });
-        expect(created).toMatchObject({ ok: true });
+        expect(shared).toMatchObject({ ok: true });
+        expect(account.writes).toHaveLength(1);
         const input = SharedSavedSecretCreateInputV1Schema.parse(account.writes[0]!.body);
         const key = mode === 'e2ee' ? await getSyncSingleton().encryption!.decryptEncryptionKey(input.keyEnvelopes![0]!.encryptedDataKey, account.scope) : null;
         const opened = mode === 'plain'
@@ -3489,10 +3485,11 @@ describe('Saved Secret operations through their real Account and Action owners',
             : key ? openSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode, storedContent: input.storedContent, resourceDataKey: key }) : null;
         expect(opened).toEqual({ v: 2, name: 'Key', kind: 'token', source });
         account.materialRow(input.resourceId, mode, input.storedContent, 1, key ?? undefined);
+        account.setEffect((_path, body) => Response.json({ resourceId: Reflect.get(body as object, 'resourceId'), revision: 2 }));
         if (mode === 'e2ee') expect(await setSavedSecretResourceGrants({ scope: account.scope, resourceId: input.resourceId, expectedRevision: 1,
             encryptionMode: mode, accountGrants: [], teamGrants: ['team-a'], groupGrants: [],
-            decryptDataKeyEnvelope: async () => key?.slice() ?? null })).toEqual({ ok: false, reason: 'recipient_mode_unsupported' });
-        expect(account.writes.filter(write => write.path.endsWith('/grants/set'))).toHaveLength(0);
+            decryptDataKeyEnvelope: async () => key?.slice() ?? null })).toEqual({ ok: true });
+        expect(account.writes.filter(write => write.path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.grants.set'])).toHaveLength(mode === 'e2ee' ? 1 : 0);
         const resource = account.resources.get(input.resourceId);
         if (!resource || !('resourceId' in resource)) throw new Error('Expected the created external Resource');
         account.resources.set(input.resourceId, { ...resource, entry: { ...resource.entry, audience: {
@@ -3555,7 +3552,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         } finally { await hook?.unmount(); }
     });
 
-    it('refuses changing Team-shared E2EE inline material to an external source before dispatch', async () => {
+    it('changes Team-shared E2EE inline material to a reference without sharing its acquired value', async () => {
         const account = await openAccount('e2ee');
         const key = new Uint8Array(32).fill(9);
         const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-a', mode: 'e2ee', resourceDataKey: key,
@@ -3564,10 +3561,16 @@ describe('Saved Secret operations through their real Account and Action owners',
         if (!('resourceId' in row)) throw new Error('Expected healthy fixture');
         account.resources.set('resource-a', { ...row, entry: { ...row.entry, audience: { accounts: [], groups: [],
             teams: [{ kind: 'team', teamId: 'team-a', name: 'Team' }] } } });
-        const source = { kind: 'external' as const, contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', reference: 'op://vault/item/token' };
+        const source = { kind: 'external' as const, contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' }, account: 'account', reference: 'op://vault/item/token' };
+        account.setEffect((_path, body) => {
+            const input = SharedSavedSecretUpdateInputV1Schema.parse(body);
+            expect(openSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode: 'e2ee',
+                storedContent: input.storedContent!, resourceDataKey: key })).toEqual({ v: 2, name: 'Key', kind: 'token', source });
+            return Response.json({ resourceId: input.resourceId, revision: 4 });
+        });
         expect(await updateSavedSecretResource({ scope: account.scope, resourceId: 'resource-a', expectedRevision: 3,
-            nextSource: source, decryptDataKeyEnvelope: async () => key.slice() })).toEqual({ ok: false, reason: 'recipient_mode_unsupported' });
-        expect(account.writes).toEqual([]);
+            nextSource: source, decryptDataKeyEnvelope: async () => key.slice() })).toEqual({ ok: true });
+        expect(account.writes).toHaveLength(1);
     });
 
     it.each(['plain', 'e2ee'] as const)('creates %s material with exact initial grants and a usable owner envelope', async mode => {

@@ -521,12 +521,16 @@ to the resource header or sent as new server-visible plaintext. Missing or
 conflicting declarations retain the generic vault label. The join reads no
 credential material and issues no additional network or native request.
 
-External content is personal-only. The client mutation owner refuses sharing
-for encrypted content; the Home writer refuses it for Plain content. Team
-brokering is unsupported. Linking one's own resource is the grant, while
-another person's resource retains the existing consent flow. Native vault
-acquisition on a shared Machine requires Manage access before native code runs.
-The descriptor follows the Account-mode and Home-managed edit rules below;
+External reference-only content can be shared through the existing Saved Secret
+audiences and envelopes in unreleased 0.3 development source. Recipients receive
+the provider identity, account, field reference and optional vault/item/field
+metadata, never a copied vault value. Each acquisition uses the requester's native
+vault access on the executing Machine; a recipient without that access receives
+an unavailable result, with no fallback to the sharer's or Machine custodian's
+vault identity. Team brokering is unsupported. Linking one's own resource is the
+grant, while another person's resource retains the existing consent flow. Native
+vault acquisition on a shared Machine requires Manage access before native code
+runs. The descriptor follows the Account-mode and Home-managed edit rules below;
 Plain Accounts remain keyless.
 
 Imported software passkeys use one `SavedSecretResource` per key, through the

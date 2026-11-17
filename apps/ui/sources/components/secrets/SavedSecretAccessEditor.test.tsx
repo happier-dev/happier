@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { IModal } from '@/modal';
 import { act } from 'react-test-renderer';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -9,7 +10,7 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const confirmDisclosure = vi.hoisted(() => vi.fn(async () => true));
+const confirmDisclosure = vi.hoisted(() => vi.fn<IModal['confirm']>(async () => true));
 
 installSettingsViewCommonModuleMocks({
     storage: 'real',
@@ -42,6 +43,9 @@ beforeEach(async () => {
         },
     });
     testScope = { serverId: home.homes['home-a']!.id, accountId: 'account-owner' };
+    home.resources.get('home-a')!.set('resource-1', { resourceId: 'resource-1', encryptionMode: 'plain',
+        recipientEnvelope: null, storedContent: { t: 'plain', v: { v: 1, name: entry.name, kind: entry.kind, value: 'private-inline-value' } },
+        entry });
 });
 
 const entry = {
@@ -85,6 +89,33 @@ const grantWrites = () => home!.mutations.filter(request => request.path === sav
 const promotionWrites = () => home!.mutations.filter(request => request.path === savedSecretPromotePath);
 
 describe('SavedSecretAccessEditor', () => {
+    it.each(['external', 'value'] as const)('discloses vault metadata before granting Team access even with a %s catalog descriptor', async storageKind => {
+        const source = { kind: 'external' as const,
+            contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
+            account: 'my-team.1password.com', reference: 'op://Deploy/Token/credential',
+            metadata: { vault: { id: 'vault', name: 'Deploy vault' }, item: { id: 'item', title: 'Deploy token' },
+                field: { id: 'field', title: 'Credential field', kind: 'CONCEALED' } } };
+        const linkedEntry = { ...entry, storage: storageKind === 'external'
+            ? { kind: 'external' as const, provider: source.contribution, providerLabel: '1Password' }
+            : { kind: 'value' as const } };
+        home!.resources.get('home-a')!.set('resource-1', { resourceId: 'resource-1', encryptionMode: 'plain',
+            recipientEnvelope: null, storedContent: { t: 'plain', v: { v: 2, name: entry.name, kind: entry.kind, source } },
+            entry: linkedEntry });
+        const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
+        const screen = await renderScreen(<SavedSecretAccessEditor target={{ kind: 'shared', entry: linkedEntry }}
+            scope={testScope} onClose={() => {}} onSaved={async () => {}} />);
+        await startAdding(screen);
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-candidate-team:team-new')).toBeTruthy());
+        await screen.pressByTestIdAsync('saved-secret-access-candidate-team:team-new');
+        await screen.pressByTestIdAsync('saved-secret-access-save');
+        await vi.waitFor(() => expect(grantWrites()).toHaveLength(1));
+        const disclosure = confirmDisclosure.mock.calls[0]?.[1];
+        for (const detail of ['my-team.1password.com', source.reference, 'Deploy vault', 'Deploy token', 'Credential field']) {
+            expect(disclosure).toContain(detail);
+        }
+        expect(home!.requests.filter(request => request.path === '/v1/account/saved-secrets/resources/materials')).toHaveLength(1);
+        expect(SharedSavedSecretGrantsSetInputV1Schema.parse(grantWrites()[0]!.body).teamGrants).toEqual(['team-new']);
+    });
     it('requires a changed audience and disables Save again when the selection is reverted', async () => {
         const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
         const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
@@ -281,6 +312,9 @@ describe('SavedSecretAccessEditor', () => {
 
         await screen.pressByTestIdAsync('saved-secret-access-reload');
         expect(screen.findByTestId('saved-secret-access-save')?.props.disabled).toBe(true);
+        const retained = home!.resources.get('home-a')!.get('resource-1')!;
+        if (!('resourceId' in retained)) throw new Error('Expected healthy retained resource');
+        home!.resources.get('home-a')!.set('resource-1', { ...retained, entry: { ...entry, revision: 4 } });
         await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-candidate-account:account-new')).toBeTruthy());
         await screen.pressByTestIdAsync('saved-secret-access-candidate-account:account-new');
         await screen.pressByTestIdAsync('saved-secret-access-save');

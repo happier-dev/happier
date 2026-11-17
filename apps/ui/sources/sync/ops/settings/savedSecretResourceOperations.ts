@@ -6,7 +6,6 @@ import { listAccountSettingsSavedSecretReferences, listSavedSecretPersonalImport
 import type { AccountSettingsHistorySavedSecretTransferV1 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1, SavedSecretResourceContentV1Schema, prepareSavedSecretResourceRecipientEnvelopesV1, prepareSavedSecretResourceUpdateContentV1, type SavedSecretExternalSourceV1, type SavedSecretResourceSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import { admitSavedSecretResourceAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { SavedSecretBackupRekeyRequiredV1Schema, type SavedSecretBackupRekeyRequiredV1, SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { SavedSecretLegacyImportResult, SavedSecretVerifiedImportReference } from '@/sync/domains/settings/savedSecretTypes';
@@ -427,10 +426,6 @@ export async function prepareSavedSecretResourceCreateInContext(
         const content = SavedSecretResourceContentV1Schema.parse(input.source
             ? { v: 2 as const, name: input.displayName, kind: input.kind, source: input.source }
             : { v: 1 as const, name: input.displayName, kind: input.kind, value: input.value! });
-        if (admitSavedSecretResourceAudienceV1(content, { accounts: input.accountGrants, teams: input.teamGrants,
-            groups: input.groupGrants }, context.accountId) !== 'allowed') {
-            throw Object.assign(new Error('recipient_mode_unsupported'), { code: 'recipient_mode_unsupported' });
-        }
         const storedContent = resourceDataKey
             ? sealSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode: 'e2ee', resourceDataKey, content, randomBytes: getRandomBytes })
             : sealSavedSecretResourceStoredContentV1({ resourceId: input.resourceId, mode: 'plain', content });
@@ -1859,11 +1854,6 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
                 resourceDataKey, nextName: params.nextName, nextValue: params.nextValue, nextSource: params.nextSource, toMode: params.toMode });
             if (!prepared) return { ok: false, reason: 'unavailable' };
             const { content, mode: nextMode } = prepared;
-            const audience = admitSavedSecretResourceAudienceV1(content, resource.entry.audience && {
-                ...resource.entry.audience, accounts: resource.entry.audience.accounts.map(account => account.accountId),
-            }, context.accountId);
-            if (audience === 'audience_unavailable') return { ok: false, reason: 'unavailable' };
-            if (audience === 'recipient_mode_unsupported') return { ok: false, reason: 'recipient_mode_unsupported' };
             const encryption = nextMode === 'e2ee' && resource.encryptionMode === 'plain'
                 ? (await context.resolveAccountEncryption()).encryption : null;
             context.assertCurrent();
@@ -1980,14 +1970,6 @@ export async function setSavedSecretResourceGrants(params: Readonly<{
             }
             resourceDataKey = await params.decryptDataKeyEnvelope(resource.recipientEnvelope.encryptedDataKey);
             if (!resourceDataKey) return { ok: false, reason: 'unavailable' };
-            const content = resource.storedContent && openSavedSecretResourceStoredContentV1({
-                resourceId: resource.resourceId, mode: 'e2ee', storedContent: resource.storedContent, resourceDataKey,
-            });
-            if (!content) return { ok: false, reason: 'unavailable' };
-            if (admitSavedSecretResourceAudienceV1(content, { accounts: params.accountGrants, teams: params.teamGrants,
-                groups: params.groupGrants }, params.scope.accountId) !== 'allowed') {
-                return { ok: false, reason: 'recipient_mode_unsupported' };
-            }
         }
 
         const finishApproved = async (value: SavedSecretMutationOutput) => {

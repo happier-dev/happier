@@ -392,7 +392,7 @@ describe('personal Saved Secret key rotation', () => {
     it.each([
         { mode: 'plain', sourceKind: 'external' }, { mode: 'e2ee', sourceKind: 'external' },
         { mode: 'plain', sourceKind: 'passkey' }, { mode: 'e2ee', sourceKind: 'passkey' },
-    ] as const)('imports $sourceKind through the real $mode resource sealing owner', async ({ mode, sourceKind }) => {
+    ] as const)('imports $sourceKind through the real $mode sealing owner and renames its Team-shared reference', async ({ mode, sourceKind }) => {
         const accountId = 'secret-owner';
         const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const keys = tweetnacl.box.keyPair();
@@ -441,7 +441,8 @@ describe('personal Saved Secret key rotation', () => {
             entry: SavedSecretCatalogEntryV1Schema.parse({ ref: formatSharedSavedSecretRefV1(request.resourceId), source: 'shared_resource',
                 relationship: 'owner', ownerAccountId: accountId, name: 'Vault token', kind, revision: 1, materialStatus: 'ready',
                 audience: { accounts: [{ kind: 'account', accountId, name: null, firstName: null, lastName: null, username: null, avatarUrl: null }],
-                    teams: [], groups: [] }, capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }) };
+                    teams: [{ kind: 'team', teamId: 'shared-team', name: 'Shared Team' }], groups: [] },
+                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }) };
         await expect(updateOwnedSavedSecretResourceForOperation({ credentials, operationContext, resourceId: request.resourceId,
             expectedRevision: 1, nextName: 'Renamed credential', executeMutation: async input => {
                 expect(input).toMatchObject({ resourceId: request.resourceId, expectedRevision: 1, displayName: 'Renamed credential' });

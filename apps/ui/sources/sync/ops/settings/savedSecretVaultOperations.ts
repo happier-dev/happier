@@ -3,7 +3,6 @@ import { PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1, PERSONAL_SAVED_SECRET_AC
 import { PluginSecretSourceListResultV1Schema, PluginSecretSourceStoreResultV1Schema, PluginSecretSourceFailureV1Schema, type PluginSecretSourceFailureV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { admitSavedSecretExternalSourceAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -103,10 +102,6 @@ export async function exportSavedSecretsToVaultInContext(account: LazyActionAcco
             if (!opened.ok) refuseSavedSecretVaultOperation(opened.reason === 'changed' ? 'revision_conflict' : 'secret_unavailable');
             const resource = opened.contents.get(identity.secretRef)!;
             if (resource.entry.relationship !== 'owner') refuseSavedSecretVaultOperation('not_found');
-            const audience = admitSavedSecretExternalSourceAudienceV1(resource.entry.audience && {
-                ...resource.entry.audience, accounts: resource.entry.audience.accounts.map(recipient => recipient.accountId),
-            }, account.accountId);
-            if (audience !== 'allowed') refuseSavedSecretVaultOperation(audience === 'audience_unavailable' ? 'secret_unavailable' : audience);
             if (resource.content.v !== 1) refuseSavedSecretVaultOperation('unsupported_source');
             const source = await storeSavedSecretValueInVaultInContext(account, input.target, resource.content.name, resource.content.value, signal);
             const converted = await updateSavedSecretResourceInContext(account, { resourceId: selected.secretId,
