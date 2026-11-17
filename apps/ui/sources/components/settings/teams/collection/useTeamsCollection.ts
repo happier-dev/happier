@@ -43,6 +43,8 @@ export type TeamsCollection = Readonly<{
     normalizedQuery: string;
     /** Paging or an unavailable/stale Home prevents claiming a complete collection. */
     activeIncomplete: boolean;
+    /** Last-known count of an answered, fully paged collection, retained while refreshing. */
+    activeCount: number | null;
     /**
      * Whether a search field belongs over the list: it no longer fits at a glance (or more pages
      * exist), or a search is already in progress. Never over an empty or short list.
@@ -172,6 +174,8 @@ export function useTeamsCollection(options: Readonly<{
         canCreateTeam,
         createGuidance,
         normalizedQuery,
+        activeCount: supplemented || active.kind === 'loading' || active.hasMore || active.unavailableHomes.length > 0
+            ? null : activeRows.length,
         activeIncomplete: supplemented || active.kind === 'loading' || active.hasMore || active.partial,
         searchable: activeRows.length > TEAMS_SEARCH_THRESHOLD || active.hasMore || normalizedQuery.length > 0,
     };

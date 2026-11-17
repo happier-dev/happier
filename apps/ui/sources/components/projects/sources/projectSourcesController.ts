@@ -27,6 +27,8 @@ export type ProjectSourceCreationDraft = Readonly<{
 type CreationFields = Pick<ProjectSourceCreationDraft, 'name' | 'address' | 'defaultRef' | 'subdir' | 'audience'>;
 export type ProjectSourcesState = Readonly<{
     rows: readonly ProjectSourceListItemV1[];
+    /** A successful catalog read, including an empty one, retained until access is withdrawn. */
+    hasLoaded: boolean;
     query: string;
     audience: ProjectSourcesListInputV1['audience'];
     catalogQuery: string;
@@ -59,7 +61,7 @@ export type ReadProjectSourcesCatalog = (query: string, audience: ProjectSources
 
 function catalogFields(state: ProjectSourcesState) {
     return { rows: state.rows, coverage: state.coverage, catalogQuery: state.catalogQuery,
-        catalogAudience: state.catalogAudience, status: state.status };
+        catalogAudience: state.catalogAudience, status: state.status, hasLoaded: state.hasLoaded };
 }
 
 function draftOf(source: ProjectSourceV1): ProjectSourceDraft {
@@ -108,7 +110,7 @@ function carryDraft(draft: ProjectSourceDraft, basis: ProjectSourceDraft, source
 export function createProjectSourcesController(scope: ServerAccountScope, execute: Execute,
     readAddressMachines: () => ProjectSourceAddressMachines = () => ({ machines: [], inventoryStatus: 'loading' }),
     readCatalog?: ReadProjectSourcesCatalog, sharedWithTeamId?: string) {
-    let state: ProjectSourcesState = { rows: [], query: '', audience: undefined, catalogQuery: '', catalogAudience: undefined, coverage: { complete: false, nextCursor: null }, status: 'initial',
+    let state: ProjectSourcesState = { rows: [], hasLoaded: false, query: '', audience: undefined, catalogQuery: '', catalogAudience: undefined, coverage: { complete: false, nextCursor: null }, status: 'initial',
         selectedId: null, current: null, canManage: false, detailStatus: 'initial', draft: null, creationDraft: null, conflict: null,
         mutation: 'idle', issue: null, uncertainCreate: false, addressResolution: { kind: 'idle' }, addressSaveDisabledReason: null };
     let catalog = readCatalog?.('', undefined, sharedWithTeamId);
@@ -181,7 +183,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
         resetAddress();
         details.clear(); drafts.clear(); draftBases.clear(); conflicts.clear(); uncertainSources.clear();
         createIntent = null; uncertainDraft = null; createRetryConfirmed = false; inspectedCreateAbsence = false;
-        return { rows: [], current: null, canManage: false, draft: null, creationDraft: null, conflict: null, uncertainCreate: false,
+        return { rows: [], hasLoaded: false, current: null, canManage: false, draft: null, creationDraft: null, conflict: null, uncertainCreate: false,
             detailStatus: 'refused' as const };
     }
     function resetAddress() {
@@ -324,7 +326,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                         const expected = createIdentity(uncertainDraft);
                         inspectedCreateAbsence = !rows.some((row) => createIdentity(draftOf(row)) === expected);
                     }
-                    publish({ rows, coverage: result.coverage, catalogQuery: query, catalogAudience: audience,
+                    publish({ rows, hasLoaded: true, coverage: result.coverage, catalogQuery: query, catalogAudience: audience,
                         status: 'ready', issue: uncertainDraft ? 'outcome_unknown' : null });
                 } else {
                     const revoked = unavailable(result.error);

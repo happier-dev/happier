@@ -160,7 +160,7 @@ async function renderNewMembers(
       <TeamNewMembersScreen serverId={serverId} teamId="team-1" />
     </ModalProvider>,
   );
-  return { screen, team };
+  return { screen, team, serverId };
 }
 
 it.each([true, false])(
@@ -206,4 +206,25 @@ it('says nothing is shared yet and that no first task is suggested', async () =>
   expect(
     screen.findByTestId('team-new-members-first-task-empty'),
   ).not.toBeNull();
+});
+
+it('keeps hydrated empty sections visible while the Sources refetch after a Team change', async () => {
+  const { screen, serverId } = await renderNewMembers([], true);
+  await waitForHomeGovernance(() => expect(screen.findByTestId('team-new-members-repositories-empty')).not.toBeNull());
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let requested = false;
+  account.home.answer(serverId, '/v1/projects/sources', {
+    select: () => { requested = true; return { respondAfter: pending,
+      body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } }; },
+  });
+  const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+  const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/changes');
+  try {
+    await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+    await waitForHomeGovernance(() => expect(requested).toBe(true));
+    expect(screen.findByTestId('team-new-members-repositories-empty')).not.toBeNull();
+    expect(screen.findByTestId('team-new-members-first-task-empty')).not.toBeNull();
+    expect(screen.findByTestId('team-new-members-repositories-loading')).toBeNull();
+  } finally { await act(async () => { release(); await pending; }); }
 });

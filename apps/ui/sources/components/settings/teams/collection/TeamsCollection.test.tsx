@@ -226,3 +226,24 @@ describe('Team collection loaded-page search', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-empty');
     });
 });
+
+it('keeps the last known Team count during a Team-change refetch', async () => {
+    const home = await addHome('count-home');
+    await harness.selectHomes([home]);
+    const body = { items: [teamSummaryFixture()], nextCursor: null };
+    harness.answer(home, LIST_PATH, { body });
+    const screen = await renderScreen(<TeamsCollectionRail />);
+    const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
+    await vi.waitFor(() => expect(screen.tree.findByType(CollectionList).props.count).toBe(1));
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    let requested = false;
+    harness.answer(home, LIST_PATH, { select: () => { requested = true; return { body, respondAfter: pending }; } });
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/changes');
+    try {
+        await act(async () => publishHomeAccountChange(home, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+        await vi.waitFor(() => expect(requested).toBe(true));
+        expect(screen.tree.findByType(CollectionList).props.count).toBe(1);
+    } finally { await act(async () => { release(); await pending; }); }
+});

@@ -173,7 +173,7 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
         <CollectionList
             testID="teams-collection-rail"
             title={t('teams.title')}
-            count={collection.activeIncomplete ? null : total}
+            count={collection.activeCount}
             headerAction={collection.showCreateTeam && sourceHint === null ? (
                 <TeamsCollectionAddButton canCreate={collection.canCreateTeam} onPress={() => open(teamsCreatePath())} />
             ) : undefined}
