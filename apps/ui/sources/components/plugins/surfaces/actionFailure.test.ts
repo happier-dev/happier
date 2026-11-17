@@ -50,7 +50,7 @@ const typedRefusal = { errorCode: 'credential_scope_denied', error: 'Choose anot
     failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
     remediation: { kind: 'retry' }, details: { reason: 'credential_scope_denied' } } as const;
 
-it.each(['host', 'daemon', 'client'] as const)('preserves %s refusal evidence and authored recovery through the presenter', placement => {
+it.each(['plugin', 'client'] as const)('preserves %s refusal evidence and authored recovery through the presenter', placement => {
     const projected = placement === 'client'
         ? projectClientActionInvocationFailure({ status: 'failed', code: typedRefusal.errorCode,
             message: typedRefusal.error, data: { ...typedRefusal } }, { readOnly: false }, {})

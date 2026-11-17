@@ -7,6 +7,8 @@ import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugin
 import { renderSurface } from '../../../../../../packages/plugins/triage/src/ui/surface';
 import { refreshTriageListWindow } from '../../../../../../packages/plugins/triage/src/ui/window/mountedWindow';
 import { createTriageEphemeralSharedScopeFixture } from '../../../../../../packages/plugins/triage/src/ui/window/ephemeralSharedScope.test-support';
+import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/savedViewsProtocol';
+import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/userMarksProtocol';
 import { actionOutcomeUnknownFailure, createPluginSurfaceActionFailureError } from './actionFailure';
 
 // Render the platform boundary through RNW rather than the unit lane's native host-tag stub.
@@ -38,7 +40,12 @@ describe('unknown Action settlement at the existing manual Retry surface', () =>
                 adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
                 handlers: {
                     publishCurrentUiContext: () => undefined,
-                    executeAction: async () => { attempts++; throw failure; },
+                    executeAction: async ({ action }) => {
+                        // Independent Account state remains readable; only the list read is under test.
+                        if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
+                        if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [] };
+                        attempts++; throw failure;
+                    },
                     replacePageLocation: ({ subPath }) => subPath,
                 },
             });
@@ -46,12 +53,12 @@ describe('unknown Action settlement at the existing manual Retry surface', () =>
         mounted.push(fixture);
         await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope); });
         if (readOnly) {
-            const retry = await fixture.getByRole('button', { name: 'Try again' });
+            const retry = await fixture.getByRole('button', { name: 'Retry' });
             const before = attempts;
             await act(async () => { await fixture.press(retry); });
             expect(attempts).toBeGreaterThan(before);
         } else {
-            await expect(fixture.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
+            await expect(fixture.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
         }
     });
 });
