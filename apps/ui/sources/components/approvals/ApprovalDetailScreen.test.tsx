@@ -1616,6 +1616,37 @@ describe('ApprovalDetailScreen', () => {
     expect(failure?.props.subtitle).toBeUndefined();
   });
 
+  it('answers a shared check’s consent on the page as the transcript card does: the check leads, Allow · Skip answer it', async () => {
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    const selected = { phase: 'before', actionIds: ['session.title.set'], mode: 'wait', onFailure: 'ask',
+      automationId: 'automation-freeze', triggerId: 'trigger-freeze', triggerRevision: 1,
+      workflowId: 'artifact-release-freeze', workflowRevision: 3, ownerAccountId: 'account-mara' };
+    const request = ApprovalRequestV2Schema.parse({ ...JSON.parse(artifact.body), automaticChecks: {
+      phase: 'consent', humanApprovalRequired: false, subjects: [], selectionStatus: 'ready',
+      notices: [{ code: 'action_automation_skipped', reason: 'machineRequired', automationId: 'automation-lint',
+        triggerId: 'trigger-lint', workflowId: 'artifact-lint' }],
+      selected: [selected], consents: [{ automationId: selected.automationId, triggerId: selected.triggerId, decision: 'pending' }],
+      runs: [], results: [] } });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+
+    // The check and its typed Skip are told on the page, not only in the transcript.
+    expect(screen.findByTestId('approvals.automatic-checks:consent')).not.toBeNull();
+    expect(screen.findByTestId('approvals.automatic-checks:skipped:0')).not.toBeNull();
+    // This Account may author the consent, so Allow stands beside Skip; approving the Action is not offered.
+    expect(decisionButton(screen, 'approvals.approve')?.props.title).toBe('workflows.triggers.checks.allow');
+    expect(decisionButton(screen, 'approvals.reject')?.props.title).toBe('workflows.triggers.checks.skip');
+
+    // Skip answers the check through the one decision owner; it neither rejects nor dismisses the Action.
+    await screen.pressByTestIdAsync('approvals.reject');
+    await vi.waitFor(() => expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody(currentArtifact.id) ?? 'null')).toMatchObject({
+      automaticChecks: { consents: [{ automationId: 'automation-freeze', decision: 'skip' }],
+        notices: expect.arrayContaining([expect.objectContaining({ code: 'action_automation_skipped', reason: 'consentSkipped' })]) },
+    }));
+    expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody(currentArtifact.id) ?? 'null').decision?.kind).not.toBe('reject');
+  });
+
   it('preserves and presents the typed Workflow refusal from a settled Setup approval', async () => {
     await prepareApprovalFixture();
     const request = ApprovalRequestV2Schema.parse({

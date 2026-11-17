@@ -15693,6 +15693,12 @@ const shareSheetTranslations = { ca: {
                 removeChoice: 'Elimina l’opció',
                 authoredInput: ({ widget }) => `Edita ${widget} per eliminar les entrades privades abans de compartir.`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `Vols compartir també els fluxos de treball d’aquest perfil amb ${audience}?`,
+                shared: 'Compartit',
+                loadFailed: 'No s’han pogut carregar els fluxos de treball que fan servir aquest perfil.',
+                notNow: 'Ara no',
+            },
             errors: {
                 unavailable: 'Compartir encara no està disponible aquí.',
                 ownerOnly: 'Només el propietari o un administrador pot canviar qui hi té accés.',

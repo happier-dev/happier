@@ -15561,6 +15561,12 @@ const shareSheetTranslations = { 'zh-Hant': {
                 removeChoice: '移除選擇',
                 authoredInput: ({ widget }) => `編輯 ${widget}，在分享前移除私人輸入。`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `也要與 ${audience} 分享此設定檔的工作流程嗎？`,
+                shared: '已分享',
+                loadFailed: '無法載入使用此設定檔的工作流程。',
+                notNow: '暫時不要',
+            },
             errors: {
                 unavailable: '此處尚不支援共享。',
                 ownerOnly: '只有擁有者或管理員可以變更誰有存取權。',

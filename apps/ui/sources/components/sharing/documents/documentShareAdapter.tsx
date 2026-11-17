@@ -10,6 +10,7 @@ import { t } from '@/text';
 import type { ShareAccessLevel, ShareLevelPresentation, ShareSheetAdapter, ShareUiError, ShareUiReason } from '../shareSheetTypes';
 import { ShareRowAction } from '@happier-dev/plugin-ui/components';
 import { sharePrincipalKey } from '../sharePrincipalPresentation';
+import type { DocumentLinkedWorkflowOffer } from './useLinkedWorkflowShareOffer';
 
 const styles = StyleSheet.create((theme) => ({
     versionReports: { color: theme.colors.text.secondary },
@@ -94,6 +95,8 @@ export function createDocumentShareAdapter(input: Readonly<{
     description?: string;
     grants: readonly ArtifactAccessGrantRowV1[];
     privateChoices?: readonly DocumentPrivateChoice[];
+    /** A shared profile's own linked Workflows, offered to its newly added recipients. */
+    linkedWorkflows?: DocumentLinkedWorkflowOffer;
     linkPath?: string;
     sendCopy?: () => void;
     loading: boolean;
@@ -128,8 +131,32 @@ export function createDocumentShareAdapter(input: Readonly<{
         ...(input.linkPath && input.kind !== 'widget-area-layout.v1' ? { linkPath: input.linkPath } : {}),
         ...(input.sendCopy ? { sendCopy: input.sendCopy } : {}),
         sections: (context) => {
+            const linked = input.linkedWorkflows;
+            const linkedSection = linked ? [{ kind: 'static' as const, id: 'linked-workflows',
+                title: t('shareSheet.documents.linkedWorkflows.title', { audience: linked.audienceLabel }),
+                rightAccessory: <ShareRowAction useHost={useShareGrantRowPresentation} label={t('shareSheet.documents.linkedWorkflows.notNow')}
+                    testID={`${context.idPrefix}document-share-linked-workflows-dismiss`} endsRow onPress={linked.dismiss} />,
+                options: [
+                    ...linked.choices.map((choice): SelectionListOption => ({ id: `linked-workflow:${choice.ref}`,
+                        testID: `${context.idPrefix}document-share-linked-workflow:${choice.ref}`, label: choice.title,
+                        ...(choice.issue ? { subtitle: choice.issue.message } : {}),
+                        ...(choice.sharing ? { loading: true } : {}),
+                        ...(choice.share ? { onSelect: choice.share } : {}),
+                        rightAccessoryOutsidePressable: true,
+                        rightAccessory: () => choice.shared
+                            ? <Text variant="meta" style={styles.versionReports}>{t('shareSheet.documents.linkedWorkflows.shared')}</Text>
+                            : <ShareRowAction useHost={useShareGrantRowPresentation} label={t(choice.issue ? 'common.retry' : 'common.share')}
+                                testID={`${context.idPrefix}document-share-linked-workflow-share:${choice.ref}`} endsRow
+                                disabled={!choice.share} onPress={() => choice.share?.()} /> })),
+                    ...(linked.failed ? [{ id: 'linked-workflows-failed', label: t('shareSheet.documents.linkedWorkflows.loadFailed'),
+                        rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction useHost={useShareGrantRowPresentation}
+                            label={t('common.retry')} testID={`${context.idPrefix}document-share-linked-workflows-retry`} endsRow
+                            onPress={linked.retry} /> }] : []),
+                    ...(linked.loadMore ? [{ id: 'linked-workflows-more', testID: `${context.idPrefix}document-share-linked-workflows-more`,
+                        label: t('common.more'), onSelect: linked.loadMore }] : []),
+                ] }] : [];
             const choices = input.privateChoices ?? [];
-            const leading = choices.length ? [{ kind: 'static' as const, id: 'private-choices',
+            const leading = [...linkedSection, ...(choices.length ? [{ kind: 'static' as const, id: 'private-choices',
                 title: t('shareSheet.documents.privateChoices.title'), options: choices.map((choice): SelectionListOption => {
                     const label = choice.service
                         ? t('shareSheet.documents.privateChoices.account', { widget: choice.widget, service: choice.service })
@@ -148,7 +175,7 @@ export function createDocumentShareAdapter(input: Readonly<{
                                 testID={`${context.idPrefix}document-share-private-remove:${choice.id}`}
                                 onPress={choice.removeChoice} disabled={!context.editable || input.readOnly || choice.loading} /> : null}
                         </View> } : {}) };
-                }) }] : undefined;
+                }) }] : [])];
             const notices: SelectionListOption[] = [];
             if (input.loading) notices.push({ id: 'loading', label: t('common.loading'), loading: true, disabled: true });
             const issue = input.issue;
@@ -156,7 +183,7 @@ export function createDocumentShareAdapter(input: Readonly<{
                 ...(issue.retryable ? { subtitle: t('common.retry') } : {}) });
             if (input.notice) notices.push({ id: 'notice', label: input.notice.message, disabled: true });
             if (input.readOnly) notices.push({ id: 'read-only', label: t('shareSheet.documents.errors.ownerOnly'), disabled: true });
-            return { ...(leading ? { leading } : {}),
+            return { ...(leading.length ? { leading } : {}),
                 ...(notices.length ? { trailing: [{ kind: 'static' as const, id: 'status', options: notices }] } : {}) };
         },
     };

@@ -110,6 +110,8 @@ const host = vi.hoisted(() => ({
     automationQueries: [] as unknown[],
 }));
 
+/** A saved Workflow linked to the shared approval profile; its grants reuse the fixture's one roster. */
+const LINKED_WORKFLOW_ID = '33333333-3333-4333-8333-333333333333';
 const WORKFLOW_DOCUMENT = {
     header: { kind: 'workflow-definition.v1', definitionId: 'wf-1', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } },
     body: 'definition',
@@ -285,7 +287,7 @@ async function serveHome(): Promise<void> {
             const layout = host.document.header.kind === 'widget-area-layout.v1'
                 ? WidgetAreaLayoutV1StoredSchema.safeParse(JSON.parse(host.document.body)) : null;
             const documentIds = layout?.success ? [buildWidgetSurfaceArtifactIdV1(layout.data.surface)]
-                : ['wf-1', 'visual', 'profile-1', 'invalid-document'];
+                : ['wf-1', 'visual', 'profile-1', 'invalid-document', LINKED_WORKFLOW_ID];
             if (!documentIds.includes(artifactId)) return Response.json({ error: 'not_found' }, { status: 404 });
             if (route[2] !== '/access/grants') {
                 if (host.access === null) return Response.json({ error: 'not_found' }, { status: 404 });
@@ -749,6 +751,52 @@ describe('DocumentShareSheet', () => {
         ]);
         expect(host.automationQueries).toHaveLength(1);
         await hook.unmount();
+    });
+
+    it('offers the profile’s linked Workflows to its new recipients in the opened sheet, sharing one only when chosen', async () => {
+        host.document = { header: { kind: 'approval-profile.v1', name: 'Release' },
+            body: JSON.stringify({ kind: 'approval-profile.v1', profile: { name: 'Release' } }) };
+        host.grants = [];
+        await activateWidgetHome();
+        vi.useRealTimers();
+        const { WorkflowAttachedTriggerV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        host.attachedWorkflows = [WorkflowAttachedTriggerV1Schema.parse({
+            automationId: 'linked-release', triggerId: 'release-check', workflowDefinitionId: LINKED_WORKFLOW_ID,
+            workflowAccess: { ownerAccountId: 'owner', access: 'owner' }, relation: 'direct', enabled: true, revision: 1,
+            summary: { kind: 'action', phase: 'before', actionIds: ['deployments.deploy'] },
+            setUpBy: { accountId: 'owner', displayName: null },
+        })];
+        const screen = await renderScreen(<DocumentShareSheet artifactId="profile-1" kind="approval-profile.v1" />);
+        await waitForHomeGovernance(() => expect(host.automationQueries).toHaveLength(1));
+        // Nobody new has the profile yet, so nothing is offered.
+        expect(screen.findByTestId(`document-share-linked-workflow:${LINKED_WORKFLOW_ID}`)).toBeNull();
+
+        const payments = { kind: 'team' as const, teamId: 'payments' };
+        // Suggestions list once someone starts adding (real timers here: the Home's Workflow read is live).
+        const search = screen.find(node => node.props?.testID === 'document-share-search' && typeof node.props.onFocus === 'function');
+        await act(async () => { search.props.onFocus(); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('document-share-candidate-team:payments')).not.toBeNull());
+        await screen.pressByTestIdAsync('document-share-candidate-team:payments');
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`document-share-linked-workflow:${LINKED_WORKFLOW_ID}`)).not.toBeNull());
+        // Offering is not sharing: only the profile grant has been written.
+        expect(host.requests.filter(request => request.method === 'PUT')).toEqual([
+            { method: 'PUT', body: { artifactId: 'profile-1', principal: payments, accessLevel: 'view' } },
+        ]);
+
+        // The Workflow's own grant owner decides who is still missing; Share grants only them "Can use".
+        host.reviewedMissingAudience = [payments];
+        await screen.pressByTestIdAsync(`document-share-linked-workflow-share:${LINKED_WORKFLOW_ID}`);
+        await waitForHomeGovernance(() => expect(host.requests.filter(request => request.method === 'PUT')).toEqual([
+            { method: 'PUT', body: { artifactId: 'profile-1', principal: payments, accessLevel: 'view' } },
+            { method: 'PUT', body: { artifactId: LINKED_WORKFLOW_ID, principal: payments, accessLevel: 'view' } },
+        ]));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`document-share-linked-workflow-share:${LINKED_WORKFLOW_ID}`)).toBeNull());
+
+        // Not now withdraws the offer without touching any grant.
+        await screen.pressByTestIdAsync('document-share-linked-workflows-dismiss');
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`document-share-linked-workflow:${LINKED_WORKFLOW_ID}`)).toBeNull());
+        expect(host.requests.filter(request => request.method === 'PUT')).toHaveLength(2);
+        await screen.unmount();
     });
 
     it.each(['owner', 'admin', 'edit', 'view'] as const)('reads attached dashboard grants through the sharing reader as %s, with no idle or unrelated reads', async access => {

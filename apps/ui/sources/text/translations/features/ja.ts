@@ -15617,6 +15617,12 @@ const shareSheetTranslations = { ja: {
                 removeChoice: '選択を削除',
                 authoredInput: ({ widget }) => `${widget} を編集し、共有前に個人用の入力を削除してください。`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `このプロファイルのワークフローも ${audience} と共有しますか？`,
+                shared: '共有済み',
+                loadFailed: 'このプロファイルを使うワークフローを読み込めませんでした。',
+                notNow: '今はしない',
+            },
             errors: {
                 unavailable: 'ここではまだ共有を利用できません。',
                 ownerOnly: 'アクセスできるユーザーを変更できるのはオーナーまたは管理者だけです。',

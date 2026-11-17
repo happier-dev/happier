@@ -15562,6 +15562,12 @@ const shareSheetTranslations = { 'zh-Hans': {
                 removeChoice: '移除选择',
                 authoredInput: ({ widget }) => `编辑 ${widget}，在共享前移除私人输入。`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `也与 ${audience} 共享此配置文件的工作流吗？`,
+                shared: '已共享',
+                loadFailed: '无法加载使用此配置文件的工作流。',
+                notNow: '暂不',
+            },
             errors: {
                 unavailable: '此处暂不支持共享。',
                 ownerOnly: '只有所有者或管理员可以更改谁有访问权限。',

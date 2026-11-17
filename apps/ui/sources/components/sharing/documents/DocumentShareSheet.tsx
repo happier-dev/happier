@@ -14,6 +14,7 @@ import { DocumentPublicLinkSection } from './DocumentPublicLinkSection';
 import { DocumentSignedInLinkSection } from './DocumentSignedInLinkSection';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ReviewedDocumentShareSheet, type ReviewedDocumentShareSelection } from './ReviewedDocumentShareSheet';
+import { useLinkedWorkflowShareOffer } from './useLinkedWorkflowShareOffer';
 
 export type DocumentShareSheetProps = Readonly<{
     artifactId: string;
@@ -35,6 +36,8 @@ const DEFAULT_TEST_ID = 'document-share-editor';
 function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ scope: ServerAccountScope }>): React.ReactElement {
     const controller = useDocumentShareController({ artifactId: props.artifactId, kind: props.kind, scope: props.scope,
         reviewLinkedWorkflows: props.kind === 'approval-profile.v1' });
+    const linkedWorkflows = useLinkedWorkflowShareOffer({ scope: props.scope, linked: controller.linkedWorkflows,
+        grants: controller.model.grants });
     const publicLinkEnabled = useFeatureEnabled('sharing.public', { scopeKind: 'spawn', serverId: props.scope.serverId });
     const audience = props.kind === 'bot_template.v1' ? 'signed_in' : 'anonymous';
     const canManagePublicLink = (audience === 'signed_in' || publicLinkEnabled) && getArtifactKindPolicyV1(props.kind, audience).publicLinkAllowed && controller.model.owner !== null
@@ -49,6 +52,7 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
         description: props.description,
         grants: controller.grants,
         privateChoices: controller.privateChoices,
+        ...(linkedWorkflows.offer ? { linkedWorkflows: linkedWorkflows.offer } : {}),
         ...(props.linkPath ? { linkPath: props.linkPath } : {}),
         ...(props.onSendCopy ? { sendCopy: props.onSendCopy } : {}),
         loading: controller.loading,
@@ -76,8 +80,11 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
                     link={publicLink} idPrefix={context.idPrefix} kind={props.kind} />,
         } } : {}),
     };
-    return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions} adapter={adapter}
-        presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose} testID={props.testID ?? DEFAULT_TEST_ID} />;
+    return <>
+        {linkedWorkflows.run}
+        <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions} adapter={adapter}
+            presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose} testID={props.testID ?? DEFAULT_TEST_ID} />
+    </>;
 }
 
 const noop = () => {};

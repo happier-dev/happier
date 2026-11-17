@@ -70,6 +70,16 @@ export function readApprovalAutomaticChecksDecision(
   return null;
 }
 
+/** Whether the checks have anything to tell: a pending consent, a running check, a failure, or a visible Skip. */
+export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecksV1): boolean {
+  const failed = checks.results.some((result) => result.outcome === 'failed' || result.outcome === 'unavailable');
+  return (checks.phase === 'consent' && checks.consents.some((consent) => consent.decision === 'pending'))
+    || checks.phase === 'checking'
+    || ((checks.phase === 'override' || checks.phase === 'refused') && failed)
+    || checks.consents.some((consent) => consent.decision === 'skip')
+    || checks.notices.some((notice) => notice.code === 'action_automation_skipped');
+}
+
 /**
  * The card's answers while before checks hold the Action, through the card's one decision owner: a shared check's
  * consent (approving the Action is not consent), and Cancel for a running check. Failures alert as every decision does.
@@ -333,7 +343,7 @@ export const ApprovalAutomaticChecks = React.memo(
           : t('workflows.triggers.checks.skippedUnavailable', { workflow: nameOf(notice) }),
       ),
     ];
-    if (!body && skipped.length === 0) return null;
+    if (!readApprovalAutomaticChecksShown(checks)) return null;
     return (
       <>
         {body}

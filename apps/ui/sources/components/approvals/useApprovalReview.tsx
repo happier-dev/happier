@@ -11,6 +11,7 @@ import { readDiscussionDraftApproval } from './discussionDraftApproval';
 import { WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { ApprovalDecisionBar } from './ApprovalDecisionBar';
+import { ApprovalAutomaticChecks, readApprovalAutomaticChecksShown, useApprovalAutomaticChecksControls } from './ApprovalAutomaticChecks';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
@@ -70,6 +71,7 @@ import {
   isApprovalReplayRouteUnavailable,
   useApprovalHome,
   useApprovalDecisionHandler,
+  type ApprovalDecisionOptions,
 } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import { presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { useRetargetNavigationFocusReturnIntent } from '@/keyboard/focusReturn';
@@ -98,6 +100,8 @@ export type ApprovalReviewInput = Readonly<{
   onBack?: () => void;
   /** The existing decision owner accepted this answer, before its Artifact projection catches up. */
   onDecisionRecorded?: (decision: 'approve' | 'reject' | 'cancel') => void;
+  /** Opens an in-app route from the review (a check's Run or Workflow); a dialog host closes itself first. */
+  onOpenRoute?: (route: string) => void;
 }>;
 
 /**
@@ -407,15 +411,21 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       : null
   ), [handoffTargetApproval, handoffTargetActionArgs, handoffTargetMachine, handoffTargetMachineLabel, machineLabel, machineId, session, sessionContext]);
   const decide = React.useCallback(
-    async (decision: 'approve' | 'reject' | 'cancel', choice?: Readonly<{ keepUndo?: boolean }>) => {
+    async (decision: 'approve' | 'reject' | 'cancel', choice?: Readonly<{ keepUndo?: boolean;
+      triggerConsent?: ApprovalDecisionOptions['triggerConsent'] }>) => {
       if (!parsed || decisionInFlightRef.current || parsed.request.status !== 'open') return;
+      // Answering a shared check's consent is not approving the Action (D15), so the Action's withholding never gates it.
+      const triggerConsent = decision === 'approve' ? choice?.triggerConsent : undefined;
       // Fails closed for a programmatic press too, not only for the dimmed control.
-      if (decision === 'approve' && (approvalWithheld || secretPrompt || proposal?.approveWithheld)) return;
+      if (decision === 'approve' && !triggerConsent && (approvalWithheld || secretPrompt || proposal?.approveWithheld)) return;
 
       try {
         decisionInFlightRef.current = true;
         setIsDeciding(true);
-        if (parsed.kind === 'target') {
+        if (triggerConsent) {
+          // The request stays open while its checks settle; the refreshed Artifact says what happens next.
+          if (!await decideActionApproval('approve', { triggerConsent })) throw new Error('approval_decision_failed');
+        } else if (parsed.kind === 'target') {
           // The Action owner carries the deciding Account's signed authority to
           // the exact executor, including on another Account's Machine.
           if (!await decideActionApproval(decision)) return;
@@ -468,6 +478,21 @@ export function useApprovalReview(props: ApprovalReviewInput) {
 
   const requestTitle = useApprovalRequestTitle(
     readApprovalArtifactTitleInput(artifact, matchedBody, [sessionId]), approvalServerId ?? null);
+
+  // Before checks holding this Action (05 S6/S8/S9) are read and answered as the transcript card does.
+  const automaticChecks = parsed?.kind === 'target' || parsed?.kind === 'built_in' && parsed.request.v === 2
+    ? parsed.request.automaticChecks ?? null : null;
+  const decideChecks = React.useCallback(async (decision: 'approve' | 'reject' | 'cancel', options?: ApprovalDecisionOptions) => {
+    // The review's decide alerts its own failures, so the controls never alert twice.
+    await decide(decision, options?.triggerConsent ? { triggerConsent: options.triggerConsent } : undefined);
+    return true;
+  }, [decide]);
+  const checks = useApprovalAutomaticChecksControls({ checks: automaticChecks, decide: decideChecks,
+    unavailable: approvalRouteUnavailable, isDeciding, setIsDeciding });
+  const openRoute = React.useCallback((route: string) => {
+    if (props.onOpenRoute) props.onOpenRoute(route);
+    else router.push(route as Href);
+  }, [props.onOpenRoute, router]);
 
   if (isLoading) return { kind: 'loading' as const };
   if (artifact?.isDecrypted === false) {
@@ -615,21 +640,40 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const approveWithheldReason = approvalRouteUnavailable ? t('actionConfirmations.homeUnavailable')
     : approvalWithheld ? cannotRun ?? t('approvals.approveUnavailableHint') : null;
   // Dismiss closes without an answer; Reject answers no. Consent remains with decide.
+  // While before checks hold the Action, the same bar answers them as the transcript card does: a shared check's
+  // consent (Allow · Skip, Allow only where this Account may author it), Cancel for a running check, and
+  // Approve anyway · Deny after a failed one.
+  const checksDecision = checks.decision;
+  const consent = checksDecision?.kind === 'consent';
+  const checking = checksDecision?.kind === 'checking';
+  const override = checksDecision?.kind === 'override';
   const decisionBar = parsed.request.status === 'open' && !answeredWhileOpen && !confidentialApproval && !confidentialInputs
     && (!requesterConfirmation || requesterMayDecide) ? (
     <ApprovalDecisionBar testID="approvals.actions" busy={isDeciding && !homeUnavailable}
-      irreversible={review?.irreversible === true && !confidentialAction}
+      irreversible={review?.irreversible === true && !confidentialAction && !consent && !checking}
       layout={handoffTargetPresentation ? 'stacked' : 'inline'}
-      approve={!confidentialAction ? {
-        testID: 'approvals.approve', label: handoffTargetPresentation?.decisionLabel ?? projectCommandDecisions?.approve ?? deploymentDecision?.approve ?? proposalLabels?.approve
+      approve={checking ? undefined : consent ? (canAllow ? {
+        testID: 'approvals.approve', label: t('workflows.triggers.checks.allow'),
+        disabled: isDeciding || approvalRouteUnavailable,
+        onPress: () => { void checks.answerConsent('allow'); },
+      } : undefined) : !confidentialAction ? {
+        testID: 'approvals.approve', label: override ? t('workflows.triggers.checks.approveAnyway')
+          : handoffTargetPresentation?.decisionLabel ?? projectCommandDecisions?.approve ?? deploymentDecision?.approve ?? proposalLabels?.approve
           ?? discussionDraftDecisions?.approve ?? review?.approveVerb ?? undefined,
         disabled: approveDisabled,
         accessibilityHint: approveWithheldReason ?? undefined,
         onPress: () => decide('approve'),
       } : undefined}
-      dismiss={projectCommand ? undefined : { testID: 'approvals.cancel', disabled: isDeciding, accessibilityHint: t('approvals.dismissHint'),
-        onPress: () => decide('cancel') }}
-      reject={{ testID: 'approvals.reject', label: projectCommandDecisions?.reject ?? proposalLabels?.reject ?? discussionDraftDecisions?.reject, disabled: isDeciding || approvalRouteUnavailable,
+      dismiss={projectCommand && !checking ? undefined : { testID: 'approvals.cancel', disabled: isDeciding,
+        ...(checking ? { label: t('workflows.triggers.checks.cancel') } : { accessibilityHint: t('approvals.dismissHint') }),
+        onPress: () => { void (checking ? checks.cancelChecks() : decide('cancel')); } }}
+      reject={checking ? undefined : consent ? { testID: 'approvals.reject', label: t('workflows.triggers.checks.skip'),
+        disabled: isDeciding || approvalRouteUnavailable,
+        accessibilityHint: approvalRouteUnavailable ? t('actionConfirmations.homeUnavailable') : undefined,
+        onPress: () => { void checks.answerConsent('skip'); } } : { testID: 'approvals.reject',
+        label: override ? t('workflows.triggers.checks.deny')
+          : projectCommandDecisions?.reject ?? proposalLabels?.reject ?? discussionDraftDecisions?.reject,
+        disabled: isDeciding || approvalRouteUnavailable,
         accessibilityHint: approvalRouteUnavailable ? t('actionConfirmations.homeUnavailable') : undefined,
         onPress: () => decide('reject') }} />
   ) : null;
@@ -647,6 +691,16 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // What is decided, in the family's own presenter; both chromes show it whole.
   const sections = (
     <>
+        {automaticChecks && readApprovalAutomaticChecksShown(automaticChecks) ? (
+          <ItemGroup>
+            <SectionContentRow testID="approvals.automatic-checks-row">
+              <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionValue} serverId={approvalServerId ?? null}
+                canAllow={canAllow} automaticCheckSkips={automaticCheckSkips}
+                automaticChecksExecutionAccountName={automaticChecksExecutionAccountName}
+                onOpenRoute={openRoute} testID="approvals.automatic-checks" />
+            </SectionContentRow>
+          </ItemGroup>
+        ) : null}
         {parsed.kind === 'built_in' ? <ApprovalReviewFacts
           actionId={parsed.request.actionId} actionArgs={parsed.request.actionArgs} preview={parsed.request.preview}
           execution={parsed.request.execution}
@@ -764,8 +818,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     /** The parsed request this review reads, for a host that presents its facts in its own words. */
     request: parsed.request,
     /** Automatic-check progress and Run references belong to this existing request. */
-    automaticChecks: parsed.kind === 'target' || parsed.kind === 'built_in' && parsed.request.v === 2
-      ? parsed.request.automaticChecks ?? null : null,
+    automaticChecks,
     /** Viewer-local consent permission from the existing exact-Home reader. */
     canAllow,
     /** Shared-check recovery facts from the held Artifact, preserving unknown producer notices. */
@@ -774,7 +827,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     /** The status the page names (an answer recorded here counts) and, when its effect failed, why. */
     displayStatus, executionFailure,
     /** Its Approve control is shown and enabled right now: the same reading that enables the button. */
-    approvable: Boolean(decisionBar) && !secretPrompt && !approveDisabled,
+    approvable: Boolean(decisionBar) && !secretPrompt && !approveDisabled && !consent && !checking,
     /** Why Approve is withheld for this request (unreachable Home, unrepresentable or unrunnable request), or null. */
     approveWithheldReason,
     /** Waits for the one person who asked (C7); a host deciding several requests at once leaves it out. */

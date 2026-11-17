@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
@@ -37,11 +37,17 @@ function ApprovalReviewModal(props: ApprovalReviewModalProps) {
     onDismissed();
     onClose();
   }, [onClose, onDismissed]);
+  const openRoute = React.useCallback((route: string) => {
+    close();
+    router.push(route as Href);
+  }, [close, router]);
   const review = useApprovalReview({
     artifactId: props.artifactId,
     serverId: props.serverId,
     onBack: close,
     onDecisionRecorded: props.onDecisionRecorded,
+    // A route opens behind this dialog, so the review closes first.
+    onOpenRoute: openRoute,
   });
   const ready = review.kind === 'ready' ? review : null;
   const decision = ready ? (ready.decisionBar ?? ready.capabilityDecisions ?? null) : null;

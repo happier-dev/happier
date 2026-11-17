@@ -95,6 +95,12 @@ export type ShareSheetTranslations = Readonly<{
             removeChoice: string;
             authoredInput: (params: Readonly<{ widget: string }>) => string;
         }>;
+        linkedWorkflows: Readonly<{
+            title: (params: Readonly<{ audience: string }>) => string;
+            shared: string;
+            loadFailed: string;
+            notNow: string;
+        }>;
         errors: Readonly<{ unavailable: string; ownerOnly: string; noAccess: string; notFound: string; subjectUnavailable: string; failed: string }>;
     }>;
 }>;
@@ -208,6 +214,12 @@ export const shareSheetTranslationsEnglish = { en: {
                 letViewersPick: 'Let viewers pick',
                 removeChoice: 'Remove the choice',
                 authoredInput: ({ widget }) => `Edit ${widget} to remove its private inputs before sharing.`,
+            },
+            linkedWorkflows: {
+                title: ({ audience }) => `Also share this profile’s Workflows with ${audience}?`,
+                shared: 'Shared',
+                loadFailed: 'Couldn’t load the Workflows that use this profile.',
+                notNow: 'Not now',
             },
             errors: {
                 unavailable: 'Sharing isn’t available here yet.',

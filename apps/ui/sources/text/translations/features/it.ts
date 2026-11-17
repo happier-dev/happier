@@ -15681,6 +15681,12 @@ const shareSheetTranslations = { it: {
                 removeChoice: 'Rimuovi la scelta',
                 authoredInput: ({ widget }) => `Modifica ${widget} per rimuovere gli input privati prima della condivisione.`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `Condividere anche i workflow di questo profilo con ${audience}?`,
+                shared: 'Condiviso',
+                loadFailed: 'Impossibile caricare i workflow che usano questo profilo.',
+                notNow: 'Non ora',
+            },
             errors: {
                 unavailable: 'La condivisione non è ancora disponibile qui.',
                 ownerOnly: 'Solo il proprietario o un amministratore può cambiare chi ha accesso.',

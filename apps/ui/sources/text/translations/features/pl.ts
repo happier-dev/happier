@@ -15706,6 +15706,12 @@ const shareSheetTranslations = { pl: {
                 removeChoice: 'Usuń wybór',
                 authoredInput: ({ widget }) => `Edytuj ${widget}, aby usunąć prywatne dane wejściowe przed udostępnieniem.`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `Udostępnić też przepływy pracy tego profilu dla ${audience}?`,
+                shared: 'Udostępniono',
+                loadFailed: 'Nie udało się wczytać przepływów pracy korzystających z tego profilu.',
+                notNow: 'Nie teraz',
+            },
             errors: {
                 unavailable: 'Udostępnianie nie jest tu jeszcze dostępne.',
                 ownerOnly: 'Tylko właściciel lub administrator może zmienić, kto ma dostęp.',

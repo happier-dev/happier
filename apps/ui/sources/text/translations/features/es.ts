@@ -15616,6 +15616,12 @@ const shareSheetTranslations = { es: {
                 removeChoice: 'Eliminar la selección',
                 authoredInput: ({ widget }) => `Edita ${widget} para eliminar las entradas privadas antes de compartir.`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `¿Compartir también los flujos de trabajo de este perfil con ${audience}?`,
+                shared: 'Compartido',
+                loadFailed: 'No se pudieron cargar los flujos de trabajo que usan este perfil.',
+                notNow: 'Ahora no',
+            },
             errors: {
                 unavailable: 'Compartir aún no está disponible aquí.',
                 ownerOnly: 'Solo el propietario o un administrador puede cambiar quién tiene acceso.',

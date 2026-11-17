@@ -15736,6 +15736,12 @@ const shareSheetTranslations = { fr: {
                 removeChoice: 'Retirer le choix',
                 authoredInput: ({ widget }) => `Modifie ${widget} pour retirer ses entrées privées avant le partage.`,
             },
+            linkedWorkflows: {
+                title: ({ audience }) => `Partager aussi les workflows de ce profil avec ${audience} ?`,
+                shared: 'Partagé',
+                loadFailed: 'Impossible de charger les workflows qui utilisent ce profil.',
+                notNow: 'Pas maintenant',
+            },
             errors: {
                 unavailable: 'Le partage n’est pas encore disponible ici.',
                 ownerOnly: 'Seul le propriétaire ou un administrateur peut modifier qui a accès.',
