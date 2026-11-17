@@ -1,5 +1,14 @@
 # CLI Architecture
 
+## Project launch environment composition (0.3 development)
+
+`workspaces/projectSetup/projectLaunchEnvironment.ts` owns Project launch inputs.
+Project setup preparation passes its captured private input to the existing native
+setup launcher. Deliberate Project, Profile and invocation selections override
+private declared-name dotenv values and assigned runtime defaults, with invocation
+selections winning. The requester secret-reference owner still supplies selected
+secrets; private dotenv values never enter review, consent or Action output.
+
 ## Unconfirmed SSH transitions (0.3 development)
 
 An unconfirmed SSH transition retains its native failure kind, reason, step and
