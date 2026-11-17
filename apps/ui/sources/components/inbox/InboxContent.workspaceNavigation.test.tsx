@@ -13,6 +13,10 @@ import { UsageNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activit
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
 import { buildInboxItems } from './inboxItems';
 import type { InboxView } from './InboxContent';
+import { evaluateMachineVitalsAlertsV1 } from '@happier-dev/protocol/machines/vitals/evaluateMachineVitalsAlertsV1';
+import { MachineVitalsAlertsPolicyV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsAlertsV1';
+import { MachineVitalsNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
+import { t } from '@/text';
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -99,5 +103,32 @@ it('files a machine alert under Machines, opens the tab its push would, and dism
     expect(dismiss.mock.calls[0]?.[0]).toEqual(model.openUsageNotices[0]);
     await screen.pressByTestIdAsync('inbox.machine-notice.notice-machine');
     expect(screen.findByTestId('opened-destination')?.props.children).toBe('/machines/edge-1-id?tab=processes&sort=memory');
+});
+
+it('reports the sustained CPU threshold rather than the latest qualifying minute as an interval value', async () => {
+    const policy = MachineVitalsAlertsPolicyV1Schema.parse({ cpu: { enabled: true, abovePct: 82.5, sustainMs: 120_000 } });
+    const [transition] = evaluateMachineVitalsAlertsV1({
+        policy, episodes: [], now: 120_000,
+        records: [83.5, 98].map((cpu, index) => ({
+            t: (index + 1) * 60_000, cpu, cpuMax: cpu, mem: 0, memMax: 0,
+            lvl: 'calm' as const, swp: null, rx: null, tx: null,
+        })),
+    });
+    expect(transition?.episode.state).toBe('fired');
+    const notice = MachineVitalsNotificationV1Schema.parse({
+        topic: 'resource_limit', phase: 'started', kind: 'cpu_busy', machineId: 'edge-1-id', machineName: 'edge-1',
+        at: transition!.episode.at, since: transition!.since, guardEnabled: false, evidence: transition!.evidence,
+    });
+    const header = { v: 1, kind: 'usage_notice.v1', title: 'CPU alert', status: 'open', notice } as const;
+    const artifact = createUsageNoticeArtifactFixture({ id: 'notice-cpu', header, rawHeader: header,
+        body: JSON.stringify({ v: 1, notice }) });
+    const model = { ...createModel(false),
+        openUsageNotices: [{ artifact, header: UsageNoticeArtifactHeaderV1Schema.parse(artifact.rawHeader) }],
+    };
+    const screen = await renderHostedInbox(model, 'updates');
+    expect(screen.getTextContent()).toContain(t('machineVitals.alerts.cpu.when', {
+        threshold: '82.5%', sustain: '2 min',
+    }));
+    expect(screen.getTextContent()).not.toContain('98%');
 });
 

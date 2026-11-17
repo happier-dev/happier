@@ -6,7 +6,7 @@ import {
   formatMachineBytes,
   formatMachinePartOfWhole,
 } from '@/components/machines/vitals/machineVitalsPresentation';
-import { formatAlertSustain } from '@/components/machines/vitals/machineAlertsPresentation';
+import { formatAlertSustain, formatCpuThreshold } from '@/components/machines/vitals/machineAlertsPresentation';
 import { resolveMachineResourceToneColor } from '@/components/machines/summary/machineSummaryStripModel';
 import { machineVitalsNoticeHref, machineVitalsNoticeTab } from '@/components/machines/page/machinePageHref';
 import { beginMachinePageTabIntent } from '@/components/machines/page/machinePageIntent';
@@ -80,9 +80,9 @@ export function describeMachineVitalsNotice(
       };
     return {
       title: t('machineVitals.inbox.cpuBusy', { machine }),
-      detail: t('machineVitals.inbox.cpuAveraged', {
-        percent: Math.round(notice.evidence.busyPct),
-        duration: formatAlertSustain(notice.evidence.sustainMs),
+      detail: t('machineVitals.alerts.cpu.when', {
+        threshold: formatCpuThreshold(notice.evidence.abovePct),
+        sustain: formatAlertSustain(notice.evidence.sustainMs),
       }),
     };
   }
