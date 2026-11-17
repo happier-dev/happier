@@ -128,8 +128,10 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
             <SelectionTiles
               variant="card"
               selectionMark="outline"
-              density={phone ? 'regular' : 'compact'}
-              descriptionPlacement={phone ? 'below' : 'beside'}
+              // Two slots share a phone's row, so each leads with its preview; one slot (Light or Dark mode) has
+              // the row to itself and keeps the desktop card, preview beside its name.
+              density={phone && slotOptions.length > 1 ? 'regular' : 'compact'}
+              descriptionPlacement={phone && slotOptions.length > 1 ? 'below' : 'beside'}
               previewAspectRatio={PHONE_SLOT_PREVIEW_ASPECT}
               minimumColumns={slotOptions.length}
               maximumColumns={slotOptions.length}
