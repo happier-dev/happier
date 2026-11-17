@@ -2611,7 +2611,6 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                     expect(environmentObservation.signal?.aborted).toBe(false);
                     registry = await activateRegistry();
                     const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
-                    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
                     try {
                         for (const uncertainty of ['failed', 'unknown'] as const) {
                             nativeObservation = uncertainty;
