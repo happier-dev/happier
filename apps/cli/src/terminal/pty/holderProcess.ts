@@ -171,8 +171,13 @@ export async function startHeldAgentPtyProcess(request: HeldAgentPtyRequest): Pr
       const nudged = Math.max(1, request.rows - 1);
       if (nudged === request.rows) return;
       // Restored on the TUI's first output after the nudge; a TUI that never redraws keeps one row less.
-      void holder.resizeTerminal(request.cols, nudged).then((resized) => {
-        if (resized) holder.stdout.once('data', () => { void holder.resizeTerminal(request.cols, request.rows); });
+      // That output can beat the nudge's reply (a Windows pseudoconsole repaints while the resize is in
+      // flight), so it is awaited from before the nudge; the replay was already delivered above.
+      const redrawn = new Promise<void>(resolve => holder.stdout.once('data', () => resolve()));
+      void holder.resizeTerminal(request.cols, nudged).then(async (resized) => {
+        if (!resized) return;
+        await redrawn;
+        void holder.resizeTerminal(request.cols, request.rows);
       });
     },
   };

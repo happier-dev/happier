@@ -24,11 +24,19 @@ import { getAgentTerminalSessionManager } from './agentTerminals';
 import { readDaemonTerminalPtyConfig } from './config';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager } from './sessions';
 
+/** A live process's command line (the OS process table is the system boundary here). */
+function processCommandLine(pid: number): string {
+  if (process.platform !== 'win32') return execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' });
+  const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+    `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`], { encoding: 'utf8', windowsHide: true });
+}
+
 /** The held primary Agent of a runner's Session scope, as the daemon records it (its address read from the holder process). */
 function heldPrimary(scope: object): SessionHeldAgentV1 {
   const { holderPids, agentPids } = readSessionAgentTreeRoots(scope);
   expect([holderPids.length, agentPids.length]).toEqual([1, 1]);
-  const args = execFileSync('ps', ['-o', 'args=', '-p', String(holderPids[0])], { encoding: 'utf8' }).trim().split(/\s+/u);
+  const args = processCommandLine(holderPids[0]!).trim().split(/\s+/u);
   return { role: 'primary', socketPath: args[args.indexOf('--socket') + 1]!, holderPid: holderPids[0]!, agentPid: agentPids[0]! };
 }
 
@@ -50,6 +58,8 @@ const timer = setInterval(() => {
   out('\x1b[2;1H\x1b[2Kcount=' + count + '\x1b[3;1H\x1b[2K[u:' + count + ']\x1b[' + process.stdout.rows + ';3H');
   if (count === 200) clearInterval(timer);
 }, 15);
+// Raw input, as a TUI reads its console: Windows reports console size changes only to raw readers.
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.on('data', () => {});
 `;
 
@@ -64,7 +74,7 @@ const rows = (text: string) => text.split('\n').map(row => row.trimEnd());
 
 const holderAvailable = (() => { try { return Boolean(resolveAgentSessionHolderExecutablePath()); } catch { return false; } })();
 
-describe.skipIf(process.platform === 'win32' || !holderAvailable)('PTY terminal host: held terminal Agent', () => {
+describe.skipIf(!holderAvailable)('PTY terminal host: held terminal Agent', () => {
   let directory = '';
   let agentPid: number | undefined;
   afterAll(async () => {
@@ -88,8 +98,8 @@ describe.skipIf(process.platform === 'win32' || !holderAvailable)('PTY terminal 
     // Runner 1 starts the Agent in a holder terminal.
     const first = await runner({ ...process.env });
     await expect.poll(() => screenText(first.adapter, first.handle)).toMatch(/count=(1\d|[2-9]\d)/);
+    agentPid = readSessionAgentTreeRoots(first.scope).agentPids[0];
     const held = heldPrimary(first.scope);
-    agentPid = held.agentPid;
 
     // The process's one PTY owner holds the Agent terminal: viewers read its bytes and resize it,
     // and the host's screen follows the new size.
@@ -103,7 +113,10 @@ describe.skipIf(process.platform === 'win32' || !holderAvailable)('PTY terminal 
     expect(terminals.resize({ terminalId: terminal!.terminalId, cols: 120, rows: 40 })).toEqual({ ok: true });
     await expect.poll(async () => rows(await screenText(first.adapter, first.handle))[0]).toBe('TUI 120x40');
 
-    // Runner 1 stops mid-output without acknowledging what is in flight (its connection just ends).
+    // An idle Agent (like a TUI waiting at its prompt) only redraws on the adopter's nudge.
+    await expect.poll(async () => rows(await screenText(first.adapter, first.handle))[1], { timeout: 10_000 }).toBe('count=200');
+
+    // Runner 1 stops without acknowledging what is in flight (its connection just ends).
     pauseSessionHolderDelivery();
     await handOverSessionHolderClients();
     expect(alive(held.agentPid)).toBe(true);
