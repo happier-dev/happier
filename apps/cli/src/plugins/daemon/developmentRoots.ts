@@ -469,7 +469,8 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
   ): Promise<void> => {
     const canonicalSource = await realpath(sourcePath);
     const existing = sources.get(canonicalSource);
-    if (existing) {
+    // Bundled custody has no observer until the first explicit/collection owner.
+    if (existing && existing.owners.size > 0) {
       existing.owners.add(ownerRoot);
       return;
     }

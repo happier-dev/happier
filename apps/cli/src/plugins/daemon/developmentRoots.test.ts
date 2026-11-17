@@ -102,10 +102,15 @@ describe('daemon plugin development root ownership', () => {
     }
   });
 
-  it('returns the typed preparation failure for an explicit standalone root and retains its recovery status', async () => {
+  it.each(['standalone', 'bundled'] as const)('returns the typed preparation failure for an explicit %s root and retains its recovery status', async (sourceKind) => {
     const happyHomeDir = await createDirectory('happier-daemon-dev-install-failure-home-');
-    const sourceRoot = await createDirectory('happier-daemon-dev-install-failure-source-');
-    const missingDependencyPath = join(sourceRoot, 'node_modules', 'missing-dependency');
+    const sourceRoot = sourceKind === 'bundled'
+      ? join(await realpath(resolve(projectPath(), '..', '..')), 'packages/plugins/codex')
+      : await createDirectory('happier-daemon-dev-install-failure-source-');
+    // Bundled dependencies already exist in this checkout. Explicit SDK
+    // selection asks the real preparer to refresh them at the managed boundary.
+    const sdkRegistryOrigin = sourceKind === 'bundled' ? 'https://registry.example.test' : undefined;
+    const missingDependencyPath = join(happyHomeDir, 'node_modules', 'missing-dependency');
     const logPath = join(happyHomeDir, 'preparation.log');
     const localLogger = new Logger({
       logFilePath: logPath,
@@ -113,11 +118,13 @@ describe('daemon plugin development root ownership', () => {
       pruneCurrentProcessLogs: false,
     });
     const restoreLogger = bindProcessLogger(localLogger);
-    await mkdir(join(sourceRoot, '.happier-plugin'));
-    await writeFile(join(sourceRoot, 'package.json'), '{"name":"standalone-plugin","version":"1.0.0"}\n');
-    await writeFile(join(sourceRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(
-      createPluginManifestV2Fixture({ id: 'acme.install-failure', entrypoints: undefined }),
-    ));
+    if (sourceKind === 'standalone') {
+      await mkdir(join(sourceRoot, '.happier-plugin'));
+      await writeFile(join(sourceRoot, 'package.json'), '{"name":"standalone-plugin","version":"1.0.0"}\n');
+      await writeFile(join(sourceRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(
+        createPluginManifestV2Fixture({ id: 'acme.install-failure', entrypoints: undefined }),
+      ));
+    }
     const service = createDaemonPluginChangeService({
       prepare: createDaemonPathPluginChangePreparer({
         happyHomeDir,
@@ -138,15 +145,22 @@ describe('daemon plugin development root ownership', () => {
       // Watch delivery is the OS boundary; classification, initial observation,
       // preparation, service failure and status projection all remain real.
       startCollectionObserver: async () => ({ stop() {} }),
-      startSourceObserver: async (projectRoot, onObservation) => await startPluginDevelopmentSourceObserver({
+      startSourceObserver: async (projectRoot, onObservation, sdkRegistryOrigin) => await startPluginDevelopmentSourceObserver({
         projectRoot,
         onObservation,
+        sdkRegistryOrigin,
         startWatchingDirectory: () => ({ ready: Promise.resolve(), stop() {} }),
       }),
     });
     try {
+      if (sourceKind === 'bundled') {
+        // Native activation has already admitted this bundled source without a
+        // watcher. Explicit development registration must still prepare it.
+        expect(owner.resolveDevelopmentSourceAuthority({ pluginId: 'happier.agent.codex', rootPath: sourceRoot }))
+          .toMatchObject({ kind: 'development', observedRevision: 0 });
+      }
       await owner.initialize();
-      await expect(owner.control({ kind: 'registerExplicit', rootPath: sourceRoot })).resolves.toMatchObject({
+      await expect(owner.control({ kind: 'registerExplicit', rootPath: sourceRoot, sdkRegistryOrigin })).resolves.toMatchObject({
         kind: 'failed',
         code: 'plugin_dev_dependency_preparation_failed',
         message: expect.stringContaining('[REDACTED_PATH]'),
@@ -167,7 +181,7 @@ describe('daemon plugin development root ownership', () => {
       {
         const output = captureStdoutJsonOutput();
         try {
-          await handlePluginsCommand(['dev', sourceRoot, '--json'], {
+          await handlePluginsCommand(['dev', sourceRoot, '--json', ...(sdkRegistryOrigin ? ['--sdk-registry', sdkRegistryOrigin] : [])], {
             ensureDaemon: async () => undefined,
             controlPluginDevelopment: async (request) => await owner.control(request),
           });
