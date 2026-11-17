@@ -626,6 +626,37 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(await write(null)).toMatchObject({ ok: true });
     expect(writes()).toBe(published);
   });
+  it('publishes instrument context refresh to its Home while a same-id Session is active elsewhere', async () => {
+    const targetServerId = await homes.addHome({ name: 'Context refresh Home', serverUrl: 'https://context-refresh.test',
+      serverIdentityId: 'srv_context_refresh', accountId: 'bob', currentAccount: true });
+    const sessionId = 'context-refresh-same-id';
+    const readTarget = installSession(sessionId, { flavor: 'claude' }, targetServerId, 1);
+    const readActive = installSession(sessionId, { flavor: 'claude' }, serverId, 1);
+    installHomeGovernanceBoundaries(httpBoundary);
+    const { useInstrumentStripModel } = await import('@/components/sessions/agentInput/instrumentStrip/useInstrumentStripModel');
+    const hook = await renderHook(() => useInstrumentStripModel({
+      sessionId, serverId: targetServerId, agentId: null, metadata: null,
+    }));
+    const metadata = (read: typeof readTarget) => {
+      const row = read();
+      const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
+      if (owner.t !== 'plain') throw new Error('Expected plain owner metadata');
+      return projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(row.metadata), ownerMetadata: owner.v });
+    };
+    try {
+      await act(async () => hook.getCurrent().refreshContextUsage());
+      await vi.waitFor(() => expect(metadata(readTarget).acpConfigOptionOverridesV1).toMatchObject({
+        overrides: { context_usage_refresh: { value: expect.any(String) } },
+      }));
+      expect(metadata(readActive).acpConfigOptionOverridesV1).toBeUndefined();
+      const writes = homes.requestsFor(`/v2/sessions/${sessionId}`).filter(request => request.input !== null);
+      expect(writes.length).toBeGreaterThan(0);
+      expect(writes.every(request => request.serverId === targetServerId)).toBe(true);
+    } finally {
+      await hook.unmount();
+    }
+  });
+
   it.each(['focus-switch', 'credential-replacement'] as const)(
     'keeps explicit Home metadata authority independent from ambient %s', async change => {
     // Published Homes carry a portable identity, so their Account encryption scopes are comparable.
