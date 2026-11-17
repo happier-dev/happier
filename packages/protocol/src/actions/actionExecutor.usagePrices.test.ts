@@ -5,8 +5,20 @@ import { UsageModelPriceCatalogSchema } from '../usage/usageModelPriceSchemas.js
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from './externalActionLimits.js';
 import { getActionSpec } from './actionSpecs.js';
 import { USAGE_PRICE_ACTION_IDS } from '../usage/usageActionIdsV1.js';
+import { projectUsageModelPriceDelivery } from '../usage/usageModelPriceDelivery.js';
+import { resolveUsageModelPrice } from '../usage/usageModelPriceSchemas.js';
 
 describe('model price Action delivery', () => {
+  it('keeps canonical vendor and dated-alias pricing available in a selected model catalog', () => {
+    const prices = UsageModelPriceCatalogSchema.parse({ v: 1, models: {
+      model: { inputUsdPerMillion: 2, outputUsdPerMillion: 4, provider: 'openai' },
+      'claude-haiku-4-5-20251001': { inputUsdPerMillion: 1, outputUsdPerMillion: 5, provider: 'anthropic' },
+    }, provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1, revision: 'aliases', fetchStatus: 'ready' } });
+    const modelIds = ['openai/model', 'claude-haiku-4-5'];
+    const selected = UsageModelPriceCatalogSchema.parse(projectUsageModelPriceDelivery(prices, { modelIds }, 'agent'));
+    expect(modelIds.map(id => resolveUsageModelPrice(id, selected))).toEqual(modelIds.map(id => resolveUsageModelPrice(id, prices)));
+  });
+
   const catalog = bundledUsageModelPriceCatalog;
   const executor = createActionExecutor({ usageActions: {
     query: async () => { throw new Error('Price reads do not query private Usage'); },
