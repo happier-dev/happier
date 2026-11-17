@@ -28,12 +28,16 @@ export const ArtifactLockedAvailabilityV1Schema = z.strictObject({ kind: z.liter
   reason: z.literal('encryption_material_unavailable') });
 export type ArtifactLockedAvailabilityV1 = z.infer<typeof ArtifactLockedAvailabilityV1Schema>;
 
-export const ArtifactAccessGrantsListInputV1Schema = lazyZodSchema(() => z.strictObject({ artifactId: z.string().check(z.minLength(1)) }));
-export const ArtifactAccessGrantSetInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessGrantsListInputV1Schema, {
+const ArtifactAccessAddressV1Schema = lazyZodSchema(() => z.strictObject({ artifactId: z.string().check(z.minLength(1)) }));
+export const ArtifactAccessGrantsListInputV1Schema = lazyZodSchema(() => z.extend(ArtifactAccessAddressV1Schema, {
+  /** Management-only review of the requested resource audience; this does not write grants. */
+  requestedAudience: z.optional(z.array(PrincipalRefV1Schema)),
+}));
+export const ArtifactAccessGrantSetInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessAddressV1Schema, {
   principal: PrincipalRefV1Schema,
   accessLevel: ArtifactAccessLevelV1Schema,
 })));
-export const ArtifactAccessGrantRemoveInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessGrantsListInputV1Schema, {
+export const ArtifactAccessGrantRemoveInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessAddressV1Schema, {
   principal: PrincipalRefV1Schema,
 })));
 export type ArtifactAccessGrantsListInputV1 = z.infer<typeof ArtifactAccessGrantsListInputV1Schema>;
@@ -59,13 +63,17 @@ export const ArtifactAccessGrantRowV1Schema = lazyZodSchema(() => z.extend(Resou
 }));
 export type ArtifactAccessGrantRowV1 = z.infer<typeof ArtifactAccessGrantRowV1Schema>;
 
-export const ArtifactAccessGrantsListResponseV1Schema = lazyZodSchema(() => z.strictObject({
+const ArtifactAccessGrantsSnapshotV1Schema = lazyZodSchema(() => z.strictObject({
   artifactId: z.string().check(z.minLength(1)),
   ownerAccountId: z.string().check(z.minLength(1)),
   access: ArtifactCallerAccessV1Schema,
   grants: z.array(ArtifactAccessGrantRowV1Schema),
 }));
-export const ArtifactAccessGrantMutationResponseV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessGrantsListResponseV1Schema, {
+export const ArtifactAccessGrantsListResponseV1Schema = lazyZodSchema(() => z.extend(ArtifactAccessGrantsSnapshotV1Schema, {
+  /** Present only for a requested audience review; effective Team/Group access is resolved by the owner. */
+  missingAudience: z.optional(z.array(PrincipalRefV1Schema)),
+}));
+export const ArtifactAccessGrantMutationResponseV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessGrantsSnapshotV1Schema, {
   access: z.nullable(ArtifactCallerAccessV1Schema),
   changed: z.boolean(),
   /** The grant receipt is committed; a fresh Artifact read retries key preparation. */

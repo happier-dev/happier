@@ -398,13 +398,16 @@ export async function postArtifactKindWriteBatch(credentials: AuthCredentials, i
 /** The existing Artifact HTTP owner carries grants and fenced recipient keys. */
 export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick<ArtifactApiOptions, 'request' | 'serverId' | 'readTransport'> = {}) {
     const send = async <T>(artifactId: string, leaf: string, schema: { parse: (value: unknown) => T },
-        method?: string, input?: unknown, signal?: AbortSignal): Promise<T> => {
+        method?: string, input?: unknown, signal?: AbortSignal,
+        requestedAudience?: ArtifactAccessGrantsListInputV1['requestedAudience']): Promise<T> => {
         throwIfAborted(signal);
         const active = opts.request ? undefined : getActiveServerSnapshot();
         const mutationOptions = { ...opts, serverId: opts.serverId ?? active?.serverId };
         const request = opts.request ?? createServerFetchForActiveServer(active);
         const run = async () => {
-            const issue = () => request(`/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}`, {
+            const query = new URLSearchParams();
+            if (requestedAudience !== undefined) query.set('requestedAudience', JSON.stringify(requestedAudience));
+            const issue = () => request(`/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}${query.size ? `?${query}` : ''}`, {
                 ...(method ? { method } : {}),
                 headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
                 ...(input === undefined ? {} : { body: JSON.stringify(input) }),
@@ -430,7 +433,7 @@ export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick
             await send(input.artifactId, 'accepted-version', ArtifactTemplateAcceptedVersionResponseV1Schema, 'PUT', input, signal);
         },
         list: (input: ArtifactAccessGrantsListInputV1, signal?: AbortSignal) =>
-            send(input.artifactId, 'grants', ArtifactAccessGrantsListResponseV1Schema, undefined, undefined, signal),
+            send(input.artifactId, 'grants', ArtifactAccessGrantsListResponseV1Schema, undefined, undefined, signal, input.requestedAudience),
         set: (input: ArtifactAccessGrantSetInputV1, signal?: AbortSignal) =>
             send(input.artifactId, 'grants', ArtifactAccessGrantMutationResponseV1Schema, 'PUT', input, signal),
         remove: (input: ArtifactAccessGrantRemoveInputV1, signal?: AbortSignal) =>

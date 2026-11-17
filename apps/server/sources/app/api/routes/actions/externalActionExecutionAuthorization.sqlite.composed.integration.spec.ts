@@ -366,6 +366,47 @@ type TestAdmittedRequester = Readonly<{
 describe("external Action execution authorization", () => {
     let harness: LightSqliteHarness;
 
+    it('admits the signed Artifact audience review query and refuses altered or undeclared query operands', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const reader = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: reader.id, role: 'member' } });
+        const artifact = await createArtifact({ actorUserId: fixture.account.id, artifactId: crypto.randomUUID(),
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'prompt_doc.v2', title: 'Private workflow' })),
+            body: decodeBase64(encodePlainArtifactStoredContent({ body: 'Private steps' })),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const principal = { kind: 'team', teamId: fixture.team.id } as const;
+        const input = { artifactId: artifact.artifact.id, requestedAudience: [principal] };
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, routes => {
+            enableErrorHandlers(routes);
+            artifactsRoutes(routes);
+        });
+        try {
+            const authorization = await mint(app, fixture, 'artifact.access.grants.list', { ...fixture.envelope, input });
+            const address = `/v1/artifacts/${encodeURIComponent(input.artifactId)}/access/grants`;
+            const path = `${address}?${new URLSearchParams({ requestedAudience: JSON.stringify(input.requestedAudience) })}`;
+            const send = (url: string, signedPath = url) => app.inject({ method: 'GET', url,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization,
+                    effectActionId: authorization.binding.actionId, target: authorization.binding.target,
+                    installationId: fixture.machine.installationId!, method: 'GET', path: signedPath,
+                    privateKey: fixture.keyPair.secretKey }) });
+            const reviewed = await send(path);
+            expect(reviewed.statusCode, reviewed.body).toBe(200);
+            expect(reviewed.json()).toMatchObject({ missingAudience: [principal], grants: [] });
+            const ordinary = await send(address);
+            expect(ordinary.statusCode, ordinary.body).toBe(200);
+            expect(ordinary.json()).not.toHaveProperty('missingAudience');
+            for (const rejectedPath of [
+                `${path}&unknown=true`, `${path}&requestedAudience=%5B%5D`, `${address}?requestedAudience=invalid`,
+                `${address}?requestedAudience=${encodeURIComponent(JSON.stringify([{ kind: 'unknown' }]))}`,
+            ]) {
+                const refused = await send(rejectedPath);
+                expect(refused.statusCode, `${rejectedPath}: ${refused.body}`).toBe(400);
+            }
+            expect((await send(`${address}?requestedAudience=%5B%5D`, path)).statusCode).toBe(401);
+        } finally { await app.close(); }
+    });
+
     it.each([['plain', 'deployments.receipts.list', 'environment'], ['plain', 'deployments.receipts.get', 'environment'],
         ['plain', 'deployments.receipts.get', 'receipt'], ['plain', 'artifact.get', 'environment'],
         ['e2ee', 'deployments.receipts.list', 'environment'], ['e2ee', 'deployments.receipts.get', 'environment'],

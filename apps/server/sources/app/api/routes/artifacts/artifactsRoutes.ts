@@ -44,6 +44,7 @@ import { ApprovalArtifactStateV1Schema, type ApprovalArtifactStateV1 } from '@ha
 import { createArtifactUpdateHttpInputV1Schema } from '@/app/artifacts/artifactMutationHttpContract';
 import { createArtifactCreateHttpInputV1Schema } from '@happier-dev/protocol';
 import type { FastifyRequest } from 'fastify';
+import { PrincipalRefV1Schema } from '@happier-dev/protocol/teams/principal';
 import { createDeploymentCandidateArtifactMutationGuard, isDeploymentCandidatePublicationEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { ArtifactTemplateAcceptedVersionInputV1Schema, ArtifactTemplateAcceptedVersionResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
@@ -441,9 +442,14 @@ export function artifactsRoutes(app: Fastify) {
     });
     app.get('/v1/artifacts/:id/access/grants', {
         preHandler: app.authenticate,
-        schema: { params: accessParams, response: { 200: ArtifactAccessGrantsListResponseV1Schema, ...accessErrors } },
+        schema: { params: accessParams, querystring: z.strictObject({
+            requestedAudience: z.optional(z.pipe(z.pipe(z.string(), z.transform(value => {
+                try { return JSON.parse(value) as unknown; } catch { return value; }
+            })), z.array(PrincipalRefV1Schema))),
+        }), response: { 200: ArtifactAccessGrantsListResponseV1Schema, ...accessErrors } },
     }, async (request, reply) => {
-        const result = await listArtifactAccessGrants({ actorAccountId: request.userId, artifactId: request.params.id });
+        const result = await listArtifactAccessGrants({ actorAccountId: request.userId, artifactId: request.params.id,
+            ...(request.query.requestedAudience === undefined ? {} : { requestedAudience: request.query.requestedAudience }) });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
     });
     app.put('/v1/artifacts/:id/access/grants', {

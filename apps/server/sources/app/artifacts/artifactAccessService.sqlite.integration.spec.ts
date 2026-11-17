@@ -54,6 +54,45 @@ describe("Artifact document grants (real SQLite)", () => {
 
     const protocolHeaders = { "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
 
+    it('reviews missing Workflow audience through effective Team and Group access without writing grants', async () => {
+        const owner = await plainAccount();
+        const covered = await plainAccount();
+        const missing = await plainAccount();
+        await makeShareEligibleForTest(owner.id, [covered.id, missing.id]);
+        const team = await db.team.create({ data: { name: 'Automation audience' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const coveredMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: covered.id, role: 'member' } });
+        const missingMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: missing.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Automation group') } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
+            teamMembershipId: coveredMembership.id, nativeContribution: true } });
+        const workflow = await plainArtifact(owner.id);
+        await db.artifactGrant.create({ data: { principalKind: 'group', artifactId: workflow.id, teamGroupId: group.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const audience = [{ kind: 'account', accountId: covered.id }, { kind: 'account', accountId: missing.id },
+            { kind: 'team', teamId: team.id }, { kind: 'group', teamId: team.id, groupId: group.id }];
+        const before = await db.artifactGrant.findMany({ where: { artifactId: workflow.id } });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const read = (actorAccountId: string) => app.inject({ method: 'GET',
+                url: `/v1/artifacts/${workflow.id}/access/grants?requestedAudience=${encodeURIComponent(JSON.stringify(audience))}`,
+                headers: { 'x-test-user-id': actorAccountId, ...protocolHeaders } });
+            const review = await read(owner.id);
+            expect(review.statusCode).toBe(200);
+            expect(review.json().missingAudience).toEqual([audience[1], audience[2]]);
+            // A Team can cover a selected individual even when no individual grant exists.
+            await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: workflow.id, teamId: team.id,
+                accessLevel: 'view', createdByAccountId: owner.id } });
+            expect((await read(owner.id)).json().missingAudience).toEqual([]);
+            // Only effective memberships count; suspended members do not turn a covered Team into a missing audience.
+            await db.artifactGrant.deleteMany({ where: { artifactId: workflow.id, principalKind: 'team' } });
+            await db.teamMembership.update({ where: { id: missingMembership.id }, data: { status: 'suspended' } });
+            expect((await read(owner.id)).json().missingAudience).toEqual([audience[1]]);
+            const denied = await read(covered.id);
+            expect(denied.statusCode).toBe(403);
+        });
+        expect(await db.artifactGrant.findMany({ where: { artifactId: workflow.id } })).toEqual(before);
+    });
+
     it('projects each visible Artifact Team audience in the list without confusing personal shares', async () => {
         const owner = await plainAccount();
         const member = await plainAccount();

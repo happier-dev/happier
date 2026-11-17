@@ -1964,13 +1964,19 @@ function isArtifactRecipientKeyPreparationHttpPurpose(proof: ExternalActionExecu
 /** Exact roster reads share the Artifact grant-list transport grammar. */
 function isArtifactGrantsReadHttpPurpose(proof: ExternalActionExecutionRequestProof): boolean {
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
-    const match = /^\/v1\/artifacts\/([^/?#]+)\/access\/grants$/u.exec(proof.path);
-    if (!match) return false;
+    const url = new URL(proof.path, 'http://home.invalid');
+    const match = /^\/v1\/artifacts\/([^/?#]+)\/access\/grants$/u.exec(url.pathname);
+    if (!match || url.hash !== '' || url.searchParams.size > 1
+        || (url.searchParams.size === 1 && !url.searchParams.has('requestedAudience'))) return false;
     try {
         const artifactId = decodeURIComponent(match[1]);
-        return getActionSpec('artifact.access.grants.list').inputSchema.safeParse({ artifactId }).success
+        const audienceQuery = url.searchParams.get('requestedAudience');
+        const input = { artifactId, ...(audienceQuery === null ? {} : { requestedAudience: JSON.parse(audienceQuery) }) };
+        const parsed = getActionSpec('artifact.access.grants.list').inputSchema.safeParse(input);
+        return parsed.success
             && match[1] === encodeURIComponent(artifactId)
-            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, { id: artifactId }));
+            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, { id: artifactId,
+                ...(parsed.data.requestedAudience === undefined ? {} : { requestedAudience: parsed.data.requestedAudience }) }));
     } catch { return false; }
 }
 

@@ -13,7 +13,8 @@ import type { AccountStatus, TeamMembershipStatus } from '@/storage/enums.genera
 import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE, isEffectiveTeamMembership, type TeamMembershipLifetimeContext } from './memberships/effectiveMembership';
 import { EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, isEffectiveTeamGroupMembership, type TeamGroupMembershipLifetimeContext } from './groups/effectiveGroupMembership';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
-import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx, type ShareSubjectError } from './shareEligibility';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx, resolveShareSubjectsInTx, type ShareSubjectError } from './shareEligibility';
 
 type Member = Readonly<{ accountId: string; status: TeamMembershipStatus; account: Readonly<{ status: AccountStatus }> }>;
 
@@ -347,21 +348,59 @@ export async function readResourceGrantPrincipalFactsInTx(tx: Tx, input: Readonl
     const accountGrants: ResourceGrantAccessFacts['accountGrants'][number][] = [];
     const teamGrants: ResourceGrantAccessFacts['teamGrants'][number][] = [];
     const groupGrants: ResourceGrantAccessFacts['groupGrants'][number][] = [];
+    const accountIds = [...new Set(input.principals.flatMap(principal => principal.kind === 'account'
+        && (input.actorAccountId === undefined || principal.accountId === input.actorAccountId) ? [principal.accountId] : []))];
+    const teamIds = [...new Set(input.principals.flatMap(principal => principal.kind === 'team' ? [principal.teamId] : []))];
+    const groupIds = [...new Set(input.principals.flatMap(principal => principal.kind === 'group' ? [principal.groupId] : []))];
+    const [accounts, teams, groups] = await Promise.all([
+        Promise.all(portableQueryChunks({ values: accountIds, bindingsPerValue: 1 }).map(ids =>
+            tx.account.findMany({ where: { id: { in: [...ids] } }, select: { id: true, status: true } }))).then(rows => rows.flat()),
+        Promise.all(portableQueryChunks({ values: teamIds, bindingsPerValue: 1, fixedBindings: input.actorAccountId === undefined ? 0 : 1 }).map(ids =>
+            tx.team.findMany({ where: { id: { in: [...ids] } }, select: { id: true, ...relations.grants.select.team.select } }))).then(rows => rows.flat()),
+        Promise.all(portableQueryChunks({ values: groupIds, bindingsPerValue: 1, fixedBindings: input.actorAccountId === undefined ? 0 : 1 }).map(ids =>
+            tx.teamGroup.findMany({ where: { id: { in: [...ids] } },
+                select: { id: true, ...relations.grants.select.teamGroup.select, teamId: true } }))).then(rows => rows.flat()),
+    ]);
+    const accountsById = new Map(accounts.map(account => [account.id, account]));
+    const teamsById = new Map(teams.map(team => [team.id, team]));
+    const groupsById = new Map(groups.map(group => [group.id, group]));
     for (const principal of input.principals) {
         if (principal.kind === 'account') {
-            if (input.actorAccountId !== undefined && principal.accountId !== input.actorAccountId) continue;
-            const account = await tx.account.findUnique({ where: { id: principal.accountId }, select: { status: true } });
+            const account = accountsById.get(principal.accountId);
             if (account) accountGrants.push({ accountId: principal.accountId, accessLevel: 'view', account });
         } else if (principal.kind === 'team') {
-            const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: relations.grants.select.team.select });
+            const team = teamsById.get(principal.teamId);
             if (team) teamGrants.push({ teamId: principal.teamId, accessLevel: 'view', team });
         } else {
-            const group = await tx.teamGroup.findUnique({ where: { id: principal.groupId },
-                select: { ...relations.grants.select.teamGroup.select, teamId: true } });
+            const group = groupsById.get(principal.groupId);
             if (group?.teamId === principal.teamId) groupGrants.push({ teamGroupId: principal.groupId, accessLevel: 'view', teamGroup: group });
         }
     }
     return { ownerAccountId: input.ownerAccountId, encryptionMode: null, accountGrants, teamGrants, groupGrants };
+}
+
+/** For an admitted review, compare audiences through the same effective-membership owner as access. */
+export async function resolveResourceGrantMissingAudienceInTx(tx: Tx,
+    input: Readonly<{ facts: ResourceGrantAccessFacts; requestedAudience: readonly PrincipalRefV1[] }>,
+): Promise<PrincipalRefV1[]> {
+    const covered = new Set(resolveResourceGrantAudienceFromFacts(input.facts));
+    const requested = await readResourceGrantPrincipalFactsInTx(tx, {
+        ownerAccountId: input.facts.ownerAccountId, principals: input.requestedAudience,
+    });
+    const accounts = new Map(requested.accountGrants.map(row => [row.accountId, row]));
+    const teams = new Map(requested.teamGrants.map(row => [row.teamId, row]));
+    const groups = new Map(requested.groupGrants.map(row => [row.teamGroupId, row]));
+    return input.requestedAudience.filter(principal => {
+        const account = principal.kind === 'account' ? accounts.get(principal.accountId) : undefined;
+        const team = principal.kind === 'team' ? teams.get(principal.teamId) : undefined;
+        const group = principal.kind === 'group' ? groups.get(principal.groupId) : undefined;
+        const facts = { ...requested,
+            accountGrants: account ? [account] : [],
+            teamGrants: team ? [team] : [],
+            groupGrants: group ? [group] : [],
+        };
+        return resolveResourceGrantAudienceFromFacts(facts).some(accountId => !covered.has(accountId));
+    });
 }
 
 /** Read a prospective grant through the same live membership policy as a stored resource. */
@@ -383,6 +422,18 @@ export type ResourceGrantPrincipalError = 'owner_grant_invalid' | 'subject_not_f
 /** Resource wire codes have no self-share code; a self-share is simply not an eligible subject. */
 function resourceGrantPrincipalError(error: ShareSubjectError): ResourceGrantPrincipalError {
     return error === 'self_grant_invalid' ? 'subject_ineligible' : error;
+}
+
+/** Prospective principals are admitted in a batch before private membership facts are inspected. */
+export async function validateResourceGrantPrincipalsInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; ownerAccountId: string; principals: readonly PrincipalRefV1[]; hasExistingGrant: boolean;
+}>): Promise<ResourceGrantPrincipalError | null> {
+    const resolutions = await resolveShareSubjectsInTx(tx, { actorAccountId: input.actorAccountId,
+        resourceOwnerAccountId: input.ownerAccountId, subjects: input.principals, hasExistingGrant: input.hasExistingGrant });
+    for (const { eligibility } of resolutions) {
+        if (!eligibility.ok) return resourceGrantPrincipalError(eligibility.error);
+    }
+    return null;
 }
 
 /** Batched Account form of the one share-eligibility rule, for grant previews. */

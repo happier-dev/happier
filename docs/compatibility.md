@@ -1,5 +1,16 @@
 # Compatibility and version skew
 
+## Workflow audience review (unreleased 0.3)
+
+The existing Artifact grant-list Action accepts optional `requestedAudience` and returns optional
+`missingAudience`. The request, response and nested principal identity envelopes remain closed.
+The management-only read resolves effective Team and Group membership through the ordinary
+grant owner; omission preserves the ordinary roster read. Grant mutation inputs and receipts
+keep their existing shape. Emitting the new review input requires matching development Protocol,
+server and UI readers; older strict readers reject it. This introduces no persisted format,
+migration, wire epoch, fallback or mixed-development adapter.
+
+
 ## Project Source Open progress (unreleased 0.3)
 
 The Action operation domain-reference union adds `projectOpen`, carrying the

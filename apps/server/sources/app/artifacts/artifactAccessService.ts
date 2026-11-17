@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 import * as privacyKit from "privacy-kit";
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { type ArtifactAccessErrorCodeV1, type ArtifactAccessGrantSetStorageInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactAccessGrantsListResponseV1, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessRecipientCensusResponseV1, type ArtifactCallerAccessV1, type ArtifactRecipientKeyEnvelopeCommitInputV1, type ArtifactRecipientKeyEnvelopeCommitResponseV1, type ArtifactRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { type ArtifactAccessErrorCodeV1, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetStorageInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactAccessGrantsListResponseV1, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessRecipientCensusResponseV1, type ArtifactCallerAccessV1, type ArtifactRecipientKeyEnvelopeCommitInputV1, type ArtifactRecipientKeyEnvelopeCommitResponseV1, type ArtifactRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
@@ -18,7 +18,8 @@ import { resolveResourceGrantAccessFromFacts, resolveResourceGrantAudienceFromFa
     resolveResourceGrantAccessInTx, resolveResourceGrantAudienceInTx,
     type ResourceGrantAccess, projectResourceRecipientEnvelope as projectRecipientEnvelope,
     projectResourceRecipientCensus, validateResourceRecipientEnvelopeCommit, applyResourceRecipientKeyEnvelopesInTx,
-    mayManageResourceGrants, validateResourceGrantPrincipalInTx, readResourceGrantPrincipalAudienceInTx, validateResourceRecipientKeyEnvelopes,
+    mayManageResourceGrants, validateResourceGrantPrincipalInTx, validateResourceGrantPrincipalsInTx,
+    resolveResourceGrantMissingAudienceInTx, readResourceGrantPrincipalAudienceInTx, validateResourceRecipientKeyEnvelopes,
     type ResourceStoredRecipientEnvelope, type ResourceRecipientEnvelopeStorageAdapter } from '@/app/teams/resourceGrantAccess';
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
@@ -853,17 +854,37 @@ export async function readArtifactBatchForCaller(input: Readonly<{
 type AccessResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: ArtifactAccessErrorCodeV1 }>;
 
 /** Kind-owned inspection scope is selected before loading any grant display profile. */
-export async function listArtifactAccessGrantsInTx(tx: Tx, input: Readonly<{
-    actorAccountId: string; artifactId: string;
+export async function listArtifactAccessGrantsInTx(tx: Tx, input: ArtifactAccessGrantsListInputV1 & Readonly<{
+    actorAccountId: string;
 }>): Promise<AccessResult<ArtifactAccessGrantsListResponseV1>> {
+    const membershipAccountId = input.requestedAudience === undefined ? input.actorAccountId : undefined;
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
-        select: { ...artifactAccessFactsSelect(input.actorAccountId), kind: true } });
+        select: { ...artifactAccessFactsSelect(membershipAccountId), kind: true } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    const access = resolveArtifactAccessFromFacts((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
+    const admittedRow = (await withArtifactSourceReadersInTx(tx, [row], membershipAccountId))[0]!;
+    const access = resolveArtifactAccessFromFacts(admittedRow, input.actorAccountId);
     if (!access) return { ok: false, error: "artifact_not_found" };
-    const selfAccountId = mayInspectArtifactAudience(row.kind, access) ? undefined : input.actorAccountId;
+    if (input.requestedAudience !== undefined && !mayManageResourceGrants(access)) {
+        return { ok: false, error: 'artifact_access_forbidden' };
+    }
+    const selfAccountId = input.requestedAudience !== undefined || mayInspectArtifactAudience(row.kind, access) ? undefined : input.actorAccountId;
     const grants = await readArtifactAccessGrantsForAdmittedCustodyInTx(tx, input.artifactId, selfAccountId, input.actorAccountId);
+    if (input.requestedAudience !== undefined) {
+        const requested = input.requestedAudience.filter(principal => principal.kind !== 'account' || principal.accountId !== access.ownerAccountId);
+        const stored = requested.filter(principal => grants.some(grant => isDeepStrictEqual(grant.principal, principal)));
+        const prospective = requested.filter(principal => !grants.some(grant => isDeepStrictEqual(grant.principal, principal)));
+        for (const [principals, hasExistingGrant] of [[stored, true], [prospective, false]] as const) {
+            const error = await validateResourceGrantPrincipalsInTx(tx, { actorAccountId: input.actorAccountId,
+                ownerAccountId: access.ownerAccountId, principals, hasExistingGrant });
+            if (error) return { ok: false, error: `artifact_${error}` };
+        }
+    }
+    const missingAudience = input.requestedAudience === undefined ? undefined
+        : await resolveResourceGrantMissingAudienceInTx(tx, {
+            facts: artifactGrantFacts(admittedRow), requestedAudience: input.requestedAudience,
+        });
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: access.ownerAccountId, access: access.level,
+        ...(missingAudience === undefined ? {} : { missingAudience }),
         grants: selfAccountId === undefined && decodeArtifactKindV1(row.kind).kindHint === 'bot_template.v1'
             ? await projectAdmittedTemplateAcceptedVersionsInTx(tx, input.artifactId, grants) : grants } };
 }
