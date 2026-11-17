@@ -40,6 +40,7 @@ import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult 
 import type { TargetActionOperationProgressPort } from '@/plugins/runtime/invocation/targetActionRegistry';
 import type { PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { resolveProfiledActionsSettingsV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { isSharedRequesterActionV1, readExplicitActionApprovalPreferenceV1, resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -541,6 +542,13 @@ export async function executeContributedAction(params: Readonly<{
   const actionSettingsProvider = scopedActionsSettings
     ? { getActionsSettings: () => scopedActionsSettings }
     : createActionSettingsProvider();
+  const accountActionsSettings = actionSettingsProvider.getActionsSettings();
+  const profiledActionsSettings = resolveProfiledActionsSettingsV1(accountActionsSettings,
+    params.approvalContext?.approvalProfileId, {
+      boundProfile: params.approvalContext?.approvalProfile ?? null,
+      approvalProfileTeamOrGroupDerived: params.approvalContext?.approvalProfileTeamOrGroupDerived,
+      context: params.approvalContext,
+    }).settings;
   // A present person's own UI press reached this Action through a plugin without
   // reviewing it. The Action's own policy decides as that press (owner 2026-11-15,
   // option A): UI-surface defaults and Settings, plus the plugin row it is called on.
@@ -553,9 +561,9 @@ export async function executeContributedAction(params: Readonly<{
   // press child is checked on its own surface and as that UI press.
   const settingsUnavailable = hasAdmittedReview ? null
     : checkContributedActionSettingsAvailability({ action, surface: actionSurface,
-      actionsSettings: actionSettingsProvider.getActionsSettings() })
+      actionsSettings: profiledActionsSettings })
     ?? (ownPressChild ? checkContributedActionSettingsAvailability({ action, surface: 'ui',
-      actionsSettings: actionSettingsProvider.getActionsSettings() }) : null);
+      actionsSettings: profiledActionsSettings }) : null);
   if (settingsUnavailable) return { matched: true, result: settingsUnavailable };
 
   const runtimeRegistry = isExecutablePluginRuntimeRegistry(registry)
@@ -1045,9 +1053,8 @@ export async function executeContributedAction(params: Readonly<{
             environmentAdmission?: import('@happier-dev/protocol/actions/actionApprovalPolicy').ActionEnvironmentApprovalScopeAdmissionV1) => {
             // The target owner parsed this invocation before asking policy.
             // Consent binds its semantic operand, not schema-produced defaults.
-            const settings = actionSettingsProvider.getActionsSettings();
             const routing = resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: contributedActionSettingsId,
-              spec: getActionSpec('action.invoke'), settings,
+              spec: getActionSpec('action.invoke'), settings: accountActionsSettings,
               approvalScope: environmentAdmission?.scope ?? undefined,
               ...(environmentAdmission?.targetApproval ? { targetApproval: environmentAdmission.targetApproval } : {}),
               defaultSafety: action.definition.safety, input: admittedReviewOperation ? reviewedInput : parsedInput,
@@ -1061,7 +1068,7 @@ export async function executeContributedAction(params: Readonly<{
               },
             });
             // The person also chose Ask for this Action's plugin callers; it asks them too.
-            const pluginAsk = ownPressChild && readExplicitActionApprovalPreferenceV1(contributedActionSettingsId, settings,
+            const pluginAsk = ownPressChild && readExplicitActionApprovalPreferenceV1(contributedActionSettingsId, profiledActionsSettings,
               { ...reviewContext, surface: 'plugin' }, environmentAdmission?.scope ?? undefined) === true;
             return routing.required || routing.uiConfirmationRequired === true || pluginAsk;
           },
