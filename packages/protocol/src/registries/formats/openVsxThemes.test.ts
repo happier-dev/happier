@@ -147,3 +147,20 @@ describe('Open VSX theme acquisition through the registry host', () => {
     expect(f.calls).toHaveLength(1);
   });
 });
+
+describe('Open VSX theme summaries', () => {
+  it('drops a description that only repeats the title and keeps a real one', async () => {
+    const http: RegistryHttpV1 = {
+      async getJson() { return { ok: true, fetchedAt: 1, value: { offset: 0, totalSize: 2, extensions: [
+        { namespace: 'jdinhlife', name: 'gruvbox', version: '1.29.2', displayName: 'Gruvbox Theme', description: ' gruvbox theme ' },
+        { namespace: 'sample', name: 'harbor', version: '1.0.0', displayName: 'Harbor', description: 'A calm blue theme.' },
+      ] } }; },
+      async getText() { throw new Error('unexpected text read'); },
+      async getBytes() { throw new Error('unexpected byte read'); },
+    };
+    const host = createRegistryHostV1({ host: 'web', http, readSources: async () => [source] });
+    const result = await host.fetchRequest({ op: 'list', sourceId: source.id, kind: 'theme', query: '' });
+    if (result.op !== 'list') throw new Error('expected a list');
+    expect(result.page.items.map(item => [item.title, item.description])).toEqual([['Gruvbox Theme', undefined], ['Harbor', 'A calm blue theme.']]);
+  });
+});

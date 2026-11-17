@@ -28,8 +28,13 @@ function selectedPath(itemId: string): string {
   return parts.map(encodeURIComponent).join('/');
 }
 function summary(source: RegistrySourceV1, value: z.infer<typeof summarySchema>): RegistryItemSummaryV1 {
-  return { sourceId: source.id, kind: 'theme', itemId: `${value.namespace}/${value.name}`, title: value.displayName || value.name,
-    version: value.version, publisher: { name: value.namespace }, ...(value.description === undefined ? {} : { description: value.description }),
+  const title = value.displayName || value.name;
+  // Many theme packages describe themselves with their own name ("Gruvbox Theme"): that says nothing the title
+  // does not, so it is no description.
+  const description = value.description?.trim();
+  return { sourceId: source.id, kind: 'theme', itemId: `${value.namespace}/${value.name}`, title,
+    version: value.version, publisher: { name: value.namespace },
+    ...(!description || description.toLowerCase() === title.trim().toLowerCase() ? {} : { description }),
     ...(value.files?.icon === undefined ? {} : { iconUrl: value.files.icon }) };
 }
 async function json(ctx: RegistryFetchContextV1, source: RegistrySourceV1, url: string) {
