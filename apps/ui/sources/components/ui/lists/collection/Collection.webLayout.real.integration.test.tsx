@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
 import { expect, it, vi } from 'vitest';
 import { Collection, CollectionToolbar, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -75,7 +76,7 @@ function PluginsList() {
 it.each([
     [1440, 'Core page', PageList], [390, 'Core page', PageList],
     [1440, 'Plugins page', PluginsList], [390, 'Plugins page', PluginsList],
-] as const)('aligns page-list section headings and row marks at %i px through %s', async (width, _surfaceName, Surface) => {
+] as const)('aligns page-list headings and row marks with their page anatomy at %i px through %s', async (width, _surfaceName, Surface) => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -88,9 +89,15 @@ it.each([
             expect.soft(Math.abs(layout.textRects(heading)[0]!.left - edge), heading).toBeLessThanOrEqual(1);
         }
         for (const item of items) {
-            // Page lists now draw sheet rows (b65a1bf2dfc5), with their marks inside
-            // the sheet. Compare peer row marks, separately from section headings.
-            expect.soft(Math.abs(layout.rect(`mark:${item.key}`).left - layout.rect('neighbor-mark').left), item.title).toBeLessThanOrEqual(1);
+            const mark = layout.rect(`mark:${item.key}`);
+            if (width === 390) {
+                // Phone browse rows lie on the page text edge (owner 2026-11-15, 4b3117307f46),
+                // with their glyph centred in the shared leading column; configuration rows keep their sheet inset.
+                const leadingColumnCenter = edge + HAPPIER_PAGE_METRICS.rowLeadingColumnPx / 2;
+                expect.soft(Math.abs(mark.left + mark.width / 2 - leadingColumnCenter), item.title).toBeLessThanOrEqual(1);
+            } else {
+                expect.soft(Math.abs(mark.left - layout.rect('neighbor-mark').left), item.title).toBeLessThanOrEqual(1);
+            }
         }
     } finally {
         await act(async () => root.unmount());
