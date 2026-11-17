@@ -12,6 +12,11 @@
       "types": "./dist/appUsage.d.ts",
       "default": "./dist/appUsage.js"
     },
+    "./stats-comparisons": {
+      "happier-source": "./src/statsComparisons.ts",
+      "types": "./dist/statsComparisons.d.ts",
+      "default": "./dist/statsComparisons.js"
+    },
     "./connection/postgresql": {
       "happier-source": "./src/connection/postgresql.ts",
       "types": "./dist/connection/postgresql.d.ts",
