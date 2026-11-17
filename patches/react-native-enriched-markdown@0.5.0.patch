@@ -2585,10 +2585,10 @@ index 6b10dda932331fb61e137e1b0714563a32a302d7..8dc779d832a676fa84ae6f38e640f771
    strong: {
      fontFamily: '',
 diff --git a/lib/module/web/EnrichedMarkdownText.js b/lib/module/web/EnrichedMarkdownText.js
-index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..f160ffb680f1bfc04e28d4bc69a583ae9f188eb5 100644
+index c6c73b0..34c881a 100644
 --- a/lib/module/web/EnrichedMarkdownText.js
 +++ b/lib/module/web/EnrichedMarkdownText.js
-@@ -1,47 +1,67 @@
+@@ -1,47 +1,68 @@
  "use strict";
  
 -import { useState, useEffect, useMemo } from 'react';
@@ -2615,6 +2615,7 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..f160ffb680f1bfc04e28d4bc69a583ae
    markdown,
 -  markdownStyle = {},
 -  md4cFlags = {},
++  elementAttributes,
 +  markdownStyle = EMPTY_MARKDOWN_STYLE,
 +  md4cFlags = EMPTY_MD4C_FLAGS,
    onLinkPress,
@@ -2674,7 +2675,7 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..f160ffb680f1bfc04e28d4bc69a583ae
        }
      }).catch(error => {
        if (!cancelled) {
-@@ -50,21 +70,90 @@ export const EnrichedMarkdownText = ({
+@@ -50,21 +71,91 @@ export const EnrichedMarkdownText = ({
          }
          setParseError(true);
          setAst(null);
@@ -2763,13 +2764,14 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..f160ffb680f1bfc04e28d4bc69a583ae
 -    katex
 -  }), [katex]);
 +    katex,
-+    streamingReveal
-+  }), [katex, streamingReveal]);
++    streamingReveal,
++    elementAttributes
++  }), [katex, streamingReveal, elementAttributes]);
 +  const settledCapabilities = useSettledCapabilities(capabilities);
    const lastChildStyle = useMemo(() => allowTrailingMargin ? normalizedStyle : zeroTrailingMargins(normalizedStyle), [normalizedStyle, allowTrailingMargin]);
    const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);
    const lastChildStyles = useMemo(() => buildStyles(lastChildStyle), [lastChildStyle]);
-@@ -76,19 +165,46 @@ export const EnrichedMarkdownText = ({
+@@ -76,19 +167,46 @@ export const EnrichedMarkdownText = ({
        userSelect: 'none'
      })
    }), [containerStyle, selectable]);
@@ -2821,7 +2823,7 @@ index c6c73b0f7f58e952eb5e08dd2942519acfcf6979..f160ffb680f1bfc04e28d4bc69a583ae
    const lastIdx = children.length - 1;
    return /*#__PURE__*/_jsx("div", {
      style: wrapperStyle,
-@@ -99,7 +215,7 @@ export const EnrichedMarkdownText = ({
+@@ -99,7 +217,7 @@ export const EnrichedMarkdownText = ({
        style: index === lastIdx ? lastChildStyle : normalizedStyle,
        styles: index === lastIdx ? lastChildStyles : styles,
        callbacks: callbacks,
@@ -3075,36 +3077,76 @@ index d47ca7036b909eb1982f787a9b061d1aed7613fb..d9b65a2f0f915a06b891b14b4f893623
 +{"version":3,"names":["createMd4cModule","parserPromise","parserRuntime","PARSE_CACHE_MAX_ENTRIES","PARSE_CACHE_MAX_MARKDOWN_CHARS","parseCache","Map","parseResultCache","WASM_FACTORY_UNAVAILABLE_MESSAGE","WASM_INPUT_ALLOCATION_FAILED_MESSAGE","resolveMd4cModuleFactory","value","default","initializeParser","Promise","resolve","then","factory","Error","wasmModule","parse","cwrap","runtime","catch","error","preloadMarkdownRuntime","message","window","isASTNode","type","shouldCacheParseResult","markdown","length","buildCacheKey","underline","latexMath","texMathBackslashDelimiters","rememberParsedResult","cacheKey","ast","set","delete","size","oldestKey","keys","next","readCachedParsedResult","previousAst","cached","get","cloneAst","parseMarkdownWithHeapInput","inputBytes","lengthBytesUTF8","inputPointer","_malloc","stringToUTF8","_free","parseMarkdown","cachedResult","parsed","result","JSON","parseMarkdownSyncIfReady","previous","Object","attributes","filter","key","previousKeys","sameAttributes","every","children","map","child","index","content"],"sources":["../../../src/web/parseMarkdown.ts"],"sourcesContent":["import type { ASTNode } from './types';\nimport type { Md4cFlags } from '../types/MarkdownStyle';\nimport createMd4cModule from './wasm/md4c.js';\n\ntype ParseFn = (\n  markdownPointer: number,\n  underline: number,\n  latexMath: number,\n  texMathBackslashDelimiters: number\n) => string;\ntype Md4cModule = {\n  cwrap(name: string, returnType: string, argTypes: string[]): ParseFn;\n  _malloc(size: number): number;\n  _free(pointer: number): void;\n  stringToUTF8(value: string, outputPointer: number, maxBytesToWrite: number): void;\n  lengthBytesUTF8(value: string): number;\n};\ntype Md4cModuleFactory = () => Promise<Md4cModule>;\ntype ParserRuntime = Readonly<{\n  parse: ParseFn;\n  wasmModule: Md4cModule;\n}>;\n\n// Caching the Promise (not the resolved value) means concurrent callers share\n// a single WASM initialization — no duplicate loading.\nlet parserPromise: Promise<ParserRuntime> | null = null;\nlet parserRuntime: ParserRuntime | null = null;\nconst PARSE_CACHE_MAX_ENTRIES = 48;\nconst PARSE_CACHE_MAX_MARKDOWN_CHARS = 32_000;\nconst parseCache = new Map<string, Promise<ASTNode>>();\nconst parseResultCache = new Map<string, ASTNode>();\nconst WASM_FACTORY_UNAVAILABLE_MESSAGE =\n  'WASM parser module did not export a factory';\nconst WASM_INPUT_ALLOCATION_FAILED_MESSAGE =\n  'WASM parser failed to allocate markdown input';\n\nfunction resolveMd4cModuleFactory(value: unknown): Md4cModuleFactory | null {\n  if (typeof value === 'function') {\n    return value as Md4cModuleFactory;\n  }\n\n  if (typeof value !== 'object' || value === null || !('default' in value)) {\n    return null;\n  }\n\n  return resolveMd4cModuleFactory(\n    (value as { default?: unknown }).default\n  );\n}\n\n// SINGLE_FILE=1 inlines the WASM binary as base64 inside md4c.js, so no\n// runtime fetch is needed — only a one-time decode + compile on first call.\nfunction initializeParser(): Promise<ParserRuntime> {\n  if (!parserPromise) {\n    parserPromise = Promise.resolve()\n      .then(() => {\n        const factory = resolveMd4cModuleFactory(createMd4cModule);\n        if (!factory) {\n          throw new Error(WASM_FACTORY_UNAVAILABLE_MESSAGE);\n        }\n\n        return factory();\n      })\n      .then((wasmModule) => ({\n        parse: wasmModule.cwrap('parseMarkdown', 'string', [\n          'number',\n          'number',\n          'number',\n          'number',\n        ]),\n        wasmModule,\n      }))\n      .then((runtime) => {\n        parserRuntime = runtime;\n        return runtime;\n      })\n      .catch((error) => {\n        parserPromise = null;\n        parserRuntime = null;\n        throw error;\n      }) as Promise<ParserRuntime>;\n  }\n  return parserPromise;\n}\n\nexport async function preloadMarkdownRuntime(): Promise<void> {\n  try {\n    await initializeParser();\n  } catch (error) {\n    if (\n      error instanceof Error &&\n      error.message === WASM_FACTORY_UNAVAILABLE_MESSAGE &&\n      typeof window === 'undefined'\n    ) {\n      return;\n    }\n\n    throw error;\n  }\n}\n\nfunction isASTNode(value: unknown): value is ASTNode {\n  return (\n    typeof value === 'object' &&\n    value !== null &&\n    'type' in value &&\n    typeof (value as ASTNode).type === 'string'\n  );\n}\n\nfunction shouldCacheParseResult(markdown: string): boolean {\n  return markdown.length <= PARSE_CACHE_MAX_MARKDOWN_CHARS;\n}\n\nfunction buildCacheKey(\n  markdown: string,\n  underline: boolean,\n  latexMath: boolean,\n  texMathBackslashDelimiters: boolean\n): string | null {\n  return shouldCacheParseResult(markdown)\n    ? `${underline ? 1 : 0}\\u0000${latexMath ? 1 : 0}\\u0000${texMathBackslashDelimiters ? 1 : 0}\\u0000${markdown}`\n    : null;\n}\n\nfunction rememberParsedResult(cacheKey: string | null, ast: ASTNode): void {\n  if (!cacheKey) return;\n\n  parseResultCache.set(cacheKey, ast);\n  parseCache.delete(cacheKey);\n  while (parseResultCache.size > PARSE_CACHE_MAX_ENTRIES) {\n    const oldestKey = parseResultCache.keys().next().value;\n    if (typeof oldestKey !== 'string') break;\n    parseResultCache.delete(oldestKey);\n  }\n}\n\nfunction readCachedParsedResult(cacheKey: string | null, previousAst?: ASTNode | null): ASTNode | null {\n  if (!cacheKey) return null;\n\n  const cached = parseResultCache.get(cacheKey);\n  if (!cached) return null;\n  parseResultCache.delete(cacheKey);\n  parseResultCache.set(cacheKey, cached);\n  return cloneAst(cached, previousAst);\n}\n\nfunction parseMarkdownWithHeapInput(\n  runtime: ParserRuntime,\n  markdown: string,\n  underline: boolean,\n  latexMath: boolean,\n  texMathBackslashDelimiters: boolean\n): string {\n  const { wasmModule } = runtime;\n  const inputBytes = wasmModule.lengthBytesUTF8(markdown) + 1;\n  const inputPointer = wasmModule._malloc(inputBytes);\n  if (!inputPointer) {\n    throw new Error(WASM_INPUT_ALLOCATION_FAILED_MESSAGE);\n  }\n\n  try {\n    wasmModule.stringToUTF8(markdown, inputPointer, inputBytes);\n    return runtime.parse(\n      inputPointer,\n      underline ? 1 : 0,\n      latexMath ? 1 : 0,\n      texMathBackslashDelimiters ? 1 : 0\n    );\n  } finally {\n    wasmModule._free(inputPointer);\n  }\n}\n\nexport async function parseMarkdown(\n  markdown: string,\n  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {},\n  previousAst?: ASTNode | null\n): Promise<ASTNode> {\n  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);\n  const cachedResult = readCachedParsedResult(cacheKey, previousAst);\n  if (cachedResult) return cachedResult;\n\n  if (cacheKey) {\n    const cached = parseCache.get(cacheKey);\n    if (cached) {\n      parseCache.delete(cacheKey);\n      parseCache.set(cacheKey, cached);\n      return cloneAst(await cached, previousAst);\n    }\n  }\n\n  const parsed = initializeParser().then((runtime) => {\n    const result: unknown = JSON.parse(\n      parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath, texMathBackslashDelimiters)\n    );\n\n    if (!isASTNode(result)) {\n      throw new Error('WASM parser returned invalid AST');\n    }\n\n    rememberParsedResult(cacheKey, result);\n    return result;\n  });\n\n  if (cacheKey) {\n    parseCache.set(cacheKey, parsed);\n    while (parseCache.size > PARSE_CACHE_MAX_ENTRIES) {\n      const oldestKey = parseCache.keys().next().value;\n      if (typeof oldestKey !== 'string') break;\n      parseCache.delete(oldestKey);\n    }\n  }\n\n  try {\n    return cloneAst(await parsed, previousAst);\n  } catch (error) {\n    if (cacheKey) {\n      parseCache.delete(cacheKey);\n    }\n    throw error;\n  }\n}\n\nexport function parseMarkdownSyncIfReady(\n  markdown: string,\n  { underline = false, latexMath = true, texMathBackslashDelimiters = false }: Md4cFlags = {},\n  previousAst?: ASTNode | null\n): ASTNode | null {\n  const cacheKey = buildCacheKey(markdown, underline, latexMath, texMathBackslashDelimiters);\n  const cachedResult = readCachedParsedResult(cacheKey, previousAst);\n  if (cachedResult) return cachedResult;\n  if (!parserRuntime) return null;\n\n  try {\n    const result: unknown = JSON.parse(\n      parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath, texMathBackslashDelimiters)\n    );\n\n    if (!isASTNode(result)) {\n      throw new Error('WASM parser returned invalid AST');\n    }\n\n    rememberParsedResult(cacheKey, result);\n    return cloneAst(result, previousAst);\n  } catch (error) {\n    if (cacheKey) {\n      parseCache.delete(cacheKey);\n      parseResultCache.delete(cacheKey);\n    }\n    return null;\n  }\n}\n\nfunction cloneAst(ast: ASTNode, previous?: ASTNode | null): ASTNode {\n  // The cache keeps raw parser output private. Only the caller's own previous\n  // tree may be shared; render annotations are recomputed immutably afterwards.\n  const keys = Object.keys(ast.attributes ?? {}).filter(\n    (key) => key !== 'taskIndex' && key !== 'isInline'\n  ) as (keyof NonNullable<ASTNode['attributes']>)[];\n  const previousKeys = Object.keys(previous?.attributes ?? {}).filter(\n    (key) => key !== 'taskIndex' && key !== 'isInline'\n  );\n  const sameAttributes = keys.length === previousKeys.length && keys.every(\n    (key) => ast.attributes?.[key] === previous?.attributes?.[key]\n  );\n  const children = ast.children?.map((child, index) =>\n    cloneAst(child, previous?.children?.[index])\n  );\n  if (\n    previous && previous.type === ast.type && previous.content === ast.content &&\n    sameAttributes && previous.children?.length === children?.length &&\n    (children?.every((child, index) => child === previous.children?.[index]) ?? true)\n  ) return previous;\n\n  return {\n    ...ast,\n    ...(ast.attributes ? { attributes: { ...ast.attributes } } : {}),\n    ...(children ? { children } : {}),\n  };\n}\n"],"mappings":"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","ignoreList":[]}
 \ No newline at end of file
 diff --git a/lib/module/web/renderers/BlockRenderers.js b/lib/module/web/renderers/BlockRenderers.js
-index 5bdaee98be35c7b622d0b700e7de7d6c9e634878..924b2ec319506e34a8ddf2a5895d6075e6000956 100644
+index 5bdaee9..c586dfd 100644
 --- a/lib/module/web/renderers/BlockRenderers.js
 +++ b/lib/module/web/renderers/BlockRenderers.js
-@@ -8,6 +8,8 @@ function ParagraphRenderer({
+@@ -7,7 +7,10 @@ import { Fragment as _Fragment, jsx as _jsx } from "react/jsx-runtime";
+ function ParagraphRenderer({
    node,
    styles,
++  capabilities,
    parentType,
 +  parentAttributes,
 +  isLastChild,
    renderChildren
  }) {
    const isImageOnly = node.children?.length === 1 && node.children[0]?.type === 'Image';
-@@ -21,7 +23,14 @@ function ParagraphRenderer({
+@@ -16,37 +19,52 @@ function ParagraphRenderer({
+   });
+   if (parentType === 'Blockquote') {
+     return /*#__PURE__*/_jsx("p", {
++      ...capabilities.elementAttributes?.paragraph,
+       style: styles.paragraphInBlockquote,
+       children: renderChildren(node)
      });
    }
    if (parentType === 'ListItem') {
 -    return /*#__PURE__*/_jsx("span", {
 +    if (parentAttributes?.isTask === 'true') {
 +      return /*#__PURE__*/_jsx("span", {
++        ...capabilities.elementAttributes?.paragraph,
 +        children: renderChildren(node)
 +      });
 +    }
 +    const paragraphStyle = isLastChild === true ? styles.paragraphInLastListItemChild : styles.paragraphInListItem;
 +    return /*#__PURE__*/_jsx("p", {
++      ...capabilities.elementAttributes?.paragraph,
 +      style: paragraphStyle,
        children: renderChildren(node)
      });
    }
+   return /*#__PURE__*/_jsx("p", {
++      ...capabilities.elementAttributes?.paragraph,
+     style: styles.paragraph,
+     children: renderChildren(node)
+   });
+ }
+ function HeadingRenderer({
++  capabilities,
+   node,
+   styles,
+   renderChildren
+ }) {
+   const Tag = toHeadingLevel(node.attributes?.level ?? '1');
+   return /*#__PURE__*/_jsx(Tag, {
++    ...capabilities.elementAttributes?.heading,
+     style: styles[Tag],
+     children: renderChildren(node)
+   });
+ }
+ function BlockquoteRenderer({
++  capabilities,
+   node,
+   styles,
+   renderChildren
+ }) {
+   return /*#__PURE__*/_jsx("blockquote", {
++    ...capabilities.elementAttributes?.quote,
+     style: styles.blockquote,
+     children: renderChildren(node)
+   });
 diff --git a/lib/module/web/renderers/InlineRenderers.js b/lib/module/web/renderers/InlineRenderers.js
-index 7c31c2bc971679076ac5429cccb630610bfe830c..5bc65a74e390f5b41a105181d37bb9f07f3caf35 100644
+index 7c31c2b..b200ecb 100644
 --- a/lib/module/web/renderers/InlineRenderers.js
 +++ b/lib/module/web/renderers/InlineRenderers.js
 @@ -2,12 +2,20 @@
@@ -3130,7 +3172,7 @@ index 7c31c2bc971679076ac5429cccb630610bfe830c..5bc65a74e390f5b41a105181d37bb9f0
    });
  }
  function LineBreakRenderer(_props) {
-@@ -58,9 +66,15 @@ function CodeRenderer({
+@@ -58,12 +66,19 @@ function CodeRenderer({
    styles,
    renderChildren
  }) {
@@ -3147,6 +3189,18 @@ index 7c31c2bc971679076ac5429cccb630610bfe830c..5bc65a74e390f5b41a105181d37bb9f0
    });
  }
  function LinkRenderer({
++  capabilities,
+   node,
+   styles,
+   callbacks,
+@@ -90,6 +105,7 @@ function LinkRenderer({
+     }
+   };
+   return /*#__PURE__*/_jsx("a", {
++    ...capabilities.elementAttributes?.link,
+     href: url,
+     style: styles.link,
+     target: "_blank",
 diff --git a/lib/module/web/renderers/KaTeXRenderer.js b/lib/module/web/renderers/KaTeXRenderer.js
 index 67b457da0e523966547412d4922cc250ad9a756e..ae6334a0ef23a5b3b50caa7b47dbc8be6a9e009a 100644
 --- a/lib/module/web/renderers/KaTeXRenderer.js
@@ -3198,10 +3252,25 @@ index d81011c6628ad9fde6f926c4bc98b90c3625681e..8a0de7ae8cd19b5d2c8802a749b1ce7a
 +{"version":3,"names":["useMemo","jsx","_jsx","KaTeXRenderer","content","katex","displayMode","style","fallbackTag","FallbackTag","delimiter","html","renderToString","output","throwOnError","trust","displayStyle","display","SafeFallbackTag","fallbackStyle","fontFamily","whiteSpace","role","children","dangerouslySetInnerHTML","__html"],"sources":["../../../../src/web/renderers/KaTeXRenderer.tsx"],"sourcesContent":["import { useMemo, type CSSProperties } from 'react';\nimport type { KaTeXInstance } from '../katex';\n\ninterface KaTeXRendererProps {\n  content: string;\n  katex: KaTeXInstance | null;\n  displayMode: boolean;\n  style: CSSProperties;\n  fallbackTag: 'code' | 'pre';\n}\n\nexport function KaTeXRenderer({\n  content,\n  katex,\n  displayMode,\n  style,\n  fallbackTag: FallbackTag,\n}: KaTeXRendererProps) {\n  const delimiter = displayMode ? '$$' : '$';\n\n  const html = useMemo(() => {\n    if (!katex) return null;\n    return katex.renderToString(content, {\n      output: 'mathml',\n      displayMode,\n      throwOnError: false,\n      trust: false,\n    });\n  }, [katex, content, displayMode]);\n\n  // Display math may occur inside Markdown phrasing nodes (p/strong/a).\n  // Keep block layout without introducing a flow-only HTML descendant.\n  const displayStyle = useMemo<CSSProperties>(\n    () => displayMode ? { ...style, display: 'block' } : style,\n    [displayMode, style]\n  );\n  const SafeFallbackTag = FallbackTag === 'pre' ? 'span' : FallbackTag;\n  const fallbackStyle: CSSProperties = FallbackTag === 'pre'\n    ? { fontFamily: 'monospace', whiteSpace: 'pre', ...style, display: 'block' }\n    : style;\n\n  if (!html) {\n    return (\n      <SafeFallbackTag role=\"math\" aria-label={content} style={fallbackStyle}>\n        {`${delimiter}${content}${delimiter}`}\n      </SafeFallbackTag>\n    );\n  }\n\n  return (\n    <span\n      role=\"math\"\n      aria-label={content}\n      style={displayStyle}\n      dangerouslySetInnerHTML={{ __html: html }}\n    />\n  );\n}\n"],"mappings":";;AAAA,SAASA,OAAO,QAA4B,OAAO;AAAC,SAAAC,GAAA,IAAAC,IAAA;AAWpD,OAAO,SAASC,aAAaA,CAAC;EAC5BC,OAAO;EACPC,KAAK;EACLC,WAAW;EACXC,KAAK;EACLC,WAAW,EAAEC;AACK,CAAC,EAAE;EACrB,MAAMC,SAAS,GAAGJ,WAAW,GAAG,IAAI,GAAG,GAAG;EAE1C,MAAMK,IAAI,GAAGX,OAAO,CAAC,MAAM;IACzB,IAAI,CAACK,KAAK,EAAE,OAAO,IAAI;IACvB,OAAOA,KAAK,CAACO,cAAc,CAACR,OAAO,EAAE;MACnCS,MAAM,EAAE,QAAQ;MAChBP,WAAW;MACXQ,YAAY,EAAE,KAAK;MACnBC,KAAK,EAAE;IACT,CAAC,CAAC;EACJ,CAAC,EAAE,CAACV,KAAK,EAAED,OAAO,EAAEE,WAAW,CAAC,CAAC;;EAEjC;EACA;EACA,MAAMU,YAAY,GAAGhB,OAAO,CAC1B,MAAMM,WAAW,GAAG;IAAE,GAAGC,KAAK;IAAEU,OAAO,EAAE;EAAQ,CAAC,GAAGV,KAAK,EAC1D,CAACD,WAAW,EAAEC,KAAK,CACrB,CAAC;EACD,MAAMW,eAAe,GAAGT,WAAW,KAAK,KAAK,GAAG,MAAM,GAAGA,WAAW;EACpE,MAAMU,aAA4B,GAAGV,WAAW,KAAK,KAAK,GACtD;IAAEW,UAAU,EAAE,WAAW;IAAEC,UAAU,EAAE,KAAK;IAAE,GAAGd,KAAK;IAAEU,OAAO,EAAE;EAAQ,CAAC,GAC1EV,KAAK;EAET,IAAI,CAACI,IAAI,EAAE;IACT,oBACET,IAAA,CAACgB,eAAe;MAACI,IAAI,EAAC,MAAM;MAAC,cAAYlB,OAAQ;MAACG,KAAK,EAAEY,aAAc;MAAAI,QAAA,EACpE,GAAGb,SAAS,GAAGN,OAAO,GAAGM,SAAS;IAAE,CACtB,CAAC;EAEtB;EAEA,oBACER,IAAA;IACEoB,IAAI,EAAC,MAAM;IACX,cAAYlB,OAAQ;IACpBG,KAAK,EAAES,YAAa;IACpBQ,uBAAuB,EAAE;MAAEC,MAAM,EAAEd;IAAK;EAAE,CAC3C,CAAC;AAEN","ignoreList":[]}
 \ No newline at end of file
 diff --git a/lib/module/web/renderers/ListRenderers.js b/lib/module/web/renderers/ListRenderers.js
-index 9433b812529115828b69877083a0956afd8d976b..1950089184d6d346d023065304b6c3bac4b022c4 100644
+index 9433b81..dd868ad 100644
 --- a/lib/module/web/renderers/ListRenderers.js
 +++ b/lib/module/web/renderers/ListRenderers.js
-@@ -70,11 +70,17 @@ function ListItemRenderer({
+@@ -10,12 +10,14 @@ function ListRenderer({
+   styles,
+   parentType,
+   renderChildren,
++  capabilities,
+   listTag: ListTag
+ }) {
+   const isNested = parentType === 'ListItem';
+   const hasTaskChild = !isNested && node.children?.some(child => child.attributes?.isTask === 'true');
+   const resolvedStyle = isNested ? styles.listNested : hasTaskChild ? styles.listTask : styles.list;
+   return /*#__PURE__*/_jsx(ListTag, {
++    ...capabilities.elementAttributes?.list,
+     style: resolvedStyle,
+     children: renderChildren(node)
+   });
+@@ -70,11 +72,17 @@ function ListItemRenderer({
      ...node,
      children: node.children?.filter(isNestedList)
    } : null;
@@ -3222,7 +3291,7 @@ index 9433b812529115828b69877083a0956afd8d976b..1950089184d6d346d023065304b6c3ba
          checked: isChecked,
          onChange: handleChange,
 diff --git a/lib/module/web/renderers/index.js b/lib/module/web/renderers/index.js
-index 17a84648cefaf71a4d6e8cfde54b962f18a24074..3913518086917b11ba89866d2d0bd371314cb983 100644
+index 17a8464..d1c016f 100644
 --- a/lib/module/web/renderers/index.js
 +++ b/lib/module/web/renderers/index.js
 @@ -1,5 +1,6 @@
@@ -3232,7 +3301,7 @@ index 17a84648cefaf71a4d6e8cfde54b962f18a24074..3913518086917b11ba89866d2d0bd371
  import { blockRenderers } from "./BlockRenderers.js";
  import { inlineRenderers } from "./InlineRenderers.js";
  import { listRenderers } from "./ListRenderers.js";
-@@ -18,32 +19,67 @@ const RENDERERS = {
+@@ -18,32 +19,68 @@ const RENDERERS = {
    ...listRenderers,
    ...tableRenderers
  };
@@ -3251,9 +3320,10 @@ index 17a84648cefaf71a4d6e8cfde54b962f18a24074..3913518086917b11ba89866d2d0bd371
 +}
 +export function useSettledCapabilities(capabilities) {
 +  return useMemo(() => ({
++    elementAttributes: capabilities.elementAttributes,
 +    katex: capabilities.katex,
 +    streamingReveal: null
-+  }), [capabilities.katex]);
++  }), [capabilities.katex, capabilities.elementAttributes]);
 +}
 +function RenderNodeComponent({
    node,
@@ -3768,10 +3838,18 @@ index b912aa6e663c5312565e4611801c820a737c68ae..b662c0858bf6f6fbab72a98481af9050
              start: number;
              end: number;
 diff --git a/lib/typescript/src/types/MarkdownTextProps.web.d.ts b/lib/typescript/src/types/MarkdownTextProps.web.d.ts
-index 609252dddb1056aaf22125c3ee09c27e0692d5d5..3e6bc9488d9cc32067265ea9fb0d857a6f89a83b 100644
+index 609252d..5327eec 100644
 --- a/lib/typescript/src/types/MarkdownTextProps.web.d.ts
 +++ b/lib/typescript/src/types/MarkdownTextProps.web.d.ts
-@@ -59,6 +59,23 @@ export interface EnrichedMarkdownTextProps extends Omit<HTMLAttributes<HTMLDivEl
+@@ -7,6 +7,7 @@ export interface EnrichedMarkdownTextProps extends Omit<HTMLAttributes<HTMLDivEl
+      * @platform ios, android, web
+      */
+     markdown: string;
++    elementAttributes?: Readonly<Partial<Record<'paragraph' | 'heading' | 'link' | 'quote' | 'list', Readonly<Record<string, string>>>>>;
+     /**
+      * Style configuration for markdown elements.
+      * @platform ios, android, web
+@@ -59,6 +60,23 @@ export interface EnrichedMarkdownTextProps extends Omit<HTMLAttributes<HTMLDivEl
       * @platform ios, android, web
       */
      selectable?: boolean;
@@ -3913,10 +3991,13 @@ index d5629f6e0baf9b7adfb2e92049bf0fbb36a3d69f..2e100d7666c787f28ef5256a5d22fcd0
      h2: CSSProperties;
      h3: CSSProperties;
 diff --git a/lib/typescript/src/web/types.d.ts b/lib/typescript/src/web/types.d.ts
-index 5bf45015c8804abfa788796c928dde3083452e11..628c71d08868077054573f0c7de5553312fa7bd7 100644
+index 5bf4501..ff732cc 100644
 --- a/lib/typescript/src/web/types.d.ts
 +++ b/lib/typescript/src/web/types.d.ts
-@@ -3,6 +3,7 @@ import type { MarkdownStyleInternal } from '../types/MarkdownStyleInternal';
+@@ -1,8 +1,10 @@
+ import type { ComponentType, ReactNode } from 'react';
+ import type { MarkdownStyleInternal } from '../types/MarkdownStyleInternal';
++import type { EnrichedMarkdownTextProps } from '../types/MarkdownTextProps.web';
  import type { Styles } from './styles';
  import type { LinkPressEvent, LinkLongPressEvent, TaskListItemPressEvent } from '../types/events';
  import type { KaTeXInstance } from './katex';
@@ -3924,7 +4005,7 @@ index 5bf45015c8804abfa788796c928dde3083452e11..628c71d08868077054573f0c7de55533
  export type NodeType = 'Document' | 'Paragraph' | 'Text' | 'Link' | 'Heading' | 'LineBreak' | 'Strong' | 'Emphasis' | 'Strikethrough' | 'Underline' | 'Code' | 'Image' | 'Blockquote' | 'UnorderedList' | 'OrderedList' | 'ListItem' | 'CodeBlock' | 'ThematicBreak' | 'Table' | 'TableHead' | 'TableBody' | 'TableRow' | 'TableHeaderCell' | 'TableCell' | 'LatexMathInline' | 'LatexMathDisplay';
  export interface NodeAttributes {
      level?: string;
-@@ -29,6 +30,10 @@ export interface ASTNode {
+@@ -29,6 +31,10 @@ export interface ASTNode {
      attributes?: NodeAttributes;
      /** Child nodes; absent on leaf nodes (Text, LineBreak, ThematicBreak). */
      children?: ASTNode[];
@@ -3935,9 +4016,11 @@ index 5bf45015c8804abfa788796c928dde3083452e11..628c71d08868077054573f0c7de55533
  }
  export interface RendererCallbacks {
      onLinkPress?: (event: LinkPressEvent) => void;
-@@ -37,12 +42,16 @@ export interface RendererCallbacks {
+@@ -36,13 +42,18 @@ export interface RendererCallbacks {
+     onTaskListItemPress?: (event: TaskListItemPressEvent) => void;
  }
  export interface RenderCapabilities {
++    elementAttributes?: EnrichedMarkdownTextProps['elementAttributes'];
      katex: KaTeXInstance | null;
 +    streamingReveal?: StreamingRevealState | null;
  }
@@ -4178,10 +4261,19 @@ index d450699edd84cd75a6763463ac49e67a99c2841d..3a8180f10219a9d73be7c4556d120dbb
    }) => void;
    icon?: string;
 diff --git a/src/types/MarkdownTextProps.web.ts b/src/types/MarkdownTextProps.web.ts
-index fa9d40140903b1d79fd2c7d775ff159392e0a68e..90d9e21b7b3c349f8ac7f82b617a14b63515ec51 100644
+index fa9d401..cc08d0c 100644
 --- a/src/types/MarkdownTextProps.web.ts
 +++ b/src/types/MarkdownTextProps.web.ts
-@@ -65,6 +65,23 @@ export interface EnrichedMarkdownTextProps
+@@ -13,6 +13,8 @@ export interface EnrichedMarkdownTextProps
+    * @platform ios, android, web
+    */
+   markdown: string;
++  /** Stable attributes for existing web element hosts. Native renderers do not consume these. */
++  elementAttributes?: Readonly<Partial<Record<'paragraph' | 'heading' | 'link' | 'quote' | 'list', Readonly<Record<string, string>>>>>;
+   /**
+    * Style configuration for markdown elements.
+    * @platform ios, android, web
+@@ -65,6 +67,23 @@ export interface EnrichedMarkdownTextProps
     * @platform ios, android, web
     */
    selectable?: boolean;
@@ -4219,10 +4311,10 @@ index 11f876c7737baf9a472b848eda1d1dad997518da..d652cc60471b092f460967f52f81683d
    selectionEnd: number;
  }
 diff --git a/src/web/EnrichedMarkdownText.tsx b/src/web/EnrichedMarkdownText.tsx
-index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..34c1bc32e2b70902407caccc14a245ab2af2b847 100644
+index 70eb3a4..9cabaaa 100644
 --- a/src/web/EnrichedMarkdownText.tsx
 +++ b/src/web/EnrichedMarkdownText.tsx
-@@ -1,28 +1,52 @@
+@@ -1,28 +1,53 @@
 -import { useState, useEffect, useMemo, type CSSProperties } from 'react';
 +import {
 +  useState,
@@ -4268,6 +4360,7 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..34c1bc32e2b70902407caccc14a245ab
    markdown,
 -  markdownStyle = {},
 -  md4cFlags = {},
++  elementAttributes,
 +  markdownStyle = EMPTY_MARKDOWN_STYLE,
 +  md4cFlags = EMPTY_MD4C_FLAGS,
    onLinkPress,
@@ -4281,7 +4374,7 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..34c1bc32e2b70902407caccc14a245ab
    dir,
    ...rest
  }: EnrichedMarkdownTextProps) => {
-@@ -30,30 +54,27 @@ export const EnrichedMarkdownText = ({
+@@ -30,30 +55,27 @@ export const EnrichedMarkdownText = ({
      () => normalizeMarkdownStyle(markdownStyle),
      [markdownStyle]
    );
@@ -4324,7 +4417,7 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..34c1bc32e2b70902407caccc14a245ab
          }
        })
        .catch((error) => {
-@@ -64,21 +85,116 @@ export const EnrichedMarkdownText = ({
+@@ -64,21 +86,116 @@ export const EnrichedMarkdownText = ({
  
            setParseError(true);
            setAst(null);
@@ -4437,14 +4530,14 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..34c1bc32e2b70902407caccc14a245ab
 +  }, [activeRevealRanges, streamingAnimation]);
 +
 +  const capabilities = useMemo<RenderCapabilities>(
-+    () => ({ katex, streamingReveal }),
-+    [katex, streamingReveal]
++    () => ({ katex, streamingReveal, elementAttributes }),
++    [katex, streamingReveal, elementAttributes]
 +  );
 +  const settledCapabilities = useSettledCapabilities(capabilities);
  
    const lastChildStyle = useMemo(
      () =>
-@@ -105,17 +221,42 @@ export const EnrichedMarkdownText = ({
+@@ -105,17 +222,42 @@ export const EnrichedMarkdownText = ({
      [containerStyle, selectable]
    );
  
@@ -4491,7 +4584,7 @@ index 70eb3a4cada04369d63b668f5dbe7f5e7bd6bfb0..34c1bc32e2b70902407caccc14a245ab
    const lastIdx = children.length - 1;
  
    return (
-@@ -127,7 +268,7 @@ export const EnrichedMarkdownText = ({
+@@ -127,7 +269,7 @@ export const EnrichedMarkdownText = ({
            style={index === lastIdx ? lastChildStyle : normalizedStyle}
            styles={index === lastIdx ? lastChildStyles : styles}
            callbacks={callbacks}
@@ -4833,37 +4926,62 @@ index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..b0f1f4acd3a017c9a85b00df231d2046
 +  };
  }
 diff --git a/src/web/renderers/BlockRenderers.tsx b/src/web/renderers/BlockRenderers.tsx
-index 28c5386d9b51fefeee373f02b32b98089806ad51..76b0f009b48646b1d560cc03f863e95ae0fefc87 100644
+index 28c5386..4a9e9d8 100644
 --- a/src/web/renderers/BlockRenderers.tsx
 +++ b/src/web/renderers/BlockRenderers.tsx
-@@ -7,6 +7,8 @@ function ParagraphRenderer({
+@@ -6,7 +6,10 @@ import { KaTeXRenderer } from './KaTeXRenderer';
+ function ParagraphRenderer({
    node,
    styles,
++  capabilities,
    parentType,
 +  parentAttributes,
 +  isLastChild,
    renderChildren,
  }: RendererProps) {
    const isImageOnly =
-@@ -18,7 +20,15 @@ function ParagraphRenderer({
+@@ -14,24 +17,32 @@ function ParagraphRenderer({
+   if (isImageOnly) return <>{renderChildren(node)}</>;
+ 
+   if (parentType === 'Blockquote') {
+-    return <p style={styles.paragraphInBlockquote}>{renderChildren(node)}</p>;
++    return <p {...capabilities.elementAttributes?.paragraph} style={styles.paragraphInBlockquote}>{renderChildren(node)}</p>;
    }
  
    if (parentType === 'ListItem') {
 -    return <span>{renderChildren(node)}</span>;
 +    if (parentAttributes?.isTask === 'true') {
-+      return <span>{renderChildren(node)}</span>;
++      return <span {...capabilities.elementAttributes?.paragraph}>{renderChildren(node)}</span>;
 +    }
 +
 +    const paragraphStyle = isLastChild === true
 +      ? styles.paragraphInLastListItemChild
 +      : styles.paragraphInListItem;
 +
-+    return <p style={paragraphStyle}>{renderChildren(node)}</p>;
++    return <p {...capabilities.elementAttributes?.paragraph} style={paragraphStyle}>{renderChildren(node)}</p>;
    }
  
-   return <p style={styles.paragraph}>{renderChildren(node)}</p>;
+-  return <p style={styles.paragraph}>{renderChildren(node)}</p>;
++  return <p {...capabilities.elementAttributes?.paragraph} style={styles.paragraph}>{renderChildren(node)}</p>;
+ }
+ 
+-function HeadingRenderer({ node, styles, renderChildren }: RendererProps) {
++function HeadingRenderer({ node, styles, capabilities, renderChildren }: RendererProps) {
+   const Tag = toHeadingLevel(node.attributes?.level ?? '1');
+-  return <Tag style={styles[Tag]}>{renderChildren(node)}</Tag>;
++  return <Tag {...capabilities.elementAttributes?.heading} style={styles[Tag]}>{renderChildren(node)}</Tag>;
+ }
+ 
+-function BlockquoteRenderer({ node, styles, renderChildren }: RendererProps) {
++function BlockquoteRenderer({ node, styles, capabilities, renderChildren }: RendererProps) {
+   return (
+-    <blockquote style={styles.blockquote}>{renderChildren(node)}</blockquote>
++    <blockquote {...capabilities.elementAttributes?.quote} style={styles.blockquote}>{renderChildren(node)}</blockquote>
+   );
+ }
+ 
 diff --git a/src/web/renderers/InlineRenderers.tsx b/src/web/renderers/InlineRenderers.tsx
-index f25cb2a680389e1ae075d9c7599738a29243a68d..b6c021e6b236a27b9cfe62de9955a6fb0c149481 100644
+index f25cb2a..0a196d9 100644
 --- a/src/web/renderers/InlineRenderers.tsx
 +++ b/src/web/renderers/InlineRenderers.tsx
 @@ -2,9 +2,22 @@ import type { MouseEvent } from 'react';
@@ -4891,7 +5009,7 @@ index f25cb2a680389e1ae075d9c7599738a29243a68d..b6c021e6b236a27b9cfe62de9955a6fb
  }
  
  function LineBreakRenderer(_props: RendererProps) {
-@@ -32,8 +45,12 @@ function UnderlineRenderer({ node, styles, renderChildren }: RendererProps) {
+@@ -32,12 +45,17 @@ function UnderlineRenderer({ node, styles, renderChildren }: RendererProps) {
  }
  
  function CodeRenderer({ node, styles, renderChildren }: RendererProps) {
@@ -4905,6 +5023,19 @@ index f25cb2a680389e1ae075d9c7599738a29243a68d..b6c021e6b236a27b9cfe62de9955a6fb
    );
  }
  
+ function LinkRenderer({
++  capabilities,
+   node,
+   styles,
+   callbacks,
+@@ -63,6 +81,7 @@ function LinkRenderer({
+ 
+   return (
+     <a
++      {...capabilities.elementAttributes?.link}
+       href={url}
+       style={styles.link}
+       target="_blank"
 diff --git a/src/web/renderers/KaTeXRenderer.tsx b/src/web/renderers/KaTeXRenderer.tsx
 index b80769633d50e9f77c29cac464f7ecd1648b73be..601aa3a8f4c2be376c1c4d540ab0bc2e82ee7f42 100644
 --- a/src/web/renderers/KaTeXRenderer.tsx
@@ -4947,10 +5078,27 @@ index b80769633d50e9f77c29cac464f7ecd1648b73be..601aa3a8f4c2be376c1c4d540ab0bc2e
      />
    );
 diff --git a/src/web/renderers/ListRenderers.tsx b/src/web/renderers/ListRenderers.tsx
-index dfe69cbcb85eb5e7e85359952e74a7aa58f6ac7d..4d4e7c25f6f1f0ee9934a54b65457d29cb945d06 100644
+index dfe69cb..6930812 100644
 --- a/src/web/renderers/ListRenderers.tsx
 +++ b/src/web/renderers/ListRenderers.tsx
-@@ -84,18 +84,25 @@ function ListItemRenderer({
+@@ -14,6 +14,7 @@ function ListRenderer({
+   parentType,
+   renderChildren,
+   listTag: ListTag,
++  capabilities,
+ }: RendererProps & { listTag: 'ul' | 'ol' }) {
+   const isNested = parentType === 'ListItem';
+   const hasTaskChild =
+@@ -25,7 +26,7 @@ function ListRenderer({
+     : hasTaskChild
+       ? styles.listTask
+       : styles.list;
+-  return <ListTag style={resolvedStyle}>{renderChildren(node)}</ListTag>;
++  return <ListTag {...capabilities.elementAttributes?.list} style={resolvedStyle}>{renderChildren(node)}</ListTag>;
+ }
+ 
+ function UnorderedListRenderer(props: RendererProps) {
+@@ -84,18 +85,25 @@ function ListItemRenderer({
      ? { ...node, children: node.children?.filter(isNestedList) }
      : null;
  
@@ -4987,7 +5135,7 @@ index dfe69cbcb85eb5e7e85359952e74a7aa58f6ac7d..4d4e7c25f6f1f0ee9934a54b65457d29
        </span>
        {nestedNode && renderChildren(nestedNode)}
 diff --git a/src/web/renderers/index.tsx b/src/web/renderers/index.tsx
-index dca24cf13cafbf25df5f2e578d901eed9694ffd2..1f992521dcd4936bc13364ea391a50c81aabb5b8 100644
+index dca24cf..60006a4 100644
 --- a/src/web/renderers/index.tsx
 +++ b/src/web/renderers/index.tsx
 @@ -1,13 +1,10 @@
@@ -5042,8 +5190,8 @@ index dca24cf13cafbf25df5f2e578d901eed9694ffd2..1f992521dcd4936bc13364ea391a50c8
 -export function RenderNode({
 +export function useSettledCapabilities(capabilities: RenderCapabilities): RenderCapabilities {
 +  return useMemo<RenderCapabilities>(
-+    () => ({ katex: capabilities.katex, streamingReveal: null }),
-+    [capabilities.katex]
++    () => ({ katex: capabilities.katex, streamingReveal: null, elementAttributes: capabilities.elementAttributes }),
++    [capabilities.katex, capabilities.elementAttributes]
 +  );
 +}
 +
@@ -5456,10 +5604,17 @@ index 4d0ff8e05d381c2c754ff502799f66038bc56423..10b731557fdcf2cc912f43e7325af0e6
      h2: headingStyle(style, '2'),
      h3: headingStyle(style, '3'),
 diff --git a/src/web/types.ts b/src/web/types.ts
-index 3a297c549971884a5b0c3338d1e84a09e0390391..9bdc235e911d7afd9fb7060ce0ed75af45d65a65 100644
+index 3a297c5..349f935 100644
 --- a/src/web/types.ts
 +++ b/src/web/types.ts
-@@ -7,6 +7,7 @@ import type {
+@@ -1,5 +1,6 @@
+ import type { ComponentType, ReactNode } from 'react';
+ import type { MarkdownStyleInternal } from '../types/MarkdownStyleInternal';
++import type { EnrichedMarkdownTextProps } from '../types/MarkdownTextProps.web';
+ import type { Styles } from './styles';
+ import type {
+   LinkPressEvent,
+@@ -7,6 +8,7 @@ import type {
    TaskListItemPressEvent,
  } from '../types/events';
  import type { KaTeXInstance } from './katex';
@@ -5467,7 +5622,7 @@ index 3a297c549971884a5b0c3338d1e84a09e0390391..9bdc235e911d7afd9fb7060ce0ed75af
  
  export type NodeType =
    | 'Document'
-@@ -62,6 +63,10 @@ export interface ASTNode {
+@@ -62,6 +64,10 @@ export interface ASTNode {
    attributes?: NodeAttributes;
    /** Child nodes; absent on leaf nodes (Text, LineBreak, ThematicBreak). */
    children?: ASTNode[];
@@ -5478,15 +5633,17 @@ index 3a297c549971884a5b0c3338d1e84a09e0390391..9bdc235e911d7afd9fb7060ce0ed75af
  }
  
  export interface RendererCallbacks {
-@@ -72,6 +77,7 @@ export interface RendererCallbacks {
+@@ -71,7 +77,9 @@ export interface RendererCallbacks {
+ }
  
  export interface RenderCapabilities {
++  elementAttributes?: EnrichedMarkdownTextProps['elementAttributes'];
    katex: KaTeXInstance | null;
 +  streamingReveal?: StreamingRevealState | null;
  }
  
  export interface RendererProps {
-@@ -79,6 +85,9 @@ export interface RendererProps {
+@@ -79,6 +87,9 @@ export interface RendererProps {
    style: MarkdownStyleInternal;
    styles: Styles;
    parentType?: NodeType;

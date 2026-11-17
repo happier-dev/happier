@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/modules/useElementLayout/index.js b/dist/cjs/modules/useElementLayout/index.js
-index f3028704292..a4b88afdf98 100644
+index f3028704292..421bed8999f 100644
 --- a/dist/cjs/modules/useElementLayout/index.js
 +++ b/dist/cjs/modules/useElementLayout/index.js
 @@ -4,7 +4,6 @@ var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefau
@@ -92,7 +92,7 @@ index f3028704292..a4b88afdf98 100644
  function getResizeObserver() {
    if (_canUseDom.default && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -28,18 +102,25 @@ function getResizeObserver() {
+@@ -28,18 +102,33 @@ function getResizeObserver() {
            if (typeof onLayout === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
@@ -107,6 +107,14 @@ index f3028704292..a4b88afdf98 100644
 +              if (width === 0 && height === 0 && typeof node.checkVisibility === 'function' && !node.checkVisibility()) {
 +                return;
 +              }
++              // React Native reports onLayout when the layout changes. A revealed retained pane re-observes every
++              // View (its layout effects reconnect), and the observer's initial delivery repeats each unchanged box:
++              // 111 of 127 reports on one Session tab reveal re-decided geometry for nothing (P03-WEB-TAB-SWITCH W6).
++              var last = node.__reactLayoutLast;
++              if (last != null && last.x === x && last.y === y && last.width === width && last.height === height) {
++                return;
++              }
++              node.__reactLayoutLast = { x, y, width, height };
 +              var layout = { x, y, width, height };
 +              var page = null;
 +              var readPage = () => page || (page = getRect(node));
@@ -127,7 +135,7 @@ index f3028704292..a4b88afdf98 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -63,6 +144,7 @@ function getResizeObserver() {
+@@ -63,6 +152,7 @@ function getResizeObserver() {
  }
  function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -135,7 +143,7 @@ index f3028704292..a4b88afdf98 100644
    (0, _useLayoutEffect.default)(() => {
      var node = ref.current;
      if (node != null) {
-@@ -70,22 +152,14 @@ function useElementLayout(ref, onLayout) {
+@@ -70,22 +160,14 @@ function useElementLayout(ref, onLayout) {
      }
    }, [ref, onLayout]);
  
@@ -167,7 +175,7 @@ index f3028704292..a4b88afdf98 100644
 \ No newline at end of file
 +module.exports = exports.default;
 diff --git a/dist/modules/useElementLayout/index.js b/dist/modules/useElementLayout/index.js
-index cd75e40a824..7e679ed456a 100644
+index cd75e40a824..1fe2f254520 100644
 --- a/dist/modules/useElementLayout/index.js
 +++ b/dist/modules/useElementLayout/index.js
 @@ -8,11 +8,85 @@
@@ -257,7 +265,7 @@ index cd75e40a824..7e679ed456a 100644
  function getResizeObserver() {
    if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -23,18 +97,25 @@ function getResizeObserver() {
+@@ -23,18 +97,33 @@ function getResizeObserver() {
            if (typeof onLayout === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
@@ -272,6 +280,14 @@ index cd75e40a824..7e679ed456a 100644
 +              if (width === 0 && height === 0 && typeof node.checkVisibility === 'function' && !node.checkVisibility()) {
 +                return;
 +              }
++              // React Native reports onLayout when the layout changes. A revealed retained pane re-observes every
++              // View (its layout effects reconnect), and the observer's initial delivery repeats each unchanged box:
++              // 111 of 127 reports on one Session tab reveal re-decided geometry for nothing (P03-WEB-TAB-SWITCH W6).
++              var last = node.__reactLayoutLast;
++              if (last != null && last.x === x && last.y === y && last.width === width && last.height === height) {
++                return;
++              }
++              node.__reactLayoutLast = { x, y, width, height };
 +              var layout = { x, y, width, height };
 +              var page = null;
 +              var readPage = () => page || (page = getRect(node));
@@ -292,7 +308,7 @@ index cd75e40a824..7e679ed456a 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -58,6 +139,7 @@ function getResizeObserver() {
+@@ -58,6 +147,7 @@ function getResizeObserver() {
  }
  export default function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -300,7 +316,7 @@ index cd75e40a824..7e679ed456a 100644
    useLayoutEffect(() => {
      var node = ref.current;
      if (node != null) {
-@@ -65,21 +147,13 @@ export default function useElementLayout(ref, onLayout) {
+@@ -65,21 +155,13 @@ export default function useElementLayout(ref, onLayout) {
      }
    }, [ref, onLayout]);
  
@@ -331,7 +347,7 @@ index cd75e40a824..7e679ed456a 100644
 +  }, [ref, observer, hasOnLayout]);
 +}
 diff --git a/src/modules/useElementLayout/index.js b/src/modules/useElementLayout/index.js
-index 6099899ca68..9a35c4f2ca1 100644
+index 6099899ca68..5fb9a66fadb 100644
 --- a/src/modules/useElementLayout/index.js
 +++ b/src/modules/useElementLayout/index.js
 @@ -11,7 +11,6 @@ import type { ElementRef } from 'react';
@@ -424,7 +440,7 @@ index 6099899ca68..9a35c4f2ca1 100644
  function getResizeObserver(): ?ResizeObserver {
    if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -29,11 +103,25 @@ function getResizeObserver(): ?ResizeObserver {
+@@ -29,11 +103,33 @@ function getResizeObserver(): ?ResizeObserver {
            if (typeof onLayout === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
@@ -439,6 +455,14 @@ index 6099899ca68..9a35c4f2ca1 100644
 +              if (width === 0 && height === 0 && typeof node.checkVisibility === 'function' && !node.checkVisibility()) {
 +                return;
 +              }
++              // React Native reports onLayout when the layout changes. A revealed retained pane re-observes every
++              // View (its layout effects reconnect), and the observer's initial delivery repeats each unchanged box:
++              // 111 of 127 reports on one Session tab reveal re-decided geometry for nothing (P03-WEB-TAB-SWITCH W6).
++              var last = node.__reactLayoutLast;
++              if (last != null && last.x === x && last.y === y && last.width === width && last.height === height) {
++                return;
++              }
++              node.__reactLayoutLast = { x, y, width, height };
 +              const layout = { x, y, width, height };
 +              let page = null;
 +              const readPage = () => page || (page = getRect(node));
@@ -452,7 +476,7 @@ index 6099899ca68..9a35c4f2ca1 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -67,6 +155,7 @@ export default function useElementLayout(
+@@ -67,6 +163,7 @@ export default function useElementLayout(
    onLayout?: ?(e: LayoutEvent) => void
  ) {
    const observer = getResizeObserver();
@@ -460,7 +484,7 @@ index 6099899ca68..9a35c4f2ca1 100644
  
    useLayoutEffect(() => {
      const node = ref.current;
-@@ -75,21 +164,13 @@ export default function useElementLayout(
+@@ -75,21 +172,13 @@ export default function useElementLayout(
      }
    }, [ref, onLayout]);
  
@@ -489,7 +513,7 @@ index 6099899ca68..9a35c4f2ca1 100644
 +  }, [ref, observer, hasOnLayout]);
  }
 diff --git a/dist/cjs/modules/useLocale/index.js b/dist/cjs/modules/useLocale/index.js
-index 0c9c16c6a0..3d1e46435a 100644
+index 0c9c16c6a0f..3d1e46435a0 100644
 --- a/dist/cjs/modules/useLocale/index.js
 +++ b/dist/cjs/modules/useLocale/index.js
 @@ -29,12 +29,15 @@ function LocaleProvider(props) {
@@ -513,7 +537,7 @@ index 0c9c16c6a0..3d1e46435a 100644
  }
  function useLocaleContext() {
 diff --git a/dist/modules/useLocale/index.js b/dist/modules/useLocale/index.js
-index 2c4e2332e4..20c929fe35 100644
+index 2c4e2332e45..20c929fe35e 100644
 --- a/dist/modules/useLocale/index.js
 +++ b/dist/modules/useLocale/index.js
 @@ -7,7 +7,7 @@
@@ -546,7 +570,7 @@ index 2c4e2332e4..20c929fe35 100644
  }
  export function useLocaleContext() {
 diff --git a/src/modules/useLocale/index.js b/src/modules/useLocale/index.js
-index 11c51517b8..f827388229 100644
+index 11c51517b8b..f8273882295 100644
 --- a/src/modules/useLocale/index.js
 +++ b/src/modules/useLocale/index.js
 @@ -9,7 +9,7 @@
@@ -582,7 +606,7 @@ index 11c51517b8..f827388229 100644
      children
    );
 diff --git a/dist/cjs/modules/useEvent/index.js b/dist/cjs/modules/useEvent/index.js
-index cbbd7a4bc1..395afed24f 100644
+index cbbd7a4bc12..395afed24fb 100644
 --- a/dist/cjs/modules/useEvent/index.js
 +++ b/dist/cjs/modules/useEvent/index.js
 @@ -33,8 +33,10 @@ function useEvent(eventType, options) {
@@ -598,7 +622,7 @@ index cbbd7a4bc1..395afed24f 100644
        var removeEventListener = (0, _addEventListener.addEventListener)(target, eventType, callback, options);
        targetListeners.set(target, removeEventListener);
 diff --git a/dist/cjs/modules/useHover/index.js b/dist/cjs/modules/useHover/index.js
-index 3c09b4b86d..85eff7f4e6 100644
+index 3c09b4b86d7..85eff7f4e6c 100644
 --- a/dist/cjs/modules/useHover/index.js
 +++ b/dist/cjs/modules/useHover/index.js
 @@ -1,10 +1,12 @@
@@ -661,7 +685,7 @@ index 3c09b4b86d..85eff7f4e6 100644
  module.exports = exports.default;
 \ No newline at end of file
 diff --git a/dist/modules/useEvent/index.js b/dist/modules/useEvent/index.js
-index 54d7c41e32..6542400643 100644
+index 54d7c41e32b..6542400643e 100644
 --- a/dist/modules/useEvent/index.js
 +++ b/dist/modules/useEvent/index.js
 @@ -28,8 +28,10 @@ export default function useEvent(eventType, options) {
@@ -677,7 +701,7 @@ index 54d7c41e32..6542400643 100644
        var removeEventListener = addEventListener(target, eventType, callback, options);
        targetListeners.set(target, removeEventListener);
 diff --git a/dist/modules/useHover/index.js b/dist/modules/useHover/index.js
-index b63e119930..954974528a 100644
+index b63e119930a..954974528a7 100644
 --- a/dist/modules/useHover/index.js
 +++ b/dist/modules/useHover/index.js
 @@ -9,6 +9,7 @@
@@ -734,7 +758,7 @@ index b63e119930..954974528a 100644
  }
 \ No newline at end of file
 diff --git a/src/modules/useEvent/index.js b/src/modules/useEvent/index.js
-index 3d726b35a7..a779866851 100644
+index 3d726b35a77..a7798668519 100644
 --- a/src/modules/useEvent/index.js
 +++ b/src/modules/useEvent/index.js
 @@ -43,8 +43,10 @@ export default function useEvent(
@@ -750,7 +774,7 @@ index 3d726b35a7..a779866851 100644
        const removeEventListener = addEventListener(
          target,
 diff --git a/src/modules/useHover/index.js b/src/modules/useHover/index.js
-index ac97e94016..22864c98e6 100644
+index ac97e94016c..22864c98e6b 100644
 --- a/src/modules/useHover/index.js
 +++ b/src/modules/useHover/index.js
 @@ -9,6 +9,7 @@
