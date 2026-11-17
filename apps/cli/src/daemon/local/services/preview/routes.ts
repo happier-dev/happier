@@ -145,9 +145,9 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             return { ok: true as const, preview };
         } catch (error) {
             signal?.throwIfAborted();
-            logger.warnLocalFile('[local-service] Preview publication failed', projectActionFailureCauseV1(error, 'local_service.preview.publish', { allowUnknownErrorCode: false }));
             context?.signal.throwIfAborted();
             if (!stillRegistered() || occurrence?.ended) return { ok: false as const, reasonCode: 'preview_target_unresolved' };
+            logger.warnLocalFile('[local-service] Preview publication failed', projectActionFailureCauseV1(error, 'local_service.preview.publish', { allowUnknownErrorCode: false }));
             const reasonCode = admission.server ? failureReason(error) : 'preview_server_unavailable';
             input.registry.previewsById.set(resource.previewId, {
                 ...(occurrence ? { occurrence } : {}),
@@ -397,10 +397,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         },
 
         async revoke(request, context) {
-                catch (error) {
-                    logger.warnLocalFile('[local-service] Preview revocation failed', projectActionFailureCauseV1(error, 'local_service.preview.revoke', { allowUnknownErrorCode: false }));
-                    return { ok: false, reasonCode: failureReason(error) };
-                }
+            let admission: Awaited<ReturnType<typeof admitRequest>>;
             try { admission = await admitRequest(context, true); }
             catch { return { ok: false, reasonCode: 'requester_credentials_unavailable' }; }
             if (request.machineId !== input.machineId) {
@@ -416,7 +413,10 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             if (resource) {
                 if (!admission.server) return { ok: false, reasonCode: 'preview_server_unavailable' };
                 try { await admission.server.unregisterPreview(request.previewId); }
-                catch (error) { return { ok: false, reasonCode: failureReason(error) }; }
+                catch (error) {
+                    logger.warnLocalFile('[local-service] Preview revocation failed', projectActionFailureCauseV1(error, 'local_service.preview.revoke', { allowUnknownErrorCode: false }));
+                    return { ok: false, reasonCode: failureReason(error) };
+                }
             }
             const result = unregisterLocalServicePreview(input.registry, request.previewId);
             return {
