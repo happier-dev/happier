@@ -4,6 +4,7 @@ import { act } from 'react';
 import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { resolveWorkflowActionTitle } from '@/sync/domains/workflows/workflowActionPresentation';
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -26,6 +27,8 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
 const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
 const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
+const { TriggerPopover } = await import('./TriggerPopover');
+const { Item } = await import('@/components/ui/lists/Item');
 const { WorkflowActionBlockEditor } = await import('../editor/WorkflowActionBlockEditor');
 const { createWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowEditorDraft');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
@@ -67,6 +70,7 @@ describe('Action trigger catalog read presentation', () => {
     it.each([
         { surface: 'trigger', state: 'failed' }, { surface: 'trigger', state: 'ready' },
         { surface: 'step', state: 'failed' }, { surface: 'step', state: 'ready' },
+        { surface: 'then', state: 'failed' }, { surface: 'then', state: 'ready' },
     ] as const)('distinguishes a pending $surface read from a settled $state catalog', async ({ surface, state }) => {
         const reply = createDeferred<Response>();
         let requested = false;
@@ -81,15 +85,22 @@ describe('Action trigger catalog read presentation', () => {
         const screen = await renderScreen(surface === 'trigger' ? <WorkflowTriggerBlock testID="action-trigger" title="Action trigger"
             when={{ kind: 'action', phase: 'before', actionIds: [], mode: 'notify' }} enabled incomplete={false}
             startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={vi.fn()} onRemove={vi.fn()}
-            machineId={null} serverId={serverId} /> : <WorkflowActionBlockEditor
+            machineId={null} serverId={serverId} /> : surface === 'then' ? <TriggerPopover
+                testID="then-action" anchorRef={React.createRef()} onRequestClose={vi.fn()}
+                whenKinds={['turnEnds']} sessionId={null} workflowOptions={[]}
+                initial={{ when: { kind: 'turnEnds' }, then: { kind: 'doAction', actionId: null, input: {} }, enabled: true }}
+                machineId={null} serverId={serverId} onSubmit={vi.fn()} /> : <WorkflowActionBlockEditor
                 block={{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: {} }}
                 draft={createWorkflowEditorDraft({ draftId: 'catalog-step', blocks: [] })}
                 ordinal={1} total={1} actions={[]} onSelect={vi.fn()} onChangeBlock={vi.fn()}
                 composerScope={{ kind: 'machine', machineId: null, serverId }} testIDPrefix="catalog-step" />);
         try {
             await vi.waitFor(() => expect(requested).toBe(true));
-            if (surface === 'trigger') {
-                await screen.pressByTestIdAsync('action-trigger-action.trigger');
+            if (surface !== 'step') {
+                if (surface === 'trigger') await screen.pressByTestIdAsync('action-trigger-action.trigger');
+                else await act(async () => {
+                    screen.findAllByType(Item).find(item => item.props.title === 'workflows.triggers.then.action')!.props.onPress();
+                });
                 await vi.waitFor(() => expect(screen.getTextContent()).toContain('workflows.triggers.card.actionsLoading'));
             } else {
                 expect.soft(screen.getTextContent()).toContain('common.loading');
@@ -108,9 +119,12 @@ describe('Action trigger catalog read presentation', () => {
             await act(async () => reply.resolve(state === 'failed'
                 ? Response.json({ error: 'catalog_settings_unavailable' }, { status: 503 })
                 : Response.json({ content: { t: 'plain', v: { actionsSettingsV1 } }, version: 2 })));
-            const emptyLabel = surface === 'trigger' ? 'workflows.triggers.card.noActions' : 'workflows.page.blocks.actionNotInCatalog';
-            await vi.waitFor(() => expect(screen.getTextContent()).toContain(state === 'failed' ? 'common.requestFailed' : emptyLabel));
+            const emptyLabel = surface === 'step' ? 'workflows.page.blocks.actionNotInCatalog' : 'workflows.triggers.card.noActions';
+            const settledLabel = state === 'failed' ? 'common.requestFailed'
+                : surface === 'then' ? resolveWorkflowActionTitle(discoveryRead.id, discoveryRead) : emptyLabel;
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(settledLabel));
             expect(screen.getTextContent()).not.toContain('workflows.triggers.card.actionsLoading');
+            if (state === 'ready') expect(screen.getTextContent()).not.toContain('common.requestFailed');
             if (state === 'failed') {
                 expect(screen.getTextContent()).not.toContain(emptyLabel);
                 expect(screen.getTextContent()).not.toContain('workflows.page.blocks.noFields');

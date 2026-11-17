@@ -1144,6 +1144,10 @@ function DoActionRows(props: Readonly<{
                 testID={`${props.testID}-action`}
                 title={t('workflows.triggers.then.action')}
                 search
+                emptyLabel={catalog.phase === 'ready' ? t('workflows.triggers.card.noActions')
+                    : catalog.phase === 'error' ? t('common.requestFailed')
+                    : catalog.phase === 'loading' ? t('workflows.triggers.card.actionsLoading')
+                    : t('common.unavailable')}
                 items={specs.map((candidate) => ({
                     id: candidate.id,
                     title: candidate.title,
