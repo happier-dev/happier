@@ -38,6 +38,9 @@ import { registerDaemonMachineAdminAccessRpcHandlers } from '@/rpc/handlers/daem
 import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { createMachineAdminAccessHost } from '@/machines/adminAccess/machineAdminAccessHost';
 import { createMachineRolesRuntime } from '@/daemon/roles/machineRolesRuntime';
+import { machineRoleCatalogFromPluginsV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { bindMachineRoleAdmission } from '@/plugins/projection/registry/builtIn/machineRoles';
+import { createMachineDaemonStatePublication } from '@/api/machine/machineDaemonStatePublication';
 import { registerDaemonMachineRolesRpcHandlers } from '@/rpc/handlers/daemonMachineRoles';
 import { readAgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
 import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
@@ -73,6 +76,7 @@ export type S0DeploymentDaemonIngress = Readonly<{
     observeRecordedApprovalExecution: ReturnType<typeof createCliActionExecutorFromCredentials>['observeRecordedApprovalExecution'];
     readIsolation(): ReturnType<typeof readAgentIsolationSnapshot> | null;
     isolationNative: ReturnType<typeof createAgentIsolationEffectsBoundary> | null;
+    publishDaemonState: ReturnType<typeof createMachineDaemonStatePublication> | null;
     close(): Promise<void>;
 }>;
 
@@ -242,10 +246,10 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         },
     });
     const receivedMethods: string[] = [];
-    const isolationMachine = input.isolationWorkspace ? await runWithServerHttpBaseUrl(home.baseUrl, async () => {
+    const isolationMachine = input.isolationWorkspace || input.installRolesReceiver === true ? await runWithServerHttpBaseUrl(home.baseUrl, async () => {
         const api = await ApiClient.create(credentials);
         const machine = await api.getMachine(home.machineId);
-        if (!machine) throw new Error('P11 requires this same enrolled Machine publication');
+        if (!machine) throw new Error('S0 requires this same enrolled Machine publication');
         return machine;
     }) : null;
     const isolationCodec = createMachineContentCodec(machineContent);
@@ -269,13 +273,29 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
                 isContentCurrent: () => true, retireAndRefreshContent: async () => {}, notifyMetadataChanged() {},
             }, mutation) };
     };
+    const roles = isolationMachine && input.installRolesReceiver !== false ? createMachineRolesRuntime({
+        port: captureMetadataPort(), readPluginCatalog: () => machineRoleCatalogFromPluginsV1(
+            (pluginReloadController.getState().activeRegistry?.contributes.machineRoles ?? [])
+                .map(entry => ({ pluginId: entry.pluginId, declaration: entry.definition }))),
+    }) : null;
+    const releaseRoleAdmission = input.installRolesReceiver === true && roles
+        ? bindMachineRoleAdmission(() => roles.appliedMetadata()) : undefined;
+    const releaseRoleCatalog = roles ? pluginReloadController.subscribe(() => roles.refreshCatalog()) : undefined;
+    if (roles) {
+        await roles.reload();
+        registerDaemonMachineRolesRpcHandlers(rpc, { roles, target: () => ({ serverId: home.serverId,
+            machineId: home.machineId, installationId: home.installationId, custodianAccountId: home.accountId }) });
+        methods.push(RPC_METHODS.MACHINES_ROLES_SET);
+    }
+    const daemonStatePublication = isolationMachine ? createMachineDaemonStatePublication({
+        getMachine: () => isolationMachine, shouldSuppress: () => daemonLifetime.signal.aborted,
+        prepareWrite: async () => ({ socket: machineSocket, codec: isolationCodec,
+            expectedDataEncryptionKey: isolationMachine.dataEncryptionKey ?? null, isCurrent: () => !daemonLifetime.signal.aborted }),
+        retireAndRefreshContent: async () => {}, needsPersistedIrohEndpointWithdrawal: () => false,
+        acknowledgeDaemonStatePublication() {}, discardUnverifiedIrohEndpoint: state => state,
+        synchronizeIrohMachineEndpointAuthority: async () => {},
+    }) : null;
     if (isolationNative && isolationMachine) {
-        if (input.installRolesReceiver !== false) {
-            const roles = createMachineRolesRuntime({ port: captureMetadataPort() });
-            registerDaemonMachineRolesRpcHandlers(rpc, { roles, target: () => ({ serverId: home.serverId,
-                machineId: home.machineId, installationId: home.installationId, custodianAccountId: home.accountId }) });
-            methods.push(RPC_METHODS.MACHINES_ROLES_SET);
-        }
         if (!input.nativeBoundary || !input.isolationReadinessSystem) throw new Error('S0 isolation must consume its enrolled guest OS boundary and readiness system');
         const adminObserver = createMachineAdminAccessObserver({ ...input.nativeBoundary.admin, onChanged: async () => {} });
         const elevation = { ...isolationNative.effects.elevation,
@@ -327,6 +347,9 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         closed = true;
         clearInterval(presenceInterval);
         daemonLifetime.abort();
+        releaseRoleCatalog?.();
+        releaseRoleAdmission?.();
+        roles?.stop();
         rpc.cancelTransportRequests();
         for (const method of methods) rpc.unregisterHandler(method);
         machineSocket.close();
@@ -358,7 +381,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         presenceInterval = setInterval(publishPresence, 20_000);
         await expect.poll(async () => runWithServerHttpBaseUrl(home.baseUrl,
             async () => (await readPublishedMachineRow(home.machineId, credentials))?.active), { timeout: 300_000 }).toBe(true);
-        return { actionOperations, executor,
+        return { actionOperations, executor, publishDaemonState: daemonStatePublication,
             externalActionIngressOwner: { currentServerId: home.serverId, currentServerHttpBaseUrl: home.baseUrl,
                 prepareRequesterAccountContext, resolveEncryption, executor,
                 resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: home.baseUrl }),

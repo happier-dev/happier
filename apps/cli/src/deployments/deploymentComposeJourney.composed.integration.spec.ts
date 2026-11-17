@@ -115,6 +115,12 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+if (process.env.HAPPIER_RUN_DBW_TELEMETRY_F14 === '1') {
+    const { registerProductionTelemetrySetupJourney } = await import('./deploymentTelemetryJourney.testkit');
+    const { runCollectorAppJourney } = await import('./deploymentCollectorAppJourney.testkit');
+    registerProductionTelemetrySetupJourney({ nativeDeploymentArtifacts, sourceRequesterForHome, settlePublicApproval,
+        collectorAppJourney: runCollectorAppJourney });
+}
 
 /** Deployment-private content uses the Account's native encrypted store, as in
  * the product preparation path; generic document Actions reject these kinds. */
