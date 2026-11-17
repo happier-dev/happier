@@ -4,6 +4,7 @@ import { PI_PROVIDER_ID, PI_PROVIDER_MODELS_FILE } from '../../providerBinding.j
 import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../../auth/services/qualifiedPurposes.js';
 import { PI_CONNECTED_ACCOUNT_MODEL_ENV } from '../../launchEnvironment.js';
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
+import { parsePiModelId } from '../../models/catalog.js';
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
   resolvePiRequestAuthExtensionPath,
@@ -38,8 +39,8 @@ function resolvePiLaunchSelectionForConnectedService(serviceId: string | null | 
 function readPreparedConnectedAccountModel(env: Readonly<Record<string, string | undefined>> | undefined): PiConnectedServiceLaunchSelection | null {
   const model = env?.[PI_CONNECTED_ACCOUNT_MODEL_ENV];
   if (!model) return null;
-  const separator = model.indexOf('/');
-  return { provider: model.slice(0, separator), startupModel: model.slice(separator + 1), modelScope: `${model.slice(0, separator)}/*` };
+  const selection = parsePiModelId(model);
+  return { provider: selection.provider, startupModel: selection.modelId, modelScope: `${selection.provider}/*` };
 }
 
 export function readPiConnectedServiceIdFromEnv(env: Readonly<Record<string, string | undefined>>): string | null {

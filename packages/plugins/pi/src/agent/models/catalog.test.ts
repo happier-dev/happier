@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPiRuntimeModelsSnapshot,
   createPiModelCatalogEntry,
+  parsePiModelId,
   qualifyPiModelId,
 } from './catalog.js';
 
@@ -12,6 +13,12 @@ describe('Pi model catalog projection', () => {
       .toBe('openrouter/meta/muse-spark-1.3-contributor');
     expect(qualifyPiModelId('openrouter', 'openrouter/meta/muse-spark-1.3-contributor'))
       .toBe('openrouter/meta/muse-spark-1.3-contributor');
+  });
+
+  it('decodes catalog identities without consuming slashes in native model ids', () => {
+    const id = qualifyPiModelId('openrouter', 'meta/muse-spark-1.3-contributor');
+    expect(parsePiModelId(id!)).toEqual({ provider: 'openrouter', modelId: 'meta/muse-spark-1.3-contributor' });
+    expect(parsePiModelId('native-model')).toEqual({ provider: 'default', modelId: 'native-model' });
   });
 
   it('uses one provider-qualified identity and Thinking option shape', () => {

@@ -14,6 +14,7 @@ import { preparePiQualifiedConnectedAccounts } from './qualifiedConnectedAccount
 import { buildPiRpcArgs } from './rpc/args.js';
 import { createPiAgentRuntime } from './engine.js';
 import { hostBoundaries } from './nativeProcess.test-support.js';
+import { qualifyPiModelId } from '../models/catalog.js';
 
 type Accounts = AgentRuntimeContext['services']['connectedAccounts'];
 const cases = [
@@ -84,18 +85,20 @@ describe('Pi native selected accounts through service materialization and launch
     const directory = await mkdtemp(join(tmpdir(), 'N-PI-OPENCODE-'));
     const boundary = hostBoundaries();
     const { accounts } = accountBoundary(row);
+    const nativeModelId = 'vendor/selected-model';
     const session = await createPiAgentRuntime().sessions.open({
       kind: 'create', sessionId: 'native-account', cwd: directory,
       launchEnvironment: { values: { PI_CODING_AGENT_DIR: directory }, unset: [] },
-      configuration: { model: { value: `${row.provider}/selected-model`, updatedAtMs: 1 },
+      configuration: { model: { value: qualifyPiModelId(row.provider, nativeModelId), updatedAtMs: 1 },
         mode: { value: null, updatedAtMs: 0 }, permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
     }, { ...boundary.context, services: { ...boundary.context.services,
       connectedAccounts: { ...boundary.context.services.connectedAccounts, ...accounts } } });
     try {
       const launch = boundary.spawn.mock.calls[0]![0].launch;
       expect(launch.args).toContain(row.provider);
+      expect(launch.args[launch.args.indexOf('--model') + 1]).toBe(nativeModelId);
       expect(launch.env?.OPENAI_API_KEY).toBeUndefined();
-      expect(boundary.write).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_model', provider: row.provider, modelId: 'selected-model' }));
+      expect(boundary.write).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_model', provider: row.provider, modelId: nativeModelId }));
     } finally { await session.dispose(); await rm(directory, { recursive: true, force: true }); }
   });
   it.each(cases)('$purpose replaces ambient auth with selected native material', async row => {

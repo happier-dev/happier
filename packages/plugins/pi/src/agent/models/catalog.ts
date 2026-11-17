@@ -34,6 +34,13 @@ export function qualifyPiModelId(providerRaw: unknown, modelIdRaw: unknown, prov
   return modelId.startsWith(providerPrefix) ? modelId : `${providerPrefix}${modelId}`;
 }
 
+export function parsePiModelId(id: string): Readonly<{ provider: string; modelId: string }> {
+  const separator = id.indexOf('/');
+  return separator < 0
+    ? { provider: 'default', modelId: id }
+    : { provider: id.slice(0, separator), modelId: id.slice(separator + 1) };
+}
+
 export function createPiModelCatalogEntry(params: Readonly<{
   providerModelId?: string;
   provider: unknown;
@@ -45,7 +52,7 @@ export function createPiModelCatalogEntry(params: Readonly<{
   const provider = readString(params.provider);
   const id = qualifyPiModelId(provider, params.modelId, params.providerModelId);
   if (!provider || !id) return null;
-  const name = readString(params.name) ?? id.slice(id.indexOf('/') + 1);
+  const name = readString(params.name) ?? parsePiModelId(id).modelId;
 
   return {
     id,

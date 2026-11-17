@@ -16,6 +16,7 @@ import type {
 
 import { replacePiAuthConfig, replacePiNativeModelsConfig } from '../auth/services/authConfig.js';
 import { PI_CONNECTED_ACCOUNT_MODEL_ENV, PI_DIRECT_AUTH_ENV_KEYS } from '../launchEnvironment.js';
+import { parsePiModelId } from '../models/catalog.js';
 import {
   PI_ANTHROPIC_API_KEY_PURPOSE_ID,
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
@@ -346,9 +347,9 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     }
     if (requiresExplicitModel && input.request) {
       const model = readNonBlank(selectedModel?.value);
-      const separator = model?.indexOf('/') ?? -1;
-      if ((!model || separator < 1 || separator === model.length - 1
-        || !nativeProviders.has(model.slice(0, separator)))
+      const selection = model ? parsePiModelId(model) : null;
+      if ((!selection || !selection.provider || !selection.modelId
+        || !nativeProviders.has(selection.provider))
         && !(input.request.kind === 'resume' && (!model || model === 'default'))) {
         throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
           message: 'Choose an explicit model from a selected Pi Connected Account provider.',

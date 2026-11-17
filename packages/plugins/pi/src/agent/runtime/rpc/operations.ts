@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { createSecureTempDirectorySync, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 import { buildPiModelDiscoveryExtensionSource, parsePiModelDiscoveryRecord } from '../../models/discoveryExtension.js';
+import { parsePiModelId } from '../../models/catalog.js';
 
 import type {
   AgentSessionCompactRequest,
@@ -1170,11 +1171,12 @@ function createRuntimeOperations(params: Readonly<{
         if (params.providerModelId && modelId !== params.providerModelId) {
           throw new Error('Pi model selection does not match the Session Provider binding');
         }
-        const [provider, ...modelParts] = modelId.split('/');
+        const selection = modelId === params.providerModelId
+          ? { provider: PI_PROVIDER_ID, modelId }
+          : parsePiModelId(modelId);
         await params.rpc.send({
           type: 'set_model',
-          provider: modelId === params.providerModelId ? PI_PROVIDER_ID : modelParts.length > 0 ? provider : 'default',
-          modelId: modelId === params.providerModelId ? modelId : modelParts.length > 0 ? modelParts.join('/') : modelId,
+          ...selection,
         }, 30_000);
         changed.push('model');
       }
