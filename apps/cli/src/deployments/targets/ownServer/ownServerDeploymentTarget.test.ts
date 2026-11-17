@@ -491,9 +491,11 @@ describe('own-server target at the Action host boundary', () => {
                 name: 'OTEL_EXPORTER_OTLP_HEADERS', phase: 'runtime', resourceId: 'review-secret', resourceRevision: 1,
             }), managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader' });
         }
+        const runningServiceBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'RUNNING_SERVICE_URL',
+            grantRef: randomUUID(),
+            source: { kind: 'reference' as const, environmentId: environment.environment.id, export: 'application', via: 'auto' as const } };
         if (scenario === 'runtime_stage') {
-            environment.content.bindings.push({ purpose: 'variable', phase: 'runtime', name: 'RUNNING_SERVICE_URL',
-                source: { kind: 'reference', environmentId: environment.environment.id, export: 'application', via: 'auto' } });
+            environment.content.bindings.push(runningServiceBinding);
             environment.content.ownServer = { ...environment.content.ownServer, rollout: 'recreate', autoRestorePreviousRelease: false,
                 serviceExports: [{ key: 'application', service: 'app', containerPort: 3000, scheme: 'http',
                     exposure: 'privateNetwork', privateNetwork: 'application' }] };
@@ -517,9 +519,11 @@ describe('own-server target at the Action host boundary', () => {
         }
         if (scenario === 'runtime_stage') runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1,
             kind: 'environmentValues', environmentId: environment.environment.id, machineId: 'machine-a', installationId: 'installation-a',
-            binding: { purpose: 'variable', phase: 'runtime', name: 'RUNNING_SERVICE_URL' } }, installationPublicKey,
-            content: { kind: 'environmentValues', definition: { kind: 'reference', environmentId: environment.environment.id,
-                export: 'application', via: 'auto' } } }));
+            binding: { purpose: runningServiceBinding.purpose, phase: runningServiceBinding.phase,
+                grantRef: runningServiceBinding.grantRef } }, installationPublicKey,
+            content: { kind: 'environmentValues', definition: runningServiceBinding.source,
+                binding: { purpose: runningServiceBinding.purpose, phase: runningServiceBinding.phase,
+                    name: runningServiceBinding.name, grantRef: runningServiceBinding.grantRef } } }));
         const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null };
         const serverHttpBaseUrl = 'https://deployment-health.test';
@@ -1190,13 +1194,15 @@ describe('own-server target at the Action host boundary', () => {
                         installationId: 'installation-a', environmentId: environment.environment.id, resourceId: role, resourceRevision: 1 },
                         installationPublicKey, content: { kind: 'secret', value: `private-${role}` } }));
                 }
-                const databaseBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_NAME',
+                const databaseBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_NAME', grantRef: randomUUID(),
                     source: { kind: 'value' as const, value: database } };
                 environment.content.bindings.push(databaseBinding);
                 runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', machineId: 'machine-a',
                     installationId: 'installation-a', environmentId: environment.environment.id,
-                    binding: { purpose: 'variable', phase: 'runtime', name: 'DB_NAME' } }, installationPublicKey,
-                    content: { kind: 'environmentValues', definition: databaseBinding.source } }));
+                    binding: { purpose: databaseBinding.purpose, phase: databaseBinding.phase, grantRef: databaseBinding.grantRef } }, installationPublicKey,
+                    content: { kind: 'environmentValues', definition: databaseBinding.source,
+                        binding: { purpose: databaseBinding.purpose, phase: databaseBinding.phase,
+                            name: databaseBinding.name, grantRef: databaseBinding.grantRef } } }));
                 const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
                 receipt.deployment.state = 'running';
                 receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
@@ -1788,13 +1794,14 @@ describe('own-server target at the Action host boundary', () => {
                         environment.content.bindings.push(createDeploymentSecretVariableBindingV1({
                             name: 'DB_PASSWORD', phase: 'runtime', resourceId: 'review-secret', resourceRevision: 1 }));
                         for (const entry of sourceValues) {
-                            const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: entry.name,
+                            const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: entry.name, grantRef: randomUUID(),
                                 source: { kind: 'value' as const, value: entry.value } };
                             environment.content.bindings.push(binding);
                             runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', machineId: 'machine-a',
                                 installationId: 'installation-a', environmentId: environment.environment.id,
-                                binding: { purpose: 'variable', phase: 'runtime', name: binding.name } }, installationPublicKey,
-                                content: { kind: 'environmentValues', definition: binding.source } }));
+                                binding: { purpose: binding.purpose, phase: binding.phase, grantRef: binding.grantRef } }, installationPublicKey,
+                                content: { kind: 'environmentValues', definition: binding.source,
+                                    binding: { purpose: binding.purpose, phase: binding.phase, name: binding.name, grantRef: binding.grantRef } } }));
                         }
                     }
                 }
