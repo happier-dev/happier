@@ -47,6 +47,8 @@ export function TeamJoinedCard(
     accountScope: ServerAccountScope | null;
     onOpenTeam: () => Promise<void> | void;
     setupContinuation?: TeamSetupContinuation;
+    /** What the Team already shares, between the name and the way on (plan D, L1 Joined). */
+    summary?: React.ReactNode;
   }>,
 ): React.ReactElement {
   const isFocused = useIsFocused();
@@ -116,6 +118,7 @@ export function TeamJoinedCard(
       title={resolveTeamJoinPresentation(props.result, props.teamName).title}
       body={
         asksName ? (
+          <>
           <AccountNameField
             testID={`${props.testID}-name-field`}
             value={name}
@@ -130,7 +133,9 @@ export function TeamJoinedCard(
             returnKeyType="go"
             onSubmitEditing={openTeam}
           />
-        ) : undefined
+          {props.summary}
+          </>
+        ) : props.summary
       }
       action={{
         label: props.setupContinuation?.label ?? t('teams.join.openTeam', { team: props.teamName }),

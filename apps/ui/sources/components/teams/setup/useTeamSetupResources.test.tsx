@@ -1,5 +1,6 @@
+import * as React from 'react';
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
-import { renderHook, standardCleanup, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
@@ -26,10 +27,10 @@ it.each([
     onTestFinished(await installRealActionExecutorModuleLoader());
     const serverId = await homes.addHome({ name: 'Setup Home', serverUrl: 'https://setup-resources.example.test',
         serverIdentityId: 'srv_setup_resources', accountId: 'member', currentAccount: true, teamsEnabled: true });
-    const address = { serverId, teamId: 'setup-team' };
     const scopeHook = await renderHook(() => useServerCredentialAccountScopeBinding(serverId));
     await waitForHomeGovernance(() => expect(scopeHook.getCurrent().binding?.isCurrent()).toBe(true));
     const lifetime = scopeHook.getCurrent().binding!;
+    const address = { serverId: lifetime.scope.serverId, teamId: 'setup-team' };
     const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: address.teamId });
     homes.answer(serverId, summary.path, { body: { teamId: address.teamId, kinds: [] } });
     homes.answer(serverId, '/v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
@@ -58,4 +59,40 @@ it.each([
         await waitForHomeGovernance(() => expect(hook.getCurrent().preset?.state.value?.id).toBe(expected));
         expect(homes.requestsFor('/v1/teams/get')).toEqual([]);
     } finally { await hook.unmount(); await scopeHook.unmount(); }
+});
+
+it('shows the admitted Team resource counts and owner refusals inside Joined', async () => {
+    onTestFinished(await installRealActionExecutorModuleLoader());
+    const serverId = await homes.addHome({ name: 'Joined Home', serverUrl: 'https://joined-resources.example.test',
+        serverIdentityId: 'srv_joined_resources', accountId: 'member', currentAccount: true, teamsEnabled: true });
+    const scopeHook = await renderHook(() => useServerCredentialAccountScopeBinding(serverId));
+    await waitForHomeGovernance(() => expect(scopeHook.getCurrent().binding?.isCurrent()).toBe(true));
+    const lifetime = scopeHook.getCurrent().binding!;
+    const address = { serverId: lifetime.scope.serverId, teamId: 'joined-team' };
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: address.teamId });
+    homes.answer(serverId, summary.path, { body: { teamId: address.teamId, kinds: [
+        { kind: 'projectSources', status: 'available', count: 2 },
+        { kind: 'credentials', status: 'unavailable', count: null, reason: 'team_authentication_required' },
+        { kind: 'sessions', status: 'available', count: 0 },
+    ] } });
+    homes.answer(serverId, '/v1/projects/sources', { body: { ok: true, sources: [
+        { id: 'shared-app', revision: 1, name: 'Team application', audience: [], createdByAccountId: 'member' },
+        { id: 'shared-tools', revision: 1, name: 'Team tools', audience: [], createdByAccountId: 'member' },
+    ], coverage: { complete: true, nextCursor: null } } });
+    const { TeamJoinedCard } = await import('@/components/teams/join/TeamJoinedCard');
+    const { TeamJoinedSummary } = await import('@/components/teams/join/TeamJoinedSummary');
+    const { t } = await import('@/text');
+    const team = teamSummaryFixture({ id: address.teamId, policy: teamPolicyFixture({ managedDefaults: null }) });
+    const screen = await renderScreen(<TeamJoinedCard testID="joined" result={{ outcome: 'joined', teamId: address.teamId }}
+        teamName={team.name} accountScope={lifetime.scope} onOpenTeam={() => {}}
+        summary={<TeamJoinedSummary testID="joined-resources" context={{ scope: lifetime.scope, address, team, lifetime }} />} />);
+    try {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('joined-resources-projectSources'), screen.getTextContent()).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Team application'));
+        expect(screen.getTextContent()).toContain(t('teams.join.summary.repositories', { count: 2 }));
+        expect(screen.findByTestId('joined-resources-credentials')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('teams.join.summary.unavailable'));
+        expect(screen.findByTestId('joined-resources-sessions')).toBeNull();
+        expect(screen.findByTestId('joined-action')).not.toBeNull();
+    } finally { await screen.unmount(); await scopeHook.unmount(); }
 });
