@@ -1191,7 +1191,7 @@ describe('createAccountArtifactStore', () => {
     let identityReads = 0;
     let unavailableMode = false;
     let listAudience: 'owner' | 'shared' | 'empty' = 'owner';
-    let afterBatch: (() => void) | undefined;
+    let afterBatch: (() => Promise<void>) | undefined;
     const rows = Array.from({ length: 502 }, (_, index) => ({ id: `artifact-${index}`, ownerAccountId: 'owner',
       access: 'owner' as const, encryptionMode: 'plain' as const, publicAudience: 'none' as const,
       kind: 'other' as const, kindHint: index >= 500 ? 'role.v1' : 'memory_doc.v1',
@@ -1243,7 +1243,7 @@ describe('createAccountArtifactStore', () => {
               header: encodePlainArtifactStoredContent({ kind: 'role.v1', name: BUILT_IN_ROLES_V1.reviewer.name }),
               body: encodePlainArtifactStoredContent({ body: JSON.stringify(BUILT_IN_ROLES_V1.reviewer) }) } : {}) }, recipientCensus: null });
         result = ArtifactReadBatchResponseV1Schema.parse({ items: batchOutcome === 'incomplete' ? items.slice(1) : items });
-        afterBatch?.();
+        await afterBatch?.();
       } else {
         response.writeHead(404).end();
         return;
@@ -1329,12 +1329,16 @@ describe('createAccountArtifactStore', () => {
         batchOutcome = 'unavailable';
         await expect(read()).rejects.toMatchObject({ code: 'artifact_read_unavailable', status: 503 });
         // A body response cannot borrow the earlier inventory's admission after
-        // authority changes, even while a connected observation holds plain.
+        // authority changes, delivered through the incumbent pushed observation.
         batchOutcome = 'success';
-        afterBatch = () => { mode = 'e2ee'; };
+        afterBatch = async () => {
+          mode = 'e2ee';
+          await channel?.push(accountId, createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }));
+        };
         await expect(read()).rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
         afterBatch = undefined;
         mode = 'plain';
+        await channel?.push(accountId, createAccountEncryptionCurrentnessFixture({ mode }));
         batchOutcome = 'held';
         const held = new Promise<void>(resolve => { onHeldBatch = resolve; });
         const controller = new AbortController();
