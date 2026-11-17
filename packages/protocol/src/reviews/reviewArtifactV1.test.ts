@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
+import { ReviewReviewerOutcomeV1Schema } from './reviewPublicationEvidence.js';
 
 function fixture() {
   let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
@@ -51,11 +52,39 @@ describe('durable Review rounds', () => {
       .rejects.toMatchObject({ code: 'invalid-params' });
   });
 
+  it.each([
+    { name: 'complete empty output', expected: ['one'], outcomes: [{ key: 'one', outcome: 'completed', materialization: { kind: 'complete' } }], state: 'completed' },
+    { name: 'failed empty output', expected: ['one'], outcomes: [{ key: 'one', outcome: 'failed' }], state: 'failed' },
+    { name: 'missing reviewer', expected: ['one', 'two'], outcomes: [{ key: 'one', outcome: 'completed', materialization: { kind: 'complete' } }], state: 'partial' },
+    { name: 'missing all results', expected: ['one'], outcomes: [], state: 'failed' },
+    { name: 'partial publication', expected: ['one'], outcomes: [{ key: 'one', outcome: 'completed', materialization: { kind: 'partial', errorCode: 'write_failed' } }], state: 'partial' },
+    { name: 'missing publication', expected: ['one'], outcomes: [{ key: 'one', outcome: 'completed' }], state: 'failed' },
+    { name: 'partial reviewer output', expected: ['one'], outcomes: [{ key: 'one', outcome: 'completed', reviewOutcome: 'partial', materialization: { kind: 'complete' } }], state: 'partial' },
+    { name: 'human-only round', expected: [], outcomes: [], state: 'completed' },
+  ])('settles $name from the admitted roster and host evidence', async ({ expected, outcomes, state }) => {
+    const f = fixture();
+    const binding = await f.records.start({ reviewId: 'review-coverage', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'workflow', reviewerIds: expected, startedAt: 10 });
+    await f.records.settle({ ...binding, outcome: 'completed', finishedAt: 20,
+      reviewerOutcomes: outcomes.map(outcome => ReviewReviewerOutcomeV1Schema.parse(outcome)), runs: [{ kind: 'workflow', runId: 'workflow-run' }] });
+    expect((await f.records.read(binding.reviewId))?.rounds[0]?.state).toBe(state);
+    expect(f.writes()).toBe(2);
+  });
+
+  it('does not let a claimed completion bypass missing host receipts', async () => {
+    const f = fixture();
+    const binding = await f.records.start({ reviewId: 'review-no-receipts', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'workflow', reviewerIds: ['one'], startedAt: 10 });
+    await f.records.settle({ ...binding, outcome: 'completed', finishedAt: 20, runs: [] });
+    expect((await f.records.read(binding.reviewId))?.rounds[0]?.state).toBe('failed');
+  });
+
   it('retains an addressable completed Review with zero findings and does not republish a terminal retry', async () => {
     const f = fixture();
     const binding = await f.records.start({ reviewId: 'review-1', title: 'Review', subjectKind: 'comparison',
       sourceKind: 'direct', reviewerIds: ['engine'], startedAt: 10, comparisonId: 'comparison-1' });
     const terminal = { ...binding, outcome: 'completed' as const, finishedAt: 20,
+      reviewerOutcomes: [{ key: 'engine', outcome: 'completed' as const, materialization: { kind: 'complete' as const } }],
       runs: [{ kind: 'execution' as const, runId: 'run-1', machineId: 'machine-1', sessionId: 'session-1' }] };
     await f.records.settle(terminal);
     await f.records.settle(terminal);
@@ -79,6 +108,8 @@ describe('durable Review rounds', () => {
       reviewerIds: ['one', 'two'], startedAt: 10 };
     const binding = await f.records.start(start);
     await f.records.settle({ ...binding, outcome: 'partial', finishedAt: 21,
+      reviewerOutcomes: [{ key: 'one', outcome: 'completed', materialization: { kind: 'complete' } },
+        { key: 'two', outcome: 'failed' }],
       runs: [{ kind: 'workflow', runId: 'workflow-1' }, { kind: 'execution', machineId: 'machine-1', runId: 'one' },
         { kind: 'execution', machineId: 'machine-2', runId: 'two' }] });
     expect(f.writes()).toBe(2);

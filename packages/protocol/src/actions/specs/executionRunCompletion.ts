@@ -7,7 +7,7 @@ import { readExecutionRunStartRunCreation } from '../../execution/runs/responseS
 import { ScmDiffSummaryGenerateOutputSchema } from '../../scm/diffSummary.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ReviewWalkthroughObservationSchema } from '../../reviews/reviewNarration.js';
-import { ReviewPublicationEvidenceSchema, ReviewPublicationMaterializationSchema } from '../../reviews/reviewPublicationEvidence.js';
+import { ReviewPublicationEvidenceSchema, ReviewReviewerOutcomeV1Schema } from '../../reviews/reviewPublicationEvidence.js';
 
 import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
 import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
@@ -22,14 +22,6 @@ const FanoutOutputSchema = lazyZodSchema(() => z.looseObject({
     z.looseObject({ key: z.string().check(z.minLength(1)), ok: z.literal(true), result: z.looseObject({ runId: z.string().check(z.minLength(1)) }) }),
     z.looseObject({ key: z.string().check(z.minLength(1)), ok: z.literal(false), errorCode: z.optional(z.string().check(z.minLength(1))), error: z.optional(z.string().check(z.minLength(1))) }),
   ])),
-}));
-
-const PerEngineOutcomeSchema = lazyZodSchema(() => z.strictObject({
-  key: z.string().check(z.minLength(1)), runId: z.optional(z.string().check(z.minLength(1))),
-  outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
-  reviewOutcome: z.optional(z.enum(['complete', 'partial', 'failed', 'unavailable'])),
-  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
-  errorCode: z.optional(z.string().check(z.minLength(1))), materialization: z.optional(ReviewPublicationMaterializationSchema),
 }));
 
 function readFanoutOutput(output: unknown, intent: 'review' | 'plan') {
@@ -90,7 +82,7 @@ function narrationTerminalValue(run: ObservedRun, purpose: 'input' | 'stored') {
 export const ReviewStartTerminalValueV1Schema = lazyZodSchema(() => z.strictObject({
   reviewedFingerprint: z.nullable(z.string()),
   commentIds: z.array(z.string().check(z.minLength(1))),
-  perEngineOutcome: z.array(PerEngineOutcomeSchema),
+  perEngineOutcome: z.array(ReviewReviewerOutcomeV1Schema),
   narration: z.optional(NarrationTerminalValueSchema),
 }));
 
@@ -187,7 +179,7 @@ export const planStartCompletion: ActionCompletionDeclaration = {
   awaits: 'execution_runs',
   terminalOutputSchema: z.strictObject({
     plans: z.array(z.strictObject({ key: z.string().check(z.minLength(1)), runId: z.string().check(z.minLength(1)), value: z.unknown() })),
-    perEngineOutcome: z.array(PerEngineOutcomeSchema),
+    perEngineOutcome: z.array(ReviewReviewerOutcomeV1Schema),
   }),
   launched: (output) => readLaunches(output, 'plan'),
   terminal: (output, runs) => ({

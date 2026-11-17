@@ -1,5 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
+import { projectReviewRoundOutcomeV1, type ReviewReviewerOutcomeV1 } from './reviewPublicationEvidence.js';
 export { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 
 export const ReviewSubjectKindV1Schema = z.enum(['comparison', 'pull_request', 'repository']);
@@ -53,6 +54,7 @@ export type ReviewRoundStartV1 = Readonly<{ reviewId: string; title: string; sub
   reviewerIds: readonly string[]; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
 export type ReviewRoundSettlementV1 = Readonly<ReviewRoundBindingV1 & {
   outcome: Exclude<ReviewRoundStateV1, 'running'>; finishedAt: number; runs: readonly ReviewRunReferenceV1[];
+  reviewerOutcomes?: readonly ReviewReviewerOutcomeV1[];
   summary?: string; signal?: AbortSignal }>;
 export type ReviewRecordPortV1 = ReturnType<typeof createReviewRecordPortV1>;
 
@@ -105,10 +107,12 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const round = current.rounds.find(item => item.ordinal === input.roundOrdinal);
       if (!round) refused('invalid-params');
       if (round.state !== 'running') return;
-      const nextRound = { ...round, state: input.outcome, finishedAt: input.finishedAt, runs: [...input.runs],
+      const outcome = input.outcome !== 'cancelled' && input.outcome !== 'failed'
+        ? projectReviewRoundOutcomeV1(round.reviewerIds, input.reviewerOutcomes ?? []) : input.outcome;
+      const nextRound = { ...round, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
         ...(input.summary === undefined ? {} : { summary: input.summary }) };
       const next = { ...current, rounds: current.rounds.map(item => item === round ? nextRound : item) };
-      const reviewMetadata: ReviewMetadataWriteV1 = { currentRoundOrdinal: input.roundOrdinal, state: input.outcome, finishedAt: input.finishedAt };
+      const reviewMetadata: ReviewMetadataWriteV1 = { currentRoundOrdinal: input.roundOrdinal, state: outcome, finishedAt: input.finishedAt };
       const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
       if (!result.ok) refused(result.errorCode);
     },
