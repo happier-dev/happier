@@ -1,4 +1,10 @@
 {
+  "activation": {
+    "configuration": {
+      "automationEventSources": true
+    },
+    "events": []
+  },
   "brand": {
     "iconResourceId": "brand-icon",
     "monochrome": true

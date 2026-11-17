@@ -171,6 +171,8 @@ export const SENTRY_PLUGIN = definePlugin({
     "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  // The issue observer follows configured automation event sources only (D1, LEAN-DAEMON).
+  activation: { events: [], configuration: { automationEventSources: true } },
   composer: {
     references: {
       [SENTRY_EVIDENCE_REFERENCE_ID]: defineComposerReference({

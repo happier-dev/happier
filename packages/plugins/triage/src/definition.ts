@@ -255,6 +255,10 @@ function createTriagePlugin(): TriagePlugin {
       },
     },
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+    // Source attention follows configured source instances only (D1, LEAN-DAEMON).
+    activation: { events: [], configuration: { accountCollections: [
+      { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION_ID },
+    ] } },
     hostAccess: {
       required: [{
         id: 'account-storage',

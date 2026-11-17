@@ -1,4 +1,15 @@
 {
+  "activation": {
+    "configuration": {
+      "accountCollections": [
+        {
+          "collectionId": "source-instances",
+          "pluginId": "happier.triage"
+        }
+      ]
+    },
+    "events": []
+  },
   "brand": {
     "iconResourceId": "brand-icon",
     "monochrome": true
