@@ -5,8 +5,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { startProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
+import { resolveTestDbProvider } from '../../src/testkit/process/serverLight';
 
-describe('server fixture Home database isolation', () => {
+describe.skipIf(resolveTestDbProvider(process.env) !== 'postgres'
+  || !process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID)('server fixture Home database isolation', () => {
   const fixtures: Awaited<ReturnType<typeof startProjectDaemonFixture>>[] = [];
   afterAll(async () => { for (const fixture of fixtures.reverse()) await fixture.stop(); });
 
