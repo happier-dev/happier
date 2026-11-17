@@ -12,12 +12,27 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
  * Dev-only specimen of an Action waiting for a declared secret input (CRED-ASK), drawn by the real
  * ApprovalDetailScreen over a stored request whose `preview.confidentialInputs` has the shape the executor
  * writes. `?variant=single` (default: a webhook signing secret) or `two` (a plugin deploy needing an API token
- * and a registry password). It proves composition only; Continue reaches no real Machine here, and the live
- * journey is judged on a request an agent actually made.
+ * and a registry password). The settled receipts reuse the single request: `executed` (value-free success),
+ * `refused` (the Home refused the signed request: the executor's typed authorization cause) and `unknown`
+ * (the outcome-unknown projection). It proves composition only; Continue reaches no real Machine here, and the
+ * live journey is judged on a request an agent actually made.
  */
-const ARTIFACT_ID = 'secret-request-specimen';
+const ARTIFACT_ID_PREFIX = 'secret-request-specimen';
 
-function buildRequest(variant: string, serverId: string, accountId: string) {
+/** Settled records in the shapes the executor stores (`projectApprovalExecutionOutcomeUnknownV1` for unknown). */
+const SETTLED_RECEIPTS = {
+  executed: { status: 'executed', execution: { ok: true, effectAttempted: true, result: { channelId: 'release-alerts' } } },
+  // `externalActionHeaderRefusalFailure`: the Home did not admit the signed request, so nothing ran.
+  refused: { status: 'failed', execution: { ok: false, effectAttempted: false, errorCode: 'action_failed',
+    error: 'External Action authorization unavailable: not_authenticated',
+    details: { authorizationRefusalReason: 'not_authenticated' },
+    failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null } } },
+  unknown: { status: 'outcome_unknown', execution: { ok: false, effectAttempted: true,
+    errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown',
+    details: { reasonCode: 'action_transport_unavailable' } } },
+} as const;
+
+function buildRequest(variant: string, serverId: string, accountId: string, artifactId: string) {
   const two = variant === 'two';
   const actionId = two
     ? 'action.invoke'
@@ -41,13 +56,18 @@ function buildRequest(variant: string, serverId: string, accountId: string) {
       authority: 'account_automation',
       serverId,
       runtimeAccountId: accountId,
-      actionRequestId: ARTIFACT_ID,
+      actionRequestId: artifactId,
       actionCaller: { kind: 'host' },
     },
   });
+  const settled = SETTLED_RECEIPTS[variant as keyof typeof SETTLED_RECEIPTS];
   return ApprovalRequestV2Schema.parse({
     v: 2,
-    status: 'open',
+    status: settled?.status ?? 'open',
+    ...(settled ? {
+      decision: { kind: 'approve', decidedAtMs: Date.now() - 45_000, authority: 'present_user' },
+      execution: { ...settled.execution, executedAtMs: Date.now() - 30_000 },
+    } : {}),
     createdAtMs: Date.now() - 90_000,
     updatedAtMs: Date.now() - 90_000,
     createdBy: { surface: 'agent' },
@@ -68,7 +88,9 @@ function buildRequest(variant: string, serverId: string, accountId: string) {
 
 export function SecretRequestSpecimen(props: Readonly<{ variant: string }>) {
   const scope = useActiveServerAccountScope();
-  const present = useArtifact(ARTIFACT_ID) !== null;
+  // One stored request per variant, so switching variants never shows the previous one.
+  const artifactId = `${ARTIFACT_ID_PREFIX}-${props.variant}`;
+  const present = useArtifact(artifactId) !== null;
   // The Home's artifact sync can replace the store's rows, so the stored request is seeded again whenever it is missing.
   React.useEffect(() => {
     if (!scope || present) return;
@@ -76,11 +98,12 @@ export function SecretRequestSpecimen(props: Readonly<{ variant: string }>) {
       props.variant,
       scope.serverId,
       scope.accountId,
+      artifactId,
     );
     storage
       .getState()
       .updateArtifact({
-        id: ARTIFACT_ID,
+        id: artifactId,
         header: buildApprovalRequestArtifactHeaderV1(request),
         title: request.summary ?? '',
         body: JSON.stringify(request),
@@ -91,8 +114,8 @@ export function SecretRequestSpecimen(props: Readonly<{ variant: string }>) {
         updatedAt: Date.now(),
         isDecrypted: true,
       } satisfies DecryptedArtifact);
-  }, [scope, present, props.variant]);
+  }, [scope, present, props.variant, artifactId]);
   return present ? (
-    <ApprovalDetailScreen key={props.variant} artifactId={ARTIFACT_ID} />
+    <ApprovalDetailScreen key={artifactId} artifactId={artifactId} />
   ) : null;
 }

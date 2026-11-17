@@ -3,7 +3,7 @@ import * as React from 'react';
 
 import { SecretRequestSpecimen } from '@/components/dev/approvals/SecretRequestSpecimen';
 
-/** Dev-only: an Action waiting for a declared secret input, over a stored request. `?variant=single|two`. */
+/** Dev-only: an Action waiting for a declared secret input, over a stored request. `?variant=single|two|executed|refused|unknown`. */
 export default function SecretRequestDevScreen() {
   const params = useLocalSearchParams<{ variant?: string }>();
   return <SecretRequestSpecimen variant={params.variant ?? 'single'} />;
