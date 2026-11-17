@@ -29,6 +29,22 @@ const notice = {
 };
 
 describe('SessionStartFailureBanner', () => {
+    it('names the failed connection and opens its review instead of retrying a rejected credential', async () => {
+        const failed = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+            code: 'invalid_api_key', source: 'auth_error', agentId: 'pi',
+            failureCause: { phase: 'authentication', failureReason: 'authentication_required' } });
+        const reviewConnection = vi.fn();
+        const screen = await renderScreen(<SessionStartFailureBanner
+            notice={resolveSessionStartFailureNotice({ issue: failed, sessionActive: false, appliedProviderBinding: {
+                connectionId: 'pc_work', displaySnapshot: { providerName: 'Gateway', connectionName: 'Work',
+                    connectionRole: 'named', connectionDisplayNameMode: 'custom' },
+            } })!} retry={{ run: vi.fn(), busy: false }} reviewConnection={reviewConnection} />);
+        expect(screen.getTextContent()).toContain('Gateway · Work');
+        await pressTestInstanceAsync(screen.findByTestId('session-start-failure-review-connection'));
+        expect(reviewConnection).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('session-start-failure-retry')).toBeNull();
+    });
+
     it('keeps the raw cause one press away under the notice, as the transcript row did', async () => {
         const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
             code: 'agent_startup_model_reconciliation_failed', source: 'agent_session_error',

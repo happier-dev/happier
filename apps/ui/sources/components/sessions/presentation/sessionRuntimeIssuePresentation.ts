@@ -23,6 +23,9 @@ import { describeAgentReadinessCause } from '@/components/sessions/model/session
 import { readSessionModelTransitionFailureStatus } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readHappierActionToolPayload } from '@happier-dev/protocol/actions/happierActionToolResult';
+import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { presentProviderConnectionIdentity } from '@/providers/connection/presentation';
+import type { ProviderConnectionReviewRecovery } from '@/providers/connection/recovery';
 
 /** Closed spawn refusals retain the same availability vocabulary as the Machine inventory. */
 export function readSessionAgentAvailabilityFailure(code: unknown): 'needsSignIn' | 'notInstalled' | null {
@@ -149,7 +152,9 @@ function resolveSessionStartupFailureCause(
     const requester = readRequesterSessionRuntimeRefusalCode(code);
     if (requester) return t(`session.startFailure.cause.${requester}`);
     const preparation = readSessionPreparationFailureCode(code);
-    if (!preparation) return null;
+    // Native vendor codes retain their producer's typed cause without implying Agent sign-in.
+    if (!preparation) return failureCause?.failureReason === 'authentication_required'
+        ? t('errors.authenticationFailed') : null;
     if (preparation === 'no_eligible_member' || preparation === 'no_eligible_group_member') {
         return t('connectedServices.diagnostics.body.no_eligible_group_member');
     }
@@ -263,10 +268,14 @@ const SENTENCE_END = /[.!?。！？]$/u;
 /**
  * The one failure line every transcript failure row draws: what failed, then its cause or next step, joined by
  * " · " on a single line, and ending as a sentence. A cause owner's two-line pair ("Title\nNext step.") reads as
- * "Title · Next step."; a line whose last part is a label or a fact ("resets Wed 01:31 AM") takes the locale's end.
+ * "Title · Next step."; every part starts as a sentence does ("· Resets Wed 01:31 AM"), and a line whose last part is
+ * a label or a fact takes the locale's end. `quoted` is the Agent's own words, kept as written for Find and copy.
  */
-export function formatSessionFailureLine(parts: readonly (string | null | undefined)[]): string | null {
-    const segments = parts.flatMap(part => part?.split('\n') ?? []).map(part => part.trim()).filter(Boolean);
+export function formatSessionFailureLine(parts: readonly (string | null | undefined)[], quoted?: string | null): string | null {
+    const segments = parts.flatMap(part => part?.split('\n') ?? []).map(part => part.trim()).filter(Boolean)
+        .map(part => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`);
+    const words = quoted?.trim();
+    if (words) segments.push(words);
     if (segments.length === 0) return null;
     const line = segments.join(' · ');
     return SENTENCE_END.test(line) ? line : `${line}${t('errors.sentenceEnd')}`;
@@ -276,6 +285,8 @@ export function formatSessionFailureLine(parts: readonly (string | null | undefi
 export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null | undefined, context?: Readonly<{
     /** The surface's own failure text that wraps this issue (a worker's result), when it has one. */
     failureText?: string | null;
+    /** The runtime-applied owner binding, never a pending selection or catalog guess. */
+    appliedProviderBinding?: Pick<SessionProviderBindingMetadataV1, 'connectionId' | 'displaySnapshot'> | null;
 }>): Readonly<{
     message: string | null;
     /**
@@ -289,6 +300,7 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     details: string | null;
     reset: string | null;
     recovery: string | null;
+    providerFailure?: Readonly<{ sourceLabel: string; recovery: ProviderConnectionReviewRecovery }>;
 }> {
     const resetAtMs = issue?.usageLimit?.resetAtMs;
     const resetDate = resetAtMs == null ? null : new Date(resetAtMs);
@@ -307,7 +319,17 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     const summary = issue ? transitionTitle ?? localized ?? (usageLimited ? t('session.usageLimitRecovery.banner.title') : null)
         ?? t('errors.agentStoppedWithError') : null;
     const raw = context?.failureText ?? issue?.sanitizedPreview ?? null;
+    const binding = context?.appliedProviderBinding;
+    const providerFailure = binding && issue?.failureCause?.failureReason === 'authentication_required'
+        && !presentSessionAgentAuthRequired(issue)
+        ? {
+            sourceLabel: presentProviderConnectionIdentity({ providerName: binding.displaySnapshot.providerName,
+                displayName: binding.displaySnapshot.connectionName, role: binding.displaySnapshot.connectionRole,
+                displayNameMode: binding.displaySnapshot.connectionDisplayNameMode }).sourceLabel,
+            recovery: { action: 'review_connection', connectionId: binding.connectionId } satisfies ProviderConnectionReviewRecovery,
+        } : null;
     return {
+        ...(providerFailure ? { providerFailure } : {}),
         summary,
         unexplained: summary === t('errors.agentStoppedWithError'),
         cause: message,

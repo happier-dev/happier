@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionProviderBindingMetadataV1, type SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 
 import { t } from '@/text';
 
@@ -19,6 +20,57 @@ function issue(overrides: Partial<SessionRuntimeIssueV1>): SessionRuntimeIssueV1
 }
 
 describe('resolveSessionStartFailureNotice', () => {
+    const appliedProviderBinding = {
+        connectionId: 'pc_work',
+        displaySnapshot: { providerName: 'Gateway', connectionName: 'Work', connectionRole: 'named', connectionDisplayNameMode: 'custom' },
+    } satisfies Pick<SessionProviderBindingMetadataV1, 'connectionId' | 'displaySnapshot'>;
+
+    it.each(['pi', 'codex', 'opencode'])('names the applied connection and requires reviewing it for %s authentication failures', agentId => {
+        const failed = issue({ code: 'invalid_api_key', source: 'auth_error', agentId,
+            failureCause: { phase: 'authentication', failureReason: 'authentication_required', providerErrorCode: 'invalid_api_key' } });
+        const notice = resolveSessionStartFailureNotice({ issue: failed, sessionActive: false, appliedProviderBinding });
+        expect(notice).toMatchObject({ title: 'Gateway · Work', message: t('errors.authenticationFailed'), retryable: false,
+            providerRecovery: { action: 'review_connection', connectionId: 'pc_work' } });
+        expect(resolveSessionStartFailureNotice({ issue: failed, sessionActive: false })).toMatchObject({
+            message: t('errors.authenticationFailed'), retryable: true,
+        });
+    });
+
+    it('keeps unknown and native sign-in failures distinct from connection credential recovery', () => {
+        expect(resolveSessionStartFailureNotice({ issue: issue({ code: 'vendor_unknown',
+            failureCause: { phase: 'turn_start', failureReason: 'unknown' } }), sessionActive: false, appliedProviderBinding })).toBeNull();
+        const native = resolveSessionStartFailureNotice({ issue: issue({ code: 'provider_endpoint_auth_required',
+            source: 'auth_error', agentId: 'pi', failureCause: { phase: 'authentication', failureReason: 'authentication_required' } }),
+            sessionActive: false, appliedProviderBinding });
+        expect(native?.message).not.toBe(t('errors.authenticationFailed'));
+        expect(native).not.toHaveProperty('providerRecovery');
+        expect(native).not.toHaveProperty('title');
+    });
+
+    it.each([true, false])('honors producer retryability %s without guessing a connection target', retryable => {
+        const failed = issue({ code: 'invalid_api_key', source: 'auth_error', agentId: 'pi',
+            failureCause: { phase: 'authentication', failureReason: 'authentication_required', retryable } });
+        const notice = resolveSessionStartFailureNotice({ issue: failed, sessionActive: false });
+        expect(notice?.retryable).toBe(retryable);
+        expect(notice).not.toHaveProperty('providerRecovery');
+    });
+
+    it('names the applied binding while the next launch selects another connection', () => {
+        const metadata = {
+            providerBindingV1: { ...appliedProviderBinding, v: 1, contributionKey: null, connectionRevision: 1,
+                protocol: 'openai-responses', materialization: 'engineConfig',
+                compatibilityFingerprint: 'compatibility:v1:a', bindingSecurityFingerprint: 'binding-security:v1:a' },
+            modelSelectionIntentV2: { v: 2, updatedAt: 1, ref: { source: 'account_provider_connection',
+                providerConnectionId: 'pc_next', agentTargetKey: 'agent:pi', modelId: 'next-model' } },
+        };
+        const failed = issue({ code: 'invalid_api_key', source: 'auth_error', agentId: 'pi',
+            failureCause: { phase: 'authentication', failureReason: 'authentication_required' } });
+        expect(resolveSessionStartFailureNotice({ issue: failed, sessionActive: false,
+            appliedProviderBinding: readSessionProviderBindingMetadataV1(metadata) })).toMatchObject({
+            title: 'Gateway · Work', providerRecovery: { action: 'review_connection', connectionId: 'pc_work' },
+        });
+    });
+
     it.each(['no_eligible_member', 'no_eligible_group_member'])('retains Connected Account refusal %s after reload', code => {
         const notice = resolveSessionStartFailureNotice({ issue: issue({ code }), sessionActive: false });
         expect(notice?.message).toBe(t('connectedServices.diagnostics.body.no_eligible_group_member'));

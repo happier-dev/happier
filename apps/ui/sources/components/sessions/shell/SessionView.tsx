@@ -161,6 +161,8 @@ import type { PaneMainColumnState } from "@/components/appShell/panes/mainColumn
 import { ComposerAuxiliaryFrame } from "./view/ComposerAuxiliaryFrame";
 import { SessionStartFailureBanner } from "@/components/sessions/startFailure/SessionStartFailureBanner";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
+import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { dispatchProviderRecoveryAction } from '@/providers/connection/recovery';
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from "@/sync/domains/session/resolveSessionActionDefaultBackend";
 import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
@@ -2615,7 +2617,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
               run: () => fireAndForget(handleResumeSession(), { tag: 'SessionView.startFailure.retry' }),
           }
           : null;
-      const startFailureNotice = resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true });
+      const startFailureNotice = resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true,
+          appliedProviderBinding: readSessionProviderBindingMetadataV1(ownerMetadata) });
+      const startFailureProviderRecovery = startFailureNotice?.providerRecovery;
       const startFailureRecovery = startFailureNotice?.code === 'plugin_disabled'
           ? resolveResumeFailurePresentation({ errorCode: startFailureNotice.code }, startFailureNotice.message,
               resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({ session })))
@@ -2623,6 +2627,10 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
       const disabledPluginId = startFailureRecovery?.kind === 'plugin_disabled' ? startFailureRecovery.pluginId : null;
       const startFailureBanner = startFailureNotice
           ? <SessionStartFailureBanner notice={startFailureNotice} retry={startFailureRetry}
+              {...(startFailureProviderRecovery ? { reviewConnection: () => {
+                  fireAndForget(dispatchProviderRecoveryAction({ router, recovery: startFailureProviderRecovery }),
+                      { tag: 'SessionView.startFailure.reviewConnection' });
+              } } : {})}
               {...(startFailureRetry && openModelPicker && session.lastRuntimeIssue?.failureCause?.failureReason === 'model_selection_required'
                   ? { chooseModel: openModelPicker } : {})}
               {...(disabledPluginId ? { managePlugin: () => {

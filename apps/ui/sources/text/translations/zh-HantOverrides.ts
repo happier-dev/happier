@@ -7038,6 +7038,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               skills_unavailable: "技能派送無法使用。請檢查目標機器，然後重試工作階段。",
               team_credential_provider_selection_not_current: "所選的 Team 提供者無法使用。請檢查 Team 的模型選擇，然後重試工作階段。",
               team_credential_model_selection_required: "請先選擇一個 Team 模型，再啟動此工作階段。",
+              resource_corrupt: "所選 Team 憑證需要修復。請讓其擁有者修復後，再重試此工作階段。",
+              policy_denied: "Team 政策不允許使用此憑證。請先檢查 Team 政策，再重試此工作階段。",
               connected_account_purpose_catalog_unavailable: "預設連結帳戶暫時無法使用。請重試啟動工作階段。",
               connected_services_default_settings_invalid: "預設連結帳戶設定無效。請檢查連結帳戶，然後重試。",
               permission_denied: "不允許存取此操作。請檢查你的權限。",

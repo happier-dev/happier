@@ -8835,6 +8835,8 @@ localTailscale: {
         skills_unavailable: "スキルの配信を利用できません。対象のマシンを確認してから、セッションを再試行してください。",
         team_credential_provider_selection_not_current: "選択した Team のプロバイダーを利用できません。Team のモデル選択を確認してから、セッションを再試行してください。",
         team_credential_model_selection_required: "このセッションを開始する前に、Team のモデルを選択してください。",
+        resource_corrupt: "選択した Team の認証情報は修復が必要です。所有者に修復を依頼してから、セッションを再試行してください。",
+        policy_denied: "Team のポリシーでは、この認証情報の使用は許可されていません。セッションを再試行する前に、Team のポリシーを確認してください。",
         connected_account_purpose_catalog_unavailable: "既定の接続済みアカウントは一時的に利用できません。セッションの開始を再試行してください。",
         connected_services_default_settings_invalid: "既定の接続済みアカウントの設定が無効です。接続済みアカウントを確認してから再試行してください。",
         permission_denied: "この操作へのアクセスは許可されていません。権限を確認してください。",

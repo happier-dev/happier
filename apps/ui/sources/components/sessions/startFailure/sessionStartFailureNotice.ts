@@ -1,12 +1,15 @@
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
-import { presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionRuntimeIssue, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import type { ProviderConnectionReviewRecovery } from '@/providers/connection/recovery';
 
 export type SessionStartFailureNotice = Readonly<{
     code: string;
     /** The localized cause and recovery step for the closed startup failure. */
     message: string;
     retryable: boolean;
+    title?: string;
+    providerRecovery?: ProviderConnectionReviewRecovery;
     /** The stored issue the notice states; its raw cause stays one press away under the notice. */
     issue: SessionRuntimeIssueV1;
 }>;
@@ -19,14 +22,19 @@ export type SessionStartFailureNotice = Readonly<{
 export function resolveSessionStartFailureNotice(input: Readonly<{
     issue: SessionRuntimeIssueV1 | null | undefined;
     sessionActive: boolean;
+    appliedProviderBinding?: NonNullable<Parameters<typeof presentSessionRuntimeIssue>[1]>['appliedProviderBinding'];
 }>): SessionStartFailureNotice | null {
     const { issue } = input;
     if (input.sessionActive || !issue || issue.scope !== 'primary_session' || issue.status !== 'failed') return null;
     const message = presentSessionStartupFailureRecovery([issue.code])?.message ?? presentSessionStartupFailureCause(issue.code, issue);
+    const providerFailure = input.appliedProviderBinding
+        ? presentSessionRuntimeIssue(issue, { appliedProviderBinding: input.appliedProviderBinding }).providerFailure : null;
     return message === null ? null : {
         code: issue.code,
         message,
-        retryable: issue.code !== 'codex_refresh_free_auth_unsupported' && issue.code !== 'plugin_disabled'
+        ...(providerFailure ? { title: providerFailure.sourceLabel, providerRecovery: providerFailure.recovery } : {}),
+        retryable: issue.failureCause?.retryable !== false && !providerFailure
+            && issue.code !== 'codex_refresh_free_auth_unsupported' && issue.code !== 'plugin_disabled'
             && issue.failureCause?.failureReason !== 'model_selection_required',
         issue,
     };

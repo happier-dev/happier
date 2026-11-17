@@ -4,6 +4,14 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { dispatchProviderRecoveryAction } from './recovery';
 
 describe('dispatchProviderRecoveryAction', () => {
+    it('reviews the exact applied connection from Session recovery without inventing a Provider error', async () => {
+        const push = vi.fn();
+        expect(await dispatchProviderRecoveryAction({ router: { push },
+            recovery: { action: 'review_connection', connectionId: 'pc_applied' },
+        })).toBe(true);
+        expect(push).toHaveBeenCalledExactlyOnceWith('/(app)/settings/providers/pc_applied');
+    });
+
     it.each([
         [{ kind: 'account' as const, account: { service: { pluginId: 'acme.native', localId: 'login' }, accountId: 'account-a' } },
             { pluginId: 'acme.native', localId: 'login', accountId: 'account-a' }],

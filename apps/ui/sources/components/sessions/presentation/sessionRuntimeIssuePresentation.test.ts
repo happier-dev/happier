@@ -326,6 +326,29 @@ describe('closed startup-failure recovery copy', () => {
         }
     });
 
+    it('uses the typed authentication cause for native Provider failures without inferring Agent sign-in', async () => {
+        const refused = issue({ code: 'invalid_api_key', source: 'auth_error', agentId: 'pi',
+            sanitizedPreview: 'Authentication failed: PRIVATE_PROVIDER_DETAIL',
+            failureCause: { phase: 'authentication', failureReason: 'authentication_required', providerErrorCode: 'invalid_api_key' } });
+        for (const language of ['en', 'fr']) {
+            await useLanguage(language);
+            // The same vendor code and prose cannot establish a cause without the producer's typed reason.
+            const unknown = presentSessionRuntimeIssue({ ...refused,
+                failureCause: { phase: 'authentication', failureReason: 'unknown' } });
+            expect(unknown.message).toBe(refused.sanitizedPreview);
+            expect(unknown.summary).not.toBe(t('errors.authenticationFailed'));
+            const provider = presentProviderError('provider_endpoint_unauthorized');
+            expect(presentSessionRuntimeIssue({ ...refused, code: 'provider_endpoint_unauthorized' }).summary)
+                .toBe(`${t(provider.titleKey)}\n${t(provider.descriptionKey)}`);
+            const presented = presentSessionRuntimeIssue(refused);
+            expect(presented).toMatchObject({ summary: t('errors.authenticationFailed'),
+                message: t('errors.authenticationFailed') });
+            expect(presented.details).toContain('invalid_api_key');
+            expect(presented.details).toContain('PRIVATE_PROVIDER_DETAIL');
+            expect(presentSessionStartupFailureCause(refused.code, undefined, refused.failureCause))
+                .toBe(t('errors.authenticationFailed'));
+        }
+    });
     it('keeps the stored cause for an unknown code and never names private text in the composer', async () => {
         await useLanguage('fr');
         expect(presentSessionRuntimeIssue(issue({ code: 'agent_session_error', sanitizedPreview: 'Agent session failed' })).message)

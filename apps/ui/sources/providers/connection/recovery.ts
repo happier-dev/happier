@@ -4,6 +4,16 @@ import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServ
 
 type RecoveryRouter = Readonly<Pick<ReturnType<typeof useRouter>, 'push'>>;
 
+/** A Session can review its binding without inventing a Provider error code. */
+export type ProviderConnectionReviewRecovery = Readonly<{
+    action: 'review_connection';
+    connectionId: NonNullable<ProviderErrorV1['connectionId']>;
+}>;
+
+function providerConnectionSettingsPath(connectionId: string) {
+    return `/(app)/settings/providers/${encodeURIComponent(connectionId)}` as const;
+}
+
 export type ProviderRecoveryAvailability = Readonly<{
     retry?: boolean;
     loadModel?: boolean;
@@ -76,7 +86,6 @@ export function canDispatchProviderRecoveryAction(
 }
 
 export async function dispatchProviderRecoveryAction(input: Readonly<{
-    error: ProviderErrorV1;
     router: RecoveryRouter;
     retry?: () => void | Promise<void>;
     loadModel?: () => void | Promise<void>;
@@ -85,7 +94,12 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
     reviewCurrentState?: () => void | Promise<void>;
     configureSecret?: () => void | Promise<void>;
     enableOnMachine?: () => void | Promise<void>;
-}>): Promise<boolean> {
+}> & (Readonly<{ error: ProviderErrorV1; recovery?: never }>
+    | Readonly<{ recovery: ProviderConnectionReviewRecovery; error?: never }>)): Promise<boolean> {
+    if (input.recovery) {
+        input.router.push(providerConnectionSettingsPath(input.recovery.connectionId));
+        return true;
+    }
     const parsed = ProviderErrorV1Schema.safeParse(input.error);
     if (!parsed.success) return false;
     const error = parsed.data;
@@ -99,7 +113,7 @@ export async function dispatchProviderRecoveryAction(input: Readonly<{
         enableOnMachine: input.enableOnMachine !== undefined,
     })) return false;
     const connectionPath = error.connectionId
-        ? `/(app)/settings/providers/${encodeURIComponent(error.connectionId)}` as const
+        ? providerConnectionSettingsPath(error.connectionId)
         : null;
     const target = error.connectedAccountTarget;
     const connectionRoute = target
