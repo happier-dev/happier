@@ -181,7 +181,7 @@ function metadata(id: typeof TELEMETRY_METRICS_READ_ACTION_ID_V1 | typeof TELEME
 }
 
 /** The saved source owns admission and placement; the collector assignment owns capability selection. */
-export const telemetryHealthActions = {
+export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
     [databaseActionLocalIdV1(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1)]: {
         ...metadata(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1), inputSchema: SavedHealthCheckSelectorV1ProtocolSchema,
         resultSchema: HealthCheckResultV1ProtocolSchema,
@@ -232,4 +232,4 @@ export const telemetryHealthActions = {
                 ...(selected.usage ? { usage: selected.usage } : {}) })));
         },
     },
-} satisfies Record<string, PluginActionDefinition>;
+};
