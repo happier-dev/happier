@@ -11,6 +11,7 @@ export type WorkflowActivityProjection = Readonly<{
     getRow(key: string): WorkflowActivityLiveFact | undefined;
     subscribeKeys(listener: Listener): () => void;
     subscribeRow(key: string, listener: Listener): () => void;
+    clear(): void;
     dispose(): void;
 }>;
 
@@ -65,6 +66,17 @@ export function createWorkflowActivityProjection(
         if (keys !== previousKeys) for (const listener of keyListeners) listener();
     }
 
+    function clear(): void {
+        cancelFrame?.();
+        cancelFrame = null;
+        pending.clear();
+        const previousKeys = keys;
+        rows.clear();
+        keys = EMPTY_KEYS;
+        for (const key of previousKeys) for (const listener of rowListeners.get(key) ?? []) listener();
+        if (previousKeys !== keys) for (const listener of keyListeners) listener();
+    }
+
     return {
         apply(batch) {
             if (disposed) return;
@@ -96,15 +108,12 @@ export function createWorkflowActivityProjection(
                 if (listeners.size === 0) rowListeners.delete(key);
             };
         },
+        clear,
         dispose() {
             disposed = true;
-            cancelFrame?.();
-            cancelFrame = null;
-            pending.clear();
-            rows.clear();
-            keys = EMPTY_KEYS;
             rowListeners.clear();
             keyListeners.clear();
+            clear();
         },
     };
 }

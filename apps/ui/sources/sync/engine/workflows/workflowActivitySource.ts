@@ -2,7 +2,7 @@ import { WorkflowActionOutputSchemasV1, type WorkflowActivityListRequestV1, type
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storageStore';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
@@ -22,6 +22,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
     const serverId = resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId);
     let since: number | null = null;
     let page: WorkflowRunListResultV1 | undefined;
+    let failed = false;
     let queue: ViewDemandSync | null = null;
     let controller: AbortController | null = null;
     let detach: (() => void)[] = [];
@@ -43,6 +44,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         queue?.stop();
         queue = null;
         page = undefined;
+        failed = false;
         since = null;
     };
     const open = () => {
@@ -126,16 +128,21 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             publish(batch);
         }, { serverIds: [serverId] }));
         const signal = controller.signal;
+        const reportError = (error: unknown) => {
+            if (signal.aborted) return;
+            failed = true;
+            for (const observer of observers) observer.onError?.(error);
+        };
         queue = new ViewDemandSync(async () => {
             const retained = await readPage();
             if (signal.aborted) return;
             const nextPage = retainDeep(page, retained);
-            if (nextPage === page) return;
+            // Recovery changes freshness even when the retained rows are identical.
+            if (nextPage === page && !failed) return;
+            failed = false;
             page = nextPage;
             for (const observer of observers) observer.onRetained(nextPage);
-        }, { onError: (error: unknown) => {
-            if (!signal.aborted) for (const observer of observers) observer.onError?.(error);
-        } });
+        }, { onError: reportError, onRetryFailure: reportError });
         const retirement = lifetime.onRetire(() => { close(); observers.clear(); });
         detach.push(() => retirement.dispose());
     };
@@ -160,9 +167,11 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
     };
 }
 
-export function getWorkflowActivitySource(): WorkflowActivitySource | null {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime) return null;
+export function getWorkflowActivitySource(addressed: ServerAccountScopeLifetime | null = captureActiveServerAccountScopeLifetime()): WorkflowActivitySource | null {
+    if (!addressed?.isCurrent()) return null;
+    const lifetime = readServerAccountScopeOwnerLifetime(addressed);
+    // Live sync is owned by the mounted Account, rather than a background credential reader.
+    if (lifetime !== captureActiveServerAccountScopeLifetime()) return null;
     let source = sources.get(lifetime);
     if (!source) sources.set(lifetime, source = createSource(lifetime));
     return source;

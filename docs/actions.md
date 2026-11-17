@@ -6378,6 +6378,14 @@ facts; unchanged updates and closed hosts produce no activity reads. Frame and
 window application belongs to the shared Events projection. `workflow.events.list`
 continues to describe eligible declarations, independently of activity.
 
+The UI adapter `useWorkflowActivityFeed({ lifetime, active })` addresses the mounted
+Account explicitly and shares the source, frame rows and retained continuation
+between presented hosts. An inactive host subscribes to neither stream; releasing
+the last host clears observations, and reopening starts a new listening baseline.
+Offline or failed reads retain visible data. Retry failure and recovery come from
+the acquisition owner, including recovery whose retained rows did not change;
+the adapter does not add a second retry policy or a persisted Event history.
+
 Saved Secret MCP sharing is selectively projected for `secrets.shared.promote`
 and `secrets.shared.grants.set`; this is not a Home-family-wide exposure. The
 existing human approval default retains the exact envelope and audience input
