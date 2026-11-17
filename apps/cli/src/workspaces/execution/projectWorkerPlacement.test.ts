@@ -7,7 +7,11 @@ import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getMachineFinitePolicyV1 } from '@happier-dev/protocol/machines/machineFinitePolicyV1';
-import { computeWorkspaceSyncPolicyDigest, ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, ProjectWorkerActionInputSchemasV1, type WorkspaceSyncRelationshipV1, type WorkspaceSyncStatusV1 } from '@happier-dev/protocol';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
@@ -26,6 +30,17 @@ import { createProjectWorkerAction } from './projectWorkerAction';
 // Home publishes the receiving installation key so original CLI invocation custody can be sealed.
 const installationKey = nacl.sign.keyPair();
 
+function accountHttpFixture(url: string | undefined) {
+  if (url === 'https://home.invalid/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+  if (url === 'https://home.invalid/v1/account/encryption/currentness') return { status: 200, data: AccountEncryptionCurrentnessResponseSchema.parse({
+    mode: 'plain', version: 1, updatedAt: 0, signingKeyFingerprint: null, contentKeyFingerprint: null,
+    recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+  }) };
+  if (url === `https://home.invalid${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`) return { status: 200,
+    data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+  return undefined;
+}
+
 function publishedMachineFixture(id: string) {
   return MachinePublishedRowV1Schema.parse({ id, kind: 'persistent', installationId: `${id}-installation`, active: true,
     installationPublicKey: Buffer.from(installationKey.publicKey).toString('base64'),
@@ -34,6 +49,14 @@ function publishedMachineFixture(id: string) {
     metadataVersion: 1, daemonState: null, daemonStateVersion: 1, storageMode: 'plain',
     dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
     access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
+}
+
+function controllerStatus(relationship: WorkspaceSyncRelationshipV1): WorkspaceSyncStatusV1 {
+  return { relationshipId: relationship.relationshipId, controllerMachineId: relationship.controllerMachineId,
+    state: 'watching', alphaPath: '/source', betaPath: '/target', mode: relationship.mode, conflictCount: 0,
+    lastCycleObservedAtMs: null, endpointStates: {
+      alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
+      beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } } };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -92,7 +115,8 @@ describe('worker pool placement through the real target admission', () => {
           || scenario.destination === 'unknown-status' || scenario.destination === 'unknown-memory' ? 'primary' : 'fail',
       allowAdHoc: true, scriptOverrides: {}, services: {} };
     vi.spyOn(axios, 'get').mockImplementation(async url => {
-      if (url === 'https://home.invalid/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      const account = accountHttpFixture(url);
+      if (account) return account;
       if (url === 'https://home.invalid/v1/machines') return { status: 200, data: installedMachines };
       const installed = installedMachines.find(machine => url === `https://home.invalid/v1/machines/${machine.id}`);
       if (installed) return { status: 200, data: { machine: publishedMachineFixture(installed.id) } };
@@ -121,11 +145,24 @@ describe('worker pool placement through the real target admission', () => {
         const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
         const installed = installedMachines.find(machine => machine.id === request.machineId);
         if (!installed) throw new Error('Unexpected finite admission target');
+        const workspaceSync = request.envelope.v === 1
+          ? projectWorkspaceSyncAdmissionInputV1(authorizedAction, request.envelope.input) : request.envelope.workspaceSyncAdmission;
+        const syncSource = workspaceSync ? installedMachines.find(machine => machine.id === workspaceSync.sourceMachineId) : undefined;
+        const sourceAccess = syncSource?.access;
+        if (workspaceSync && (!syncSource || !sourceAccess)) throw new Error('Unexpected finite Sync source');
         return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-finite-authorization',
           binding: { accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId,
             machineId: installed.id, custodianAccountId: 'owner', installationId: installed.installationId,
             accountEncryptionMode: 'plain', actionId: authorizedAction, requestId: request.envelope.requestId,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), target: request.envelope.target },
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), target: request.envelope.target,
+            ...(workspaceSync && syncSource && sourceAccess ? { workspaceSyncAdmission: {
+              relationshipId: workspaceSync.relationshipId ?? deriveWorkspaceSyncRelationshipId(request.envelope.requestId),
+              sourceWorkspaceRefId: workspaceSync.sourceWorkspaceRefId,
+              source: { actorAccountId: 'owner', custodianAccountId: sourceAccess.custodian.accountId,
+                machineId: syncSource.id, installationId: syncSource.installationId,
+                role: sourceAccess.role, encryptionMode: sourceAccess.resourceMode },
+            } } : {}),
+          },
         }) };
       }
       if (url === 'https://home.invalid/v1/actions/projects.inspect') {
@@ -169,7 +206,8 @@ describe('worker pool placement through the real target admission', () => {
     });
     vi.spyOn(axios, 'request').mockImplementation(async config => {
       expect(config.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
-      if (config.url === 'https://home.invalid/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      const account = accountHttpFixture(config.url);
+      if (account) return account;
       if (config.url === 'https://home.invalid/v1/machines/managed/actions/list') {
         // These are persistent Machines, not retained managed allocations.
         return { status: 200, data: { machines: [] } };
@@ -180,7 +218,8 @@ describe('worker pool placement through the real target admission', () => {
           content: scenario.destination === 'invalid' ? { t: 'plain', v: { invalid: true } } : { t: 'plain', v: settings } } };
       }
       if (config.url === 'https://home.invalid/v1/machines/pools/get') return { status: 200, data: {
-        pool: { id: poolId, name: 'Full worker', description: null, revision: 0, createdAt: 1, updatedAt: 1,
+        pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Full worker' }, recipientEnvelope: null } },
+          description: null, revision: 0, createdAt: 1, updatedAt: 1,
           members: [{ machineId: 'target', priorityTier: 0, enabled: true,
             state: scenario.destination.startsWith('unavailable-') ? 'offline' : 'connected' }] },
         availability: { state: 'known', connectedCount: scenario.destination.startsWith('unavailable-') ? 0 : 1, enabledCount: 1 },
@@ -198,6 +237,12 @@ describe('worker pool placement through the real target admission', () => {
     const worker = createProjectWorkerAction({ machineId: 'target', serverId: 'home', accountId: 'owner',
       serverHttpBaseUrl: 'https://home.invalid', credentials, admission, isFiniteExecutionLive: () => true });
     const statusInputs: unknown[] = [];
+    // Current copy usability is observed at the controller RPC boundary.
+    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockImplementation(async request => {
+      expect(request.machineId).toBe(source.machineId);
+      expect(request.method).toBe(RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST);
+      return { statuses: relationships.map(controllerStatus) };
+    });
     vi.spyOn(machineRpcTransport, 'callExactMachineRpc').mockImplementation(async request => {
       if (request.method === 'daemon.projects.inspect.v1') {
         throw new Error('Original Account inspection must enter its Home Action front door');
@@ -282,12 +327,14 @@ describe('worker pool placement through the real target admission', () => {
     const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
     const serverIdentityId = 'home-identity';
     const poolView = {
-      pool: { id: poolId, name: 'Full worker', description: null, revision: 0, createdAt: 1, updatedAt: 1,
+      pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Full worker' }, recipientEnvelope: null } },
+        description: null, revision: 0, createdAt: 1, updatedAt: 1,
         members: [{ machineId: 'target', priorityTier: 0, enabled: true, state: 'connected' }] },
       availability: { state: 'known', connectedCount: 1, enabledCount: 1 },
     };
     vi.spyOn(axios, 'get').mockImplementation(async url => {
-      if (url === 'https://home.invalid/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      const account = accountHttpFixture(url);
+      if (account) return account;
       if (url === 'https://home.invalid/v1/machines') return { status: 200, data: ['primary', 'target'].map(publishedMachineFixture) };
       const machineId = ['primary', 'target'].find(id => url === `https://home.invalid/v1/machines/${id}`);
       if (machineId) return { status: 200, data: { machine: publishedMachineFixture(machineId) } };
@@ -324,6 +371,8 @@ describe('worker pool placement through the real target admission', () => {
       throw new Error(`Unexpected worker-placement POST: ${url}`);
     });
     vi.spyOn(axios, 'request').mockImplementation(async config => {
+      const account = accountHttpFixture(config.url);
+      if (account) return account;
       if (config.method === 'POST' && config.url === 'https://home.invalid/v1/machines/pools/get') {
         expect(config.data).toEqual({ poolId });
         expect(config.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
@@ -339,6 +388,11 @@ describe('worker pool placement through the real target admission', () => {
     });
     const worker = createProjectWorkerAction({ machineId: 'target', serverId: 'home', accountId: 'owner',
       serverHttpBaseUrl: 'https://home.invalid', credentials, admission, isFiniteExecutionLive: () => true });
+    vi.spyOn(machineRpcTransport, 'callMachineRpc').mockImplementation(async request => {
+      expect(request.machineId).toBe(source.machineId);
+      expect(request.method).toBe(RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST);
+      return { statuses: relationships.map(controllerStatus) };
+    });
     // Only the addressed Machine network is replaced. It invokes the real
     // receiving producer; the requester CLI Account/Action/RPC adapters stay real.
     vi.spyOn(machineRpcTransport, 'callExactMachineRpc').mockImplementation(async request => {
