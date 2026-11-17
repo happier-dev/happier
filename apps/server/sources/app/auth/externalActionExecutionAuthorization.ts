@@ -1809,45 +1809,45 @@ async function verifyCommon(
     if (domainContinuation?.kind === 'secret-facts') {
         const input = domainContinuation.input;
         const materialization = domainContinuation.materialization;
-        if (!verifySignature(machine.installationPublicKey)) return null;
+        if (!verifySignature(machine.installationPublicKey)) return refuse('machine_signature');
         const domainJob = await readAcceptedDeploymentDomainInTx(db, binding, {
             environmentId: input.environmentId, domainId: materialization.domainId,
             expectedDomainRevision: materialization.expectedDomainRevision,
             actionOperationId: materialization.actionOperationId, capture: materialization.capture,
         });
-        if (!domainJob) return null;
+        if (!domainJob) return refuse('deployment_child_admission');
         const domainAdmission = projectAcceptedDeploymentDomainSecretLaunchAdmission(domainJob,
             { machineId: binding.machineId, installationId: binding.installationId, publicKey: machine.installationPublicKey });
-        if (!domainAdmission) return null;
+        if (!domainAdmission) return refuse('deployment_child_admission');
         const routing = DeploymentChildRoutingV1Schema.safeParse({ v: 1, kind: 'domain', actionId: effectActionId.data,
             input: { serverId: binding.serverIdentityId, environmentId: input.environmentId, domainId: materialization.domainId },
             machineId: domainJob.capture.placement.machineId, installationId: domainJob.capture.placement.installationId,
             expectedDomainRevision: materialization.expectedDomainRevision, actionOperationId: materialization.actionOperationId,
             capture: materialization.capture });
-        if (!routing.success) return null;
+        if (!routing.success) return refuse('deployment_child_routing');
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal, effectiveAuthority: principal.authority,
             deploymentDomainPurpose: domainContinuation,
             deploymentChildSigner: { machineId: binding.machineId, installationId: binding.installationId,
                 custodianAccountId: binding.custodianAccountId },
             deploymentChildAdmission: { binding, routing: routing.data, domainJob, domainAdmission },
-            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
+            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : refuse('principal');
     }
     if (domainContinuation) {
-        if (!verifySignature(machine.installationPublicKey)) return null;
+        if (!verifySignature(machine.installationPublicKey)) return refuse('machine_signature');
         // Prepared content spends the accepted binding once, under the Domain CAS lock.
         // A transition continues the Domain owner's accepted native capture or provider custody.
         if (domainContinuation.kind === 'transition'
-            && !await isAcceptedDeploymentDomainTransitionInTx(db, binding, domainContinuation.input)) return null;
+            && !await isAcceptedDeploymentDomainTransitionInTx(db, binding, domainContinuation.input)) return refuse('deployment_child_admission');
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority, ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
-            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
+            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : refuse('principal');
     }
 
     const admittedFiniteOperation = readAdmittedFiniteOperationPrincipal(binding, undefined, acceptedDeployment || undefined);
     if (acceptedDeployment) {
-        if (proof.reviewedChild && proof.reviewedChild.actionId !== effectActionId.data) return null;
+        if (proof.reviewedChild && proof.reviewedChild.actionId !== effectActionId.data) return refuse('reviewed_child');
         const principal = admittedFiniteOperation;
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
@@ -1856,9 +1856,10 @@ async function verifyCommon(
                 ...(platformMaterial ? { platformMaterial } : {}) },
             ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
             ...(targetRetentionPurpose ? { deploymentTargetRetentionAdmission: targetRetentionPurpose } : {}),
-            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
+            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : refuse('principal');
     }
-    if (deploymentContinuation) return null;
+    // A signed deployment continuation without its accepted receipt, as for platform material above.
+    if (deploymentContinuation) return refuse('deployment_child_http');
     if (!purpose && !nativeTransition && !domainContinuation && !admittedFiniteOperation && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine, retainedCreationAdmission)) return refuse('source_before_principal');
 
     // The installed generic issuer carries reviewed child consent on the original
@@ -1890,7 +1891,7 @@ async function verifyCommon(
             ...(deploymentPreparationSourceRead ? { deploymentPreparationSourceRead }
                 : createPreparationAdmission?.source ? { deploymentPreparationSourceRead: { source: createPreparationAdmission.source, canManage: false } } : {}),
             ...(targetRetentionPurpose ? { deploymentTargetRetentionAdmission: targetRetentionPurpose } : {}),
-            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
+            ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : refuse('principal');
     }
 
 
@@ -3728,23 +3729,23 @@ export async function verifyExternalActionDomainExecutionRequest(
     const refuse = (phase: ExternalActionAuthorizationRefusalPhase) => refuseExternalActionExecutionRequest(phase, proof, undefined,
         { rootActionId: verified.binding.actionId, effectActionId: verified.effectActionId });
     const snapshotBatch = readSessionSnapshotBatchHttpDemand(proof);
-    if (proof.path === '/v2/sessions/read-batch' && !snapshotBatch) return null;
+    if (proof.path === '/v2/sessions/read-batch' && !snapshotBatch) return refuse('verification_purpose');
     // All reachable roots spend the same resolved private phase, including
     // approval/invoke wrappers. Finite preview corpus permission is separate.
     if (verified.effectActionId === 'follow.preview' && isSessionFollowActionHttpRequestV1('follow.preview', {
         method: proof.method, path: proof.path, body: proof.body, routeInput: proof.routeInput,
         sessionRouteSessionId: proof.sessionRouteTarget?.sessionId,
     })
-        && !('authentication' in verified.binding) && isApiTokenGrantRestrictedV1(verified.binding.grant)) return null;
+        && !('authentication' in verified.binding) && isApiTokenGrantRestrictedV1(verified.binding.grant)) return refuse('credential_action_admission');
     const sessionIds = new Set([
         ...(proof.sessionRouteTarget ? [proof.sessionRouteTarget.sessionId, ...(proof.sessionRouteTarget.additionalSessionIds ?? [])] : []),
         ...(snapshotBatch?.sessionIds ?? []), ...(snapshotBatch?.underSessionId ? [snapshotBatch.underSessionId] : []),
     ]);
     for (const sessionId of sessionIds) {
-        if (!await isExternalActionSessionTargetWithinGrant(verified.binding, sessionId)) return null;
+        if (!await isExternalActionSessionTargetWithinGrant(verified.binding, sessionId)) return refuse('resolved_target');
     }
     if (verified.binding.handoffPreflight && (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
-        || proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`)) return null;
+        || proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`)) return refuse('verification_purpose');
     const relay = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
     const isAdmittedRootRelay = proof.method.toUpperCase() === 'POST'
         && proof.path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${encodeURIComponent(verified.binding.actionId)}`
@@ -4137,7 +4138,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (isOriginalAccountProjectAction(verified.binding.actionId)) {
         const actionId = verified.binding.actionId;
         const path = proof.path.split('?')[0];
-        if (verified.effectActionId !== actionId) return null;
+        if (verified.effectActionId !== actionId) return refuse('verification_purpose');
         const readsSource = actionId === 'projects.open' && proof.method.toUpperCase() === 'GET'
             && /^\/v1\/projects\/sources\/[^/]+$/u.test(path)
             && new URL(proof.path, 'http://home.invalid').searchParams.get('serverId') === verified.binding.serverIdentityId;
@@ -4147,7 +4148,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         const revocation = actionId === 'projects.trust.revoke' && path === `${PROJECT_TRUST_ROUTE_V1}/mutate`
             ? ProjectTrustMutationRequestV1Schema.safeParse(proof.body) : null;
         const revokesTrust = revocation?.success && revocation.data.content === null;
-        if (!readsSource && (proof.method.toUpperCase() !== 'POST' || !readsTrust && !opensProjectRows && !revokesTrust)) return null;
+        if (!readsSource && (proof.method.toUpperCase() !== 'POST' || !readsTrust && !opensProjectRows && !revokesTrust)) return refuse('verification_purpose');
     } else if (isOriginalAccountHandoffAction(verified.binding.actionId)) {
         const path = proof.path.split('?')[0];
         const child = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
@@ -4155,11 +4156,11 @@ export async function verifyExternalActionDomainExecutionRequest(
             || verified.binding.handoffPreflight
             || proof.method.toUpperCase() !== 'POST' || !child.success
             || !(child.data.handoffContinuation && readHandoffContinuationIssuanceAction(path) !== null
-                || child.data.handoffPreflight && path === bindExternalActionExecutionAuthorizationHttpPathV1('session.handoff'))) return null;
+                || child.data.handoffPreflight && path === bindExternalActionExecutionAuthorizationHttpPathV1('session.handoff'))) return refuse('verification_purpose');
     } else if (verified.binding.actionId === 'session.agent.transition' || verified.binding.actionId === 'session.continuation.inspect') {
-        if (!await isSessionAgentTransitionHttpPurpose(verified, proof)) return null;
+        if (!await isSessionAgentTransitionHttpPurpose(verified, proof)) return refuse('verification_purpose');
     } else if (nativePurpose === 'quota_read') {
-        if (verified.effectActionId !== verified.binding.actionId || !isQuotaReadHttpPurpose(proof)) return null;
+        if (verified.effectActionId !== verified.binding.actionId || !isQuotaReadHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (verified.binding.actionId === 'agents.models.list') {
         // Automatic Summary models consume the requester's current default-auth
         // purposes row. Admit only that row and Account-mode currentness under
@@ -4167,7 +4168,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (verified.effectActionId !== verified.binding.actionId
             || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
             || !['/v1/account/encryption/currentness',
-                `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`].includes(proof.path)) return null;
+                `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`].includes(proof.path)) return refuse('verification_purpose');
     } else if (verified.binding.actionId === 'scm.diffSummary.reviewed.mark'
         || verified.binding.actionId === 'scm.diffSummary.reviewed.unmark'
         || verified.binding.actionId === 'scm.diffSummary.result.delete'
@@ -4177,12 +4178,12 @@ export async function verifyExternalActionDomainExecutionRequest(
         // the Home keeps mode admission and Account isolation authoritative.
         if (verified.effectActionId !== verified.binding.actionId
             || verified.binding.accountId !== verified.binding.custodianAccountId
-            || !isScmReviewedMarksHttpPurpose(proof)) return null;
+            || !isScmReviewedMarksHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (nativePurpose === 'session_board_write') {
         const target = verified.binding.target;
         const origin = verified.binding.sessionActionOrigin;
         if (verified.effectActionId !== verified.binding.actionId || target.kind !== 'session'
-            || !origin || origin.caller.sessionId !== target.sessionId) return null;
+            || !origin || origin.caller.sessionId !== target.sessionId) return refuse('verification_purpose');
         const url = new URL(proof.path, 'http://home.invalid');
         const sessionPath = `/v2/sessions/${encodeURIComponent(target.sessionId)}`;
         const method = proof.method.toUpperCase();
@@ -4196,7 +4197,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             && (address.data.kind === 'item.v1' || address.data.kind === 'layout.v1' && address.data.localId === 'layout');
         const readsSession = method === 'GET' && proof.body === undefined && url.pathname === sessionPath
             && (url.search === '' || url.search === '?accessProjectionVersion=1');
-        if (!readsSession && !readsSurface && !(mutation?.success && mutation.data.operation === 'upsert_item')) return null;
+        if (!readsSession && !readsSurface && !(mutation?.success && mutation.data.operation === 'upsert_item')) return refuse('verification_purpose');
     } else if (nativePurpose === 'pending_reset_start') {
         const admission = verified.binding.pendingResetStartAdmission;
         const purpose = readExternalActionPendingResetStartPurpose({ actionId: verified.effectActionId,
@@ -4205,7 +4206,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             path: proof.path, body: proof.body, admission });
         if (verified.effectActionId !== verified.binding.actionId
             || !preparesReset && (!purpose || (admission ? !purpose.reset || !sameManagedInput(projectExternalActionPendingResetStartAdmissionV1(purpose), admission)
-                : verified.binding.target.kind !== 'session' || purpose.sessionId !== verified.binding.target.sessionId))) return null;
+                : verified.binding.target.kind !== 'session' || purpose.sessionId !== verified.binding.target.sessionId))) return refuse('verification_purpose');
     } else if (verified.binding.actionId === 'teams.credentials.usage.export') {
         // The installed executor derives this consumed read from the admitted
         // export input. Home retains only its envelope digest, not the opened
@@ -4213,18 +4214,18 @@ export async function verifyExternalActionDomainExecutionRequest(
         // The native signature binds the read bytes; the existing route still
         // owns current actor, Team and resource authorization.
         if (!verified.signedChildPurpose.sibling.teamUsage
-            || !isAccountActionHttpOperation(verified.effectActionId, proof)) return null;
+            || !isAccountActionHttpOperation(verified.effectActionId, proof)) return refuse('verification_purpose');
     } else if (isSessionFollowActionIdV1(verified.binding.actionId) && verified.binding.actionId.startsWith('follow.')) {
         // A finite Follow root cannot fall through to generic Session read
         // admission or spend a sibling Follow subaction/private census.
         if (verified.effectActionId !== verified.binding.actionId
-            || !isAccountActionHttpOperation(verified.effectActionId, proof)) return null;
+            || !isAccountActionHttpOperation(verified.effectActionId, proof)) return refuse('verification_purpose');
     } else if (templateHttpPurpose !== null) {
-        if (!templateHttpPurpose) return null;
+        if (!templateHttpPurpose) return refuse('verification_purpose');
     } else if (signedLinkHttpPurpose !== null) {
         if (verified.effectActionId !== verified.binding.actionId
             || !(signedLinkHttpPurpose || verified.binding.actionId !== 'artifact.public_link.join'
-                && isReadOnlyArtifactHttpPurpose(proof))) return null;
+                && isReadOnlyArtifactHttpPurpose(proof))) return refuse('verification_purpose');
     } else if (verified.binding.actionId === 'artifact.update' && verified.effectActionId === 'artifact.update'
         && isArtifactJsonUpdateHttpPurpose(proof)) {
         // The signed bytes retain approval authority; Artifact routes retain access and revision fencing.
@@ -4234,7 +4235,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.binding.actionId === 'session.targets.resolve') {
         // Inspection has no final Session effect. A non-preparation read must
         // not borrow the generic read-root admission below (for example messages).
-        return null;
+        return refuse('verification_purpose');
     } else if (verified.effectActionId === verified.binding.actionId
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined && proof.path === '/v1/features/authenticated') {
         // Shared transport discovery runs only after each specialized native
@@ -4295,7 +4296,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Codec preparation retains the admitted Session proposal; it cannot
         // confer the human authority required by the actual mutation route.
         surface: isDiscussionActionHttpPreparation(verified, proof)
-            ? readExternalActionSessionProposalSurface(verified.binding) : undefined }).ok) return null;
+            ? readExternalActionSessionProposalSurface(verified.binding) : undefined }).ok) return refuse('credential_action_admission');
     if (setupMachineReadId) {
         const admitted = await readAdmittedExternalActionMachineInTx(db, verified.binding, setupMachineReadId,
             setupMachineReadId === verified.binding.machineId ? verified.binding.installationId : undefined);

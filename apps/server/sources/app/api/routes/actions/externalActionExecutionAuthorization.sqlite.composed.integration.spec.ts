@@ -4158,6 +4158,8 @@ describe("external Action execution authorization", () => {
                     method: 'GET', path, body: undefined, privateKey: fixture.keyPair.secretKey,
                 }) });
                 expect(response.statusCode, `${path}: ${response.body}`).toBe(401);
+                // The refusing purpose owner names its existing phase; status and error stay unchanged.
+                expect(response.json(), path).toEqual({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });
                 expect(response.body).not.toContain('synthetic-retained-secret-carrier');
                 expect(await verify('GET', path), path).toBeNull();
             }

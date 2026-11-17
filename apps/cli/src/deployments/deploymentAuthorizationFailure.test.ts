@@ -80,3 +80,16 @@ it.each([[401, true], [403, true], [401, false], [403, false]] as const)(
     } });
     expect(JSON.stringify(output)).not.toMatch(/never-record-proof|private content/u);
 });
+
+it('carries every phase Home refuses with, including the managed bound-Session setup phase', async () => {
+    // Home already sends this phase (externalActionExecutionAuthorization managed_bound_session_setup);
+    // an unknown phase fails the strict HTTP schema and loses the cause.
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 401,
+        data: { error: 'invalid_token', authorizationRefusal: 'managed_bound_session_setup' } });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'never-record-proof' }),
+        dispatchReceipt: async () => { throw new Error('A refused read cannot issue a deploy effect'); } });
+    const child = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'retained' }, {});
+    expect(child).toMatchObject({ errorCode: 'action_forbidden',
+        failureCause: { phase: 'home.authorization.managed_bound_session_setup', httpStatus: 401 } });
+});
