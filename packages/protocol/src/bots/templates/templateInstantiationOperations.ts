@@ -7,7 +7,7 @@ import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '../../prompts/library/skills/ski
 import { MemoryMutationResultV1Schema } from '../../prompts/library/memoryActionsV1.js';
 import { readSkillFrontmatterV1 } from '../../prompts/library/skills/skillLibraryItemV1.js';
 import { decodeBase64 } from '../../crypto/base64.js';
-import { SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
+import { admitSessionSpawnNewTargetedAuthoringInputV2, SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { readBotTemplateInstanceV1, type BotTemplateInstanceV1 } from './templateInstanceV1.js';
 import { projectBotTemplateArtifactHeaderV1 } from './botTemplateV1.js';
 import { BotTemplateInstantiateInputV1Schema, type BotTemplatePreviewResultV1 } from './botTemplateActionsV1.js';
@@ -51,16 +51,17 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
     if (resolved.release.version !== input.expectedVersion
       || input.expectedRevision && !sameStrictJsonValue(input.expectedRevision, resolved.revision)) return fail('version_mismatch');
     const { creation } = input;
+    const { executionTarget } = admitSessionSpawnNewTargetedAuthoringInputV2(creation);
     if (!creation.creationKey || creation.environmentVariables !== undefined || creation.initialInput || creation.initialTriggers?.length || creation.sourceContext
       || creation.discussionParticipant || creation.managedCreation || creation.attestedContext
       || creation.agentSessionStartupInstructionsV1) return fail('invalid_request');
     const { content } = resolved.release;
     const setup = prepareBotTemplateSetupV1(content.needs, input.setup);
-    const serverId = creation.executionTarget.serverId;
+    const serverId = executionTarget.serverId;
     if (!serverId || request.context.serverId && !port.isSameServerId?.(request.context.serverId, serverId)
       && request.context.serverId !== serverId) return fail('server_scope_mismatch');
     const machineSetupPlanInput = setup.machineSetup ? buildBotTemplateMachineSetupPlanInputV1(
-      { homeId: request.context.serverIdentityId ?? serverId, machineId: creation.executionTarget.machineId }, setup.machineSetup) : undefined;
+      { homeId: request.context.serverIdentityId ?? serverId, machineId: executionTarget.machineId }, setup.machineSetup) : undefined;
     let softwarePlan: ReturnType<typeof MachineSetupPlanResultV1Schema.parse> | undefined;
     if (machineSetupPlanInput) {
       const invoke = request.invokeChild ?? fail('admission_unavailable');

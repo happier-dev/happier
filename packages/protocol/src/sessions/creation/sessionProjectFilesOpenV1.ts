@@ -10,6 +10,13 @@ export const SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 = {
   target: { action: 'projects.open', role: 'session_project_files_target' },
 } as const;
 
+/** Content demand is known from authoring intent before destination inheritance. */
+export function sessionProjectFilesConsumeRequesterAccountContentV1(input: Pick<SessionSpawnNewInputV2,
+  'sessionPlacement'> & Readonly<{ projectFiles?: SessionProjectFilesV1 }>): boolean {
+  return input.sessionPlacement?.projectFilesSource !== undefined
+    || (input.sessionPlacement?.projectFiles ?? input.projectFiles)?.kind === 'git_clone';
+}
+
 /** Placement's captured folder is the origin; the chosen execution Machine is never a substitute. */
 export function needsEnrolledSessionProjectFilesOpenV1(input: Readonly<{
   placement?: SessionPlacementSelectionV1;
@@ -37,8 +44,7 @@ export function sessionProjectFilesOpenChildrenV1(input: Pick<SessionSpawnNewInp
     ? buildSessionProjectFilesSourceOpenInputV1(input.sessionPlacement) : null;
   return [
     ...(source ? [{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source, input: projectNativeJsonValueForTransport(source) }] : []),
-    ...(source || needsEnrolledSessionProjectFilesOpenV1({ placement: input.sessionPlacement,
-      projectFiles: input.projectFiles, executionTarget: input.executionTarget })
+    ...(sessionProjectFilesConsumeRequesterAccountContentV1(input)
       ? [{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target, scopeInput: { ...input.executionTarget } }] : []),
   ];
 }

@@ -84,7 +84,7 @@ export const BOT_TEMPLATE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & R
         presentation: { onStart: 'current' as const } },
       invocationServerIdForInput: (value: unknown) => {
         const parsed = BotTemplateActionInputSchemasV1['template.instantiate'].safeParse(value);
-        return parsed.success ? parsed.data.creation.executionTarget.serverId : undefined;
+        return parsed.success ? parsed.data.creation.executionTarget?.serverId : undefined;
       },
     } : {}),
     ...(id === 'template.updates.apply' ? {
