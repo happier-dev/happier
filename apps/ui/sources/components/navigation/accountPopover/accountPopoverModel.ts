@@ -1,4 +1,5 @@
 import type { AccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
+import type { AccountServiceSignIn } from '@/components/account/auth/useAccountServiceSignedInName';
 import type { HomeConnectionSummary } from '@/components/navigation/connectionStatus/resolveHomeConnectionSummary';
 import type { MachineConnectionSummary } from '@/components/navigation/connectionStatus/resolveMachineConnectionSummary';
 import { t } from '@/text';
@@ -92,7 +93,7 @@ export type AccountServiceIdentity =
     | Readonly<{ kind: 'no_service'; canOpenAccount: false }>
     /** The Home's sign-in policy is not read yet. */
     | Readonly<{ kind: 'pending'; canOpenAccount: false }>
-    /** The policy cannot be read now (the read failed, or the Home does not answer). */
+    /** The sign-in status cannot be read now (policy or device credential storage is unavailable). */
     | Readonly<{ kind: 'status_unavailable'; canOpenAccount: false }>
     | Readonly<{
         /** `self`: the Home is its own sign-in service, so the person in it is signed in to it. */
@@ -105,7 +106,7 @@ export type AccountServiceIdentity =
 /** Who the person is to the account service this Home points at, named by the service's name owner. */
 export function resolveAccountServiceIdentity(input: Readonly<{
     entryStatus: AccountServiceEntryOptions['status'];
-    signedIn: boolean;
+    credentialReadKind: AccountServiceSignIn['credentialReadKind'];
     serviceName: string | null;
     /** The Home is its own sign-in service (`effectiveSignInService.kind === 'self'`). */
     selfService: boolean;
@@ -122,7 +123,17 @@ export function resolveAccountServiceIdentity(input: Readonly<{
     if (input.selfService) return { kind: 'self', serviceName, canOpenAccount: input.entryStatus === 'ready' };
     switch (input.entryStatus) {
         case 'ready':
-            return { kind: input.signedIn ? 'signed_in' : 'not_linked', serviceName, canOpenAccount: true };
+            switch (input.credentialReadKind) {
+                case 'valid':
+                    return { kind: 'signed_in', serviceName, canOpenAccount: true };
+                case 'absent':
+                    return { kind: 'not_linked', serviceName, canOpenAccount: true };
+                case 'corrupt':
+                case 'unavailable':
+                    return { kind: 'status_unavailable', canOpenAccount: false };
+                case null:
+                    return { kind: 'pending', canOpenAccount: false };
+            }
         case 'loading':
             return { kind: 'loading', serviceName, canOpenAccount: false };
         case 'unsupported':

@@ -57,7 +57,7 @@ function useHomeAccountServiceLine(profile: ServerProfile | null): string | null
     }, rereadKey);
     const identity = resolveAccountServiceIdentity({
         entryStatus: entry.status,
-        signedIn: stored.signedIn === true,
+        credentialReadKind: stored.credentialReadKind,
         serviceName: namedService,
         selfService: entry.effectiveSignInService.kind === 'self',
         policyReady,
@@ -65,7 +65,6 @@ function useHomeAccountServiceLine(profile: ServerProfile | null): string | null
         policyUnavailable: policyFailed || homeUnreachable,
     });
     if (identity.kind === 'pending' || identity.kind === 'loading') return null;
-    if ((identity.kind === 'signed_in' || identity.kind === 'not_linked') && stored.signedIn === null) return null;
     return describeAccountServiceIdentity(identity, 'sentence');
 }
 

@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderSettingsView } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
+import { renderSettingsView } from '@/dev/testkit';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
@@ -17,11 +18,9 @@ const navigationState = vi.hoisted(() => ({
     focused: true,
     headerRight: null as null | (() => React.ReactNode),
 }));
-// The chosen account service and this device's stored sign-in for it (secure storage).
+// The chosen account service; its credential reads use the real persistence owner below.
 const accountServiceState = vi.hoisted(() => ({
-    mutationListeners: new Set<() => void>(),
     endpoint: { url: 'https://accounts.acme.test', serverIdentityId: 'srv-acme', displayName: 'Acme Accounts' } as Record<string, unknown>,
-    storedCredential: null as unknown,
 }));
 
 installSettingsViewCommonModuleMocks({
@@ -160,16 +159,8 @@ vi.mock('@/components/account/auth/useHomeAccountServiceEntry', () => ({
     }),
 }));
 
-vi.mock('@/auth/accountDirectory/accountDirectoryCredentialStorage', () => ({
-    accountDirectoryCredentialStorage: {
-        get: async () => accountServiceState.storedCredential,
-    },
-    subscribeAccountDirectoryCredentialMutations: (listener: () => void) => {
-        accountServiceState.mutationListeners.add(listener);
-        return () => { accountServiceState.mutationListeners.delete(listener); };
-    },
-}));
-
+const { accountDirectoryCredentialStorage, ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY } = await import('@/auth/accountDirectory/accountDirectoryCredentialStorage');
+const credentialTarget = { endpoint: 'https://accounts.acme.test', serverIdentityId: 'srv-acme' };
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { Avatar } = await import('@/components/ui/avatar/Avatar');
 await import('./SettingsView');
@@ -184,10 +175,18 @@ function NavigationFixture({ children }: React.PropsWithChildren) {
 
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+let deviceStorage: ReturnType<typeof installLocalStorageMock>;
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
 beforeEach(() => {
+    deviceStorage = installLocalStorageMock();
+    webLocks = installWebLockManagerMock();
     storage.setState({ settings: { ...settingsDefaults, useProfiles: false },
         profile: { ...profileDefaults, id: 'prof_1' }, machines: {},
         machineListByServerId: {}, machineListStatusByServerId: {} });
+});
+afterEach(() => {
+    deviceStorage.restore();
+    webLocks.restore();
 });
 
 describe('SettingsView profile header', () => {
@@ -254,31 +253,33 @@ describe('SettingsView profile header', () => {
     });
 
     it('says where the person stands with the Home\'s account service, as the account popover does', async () => {
-        accountServiceState.storedCredential = { token: 't' };
+        expect(await accountDirectoryCredentialStorage.set(credentialTarget, { token: 't' })).toBe(true);
         const { SettingsView } = await import('./SettingsView');
         const signedIn = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
         // The stored sign-in is read asynchronously from secure storage.
         await vi.waitFor(() => expect(signedIn.getTextContent()).toContain('settingsOverview.accountServiceSignedIn'));
 
-        accountServiceState.storedCredential = null;
+        await act(async () => { expect(await accountDirectoryCredentialStorage.remove(credentialTarget)).toBe(true); });
         const signedOut = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
         await vi.waitFor(() => expect(signedOut.getTextContent()).toContain('accountPopover.notLinkedTo'));
         expect(signedOut.getTextContent()).not.toContain('settingsOverview.accountServiceSignedIn');
     });
 
     it('follows a sign-out while mounted, and re-reads the sign-in on focus', async () => {
-        accountServiceState.storedCredential = { token: 't' };
+        expect(await accountDirectoryCredentialStorage.set(credentialTarget, { token: 't' })).toBe(true);
+        const storageKey = [...deviceStorage.store.keys()].find(key => key.includes(ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY));
+        const credentialRecord = storageKey ? deviceStorage.store.get(storageKey) : null;
+        if (!storageKey || !credentialRecord) throw new Error('Expected stored Account Service credential record');
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>, { wrapper: NavigationFixture });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsOverview.accountServiceSignedIn'));
 
         // Signed out from the Account page while the Settings home stayed mounted beneath it.
-        accountServiceState.storedCredential = null;
-        await act(async () => { for (const listener of accountServiceState.mutationListeners) listener(); });
+        await act(async () => { expect(await accountDirectoryCredentialStorage.remove(credentialTarget)).toBe(true); });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('accountPopover.notLinkedTo'));
 
         // Signed in elsewhere (no write this device observed): coming back to the page re-reads.
-        accountServiceState.storedCredential = { token: 't2' };
+        deviceStorage.store.set(storageKey, credentialRecord);
         navigationState.focused = false;
         await screen.update(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
         navigationState.focused = true;

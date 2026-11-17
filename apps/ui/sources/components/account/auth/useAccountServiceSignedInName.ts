@@ -9,7 +9,9 @@ import { useAccountServiceDisplayName } from '@/components/account/auth/accountS
 export type AccountServiceSignIn = Readonly<{
     /** How the app names the selected sign-in service, or null when it has no name to offer. */
     serviceName: string | null;
-    /** Whether this device holds a sign-in for it; null until the stored sign-in has been read. */
+    /** The persistence owner's settled result; null until this exact endpoint has been read. */
+    credentialReadKind: Awaited<ReturnType<typeof accountDirectoryCredentialStorage.read>>['kind'] | null;
+    /** Whether this device holds a sign-in; null while unread or storage cannot answer. */
     signedIn: boolean | null;
 }>;
 
@@ -29,7 +31,10 @@ export function useStoredAccountServiceSignIn(
         serverIdentityId,
         savedName: endpoint.displayName,
     });
-    const [signedIn, setSignedIn] = React.useState<Readonly<{ key: string; value: boolean }> | null>(null);
+    const [read, setRead] = React.useState<Readonly<{
+        key: string;
+        kind: NonNullable<AccountServiceSignIn['credentialReadKind']>;
+    }> | null>(null);
     const key = `${endpoint.url}|${serverIdentityId ?? ''}`;
     const [mutationGeneration, setMutationGeneration] = React.useState(0);
     React.useEffect(() => subscribeAccountDirectoryCredentialMutations(
@@ -38,18 +43,16 @@ export function useStoredAccountServiceSignIn(
     React.useEffect(() => {
         if (!serverIdentityId) return;
         let cancelled = false;
-        void accountDirectoryCredentialStorage.get({ endpoint: endpoint.url, serverIdentityId })
-            .then((credentials) => {
-                if (!cancelled) setSignedIn({ key, value: Boolean(credentials) });
-            })
-            .catch(() => {
-                if (!cancelled) setSignedIn({ key, value: false });
+        void accountDirectoryCredentialStorage.read({ endpoint: endpoint.url, serverIdentityId })
+            .then((result) => {
+                if (!cancelled) setRead({ key, kind: result.kind });
             });
         return () => {
             cancelled = true;
         };
     }, [endpoint.url, key, mutationGeneration, rereadKey, serverIdentityId]);
-    const signedInValue = !serverIdentityId ? false : signedIn?.key === key ? signedIn.value : null;
-    return React.useMemo(() => ({ serviceName, signedIn: signedInValue }), [serviceName, signedInValue]);
+    const credentialReadKind = read?.key === key ? read.kind : null;
+    const signedIn = credentialReadKind === 'valid' ? true : credentialReadKind === 'absent' ? false : null;
+    return React.useMemo(() => ({ serviceName, signedIn, credentialReadKind }), [serviceName, signedIn, credentialReadKind]);
 }
 

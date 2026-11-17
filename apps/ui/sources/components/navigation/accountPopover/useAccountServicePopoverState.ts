@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 
-import { accountDirectoryCredentialStorage } from '@/auth/accountDirectory/accountDirectoryCredentialStorage';
+import { useStoredAccountServiceSignIn } from '@/components/account/auth/useAccountServiceSignedInName';
 import { useHomeAccountServiceEntry } from '@/components/account/auth/useHomeAccountServiceEntry';
 import { buildAuthenticatedAccountEntryHref } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
 import {
@@ -40,6 +40,11 @@ export function useAccountServicePopoverState(input: Readonly<{
         homeCarrier: input.homeCarrier,
     });
     const discovery = entry.status === 'ready' ? entry.discovery : null;
+    const stored = useStoredAccountServiceSignIn({
+        url: discovery?.endpointUrl ?? entry.endpoint.url,
+        serverIdentityId: discovery?.serverIdentityId ?? entry.endpoint.serverIdentityId,
+    });
+    const signedIn = stored.signedIn === true;
     const currentHomeServerIdentityId = profile?.serverIdentityId?.trim() || null;
     const discoveredServiceKey = discovery ? createAccountDirectoryServiceKey({
         endpoint: discovery.endpointUrl,
@@ -49,7 +54,6 @@ export function useAccountServicePopoverState(input: Readonly<{
         serviceKey: string;
         session: AccountDirectorySession;
     }> | null>(null);
-    const [signedIn, setSignedIn] = React.useState(false);
     const directorySession = directorySessionBinding?.serviceKey === discoveredServiceKey
         ? directorySessionBinding.session
         : null;
@@ -65,9 +69,8 @@ export function useAccountServicePopoverState(input: Readonly<{
 
     React.useEffect(() => {
         let cancelled = false;
-        setSignedIn(false);
         setDirectorySessionBinding(null);
-        if (!discovery || !discoveredServiceKey) return () => { cancelled = true; };
+        if (!signedIn || !discovery || !discoveredServiceKey) return () => { cancelled = true; };
 
         void (async () => {
             try {
@@ -75,18 +78,14 @@ export function useAccountServicePopoverState(input: Readonly<{
                     endpoint: discovery.endpointUrl,
                     serverIdentityId: discovery.serverIdentityId,
                 };
-                const credentials = await accountDirectoryCredentialStorage.get(target);
-                if (cancelled || !credentials) return;
                 const session = createAccountDirectorySession(target, {
                     capability: discovery.capability,
                     transport: entry.transport,
                 });
                 setDirectorySessionBinding({ serviceKey: discoveredServiceKey, session });
-                setSignedIn(true);
                 await session.refresh();
             } catch {
                 if (!cancelled) {
-                    setSignedIn(false);
                     setDirectorySessionBinding(null);
                 }
             }
@@ -95,7 +94,7 @@ export function useAccountServicePopoverState(input: Readonly<{
         return () => {
             cancelled = true;
         };
-    }, [discoveredServiceKey, discovery, entry.transport]);
+    }, [discoveredServiceKey, discovery, entry.transport, signedIn]);
 
     const openEntry = React.useCallback((intent: AccountEntryIntent) => {
         if (!discovery || launchingRef.current) return;
@@ -119,7 +118,6 @@ export function useAccountServicePopoverState(input: Readonly<{
         if (!directorySession) return;
         const removed = await directorySession.logout();
         if (!removed) return;
-        setSignedIn(false);
         setDirectorySessionBinding(null);
     }, [directorySession]);
 
@@ -128,7 +126,7 @@ export function useAccountServicePopoverState(input: Readonly<{
         : false;
     const selfService = entry.effectiveSignInService.kind === 'self';
     const linkOffer = resolveLinkCurrentHomeOffer({
-        serviceReady: discovery !== null,
+        serviceReady: discovery !== null && stored.signedIn !== null,
         selfService,
         currentHomeServerIdentityId,
         signedIn,
@@ -143,6 +141,7 @@ export function useAccountServicePopoverState(input: Readonly<{
         serviceUrl: discovery?.endpointUrl ?? entry.endpoint.url,
         advertisedServiceName: discovery?.accountServiceDisplayName ?? null,
         signedIn,
+        credentialReadKind: stored.credentialReadKind,
         selfService,
         policyReady,
         policyFailed,

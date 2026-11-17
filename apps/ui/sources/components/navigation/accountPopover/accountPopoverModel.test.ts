@@ -112,41 +112,41 @@ describe('account popover Home health', () => {
 
 describe('account popover identity', () => {
     it('names the account service the person is signed in to', () => {
-        expect(resolveAccountServiceIdentity({ entryStatus: 'ready', signedIn: true, serviceName: 'Acme', selfService: false, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'ready', credentialReadKind: 'valid', serviceName: 'Acme', selfService: false, policyReady: true }))
             .toEqual({ kind: 'signed_in', serviceName: 'Acme', canOpenAccount: true });
     });
 
     it('says the person is not linked to the configured service, never a hard-coded one', () => {
-        expect(resolveAccountServiceIdentity({ entryStatus: 'ready', signedIn: false, serviceName: 'Acme', selfService: false, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'ready', credentialReadKind: 'absent', serviceName: 'Acme', selfService: false, policyReady: true }))
             .toEqual({ kind: 'not_linked', serviceName: 'Acme', canOpenAccount: true });
     });
 
     it('explains an unreachable or unsupported service and offers nothing it cannot open', () => {
-        expect(resolveAccountServiceIdentity({ entryStatus: 'unavailable', signedIn: false, serviceName: 'Acme', selfService: false, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'unavailable', credentialReadKind: 'absent', serviceName: 'Acme', selfService: false, policyReady: true }))
             .toEqual({ kind: 'unavailable', serviceName: 'Acme', canOpenAccount: false });
-        expect(resolveAccountServiceIdentity({ entryStatus: 'unsupported', signedIn: false, serviceName: 'Acme', selfService: false, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'unsupported', credentialReadKind: 'absent', serviceName: 'Acme', selfService: false, policyReady: true }))
             .toEqual({ kind: 'unsupported', serviceName: 'Acme', canOpenAccount: false });
-        expect(resolveAccountServiceIdentity({ entryStatus: 'loading', signedIn: false, serviceName: 'Acme', selfService: false, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'loading', credentialReadKind: 'absent', serviceName: 'Acme', selfService: false, policyReady: true }))
             .toEqual({ kind: 'loading', serviceName: 'Acme', canOpenAccount: false });
     });
 
     it('says a Home that is its own sign-in service is signed in, never "not linked"', () => {
         // The Home is the service: the person is in it, and linking the Home to itself does not apply.
-        expect(resolveAccountServiceIdentity({ entryStatus: 'ready', signedIn: false, serviceName: 'Personal Home', selfService: true, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'ready', credentialReadKind: 'absent', serviceName: 'Personal Home', selfService: true, policyReady: true }))
             .toEqual({ kind: 'self', serviceName: 'Personal Home', canOpenAccount: true });
-        expect(resolveAccountServiceIdentity({ entryStatus: 'unavailable', signedIn: false, serviceName: 'Personal Home', selfService: true, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'unavailable', credentialReadKind: 'absent', serviceName: 'Personal Home', selfService: true, policyReady: true }))
             .toEqual({ kind: 'self', serviceName: 'Personal Home', canOpenAccount: false });
     });
 
     it('always has a service line: a Home that offers no service is signed in, one not read yet is pending', () => {
-        expect(resolveAccountServiceIdentity({ entryStatus: 'not_offered', signedIn: false, serviceName: null, selfService: false, policyReady: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'not_offered', credentialReadKind: 'absent', serviceName: null, selfService: false, policyReady: true }))
             .toEqual({ kind: 'no_service', canOpenAccount: false });
-        expect(resolveAccountServiceIdentity({ entryStatus: 'not_offered', signedIn: false, serviceName: null, selfService: false, policyReady: false }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'not_offered', credentialReadKind: 'absent', serviceName: null, selfService: false, policyReady: false }))
             .toEqual({ kind: 'pending', canOpenAccount: false });
     });
 
     it('settles instead of "checking" forever once the policy read failed or the Home does not answer', () => {
-        expect(resolveAccountServiceIdentity({ entryStatus: 'not_offered', signedIn: false, serviceName: null, selfService: false, policyReady: false, policyUnavailable: true }))
+        expect(resolveAccountServiceIdentity({ entryStatus: 'not_offered', credentialReadKind: 'absent', serviceName: null, selfService: false, policyReady: false, policyUnavailable: true }))
             .toEqual({ kind: 'status_unavailable', canOpenAccount: false });
     });
 });

@@ -285,7 +285,7 @@ function IdentitySection(props: Readonly<{
     const displayName = resolveViewerAccountDisplayName(formatAccountDisplayName(profile));
     const identity = resolveAccountServiceIdentity({
         entryStatus: props.service.entry.status,
-        signedIn: props.service.signedIn,
+        credentialReadKind: props.service.credentialReadKind,
         serviceName: props.service.namedService,
         selfService: props.service.selfService,
         policyReady: props.service.policyReady,
