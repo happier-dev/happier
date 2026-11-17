@@ -591,6 +591,27 @@ describe('createSessionModelTransitionCoordinator', () => {
     await harness.coordinator.dispose();
   });
 
+  it.each([false, true])('compares the startup Team metadata echo with its opened source (changed: %s)', async changed => {
+    const selection = native('same-model');
+    const team = { kind: 'team_credential_provider_model' as const,
+      resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 4,
+      deliveryMode: 'brokered' as const, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId };
+    const initialTarget = { ...authorized(selection), readAppliedTeamCredentialModel: () => team };
+    const { kind: _kind, ...ref } = team;
+    const intent = { v: 2 as const, updatedAt: 42,
+      ref: { ...ref, source: 'team_resource' as const, resourceId: changed ? 'resource-2' : team.resourceId } };
+    const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId: 'claude', agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => harness.coordinator.readActiveTarget() });
+    const harness = createHarness({ initialTarget, authorize, readModelSelectionIntent: () => intent });
+    try {
+      const result = await harness.coordinator.submit(selection, { source: 'metadata', reuseInitialAdmission: true });
+      expect(result).toMatchObject(changed ? { ok: false, status: 'restart_required' }
+        : { ok: true, status: 'already_active', activeSelection: selection });
+      expect(harness.coordinator.readActiveTarget().readAppliedTeamCredentialModel?.()).toEqual(team);
+    } finally { await harness.coordinator.dispose(); }
+  });
+
   it.each([['brokered', 0, true], ['brokered', 1, false], ['vendor-native', 0, false]] as const)(
     'reopens the same Team broker binding for a carried model change before dispatching the next prompt (%s, revision %s)', async (deliveryMode, expectedResourceRevision, canApply) => {
     const selection = native('muse-spark-1.2');

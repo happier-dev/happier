@@ -288,6 +288,17 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     });
   });
 
+  it('retains Team resource identity through canonical daemon spawn admission', () => {
+    const modelSelection = { v: 2 as const, updatedAt: 42, ref: { source: 'team_resource' as const,
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', resourceId: 'resource-1',
+      teamId: 'team-1', expectedResourceRevision: 4, deliveryMode: 'brokered' as const } };
+    const request = { directory: '/tmp', agentTarget: { kind: 'agent' as const,
+      identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+    expect(SpawnDaemonSessionRequestSchema.parse({ ...request, modelSelection }).modelSelection).toEqual(modelSelection);
+    expect(SpawnDaemonSessionRequestSchema.parse(request).modelSelection).toBeUndefined();
+    expect(SpawnDaemonSessionRequestSchema.safeParse({ ...request, modelSelection: null }).success).toBe(false);
+  });
+
   it('normalizes deployed bare model input to a target-bound native selection', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',

@@ -20,6 +20,7 @@ import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionAuthoringV1
 import { SessionInputRequestSchema, SessionMessageProvenanceSchema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionUserMessageSendRequestSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionManagerV1Schema } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { SessionIdentityAdditionsV1Schema } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { SessionPromptStackV1Schema } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -272,7 +273,7 @@ const SpawnDaemonSessionRequestCompatSchema = lazyZodSchema(() => (<I extends z.
   agentModeUpdatedAt: z.optional(z.number().check(z.int())),
   modelId: z.optional(z.string()),
   modelUpdatedAt: z.optional(z.number().check(z.int())),
-  modelSelection: z.optional(SessionModelSelectionV1Schema),
+  modelSelection: z.optional(SessionModelSelectionSchema),
   providerBindingSecurityChangeConfirmationV1: z.optional(SessionProviderBindingSecurityChangeConfirmationV1Schema),
   sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),
   backendTarget: z.optional(z.any()),

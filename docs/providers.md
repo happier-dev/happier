@@ -1093,7 +1093,14 @@ connection reopens in the custom editor it was added with and saves through the
 can express the stored template exactly. Child Run headers read R2's `resolvedSelection`
 ("Inherit session · <route> · <model>"). Composed live validation is still pending.
 
-Persisted selections, favorites, drafts, session metadata, fork/resume state, and model-switch requests must use `SessionModelSelectionV1`. A provider model is identified by the exact tuple:
+Current 0.3 development Session creation, drafts and fork/resume transport use
+`SessionModelSelection`, which accepts retained V1 selections and source-qualified
+V2 selections. V2 keeps `native`, `account_provider_connection` and `team_resource`
+distinct through native launch and Session metadata; Team selections retain their
+resource, Team, revision and delivery choice. Creation does not project V2 into an
+older carrier. The composed launcher validation for this source change is pending.
+
+The retained V1 Account/native reference identifies a model by the exact tuple:
 
 ```text
 { agentTargetKey, providerConnectionId, modelId }

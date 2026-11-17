@@ -1025,7 +1025,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     // A prompt carries a model tuple without its Team source. Keep the
     // opened source, and reopen its model-specific materialization when only
     // the brokered model changed. The broker still admits that exact model.
-    const desiredModel = proposal.source === 'prompt' ? params.readModelSelectionIntent() : null;
+    const desiredModel = proposal.source === 'prompt'
+      || (proposal.source === 'metadata' && proposal.reuseInitialAdmission === true)
+      ? params.readModelSelectionIntent() : null;
     const activeTeam = readTeamRoute(activeTarget);
     let carriesActiveTeamSelection = false;
     if (proposal.source === 'prompt'
@@ -1046,15 +1048,17 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     // Startup metadata echoes the Provider already admitted by the launch
     // handoff. Runtime readback does not make that echo a new admission.
-    const carriesOpenedProviderSelection = proposal.reuseInitialAdmission === true
+    const carriesOpenedSelection = proposal.reuseInitialAdmission === true
       && proposal.source === 'metadata'
       && activeTarget === params.initialActiveTarget
-      && activeTarget.providerBinding != null
+      && (activeTarget.providerBinding != null
+        || (desiredModel?.ref.source === 'team_resource'
+          && sameTeamResourceBinding(desiredModel.ref, activeTeam)))
       && sameSelection(activeTarget.selection, proposal.selection)
       && proposal.callerInputConstraints === undefined;
     try {
       target = (carriesActiveTeamSelection && sameSelection(activeTarget.selection, proposal.selection))
-        || carriesOpenedProviderSelection ? activeTarget
+        || carriesOpenedSelection ? activeTarget
         : await params.authorize(proposal.selection, proposal.callerInputConstraints);
       if (carriesActiveTeamSelection && target !== activeTarget) {
         // The broker materialization is model-bound even when the Agent can

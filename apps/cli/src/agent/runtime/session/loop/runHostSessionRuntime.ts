@@ -1,3 +1,4 @@
+import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 import { randomUUID } from 'node:crypto';
 import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
@@ -27,7 +28,6 @@ import type {
   AgentProviderBindingLaunchMaterializationV1,
   BackendTargetRefV2,
   BackendTargetRefV2Input,
-  SessionModelSelectionV1,
   ProviderBoundModelRef,
   AgentSessionRuntimeEvent,
   SessionPendingMessageComposerAdmissionAcceptedRequestV1,
@@ -645,7 +645,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   >;
 }>;
 
-export type HostSessionRuntimeInitialModelSelection = SessionModelSelectionV1;
+export type HostSessionRuntimeInitialModelSelection = SessionModelSelection;
 
 export type HostSessionRuntimeSessionSwapStrategy = Readonly<{
   requestSessionSwap: (params: Readonly<{
@@ -750,10 +750,13 @@ function createActiveSessionStateMetadataPort(
 
 function resolveHostActiveModelSelection(params: Readonly<{
   agentTargetKey: string;
-  runtimeSelection?: SessionModelSelectionV1;
+  runtimeSelection?: SessionModelSelection;
 }>): ProviderBoundModelRef {
-  return params.runtimeSelection?.ref
-    ?? {
+  return params.runtimeSelection ? {
+      agentTargetKey: params.runtimeSelection.ref.agentTargetKey,
+      providerConnectionId: readSessionModelSelectionProviderConnectionId(params.runtimeSelection),
+      modelId: params.runtimeSelection.ref.modelId,
+    } : {
       agentTargetKey: params.agentTargetKey,
       providerConnectionId: null,
       modelId: 'default',
@@ -799,7 +802,7 @@ export type HostSessionRuntimeRunOptions = {
   permissionModeUpdatedAt?: number;
   sessionModeId?: string;
   sessionModeUpdatedAt?: number;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
   existingSessionId?: string;
   sessionAttachFilePath?: string;
   sessionAttachSecret?: import('@/agent/runtime/sessionAttach').SessionAttachSecret;
@@ -852,7 +855,7 @@ export type HostSessionRuntimeStartupSeed = Readonly<{
   permissionModeSource:
     | import('@/settings/permissions/permissionModeSeed').PermissionModeSeedSource
     | 'released_cache_v1';
-  modelSelection: SessionModelSelectionV1 | null;
+  modelSelection: SessionModelSelection | null;
 }>;
 
 export type HostSessionRuntimeLoopApi = Readonly<{
@@ -958,7 +961,7 @@ export type HostSessionRuntimeConfig = {
     writeRuntimeOverrides?: (params: Readonly<{
       permissionMode: PermissionMode;
       permissionModeUpdatedAt: number;
-      modelSelection: SessionModelSelectionV1 | null;
+      modelSelection: SessionModelSelection | null;
     }>) => void;
   }>;
 };
@@ -1220,7 +1223,10 @@ async function runHostedSessionRuntime(
     ...(runtimeOpts.environmentVariables ? [runtimeOpts.environmentVariables] : []),
     sessionEnvironment,
   ]);
-  const selectedProviderConnectionId = runtimeOpts.modelSelection?.ref.providerConnectionId;
+  const launchModelRef = runtimeOpts.modelSelection ? resolveHostActiveModelSelection({
+    agentTargetKey: runtimeOpts.modelSelection.ref.agentTargetKey, runtimeSelection: runtimeOpts.modelSelection,
+  }) : undefined;
+  const selectedProviderConnectionId = launchModelRef?.providerConnectionId;
   if (
     selectedProviderConnectionId !== null
     && selectedProviderConnectionId !== undefined
@@ -1230,7 +1236,7 @@ async function runHostedSessionRuntime(
       throw new Error('Provider-bound model selection requires a validated provider binding handoff');
     }
     assertProviderBindingHandoffMatchesSelection({
-      selection: runtimeOpts.modelSelection!.ref,
+      selection: launchModelRef!,
       handoff: providerBindingHandoff,
     });
   } else if (
@@ -1242,13 +1248,13 @@ async function runHostedSessionRuntime(
       throw new Error('Native model selection cannot include a provider binding handoff');
     }
     assertProviderBindingHandoffMatchesSelection({
-      selection: runtimeOpts.modelSelection.ref,
+      selection: launchModelRef!,
       handoff: providerBindingHandoff,
     });
   }
   const providerBindingMaterialization = providerBindingHandoff?.materialization;
   const providerBindingMetadataUpdate = providerBindingHandoff?.sessionBindingMetadata
-    ?? (runtimeOpts.modelSelection?.ref.providerConnectionId === null ? null : undefined);
+    ?? (launchModelRef?.providerConnectionId === null ? null : undefined);
   const providerBindingRuntimeDiagnosticRedaction = beginProviderBindingRuntimeDiagnosticRedaction({
     agentId: config.policyAgentId,
     providerBindingActive: providerBindingHandoff !== undefined,
@@ -1559,6 +1565,9 @@ async function runHostedSessionRuntime(
     opts: runtimeOpts,
     seed: canonicalStartupSeed,
   }) ?? canonicalStartupSeed;
+  const startupActiveModelRef = startupSeed.modelSelection ? resolveHostActiveModelSelection({
+    agentTargetKey: modelTargetKey, runtimeSelection: startupSeed.modelSelection,
+  }) : null;
   recordStartupPhase('startup_seed');
   const createPreparedDeferredStartupBootstrapForRuntime:
     typeof createPreparedDeferredStartupBootstrap = async (params) =>
@@ -1648,7 +1657,7 @@ async function runHostedSessionRuntime(
       sessionModeId: runtimeOpts.sessionModeId,
       sessionModeUpdatedAt: runtimeOpts.sessionModeUpdatedAt,
       modelSelectionIntent: startupSeed.modelSelection
-        ? {
+        ? startupSeed.modelSelection.v === 2 ? startupSeed.modelSelection : {
             v: 1,
             updatedAt: startupSeed.modelSelection.updatedAt,
             selection: startupSeed.modelSelection.ref,
@@ -3230,7 +3239,7 @@ async function runHostedSessionRuntime(
       await runtimePublicationMetadata.waitForProviderSessionIdPublication(providerSessionId, signal);
     },
     runnerProcessIdentity,
-    startupModelSelection: startupSeed.modelSelection?.ref ?? null,
+    startupModelSelection: startupActiveModelRef,
     runWithTerminalModelSelection: async (effect) => {
       if (!modelTransitionCoordinator) {
         if (
@@ -3242,7 +3251,7 @@ async function runHostedSessionRuntime(
         return {
           status: 'completed',
           value: await effect(
-            startupSeed.modelSelection?.ref ?? null,
+            startupActiveModelRef,
             runWithCurrentModelPublisherPermit,
           ),
         };
@@ -3595,7 +3604,12 @@ async function runHostedSessionRuntime(
         throw error;
       }
       if (evidence !== 'runtime_readback') {
-        adoptedModelSelection = SessionModelSelectionV1Schema.parse({
+        const retainedTypedIntent = readSessionModelSelectionV2FromMetadata(modelTransitionMetadataSession.getMetadataSnapshot());
+        adoptedModelSelection = retainedTypedIntent
+          && retainedTypedIntent.ref.agentTargetKey === target.selection.agentTargetKey
+          && retainedTypedIntent.ref.modelId === target.selection.modelId
+          && readSessionModelSelectionProviderConnectionId(retainedTypedIntent) === target.selection.providerConnectionId
+          ? retainedTypedIntent : SessionModelSelectionV1Schema.parse({
           v: 1,
           updatedAt: lastAcceptedModelIntentUpdatedAt || Date.now(),
           ref: target.selection,
@@ -3709,21 +3723,26 @@ async function runHostedSessionRuntime(
         return publisherAuthority;
       }
 
-      const freshIntent =
-        resolveModelSelectionIntentFromSessionMetadata(
+      const freshTypedIntent = readSessionModelSelectionV2FromMetadata(claimedSession.getMetadataSnapshot());
+      const freshLegacyIntent = freshTypedIntent ? null
+        : resolveModelSelectionIntentFromSessionMetadata(
           claimedSession.getMetadataSnapshot(),
           modelTargetKey,
         );
-      if (freshIntent) {
+      const freshSelection = freshTypedIntent ? resolveHostActiveModelSelection({
+        agentTargetKey: modelTargetKey, runtimeSelection: freshTypedIntent,
+      }) : freshLegacyIntent?.selection;
+      const freshUpdatedAt = freshTypedIntent?.updatedAt ?? freshLegacyIntent?.updatedAt;
+      if (freshUpdatedAt !== undefined) {
         lastAcceptedModelIntentUpdatedAt = Math.max(
           lastAcceptedModelIntentUpdatedAt,
-          freshIntent.updatedAt,
+          freshUpdatedAt,
         );
-        if (freshIntent.selection !== null) {
-          const selection = freshIntent.selection;
-          adoptedModelSelection = SessionModelSelectionV1Schema.parse({
+        if (freshSelection) {
+          const selection = freshSelection;
+          adoptedModelSelection = freshTypedIntent ?? SessionModelSelectionV1Schema.parse({
             v: 1,
-            updatedAt: freshIntent.updatedAt,
+            updatedAt: freshUpdatedAt,
             ref: selection,
           });
           await traceStartupAuthority('model_intent_reconciliation', claimedSession, async () => {
@@ -4526,7 +4545,7 @@ function createCanonicalHostSessionRuntimeRunOptions(
     permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
     sessionModeId: typeof opts.sessionModeId === 'string' ? opts.sessionModeId.trim() || undefined : undefined,
     sessionModeUpdatedAt: opts.sessionModeUpdatedAt,
-    ...(opts.modelSelection ? { modelSelection: SessionModelSelectionV1Schema.parse(opts.modelSelection) } : {}),
+    ...(opts.modelSelection ? { modelSelection: SessionModelSelectionSchema.parse(opts.modelSelection) } : {}),
     existingSessionId: opts.existingSessionId,
     ...(opts.sessionAttachFilePath ? { sessionAttachFilePath: opts.sessionAttachFilePath } : {}),
     ...(opts.sessionAttachSecret ? { sessionAttachSecret: opts.sessionAttachSecret } : {}),
