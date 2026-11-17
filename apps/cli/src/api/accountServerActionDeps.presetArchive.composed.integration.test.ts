@@ -3,7 +3,7 @@ import * as undici from 'undici';
 import { resolve } from 'node:path';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { AccountSettingsSchema, normalizeActionsSettingsV1, QualifiedConnectedAccountCredentialSnapshotV4Schema,
-    QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+    QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -19,16 +19,22 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { PLUGIN_MANIFEST } from '../../../../packages/plugins/machine-daytona/src/manifest';
+import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '../../../../packages/plugins/machine-lima/src/manifest';
 
 // Home/vendor HTTP and temporary filesystem custody are the genuine boundaries.
 // The original Action, review, Account selection, provider and private CAS stay real.
 vi.mock('undici', async importOriginal => ({ ...await importOriginal<typeof import('undici')>(), fetch: vi.fn() }));
 
 it.each([
-    { prepared: true, refuseFirstDelete: false },
-    { prepared: false, refuseFirstDelete: false },
-    { prepared: true, refuseFirstDelete: true },
-])('archives only after owned native absence and restores cold ($prepared/$refuseFirstDelete)', async ({ prepared, refuseFirstDelete }) => {
+    { prepared: true, refuseFirstDelete: false, hostState: undefined },
+    { prepared: false, refuseFirstDelete: false, hostState: undefined },
+    { prepared: true, refuseFirstDelete: true, hostState: undefined },
+    ...(['revoked', 'replaced', 'offline', 'not_found', 'abort'] as const).map(hostState => ({
+        prepared: true, refuseFirstDelete: false, hostState,
+    })),
+])('archives after native cleanup or confirmed permanent host loss and restores cold ($prepared/$refuseFirstDelete/$hostState)', async ({ prepared, refuseFirstDelete, hostState }) => {
+    const machineNative = hostState !== undefined;
+    const permanentlyGone = hostState === 'revoked' || hostState === 'replaced';
     const controller = new AbortController();
     onTestFinished(() => controller.abort());
     await withTempDir('cli-preset-archive-composed-', async happyHomeDir => {
@@ -44,44 +50,49 @@ it.each([
         const settings = AccountSettingsSchema.parse({ actionsSettingsV1: policy });
         setActiveAccountSettingsSnapshot({ source: 'network', settings, settingsVersion: 1, loadedAtMs: 1,
             settingsSecretsReadKeys: [], scopeKey: runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveAccountSettingsScopeKeyForToken(token)) });
-        const authored = await registerAuthoredAccountActionRelease(app, accountId, { primary: {
+        const authored = await registerAuthoredAccountActionRelease(app, accountId, { includeBundledPluginIds: [LIMA_MANIFEST.id], ...(machineNative ? {} : { primary: {
             manifest: PLUGIN_MANIFEST, projectRoot: resolve(import.meta.dirname, '../../../../packages/plugins/machine-daytona'),
             entryPath: resolve(import.meta.dirname, '../../../../packages/plugins/machine-daytona/src/manifest.ts'),
             manifestExport: 'PLUGIN_MANIFEST', activateExport: 'activateAccount',
-        } });
-        const provider = { pluginId: authored.pluginId, localId: authored.manifest.contributes.machineProvisioners[0]!.id };
+        } }) });
+        const provider = machineNative ? { pluginId: LIMA_MANIFEST.id, localId: LIMA_MANIFEST.contributes.machineProvisioners[0]!.id }
+            : { pluginId: authored.pluginId, localId: authored.manifest.contributes.machineProvisioners[0]!.id };
         const selected = { service: { pluginId: authored.pluginId, localId: 'daytona-account' }, accountId: 'selected' };
         const secret = 'private-archive-api-key';
         const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
         const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: selected, status: 'connected', authenticationModeId: 'token',
             revisionSemantics: 'revisioned', credentialRevision: revision, configurationReady: true,
-            configurationRevision: 'selected-config', displayName: 'Selected', scopes: [] });
+            configurationRevision: null, displayName: 'Selected', scopes: [] });
         const seal = (kind: 'credential' | 'configuration', payload: Parameters<typeof sealQualifiedConnectedAccountContentEnvelope>[0]['payload']) =>
             sealQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', payload, randomBytes: length => new Uint8Array(length) });
         const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: selected, authenticationModeId: 'token',
-            revisionSemantics: 'revisioned', credentialRevision: revision, configurationRevision: 'selected-config',
+            revisionSemantics: 'revisioned', credentialRevision: revision, configurationRevision: null,
             content: seal('credential', { v: 1, values: { token: secret } }), metadata: { scopes: [] } });
-        const configuration = QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ target: { kind: 'account', ref: selected },
-            authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: revision, configurationRevision: 'selected-config',
-            configurationContent: seal('configuration', { values: {}, secretRefs: {} }) });
-        const launch = { provider, schemaVersion: 1, name: 'Private archive base', choices: { snapshot: 'original-base' },
-            credentials: [{ purpose: { consumer: provider, purpose: 'cloud-api' }, account: selected }] };
-        const credentialConfigurations = [{ account: selected, revision: 'selected-config' }];
+        const limaChoices = { store: '/private/lima', image: 'private-image', arch: 'aarch64', vmType: 'vz',
+            cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
+        const launch = { provider, schemaVersion: 1, name: 'Private archive base',
+            choices: machineNative ? limaChoices : { snapshot: 'original-base' },
+            credentials: machineNative ? [] : [{ purpose: { consumer: provider, purpose: 'cloud-api' }, account: selected }] };
+        const credentialConfigurations = machineNative ? [] : [{ account: selected, revision: null }];
         const content = { v: 1 as const, name: 'Private preset', launch, preparation: { enabled: true } };
-        const artifact = { contributionRef: provider, schemaVersion: 1, value: {
+        const artifact = { contributionRef: provider, schemaVersion: 1, value: machineNative ? {
+            operationId: 'original-build', launch: { ...limaChoices, preparedBase: { operationId: 'original-build' } },
+        } : {
             snapshotId: 'owned-image', name: 'happier-prepared-original-build', organizationId: 'organization', launch: { snapshot: 'owned-image' },
         } };
         let preset = ManagedMachinePresetV1Schema.parse({ id: 'archive-preset', homeId, revision: 1,
             owner: { kind: 'account', accountId }, contentEncryptionMode: 'plain', recipients: [],
             content: { t: 'plain', v: { ...content, ...(prepared ? { prepared: { operationId: 'original-build', status: 'ready', artifact,
                 cliBinaryPath: '/opt/happier/bin/happier', binding: createManagedMachinePresetPreparationBindingV1({
-                    content, cliIdentity: 'original-cli', credentialConfigurations }) } } : {}) } } });
+                    content, cliIdentity: 'original-cli', credentialConfigurations,
+                    machineId: 'original-prepare-host' }) } } : {}) } } });
         let nativePresent = prepared;
         let refuseDelete = refuseFirstDelete;
         const nativePresenceAtArchive: boolean[] = [];
         const vendorMethods: string[] = [];
         const supplierRequests: string[] = [];
         const homeRequests: string[] = [];
+        const hostAvailabilityRequests: string[] = [];
         app.addHook('onRequest', async request => { homeRequests.push(`${request.method} ${request.url.split('?')[0]}`); });
         app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
         app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, settingsVersion: 1,
@@ -89,10 +100,24 @@ it.each([
         app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: settings }, version: 1 }));
         app.get('/v4/connect/qualified/accounts', async () => ({ service: selected.service, accounts: [profile] }));
         app.get('/v4/connect/qualified/credential', async () => credential);
-        app.get('/v4/connect/qualified/configuration', async () => configuration);
+        // Daytona's token mode has no configuration sidecar; an invented Account
+        // configuration is rejected by the real established-runtime owner.
+        app.get('/v4/connect/qualified/configuration', async (_request, reply) => reply.code(404).send());
         app.patch('/v4/connect/qualified/credential/health', async () => ({ success: true,
-            credentialRevision: revision, configurationRevision: 'selected-config' }));
+            credentialRevision: revision, configurationRevision: null }));
         app.post('/v1/machines/presets/get', async () => ({ kind: 'found', preset }));
+        app.post('/v1/machines/read-batch', async request => {
+            const body = request.body as { machineIds: string[] };
+            expect(body.machineIds).toEqual(['original-prepare-host']);
+            hostAvailabilityRequests.push(...body.machineIds);
+            if (hostState === 'abort') controller.abort();
+            if (hostState === 'not_found') return { results: [{ machineId: 'original-prepare-host', status: 'not_found' }] };
+            return { results: [{ machineId: 'original-prepare-host', status: 'found', machine: {
+                id: 'original-prepare-host', managedMachineRef: null, active: false,
+                revokedAt: hostState === 'revoked' ? 123 : null, replacedByMachineId: hostState === 'replaced' ? 'new-host' : null,
+                metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+            } }] };
+        });
         app.post('/v1/machines/presets/update', async (request, reply) => {
             const body = request.body as { expectedRevision: number; patch: { content: typeof preset.content; recipients: typeof preset.recipients } };
             if (body.expectedRevision !== preset.revision) return reply.code(409).send({ kind: 'conflict', currentRevision: preset.revision });
@@ -133,20 +158,34 @@ it.each([
         vi.stubGlobal('fetch', fixtureFetch);
         vi.mocked(undici.fetch).mockImplementation(async (url, init) => {
             const response = await fixtureFetch(String(url), { method: init?.method, headers: [...new undici.Headers(init?.headers)] });
-            return new undici.Response(await response.arrayBuffer(), { status: response.status, headers: [...response.headers] });
+            return new undici.Response(response.body === null ? null : await response.arrayBuffer(),
+                { status: response.status, headers: [...response.headers] });
         });
         try {
             const snapshot = getActiveAccountSettingsSnapshot()!;
             const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
             const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot, serverHttpBaseUrl,
                 isCurrent: async () => lifetime === getActiveAccountSettingsSnapshotLifetimeToken() });
+            const accountDeps = createAccountServerActionDeps({ token, credentials, serverId: 'route-home', serverIdentityId: homeId, serverHttpBaseUrl });
             const cli = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createCliActionExecutor({ token, credentials, happyHomeDir,
                 savedSecretOperationContext, sessionId: 'cli-global', mode: 'plain', ctx: null,
                 serverId: 'route-home', serverIdentityId: homeId, serverHttpBaseUrl,
-                accountServerActionDeps: createAccountServerActionDeps({ token, credentials, serverId: 'route-home', serverIdentityId: homeId, serverHttpBaseUrl }) }));
+                accountServerActionDeps: accountDeps }));
             const context = { surface: 'cli' as const, authority: 'present_user' as const, actionsSettings: policy, signal: controller.signal };
             let archived = await cli.execute('machines.presets.archive', { homeId, id: preset.id, expectedRevision: 1 },
                 { ...context, actionRequestId: 'original-archive' });
+            if (machineNative && !permanentlyGone) {
+                expect(archived).toMatchObject({ ok: false });
+                expect(preset.archivedAt).toBeUndefined();
+                expect(nativePresenceAtArchive).toEqual([]);
+                expect(hostAvailabilityRequests).toEqual(['original-prepare-host']);
+                expect(nativePresent).toBe(true);
+                expect(openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'plain', content: preset.content })?.prepared?.artifact).toEqual(artifact);
+                expect(vendorMethods).toEqual([]);
+                expect(supplierRequests).toEqual([]);
+                if (hostState === 'abort') expect(homeRequests).not.toContain('POST /v1/machines/presets/update');
+                return;
+            }
             if (refuseFirstDelete) {
                 expect(archived).toMatchObject({ ok: false });
                 expect(vendorMethods).toContain('DELETE /api/snapshots/owned-image');
@@ -160,7 +199,8 @@ it.each([
                     { ...context, actionRequestId: 'retry-archive' });
             }
             expect(archived, JSON.stringify({ archived, vendorMethods, homeRequests, supplierRequests })).toMatchObject({ ok: true, result: { kind: 'saved', preset: { archivedAt: 100 } } });
-            expect(nativePresenceAtArchive, 'Archive must wait for the existing native destroy role to establish absence').toEqual([false]);
+            expect(nativePresenceAtArchive, 'Only canonical permanent host loss permits Archive with a retained image').toEqual([permanentlyGone]);
+            expect(hostAvailabilityRequests).toEqual(machineNative ? ['original-prepare-host'] : []);
             const restored = await cli.execute('machines.presets.restore', { homeId, id: preset.id, expectedRevision: preset.revision },
                 { ...context, actionRequestId: 'original-restore' });
             expect(restored).toMatchObject({ ok: true, result: { kind: 'saved' } });
@@ -169,8 +209,9 @@ it.each([
             if (!opened) throw new Error('Expected readable retained private content');
             expect(readManagedMachinePresetPreparationV1({ content: opened,
                 cliIdentity: 'original-cli', credentialConfigurations })).toMatchObject({ kind: 'cold' });
-            expect(nativePresent).toBe(false);
-            expect(vendorMethods.some(method => method.startsWith('DELETE '))).toBe(prepared);
+            if (permanentlyGone) expect(opened.prepared).toMatchObject({ status: 'cancelled', code: 'preparation_cleanup_required', artifact });
+            expect(nativePresent).toBe(permanentlyGone);
+            expect(vendorMethods.some(method => method.startsWith('DELETE '))).toBe(prepared && !permanentlyGone);
             expect(supplierRequests).toEqual([]);
             expect(JSON.stringify({ archived, restored })).not.toContain(secret);
         } finally {

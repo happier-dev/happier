@@ -40,6 +40,7 @@ export async function executeCliMachinePresetArchive(request: Parameters<NonNull
         let revision = preset.revision;
         if (prepared) {
             let invoke: ManagedNativeInvocation = async () => { throw new ManagedMachineControllerError('invalid_request'); };
+            let cleanupUnavailable: Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['cleanupUnavailable'];
             if (managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) {
                 const launch = prepared.binding.configuration.launch;
                 const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: launch.provider.pluginId,
@@ -50,13 +51,21 @@ export async function executeCliMachinePresetArchive(request: Parameters<NonNull
                 if (!provisioner.success || provisioner.data.schemaVersion !== launch.schemaVersion || !provisioner.data.preparation) {
                     throw new ManagedMachineControllerError('provider_unavailable');
                 }
-                invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
+                const destroyId = provisioner.data.preparation.actions.destroy;
+                const destroy = selected.manifest.contributes.actions.find(action => action.id === destroyId);
+                if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
+                if (destroy.execution?.target !== 'account' && prepared.binding.machineId) {
+                    cleanupUnavailable = await host.readPreparationCleanupUnavailable?.({
+                        machineId: prepared.binding.machineId, context, signal });
+                }
+                if (!cleanupUnavailable) invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
                     credentialConfigurations: prepared.binding.credentialConfigurations, provisioner: provisioner.data,
                     originalMachineId: prepared.binding.machineId,
                     selected, context, signal, requestId: context.actionRequestId ?? prepared.operationId });
             }
             let first = true;
             const cleanup = await settleManagedMachinePresetPreparationOperationV1({ cleanupOnly: true,
+                cleanupUnavailable,
                 operationId: prepared.operationId, expectedRevision: input.expectedRevision, custody,
                 credentialConfigurations: prepared.binding.credentialConfigurations,
                 storage: { read: async () => { if (first) { first = false; return preset; } return await read(); },
