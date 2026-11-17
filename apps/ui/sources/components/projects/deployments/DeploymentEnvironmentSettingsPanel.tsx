@@ -491,13 +491,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           />
         ) : null}
         <View ref={revealHost('backups')} collapsable={false}>
-        <ItemGroup
-          testID={section('backups')}
-          title={t('projects.deployments.sectionBackups')}
-          description={t('projects.deployments.sectionBackupsDescription')}
-        >
           <BackupRows {...props} testID={section('backups')} />
-        </ItemGroup>
         </View>
         {detail.environment.purpose === 'preview' || props.lifetime || detail.content.previewTemplate ? (
           <View ref={revealHost('previews')} collapsable={false}>
@@ -660,33 +654,44 @@ function BackupRows(props: SectionProps) {
     lifetime={lifetime} actions={{ configureBackup: actions.configureBackup,
       addBackupSchedule: actions.addBackupSchedule,
       prepareConfigurationDefaults: editing.actions.prepareConfigurationDefaults ?? actions.prepareConfigurationDefaults }} /> : null;
-  if (!backup && backups.result.status === 'empty' && setup) return setup;
+  // One section, read top-down: what is copied, where, when and for how long, then the copies and what you do with
+  // them. Restore is the section's action (lab d7 `Backups`); history stays on the Database page (P9).
+  const configSection = (children: React.ReactNode, restore = false) => (
+    <ItemGroup
+      testID={props.testID}
+      title={t('projects.deployments.sectionBackups')}
+      description={t('projects.deployments.sectionBackupsDescription')}
+      action={restore && props.onRestore ? (
+        <SectionActionButton
+          testID={`${props.testID}.restore.open`}
+          title={t('projects.deployments.restoreAction')}
+          icon="clock-counter-clockwise"
+          onPress={props.onRestore}
+        />
+      ) : undefined}
+    >
+      {children}
+    </ItemGroup>
+  );
+  if (!backup && backups.result.status === 'empty' && setup) return configSection(setup);
   if (!backup || backups.result.status !== 'ready') {
-    return (
+    return configSection(
       <DeploymentTabState
         result={backups.result}
         testID={props.testID}
         errorTitle={t('projects.deployments.backupsErrorTitle')}
         emptyTitle={t('projects.deployments.settingsSections.backupNotSetUpBody')}
-      />
+      />,
     );
   }
-  if ('notNeeded' in backup) return <>
+  if ('notNeeded' in backup) return configSection(<>
     <Item testID={`${props.testID}.notNeeded`} title={t('projects.deployments.backupNotNeededTitle')}
       subtitle={t('projects.deployments.backupNotNeededBody', { name: props.detail.content.name })} mode="info" />
     {setup}
-  </>;
+  </>);
 
-  return (
-    <>
-      <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions}
-        lifetime={props.lifetime ?? undefined} testID={props.testID} />
-      <DeploymentBackupCredentialRows
-        detail={props.detail} configuration={backup} lifetime={actions ? props.lifetime ?? null : null}
-        actions={actions} review={props.review ?? null} onChanged={editing?.onChanged ?? noop}
-        machineName={props.machineName} testID={props.testID}
-      />
-      <DeploymentBackupScheduleRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
+  return configSection(<>
+      {/* What is copied, then where it goes, when, and how long copies stay. */}
       <Item
         testID={`${props.testID}.sources`}
         title={t('projects.deployments.backupSources')}
@@ -695,6 +700,14 @@ function BackupRows(props: SectionProps) {
           : t('projects.deployments.backupSourceVolume', { service: source.service, volume: source.volume })).join(', ')}
         mode="info"
       />
+      <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions}
+        lifetime={props.lifetime ?? undefined} testID={props.testID} />
+      <DeploymentBackupCredentialRows
+        detail={props.detail} configuration={backup} lifetime={actions ? props.lifetime ?? null : null}
+        actions={actions} review={props.review ?? null} onChanged={editing?.onChanged ?? noop}
+        machineName={props.machineName} testID={props.testID}
+      />
+      <DeploymentBackupScheduleRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
       <DeploymentBackupRetentionRows
         key={`${backup.configRevision}:${props.detail.environment.revision}`}
         detail={props.detail} configuration={backup} label={retentionLabel(backup.retention)}
@@ -736,27 +749,18 @@ function BackupRows(props: SectionProps) {
           machineName={props.machineName} testID={props.testID}
         />
       ) : null}
-      {props.onRestore ? (
+      {/* The copy the serving deploy kept before its migration is one of the saved copies; Restore above opens it. */}
+      {props.onRestore && props.retainedBackup ? (
         <Item
           testID={`${props.testID}.restore`}
-          title={t('projects.deployments.restoreEntry')}
-          subtitle={!props.retainedBackup ? t('projects.deployments.settingsSections.restoreExtended.uploadBody') : props.retainedBackup.versionLabel
+          title={props.retainedBackup.versionLabel
             ? t('projects.deployments.restoreBackupBefore', { version: props.retainedBackup.versionLabel,
               time: formatAsOfTime(props.retainedBackup.takenAtMs) })
             : t('projects.deployments.restoreBackupTaken', { time: formatAsOfTime(props.retainedBackup.takenAtMs) })}
           mode="info"
-          rightElement={
-            <SectionActionButton
-              testID={`${props.testID}.restore.open`}
-              title={t('projects.deployments.restoreAction')}
-              icon="clock-counter-clockwise"
-              onPress={props.onRestore}
-            />
-          }
         />
       ) : null}
-    </>
-  );
+    </>, true);
 }
 
 function retentionLabel(retention: DeploymentBackupConfigurationV1['retention']): string {

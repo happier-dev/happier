@@ -1257,12 +1257,12 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const id = 'project-deployments.environment.settings.backups';
     try {
       expect(await settle(`${id}.run`)).not.toBeNull();
-      const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
-      // Descriptor-driven values are read-only form controls, rather than text children of the row.
+      const { Item } = await import('@/components/ui/lists/Item');
+      // The saved destination reads as its descriptor-declared values on the row (lab d7), not as a disabled form.
       await vi.waitFor(() => {
-        const fields = screen.findAllByType(HappierInputField);
-        expect(fields.find(node => node.props.field.path === 'bucket')?.props).toMatchObject({ value: 'team-recovery', disabled: true });
-        expect(fields.find(node => node.props.field.path === 'prefix')?.props).toMatchObject({ value: 'staging/', disabled: true });
+        const where = String(screen.findAllByType(Item).find(row => row.props.testID === `${id}.destination`)?.props.subtitle ?? '');
+        expect(where).toContain('team-recovery');
+        expect(where).toContain('staging/');
       });
       // Opening Settings reads only the recorded history (the owner's facts); it runs and verifies nothing.
       await vi.waitFor(() => expect(screen.getTextContent()).toContain('Backup failed'));

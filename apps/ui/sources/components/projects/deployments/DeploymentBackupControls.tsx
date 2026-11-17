@@ -28,7 +28,7 @@ import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/useP
 import { deriveActionInputHints } from '@happier-dev/protocol/actions/schemaInputHints';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
-import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { ActionInputFields, formatActionInputFieldChoice, getValueAtPath } from '@/components/sessions/actions/ActionInputFields';
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
@@ -219,6 +219,15 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
     ? deriveActionInputHints(destination.definition.configSchema, destination.definition.fieldHints) : null, [destination]);
   const fields = React.useMemo(() => inputHints
     ? resolveEffectiveInputFields({ inputHints }, props.configuration.config) : [], [inputHints, props.configuration.config]);
+  // The saved destination reads as its values on one line (lab d7: "acme-backups · happier-api/"), not as a
+  // disabled form; it is edited through Set up backups.
+  const where = fields.flatMap((field) => {
+    if (field.visible === false) return [];
+    const value = getValueAtPath(props.configuration.config, field.path);
+    const choice = formatActionInputFieldChoice(field, value, destinationFieldOptions);
+    if (choice) return [choice];
+    return typeof value === 'string' && value.trim() ? [value] : typeof value === 'number' ? [String(value)] : [];
+  });
   const { actions } = props;
   const test = async () => {
     if (!actions || !target || running) return;
@@ -235,8 +244,9 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
   return (
     <><Item
       testID={`${props.testID}.destination`}
-      title={destination ? localize(destination.pluginId, destination.definition.title) : t('common.unavailable')}
-      subtitle={tested?.line}
+      // The row names the destination; when its plugin can't be read here it still says what the row is.
+      title={destination ? localize(destination.pluginId, destination.definition.title) : t('projects.deployments.backupDestination')}
+      subtitle={destination ? [...where, tested?.line].filter(Boolean).join(' · ') || undefined : tested?.line ?? t('common.unavailable')}
       subtitleLeading={tested && !tested.ok
         ? <StatusDot size={6} color={theme.colors.state.danger.foreground} /> : undefined}
       mode="info"
@@ -244,8 +254,6 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
         <SectionActionButton testID={`${props.testID}.destination.test`}
           title={t('projects.deployments.settingsSections.destinationTest')} disabled={running} onPress={test} />
       ) : undefined}
-      bottomElement={destination ? <ActionInputFields fields={fields} input={props.configuration.config}
-        editable={false} resolveFieldOptions={destinationFieldOptions} onPatch={noop} /> : undefined}
     />
     <BackupPathCapacityReview capacity={pathCapacity.capacity}
       machine={pathCapacity.machineName} testID={`${props.testID}.destination`} />
