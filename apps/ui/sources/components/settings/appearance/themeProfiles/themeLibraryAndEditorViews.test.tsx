@@ -103,10 +103,19 @@ describe('theme library and editor views', () => {
     const onInsertSelector = vi.fn();
     const onReady = vi.fn();
     const interactive = await renderSettingsView(<ThemeProfileEditorView {...basis} css={{ ...basis.css, onInsertSelector, onReady }} />);
-    await interactive.pressByTestIdAsync('settings-theme-surface-session-row');
+    const interactiveRow = interactive.findHostByTestId('settings-theme-surface-session-row');
+    expect(interactiveRow?.props.role).toBe('button');
+    await act(async () => { interactiveRow!.props.onPress(); });
     expect(onInsertSelector).toHaveBeenCalledExactlyOnceWith('session-row');
     expect(onReady).toHaveBeenCalledOnce();
     await interactive.unmount();
+    vi.stubGlobal('window', { innerWidth: 1440 });
+    const readonly = await renderSettingsView(<ThemeProfileEditorView {...basis} readonly css={{ ...basis.css, onInsertSelector }} />);
+    const readonlyRow = readonly.findHostByTestId('settings-theme-surface-session-row');
+    expect(readonlyRow?.props.role).not.toBe('button');
+    expect(readonlyRow?.props.onPress).toBeUndefined();
+    expect(onInsertSelector).toHaveBeenCalledOnce();
+    await readonly.unmount();
     vi.unstubAllGlobals();
   });
 
