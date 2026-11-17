@@ -223,6 +223,7 @@ describe('qualified first-party spawn credential authority', () => {
   ].flatMap(provider => (provider.agentId === 'ohMyPi' || provider.agentId === 'pi' ? ['healthy'] as const
     : ['healthy', 'expired', 'rejected', 'stored_rejected', 'stored_rejected_refresh_window'] as const).map(state => ({ ...provider, state }))))('handles $state $agentId credentials through real spawn preflight', async ({ agentId, service, authenticationModeId, state }) => {
     if (agentId === 'ohMyPi' && process.platform === 'win32') return;
+    const catalogEntry = await lease.registry.acquireAgentCatalogEntry!(agentId);
     const account = { service, accountId: agentId === 'ohMyPi' ? `${state}-${agentId}-${service.localId}` : `${state}-${agentId}` };
     const serviceId = `${service.pluginId}/${service.localId}`;
     const rejected = state === 'rejected' || state === 'stored_rejected' || state === 'stored_rejected_refresh_window';
@@ -292,7 +293,7 @@ describe('qualified first-party spawn credential authority', () => {
         processEnv: { HOME: directory }, credentials, api, connectedAccountsOwner: purposeOwner,
         qualifiedConnectedAccountApi: { listAccounts: async () => listing, readGroup: async () => null },
         resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
-          agentId, bindings, contributions: lease.registry.contributes }),
+          agentId, bindings, contributions: lease.registry.contributes, catalogEntry }),
         activateQualifiedPurposeBindings: binding => purposeOwner.activateSessionPurposeBindings({
           sessionId: account.accountId, purposes: binding.purposes, bindings: binding.bindings }),
         credentialRefreshService: coordinator,
@@ -306,10 +307,14 @@ describe('qualified first-party spawn credential authority', () => {
             } } } });
       } else {
         result = await admission;
-        expect(result?.sessionConnectedAccounts).toBeDefined();
         expect(JSON.parse(result!.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON!)[0].credentialRevision).toBe(snapshot.credentialRevision);
         if (agentId === 'pi') {
-          const declarations = resolveAgentSpawnPurposeDeclarations({ agentId, contributions: lease.registry.contributes })!;
+          // Pi retains the selected Account for request-time headers; spawn does not copy its credentials.
+          expect(result?.requestAuthPurposeBindings).toEqual([expect.objectContaining({
+            target: { kind: 'account', account },
+          })]);
+          expect(result?.sessionConnectedAccounts).toBeUndefined();
+          const declarations = resolveAgentSpawnPurposeDeclarations({ agentId, contributions: lease.registry.contributes, catalogEntry })!;
           const controller = new AbortController();
           const host = createStablePluginConnectedAccountsHost(purposeOwner);
           const connectedAccounts = host.bind({
@@ -335,6 +340,8 @@ describe('qualified first-party spawn credential authority', () => {
               expect(JSON.parse(await readFile(join(prepared.launchEnvironment.values.PI_CODING_AGENT_DIR!, 'auth.json'), 'utf8'))).toEqual({});
             } finally { await prepared.dispose(); }
           } finally { controller.abort(); host.retire(); }
+        } else {
+          expect(result?.sessionConnectedAccounts).toEqual(expect.arrayContaining([expect.objectContaining({ account })]));
         }
         if (agentId === 'ohMyPi') {
           expect(result!.env.PI_CODING_AGENT_DIR).toEqual(expect.any(String));
