@@ -36,10 +36,12 @@ export interface TeamAuthenticationSqlCapture {
 /** Prisma DateTime is UTC without a PostgreSQL timezone. JSON dates must carry their UTC identity. */
 export function capturedPostgresRowJson(alias: string, dates: readonly string[], bytes: readonly string[] = [], bigints: readonly string[] = []): Prisma.Sql {
     const column = (key: string) => prismaRuntime.raw(`${alias}."${key}"`);
+    // Driver parameters arrive untyped; jsonb_build_object's variadic "any" cannot infer a key's type.
+    const name = (key: string) => prismaRuntime.sql`${key}::text`;
     const fields = [
-        ...dates.flatMap(key => [prismaRuntime.sql`${key}`, prismaRuntime.sql`EXTRACT(EPOCH FROM ${column(key)}) * 1000`]),
-        ...bytes.flatMap(key => [prismaRuntime.sql`${key}`, prismaRuntime.sql`replace(encode(${column(key)}, 'base64'), chr(10), '')`]),
-        ...bigints.flatMap(key => [prismaRuntime.sql`${key}`, prismaRuntime.sql`${column(key)}::text`]),
+        ...dates.flatMap(key => [name(key), prismaRuntime.sql`EXTRACT(EPOCH FROM ${column(key)}) * 1000`]),
+        ...bytes.flatMap(key => [name(key), prismaRuntime.sql`replace(encode(${column(key)}, 'base64'), chr(10), '')`]),
+        ...bigints.flatMap(key => [name(key), prismaRuntime.sql`${column(key)}::text`]),
     ];
     return prismaRuntime.sql`to_jsonb(${prismaRuntime.raw(alias)}) || jsonb_build_object(${prismaRuntime.join(fields)})`;
 }
