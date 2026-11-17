@@ -35,12 +35,14 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
-import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
+  verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionIdSchema, DeploymentPrepareInputV1Schema, ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { dispatchManagedSessionStart, dispatchOriginalAccountAction, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof } from './externalActionExecutionAuthorization';
@@ -661,15 +663,16 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     if (request.url === '/ping') return respond({ status: 'ok' });
     if (request.url === '/v1/machines/alice-machine') {
       const hostFacts = request.headers.accept === 'application/json;happier-machine-projection=host-facts';
-      if (hostFacts) {
-        options.onInventoryRead?.();
-        await options.beforeInventoryRead?.();
-        if (options.inventoryUnavailable) { response.statusCode = 503; return respond({ error: 'unavailable' }); }
-        options.onInventoryResponse?.(request.url, 1);
-      } else options.onInstalledMachineRead?.();
+      // Admission projects inventory host facts from the same full publication
+      // whenever it also needs installation proof, so either read is the inventory read.
+      if (!hostFacts) options.onInstalledMachineRead?.();
+      options.onInventoryRead?.();
+      await options.beforeInventoryRead?.();
+      if (options.inventoryUnavailable) { response.statusCode = 503; return respond({ error: 'unavailable' }); }
+      options.onInventoryResponse?.(request.url, 1);
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
       return respond({ machine: !hostFacts && options.installedCustodianAccountId
-        ? { ...machine, access: { ...machine.access, custodian: { accountId: options.installedCustodianAccountId } } } : machine });
+        ? { ...machine, access: { ...machine.access, custodian: { accountId: options.installedCustodianAccountId, displayName: 'Replacement owner' } } } : machine });
     }
     if (request.url === '/v1/machines/alice-controller') {
       if (options.controllerInventoryAbsent) { response.statusCode = 404; return respond({ error: 'not_found' }); }
@@ -1056,11 +1059,11 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const server = createServer(async (request, response) => {
       for await (const _chunk of request) { /* consume the HTTP request */ }
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify({ kind: 'found', preset: {
-        id: 'portable-preset', homeId: homeIdentityId, revision: 1, name: 'Portable',
-        owner: { kind: 'account', accountId: 'bob' },
-        launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-      } }));
+      // Saved Presets keep labels and launch choices in sealed content; the public row has no controller.
+      response.end(JSON.stringify({ kind: 'found', preset: ManagedMachinePresetV1Schema.parse({
+        id: 'portable-preset', homeId: homeIdentityId, revision: 1, owner: { kind: 'account', accountId: 'bob' },
+        contentEncryptionMode: 'plain', content: { t: 'plain', v: {} }, recipients: [],
+      }) }));
     });
     servers.push(server);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -1068,7 +1071,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     if (!address || typeof address === 'string') throw new Error('Expected an HTTP fixture address');
     const input = ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse({
       selection: { kind: 'preset', homeId: homeIdentityId, id: 'portable-preset', revision: 1 },
-      enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, controller: undefined,
+      controller: undefined,
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     });
     await expect(dispatchOriginalAccountAction({ actionId: 'machines.managed.acquire', input,
@@ -1648,7 +1651,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(target.readReceived()).toBeUndefined();
   });
 
-  it('overlaps installed publication with inventory and validates their custody before disclosure', async () => {
+  it('joins the one Machine publication read and validates its custody before disclosure', async () => {
     const request = { actionId: 'agents.models.list', input: ownMachineInput,
       requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' } as const,
       credentials: { token: token(), encryption: null }, serverIdentityId: homeIdentityId };
@@ -1673,7 +1676,9 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(await dispatchOriginalAccountAction({ ...request, serverHttpBaseUrl: mismatch.url,
       onRequesterSessionCredentialDisclosure: async () => { mismatchEvents.push('disclosed'); return true; } }))
       .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
-    expect(mismatchEvents).toEqual([]);
+    // Inventory and installation share one publication, so a replaced custodian is
+    // caught against the Home-minted binding: nothing is disclosed or dispatched.
+    expect(mismatchEvents).toEqual(['home-authorized']);
     expect(mismatch.readReceived()).toBeUndefined();
   });
 
@@ -1934,7 +1939,10 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           }
           let raw = '';
           for await (const chunk of request) raw += String(chunk);
-          const body: unknown = JSON.parse(raw);
+          // Signed requests carry their proofs in the JSON frame; restore them as Home does.
+          const frame = request.headers[EXTERNAL_ACTION_HTTP_BODY_HEADER_V1] === undefined ? null : decodeExternalActionHttpBodyV1(JSON.parse(raw));
+          const body: unknown = frame ? frame.body : JSON.parse(raw);
+          const proofHeaders: Readonly<Record<string, unknown>> = frame ? frame.headers : request.headers;
           if (request.url === '/v1/machines/managed/controller/context') {
             expect(body).toMatchObject({ homeId: homeIdentityId, managedId: 'managed-guest', expectedIntentRevision: 1,
               controller: { machineId: controller.machineId, installationId: 'controller-installation' }, includeEnrollmentInstallation: true });
@@ -1945,7 +1953,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           }
           const parsed = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
           if (parsed.envelope.v !== 2) throw new Error('Expected protected terminal child');
-          const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER.toLowerCase()];
+          const signature = proofHeaders[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER.toLowerCase()];
           signatureValid = typeof signature === 'string' && verifyExternalActionMachineRequestV1({
             authorizationToken: authorization.token, effectActionId: 'machines.managed.acquire', target: controller,
             installationId: 'controller-installation', requestId: 'request-1', method: 'POST',
