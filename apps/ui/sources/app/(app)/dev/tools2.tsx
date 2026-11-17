@@ -347,6 +347,19 @@ export function formatTime(date: Date): string {
             },
             children: [],
         },
+        toolPendingReadOnly: {
+            name: 'mcp__happier__action_spec_get',
+            state: 'running' as const,
+            input: { id: 'session.list' },
+            createdAt: Date.now(),
+            startedAt: Date.now(),
+            completedAt: null,
+            description: null,
+            permission: {
+                id: 'perm-read-only-1',
+                status: 'pending' as const,
+            },
+        },
         toolPendingInactive: {
             name: 'Bash',
             state: 'running' as const,
@@ -498,6 +511,12 @@ export function formatTime(date: Date): string {
                             onPress={() => setSelectedExample('toolPending')}
                         />
                         <Item
+                            testID="dev-tools2-filter:permissions.pending-read-only"
+                            title="Permission: read-only viewer"
+                            selected={selectedExample === 'toolPendingReadOnly'}
+                            onPress={() => setSelectedExample('toolPendingReadOnly')}
+                        />
+                        <Item
                             testID="dev-tools2-filter:permissions.pending-inactive"
                             title="Permission: inactive"
                             selected={selectedExample === 'toolPendingInactive'}
@@ -550,7 +569,7 @@ export function formatTime(date: Date): string {
                             </>
                         ) : null}
 
-                        {selectedExample === 'all' || selectedExample === 'permissions' || shouldShowPermissionExample('toolPending') || shouldShowPermissionExample('toolPendingInactive') || shouldShowPermissionExample('toolApproved') || shouldShowPermissionExample('toolDenied') || shouldShowPermissionExample('toolCanceled') ? (
+                        {selectedExample === 'all' || selectedExample === 'permissions' || shouldShowPermissionExample('toolPending') || shouldShowPermissionExample('toolPendingInactive') || shouldShowPermissionExample('toolPendingReadOnly') || shouldShowPermissionExample('toolApproved') || shouldShowPermissionExample('toolDenied') || shouldShowPermissionExample('toolCanceled') ? (
                             <>
                                 <Text style={styles.subsectionTitle}>Permission States</Text>
                                 {shouldShowPermissionExample('toolPending') ? renderExample('toolPending', examples.toolPending, {
@@ -561,6 +580,11 @@ export function formatTime(date: Date): string {
                                     canSendMessages: true,
                                     canApprovePermissions: false,
                                     permissionDisabledReason: 'inactive',
+                                }) : null}
+                                {shouldShowPermissionExample('toolPendingReadOnly') ? renderExample('toolPendingReadOnly', examples.toolPendingReadOnly, {
+                                    canSendMessages: true,
+                                    canApprovePermissions: false,
+                                    permissionDisabledReason: 'readOnly',
                                 }) : null}
                                 {shouldShowPermissionExample('toolApproved') ? renderExample('toolApproved', examples.toolApproved) : null}
                                 {shouldShowPermissionExample('toolDenied') ? renderExample('toolDenied', examples.toolDenied) : null}
