@@ -70,9 +70,14 @@ export function resolveLockedInstallEnv(env = process.env, { lockPath, owner } =
 
 /** `admitReaders`: the action installs into a new dependency generation, so
  * readers keep entering until it calls `context.closeReaderAdmission()` right
- * before switching generations; existing readers are never drained. */
-export async function withDependencyRefreshLock({ installDir, env = process.env, signal, wait = true, isRequired, admitReaders = false }, action) {
+ * before switching generations; existing readers are never drained. Every
+ * writer of a generation-managed tree admits readers: its live paths change only
+ * by atomic switches, so no long-lived consumer (Metro serving graph reads)
+ * can hold a writer, and every consumer queued behind it, indefinitely. A
+ * writer's first mutation mark closes admission (`markDependencyMutation`). */
+export async function withDependencyRefreshLock({ installDir, env = process.env, signal, wait = true, isRequired, admitReaders: admitRequested = false }, action) {
   signal?.throwIfAborted();
+  const admitReaders = admitRequested || isDependencyGenerationManaged(installDir);
   await assertDependencyTreeWritable(installDir);
   const lockPath = resolveDependencyRefreshLockPath(installDir, env);
   const inherited = dependencyWriters.getStore();
@@ -497,6 +502,8 @@ export async function markDependencyMutation({ installDir, env = process.env, ou
   const generationPath = `${lockPath}.generation`;
   const previous = await readJsonIfExists(generationPath);
   const writer = dependencyWriters.getStore()?.get(lockPath);
+  // New readers wait from the first mutation on; readers already in keep going.
+  if (writer?.active) closeDependencyReaderAdmission(lockPath);
   const outputsChanged = writer?.active && (previous?.generation ?? null) !== writer.beforeGeneration
     ? previous?.outputsChanged ?? ['install'] : [];
   await writeJsonAtomic(generationPath, { generation: randomUUID(), completedGeneration: previous?.completedGeneration ?? null,

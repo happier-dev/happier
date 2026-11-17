@@ -125,8 +125,11 @@ export async function bootstrapRemoteDependencies({
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   const sourceToolsOnly = toolsOnly || validationKind === 'source-test' || validationKind === 'typecheck';
   let refreshed = false;
-  const installAndPrepare = async ({ env: installEnv = env } = {}) => {
-    await installInitialDependenciesImpl({ repoDir, env: installEnv });
+  // A generation-managed tree installs into `installCwd` (a new dependency
+  // generation) and switches to it; readers of the live tree are never drained.
+  const installAndPrepare = async ({ env: installEnv = env, installCwd = repoDir, publishInstallation } = {}) => {
+    await installInitialDependenciesImpl({ repoDir: installCwd, env: installEnv });
+    await publishInstallation?.();
     refreshed = true;
   };
   // Every role reads the same installed tree. Complete the canonical UI
@@ -157,7 +160,7 @@ export async function bootstrapRemoteDependencies({
     // The readiness verifier and postinstall tools resolve source directly;
     // retain patched dependency preparation without publishing workspace dist.
     return await withDependencyRefreshImpl(
-      { installDir: repoDir, componentDir, env, onDependenciesReady, signal },
+      { installDir: repoDir, componentDir, env, onDependenciesReady, signal, generationInstall: true },
       installAndPrepare,
     );
   }
@@ -172,7 +175,7 @@ export async function bootstrapRemoteDependencies({
   const dependencyOwnerReady = dependencyOwnerEntrypoints.every((entrypoint) => packageExists(entrypoint));
   if (!dependencyOwnerReady) {
     await withDependencyRefreshImpl(
-      { installDir: repoDir, componentDir, env, onDependenciesReady },
+      { installDir: repoDir, componentDir, env, onDependenciesReady, generationInstall: true },
       installAndPrepare,
     );
     const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();

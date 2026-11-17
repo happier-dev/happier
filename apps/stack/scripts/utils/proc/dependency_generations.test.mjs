@@ -157,3 +157,42 @@ test('a Stack running on the checkout keeps the replaced generation until it exi
   await dependencies.withDependencyConsumption({ installDir, env }, async () => { readInstalled(installDir); });
   assert.deepEqual(await readdir(container), [second]);
 });
+
+test('a lock-only writer on a generation-managed tree runs beside a long-lived reader; new readers wait only from its mutation', async t => {
+  const { env, installDir } = await setup(t);
+  await moveInPlaceInstallationIntoGeneration(installDir);
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  let entered;
+  const inside = new Promise(resolve => { entered = resolve; });
+  const server = dependencies.withDependencyConsumption({ installDir, env }, async () => { entered(); await held; });
+  t.after(() => release());
+  await inside;
+  let mutate, marked, finish;
+  const mutation = new Promise(resolve => { mutate = resolve; });
+  const markedNow = new Promise(resolve => { marked = resolve; });
+  const finished = new Promise(resolve => { finish = resolve; });
+  // The UI output repair's shape: inspect under the writer lock, then mark and write outputs.
+  const writer = dependencies.withDependencyRefreshLock({ installDir, env }, async () => {
+    await mutation;
+    await dependencies.markDependencyMutation({ installDir, env, output: 'ui-dependency-outputs' });
+    marked();
+    await finished;
+  });
+  const before = await Promise.race([
+    dependencies.withDependencyConsumption({ installDir, env }, async () => 'entered'),
+    delay(5000).then(() => 'blocked'),
+  ]);
+  assert.equal(before, 'entered', 'consumers keep entering while the writer has not mutated anything');
+  mutate();
+  await markedNow;
+  const during = await dependencies.withDependencyConsumption({ installDir, env, wait: false }, async () => 'entered')
+    .catch(error => error.code);
+  assert.notEqual(during, 'entered', 'a new consumer does not enter during the mutation');
+  finish();
+  assert.equal(await Promise.race([writer.then(() => 'done'), delay(5000).then(() => 'waiting')]), 'done',
+    'the writer never waits for the long-lived reader');
+  assert.equal(await dependencies.withDependencyConsumption({ installDir, env }, async () => 'entered'), 'entered');
+  release();
+  await server;
+});
