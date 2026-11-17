@@ -301,6 +301,14 @@ describe('live staged helper on this Linux target', () => {
 });
 
 describe('unchanged custody surface', () => {
+    it.each(['darwin', 'win32'] as const)('resolves the staged custody helper on %s without throwing', async (platform) => {
+        const { resolveProcessCustodyRuntimeExecutable } = await import('./processCustody');
+        const executable = resolveProcessCustodyRuntimeExecutable(platform);
+        if (executable === null) return;
+        expect(existsSync(executable)).toBe(true);
+        expect(basename(executable)).toBe(platform === 'win32' ? 'happier-process-custody.exe' : 'happier-process-custody');
+    });
+
     it('still resolves the custody helper only on its custody platforms', async () => {
         const { resolveProcessCustodyRuntimeExecutable } = await import('./processCustody');
         expect(resolveProcessCustodyRuntimeExecutable('linux')).toBeNull();

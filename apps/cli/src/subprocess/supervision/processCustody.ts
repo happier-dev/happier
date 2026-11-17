@@ -294,7 +294,7 @@ export function resolveProcessCustodyRuntimeExecutable(
     platform: NodeJS.Platform = process.platform,
 ): string | null {
     if (platform !== 'win32' && platform !== 'darwin') return null;
-    return resolveStagedCustodyBinaryPath(platform, stagedCustodyExecutableName(platform));
+    return resolveProcessCustodySupportExecutable(platform);
 }
 
 export function formatWindowsJobCustodyStartIdentity(jobName: string): string {
