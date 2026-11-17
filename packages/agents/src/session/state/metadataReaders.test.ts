@@ -29,16 +29,16 @@ describe('isProviderBoundSessionMetadata', () => {
     })).toBe(true);
   });
 
-  it('does not classify a current native or Team source from a stale V1 Provider intent', () => {
-    for (const ref of [
-      { source: 'native', agentTargetKey: 'backend:codex', modelId: 'model' },
-      { source: 'team_resource', agentTargetKey: 'backend:codex', modelId: 'model',
-        resourceId: 'resource', teamId: 'team', expectedResourceRevision: 1, deliveryMode: 'brokered' },
+  it('uses the current V2 source instead of a stale V1 Provider intent', () => {
+    for (const { ref, bound } of [
+      { ref: { source: 'native', agentTargetKey: 'backend:codex', modelId: 'model' }, bound: false },
+      { ref: { source: 'team_resource', agentTargetKey: 'backend:codex', modelId: 'model',
+        resourceId: 'resource', teamId: 'team', expectedResourceRevision: 1, deliveryMode: 'brokered' }, bound: true },
     ]) {
       expect(isProviderBoundSessionMetadata({
         ...intent({ agentTargetKey: 'backend:codex', providerConnectionId: 'pc_old', modelId: 'old' }),
         modelSelectionIntentV2: { v: 2, updatedAt: 12, ref },
-      })).toBe(false);
+      })).toBe(bound);
     }
     expect(isProviderBoundSessionMetadata({
       modelSelectionIntentV2: { ref: { source: 'account_provider_connection', providerConnectionId: 'pc_work' } },

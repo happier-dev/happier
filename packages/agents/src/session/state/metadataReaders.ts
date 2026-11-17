@@ -128,8 +128,8 @@ export function resolveAmbientProviderConnectionForModelIntent(input: Readonly<{
 }
 
 /**
- * Whether the Session's persisted model intent binds it to a model Provider
- * connection.
+ * Whether the Session's persisted model intent binds it to an Account Provider
+ * connection or a Team model resource.
  *
  * Agent-native fork is impossible for such a Session: the fork lifecycle owner
  * refuses every non-replay strategy so Provider authorization completes before
@@ -148,7 +148,7 @@ export function isProviderBoundSessionMetadata(metadata: unknown): boolean {
   if (!record) return false;
   if (record.modelSelectionIntentV2 !== undefined) {
     const ref = asRecord(asRecord(record.modelSelectionIntentV2)?.ref);
-    return ref?.source === 'account_provider_connection';
+    return ref?.source === 'account_provider_connection' || ref?.source === 'team_resource';
   }
   const parsed = SessionModelSelectionIntentV1Schema.safeParse(record[MODEL_SELECTION_INTENT_KEY]);
   if (!parsed.success) {
