@@ -123,6 +123,7 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { createPluginNativeNotificationDelivery } from '@/notifications/activity/pluginNativeNotificationDelivery';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { createDeploymentTelemetryHost } from '@/deployments/telemetry/collectorHost';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { QualifiedConnectedAccountPurposeBindingsV1, ConnectedAccountRequestAuthUseV1, ProviderRuntimeBindingBasisV1, PluginContributionIdentityV1, PluginMachineExecutionOriginV1, PluginMachineMaterializationRefV1, TargetActionApprovalReplayPlacementV1, NormalizedPluginAccountCollectionContractV1, PluginCollectionCandidatePreparationBindingV1, PluginCollectionContractRefV1, PluginReleaseRefV1, PluginUiArtifactDigestV1, PluginResourceContextV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
@@ -3527,6 +3528,21 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const currentDomainEdgeObservation = createCurrentDomainEdgeObservation();
     consumerAssembly.allRetirementSignal.addEventListener('abort', () => currentDomainEdgeObservation.dispose(), { once: true });
     const notificationAccountId = sessionCredentials ? readAccountIdFromToken(sessionCredentials.token) : null;
+    const telemetryMachineId = params?.resolveCurrentMachineId?.();
+    const deploymentTelemetry = !accountExecution && sessionCredentials && notificationAccountId && telemetryMachineId
+        ? createDeploymentTelemetryHost({
+            serverBaseUrl: notificationServerHttpBaseUrl, token: sessionCredentials.token, machineId: telemetryMachineId,
+            subscribeMachineChanges(listener) {
+                const accountChanges = acquireRequesterAccountEncryptionCurrentness({ accountId: notificationAccountId,
+                    token: sessionCredentials.token, serverBaseUrl: notificationServerHttpBaseUrl });
+                const unsubscribe = accountChanges.subscribeRunFollowAvailability(change => {
+                    if (change.kind === 'machine') listener(change.machineId);
+                    else if (change.kind === 'reconnected') listener(null);
+                });
+                return () => { unsubscribe(); void accountChanges.dispose(); };
+            },
+            onRefreshError() { logger.warn('[PLUGIN RUNTIME] Telemetry assignments could not be refreshed'); },
+        }) : null;
     if (!accountExecution && sessionCredentials && notificationAccountId) {
         // The observer's admitted Account/Home already owns this push feed. Domain and Environment
         // writes by any entitled client invalidate its current fact without another probe or timer.
@@ -3559,6 +3575,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         return caller && occurrenceId ? { caller, occurrenceId } : null;
     };
     invocationServiceOwners = createProductionPluginInvocationServiceOwners({
+        ...(deploymentTelemetry ? { deploymentTelemetry } : {}),
         readSecretSources: () => resolvedRuntimeRegistryOwner?.secretSources,
         resolveRetirementSignal: pluginId => resolveRuntimeConsumerLifecycle(pluginId).retirementSignal,
         ...(!params?.accountExecution ? { healthChecks: createSavedHealthChecksHost({
@@ -6528,6 +6545,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return projectManagedServicesOwner;
         },
         currentDomainEdgeObservation,
+        readTelemetryCollectorEndpoint: () => deploymentTelemetry?.readEndpoint() ?? null,
         readHealthAlertSource: automationAssembly.readHealthAlertSource,
         readHealthCheckSource(sourceInstanceId, signal) {
             const owner = params?.accountExecution ? null : resolveHealthCheckSourceOwner();

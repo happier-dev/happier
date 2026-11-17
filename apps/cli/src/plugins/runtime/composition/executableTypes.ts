@@ -83,6 +83,8 @@ export type PluginContributionRuntimeLifecycle = Readonly<{
 }>;
 
 export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
+    /** Same local production collector; reading never acquires a receiver or assignments. */
+    readTelemetryCollectorEndpoint?: () => string | null;
     /** Same installed observer's runtime-only current Domain edge facts. */
     currentDomainEdgeObservation?: CurrentDomainEdgeObservation;
     /** Finite current-source projection from the same local saved observer, without another adoption owner. */
