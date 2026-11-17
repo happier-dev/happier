@@ -21,7 +21,7 @@ import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { teamDetailPath } from '@/components/settings/teams/teamsRoutes';
+import { teamDetailPath, teamSetupPath } from '@/components/settings/teams/teamsRoutes';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { parseToken } from '@/utils/auth/parseToken';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
@@ -144,9 +144,10 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
     const openTeamOnExactHome = React.useCallback(async (
         serverId: string,
         teamId: string,
+        page: 'team' | 'setup' = 'team',
     ): Promise<void> => {
         await destination.continueToHome(serverId, () => {
-            routerRef.current.replace(teamDetailPath({
+            routerRef.current.replace((page === 'setup' ? teamSetupPath : teamDetailPath)({
                 serverId: resolveServerProfileScopeIdForIdentifier(serverId),
                 teamId,
             }));
@@ -310,6 +311,10 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                         accountId: completedAdmission.accountId,
                     } : null}
                     onOpenTeam={() => openTeamOnExactHome(target.serverId, completedAdmission.teamId)}
+                    setupContinuation={{
+                        label: t('teams.join.setUpForTeam', { team: completedAdmission.teamName }),
+                        onContinue: () => openTeamOnExactHome(target.serverId, completedAdmission.teamId, 'setup'),
+                    }}
                 />
             </TeamJoinStateShell>
         );
@@ -411,6 +416,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
             onAdmissionComplete={(result) => {
                 void openTeamOnExactHome(target.serverId, result.teamId);
             }}
+            onSetupTeam={(result) => openTeamOnExactHome(target.serverId, result.teamId, 'setup')}
         />
     );
 });
