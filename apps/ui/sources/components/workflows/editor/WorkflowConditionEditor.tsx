@@ -37,6 +37,7 @@ import { workflowEditorStyles } from './workflowEditorStyles';
 import { resolveWorkflowConditionValueFacts } from './workflowConditionValueOptions';
 import { WorkflowFieldSelect, WorkflowReferenceSentence } from './WorkflowStepDataEditor';
 import { WorkflowValuePicker } from './WorkflowValuePicker';
+import { WorkflowEventValueContext } from './WorkflowEventValueContext';
 
 const GROUP_MODE_LABEL_KEYS = {
     all: 'workflows.condition.allOf',
@@ -161,10 +162,11 @@ function ConditionRule(props: RuleContext & Readonly<{
     onRemove?: () => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const valueContext = React.useContext(WorkflowEventValueContext);
     const rule = readWorkflowConditionRule(props.condition);
     const unset = isWorkflowConditionUnset(props.condition);
     const left = rule?.left ?? null;
-    const facts = left === null || unset ? { type: 'unknown' as const } : resolveWorkflowConditionValueFacts(props.draft, left);
+    const facts = left === null || unset ? { type: 'unknown' as const } : resolveWorkflowConditionValueFacts(props.draft, left, valueContext);
     const remove = props.onRemove === undefined ? null : (
         <IconButton testID={`${props.testIDPrefix}-remove`} variant="plain" iconName="x"
             accessibilityLabel={t('workflows.condition.removeCondition')} tooltip={t('workflows.condition.removeCondition')} onPress={props.onRemove} />

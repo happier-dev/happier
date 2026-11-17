@@ -19,6 +19,7 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
 
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { WorkflowConditionEditor } = await import('./WorkflowConditionEditor');
+const { WorkflowEventValueContext } = await import('./WorkflowEventValueContext');
 
 const check = { kind: 'step' as const, id: 'check', name: 'Check the build',
     document: { text: 'Check it', references: [], attachments: [] },
@@ -47,6 +48,40 @@ async function render(condition: WorkflowCondition | undefined, props: Readonly<
 }
 
 describe('building a condition as one sentence', () => {
+    it.each(['number', 'choice', 'boolean'] as const)('keeps a chosen Event %s comparison typed after rendering the selected value', async (kind) => {
+        const event = { pluginId: 'example.events', localId: 'check' };
+        const path = kind === 'number' ? 'attempt' : kind === 'choice' ? 'verdict' : 'passed';
+        const changed = vi.fn();
+        const valueContext: React.ContextType<typeof WorkflowEventValueContext> = { triggerEvents: [{ event, payloadSchema: {
+            type: 'object', properties: {
+                attempt: { type: 'integer' }, verdict: { type: 'string', enum: ['ship', 'hold'] }, passed: { type: 'boolean' },
+            },
+        } }] };
+        function EventCondition() {
+            const [condition, setCondition] = React.useState<WorkflowCondition | undefined>({ kind: 'exists', value: { kind: 'literal', value: true } });
+            return <WorkflowEventValueContext.Provider value={valueContext}>
+                <WorkflowConditionEditor label="workflows.condition.ifWhen" condition={condition} required draft={draft}
+                    consumerBlockId="gate" onChange={(next) => { changed(next); setCondition(next); }} testIDPrefix="cond" />
+            </WorkflowEventValueContext.Provider>;
+        }
+        const screen = await renderScreen(<EventCondition />);
+        const menu = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
+        const left = { kind: 'trigger_event', event, path: [path] };
+        await act(async () => menu('cond-value')!.props.onSelect(JSON.stringify(left)));
+        if (kind === 'number') {
+            await act(async () => screen.changeTextByTestId('cond-right-literal', '12'));
+            expect(changed.mock.lastCall?.[0]).toMatchObject({ left, right: { kind: 'literal', value: 12 } });
+            expect(menu('cond-test')!.props.items).toContainEqual(expect.objectContaining({ id: 'gt' }));
+        } else if (kind === 'choice') {
+            expect(menu('cond-right-choice')).toBeDefined();
+            await act(async () => menu('cond-right-choice')!.props.onSelect('hold'));
+            expect(changed.mock.lastCall?.[0]).toMatchObject({ left, right: { kind: 'literal', value: 'hold' } });
+        } else {
+            await screen.pressByTestIdAsync('cond-right-boolean:no');
+            expect(changed.mock.lastCall?.[0]).toMatchObject({ left, right: { kind: 'literal', value: false } });
+        }
+    });
+
     it('offers one value picker naming each value and its type, never the reference\'s kind, step and field as separate selects', async () => {
         const { screen, menu } = await render({ kind: 'exists', value: { kind: 'literal', value: true } });
         expect(screen.findByTestId('cond-value')).not.toBeNull();
