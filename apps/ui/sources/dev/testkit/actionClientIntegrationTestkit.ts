@@ -4,6 +4,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
@@ -65,7 +66,10 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
             // The composed fixture supplies the designed user's explicit Confirm.
             executeConfirmed: execute.confirmed,
             isAccountReady: () => Boolean(getActiveServerAccountScope()),
-            isMachineActive: (machineId: string) => storage.getState().machines[machineId]?.active === true,
+            isMachineActive: (machineId: string) => {
+                const machine = storage.getState().machines[machineId];
+                return machine ? readMachineActivity(machine).active === true : false;
+            },
             close,
         };
     } catch (error) {

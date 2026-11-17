@@ -32,6 +32,7 @@ export type DaemonState = {
   startedWithCliVersion?: string;
   lastHeartbeat?: string;
   daemonLogPath?: string;
+  machineControlReady?: boolean;
 };
 
 export function daemonStatePath(happyHomeDir: string): string {
@@ -282,14 +283,15 @@ function recordDaemonStatePresence(
 
 export async function waitForDaemonState(
   happyHomeDir: string,
-  opts?: { timeoutMs?: number; statePresence?: DaemonStatePresenceTracker },
+  opts?: { timeoutMs?: number; statePresence?: DaemonStatePresenceTracker; requireMachineControlReady?: boolean },
 ): Promise<DaemonState> {
   const timeoutMs = opts?.timeoutMs ?? 30_000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     recordDaemonStatePresence(opts?.statePresence, await observeDaemonStatePresence(happyHomeDir));
     const state = await readDaemonState(happyHomeDir);
-    if (state && state.httpPort > 0 && state.pid > 0) return state;
+    if (state && state.httpPort > 0 && state.pid > 0
+      && (!opts?.requireMachineControlReady || state.machineControlReady === true)) return state;
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`Timed out waiting for daemon.state.json in ${happyHomeDir}`);
@@ -945,6 +947,8 @@ export async function startTestDaemon(params: {
   env: NodeJS.ProcessEnv;
   snapshotDir?: string;
   startupTimeoutMs?: number;
+  /** Enrollment needs acknowledged server presence and Machine RPC registration, beyond the local HTTP listener. */
+  requireMachineControlReady?: boolean;
   cleanupDescendantsOnExit?: boolean;
   cliLaunchSpec?: CliTestLaunchSpec;
   /** Test-only artifact preparation after daemon setup and immediately before process spawn. */
@@ -1070,7 +1074,8 @@ export async function startTestDaemon(params: {
     const state = await runDaemonStartupPhase(
       'waitForDaemonState',
       Promise.race([
-        waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs, statePresence }),
+        waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs, statePresence,
+          requireMachineControlReady: params.requireMachineControlReady }),
         new Promise<DaemonState>((resolveState, rejectState) => {
           spawnedProc.child.once('exit', (code, signal) => {
             void (async () => {
@@ -1078,6 +1083,7 @@ export async function startTestDaemon(params: {
                 const exitedState = await waitForDaemonState(params.happyHomeDir, {
                   timeoutMs: exitStateGraceTimeoutMs,
                   statePresence,
+                  requireMachineControlReady: params.requireMachineControlReady,
                 });
                 resolveState(exitedState);
               } catch {

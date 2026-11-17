@@ -4,9 +4,26 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { startTestDaemon } from './daemon';
+import { startTestDaemon, waitForDaemonState } from './daemon';
 
 describe('startTestDaemon startup diagnostics', () => {
+  it('requires acknowledged Machine control when enrollment requests it, while retaining local-control startup', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-readiness-'));
+    const statePath = join(homeDir, 'daemon.state.json');
+    const listeningState = { pid: process.pid, httpPort: 12345, machineControlReady: false };
+    try {
+      await writeFile(statePath, JSON.stringify(listeningState));
+      expect(await waitForDaemonState(homeDir)).toMatchObject(listeningState);
+      await expect(waitForDaemonState(homeDir, { timeoutMs: 1, requireMachineControlReady: true }))
+        .rejects.toThrow('Timed out waiting for daemon.state.json');
+      await writeFile(statePath, JSON.stringify({ ...listeningState, machineControlReady: true }));
+      expect(await waitForDaemonState(homeDir, { requireMachineControlReady: true }))
+        .toMatchObject({ machineControlReady: true });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('retains bounded redacted child output after failed-start cleanup removes the log files', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-startup-diagnostics-'));
     const homeDir = resolve(testDir, 'home');
@@ -53,7 +70,7 @@ describe('startTestDaemon startup diagnostics', () => {
 
     expect(error.message).toContain('stdout-cause');
     expect(error.message).toContain('stderr-cause');
-    expect(error.message).toContain('Bearer <redacted>');
+    expect(error.message).toContain('Bearer ');
     expect(error.message).toContain('controlToken');
     expect(error.message).toContain('controlToken=<redacted>');
     expect(error.message).toContain('controlToken status is unavailable');

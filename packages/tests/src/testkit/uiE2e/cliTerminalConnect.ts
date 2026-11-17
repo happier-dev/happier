@@ -21,7 +21,7 @@ import { waitFor } from '../timing';
 import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 
 const DEFAULT_TERMINAL_CONNECT_URL_TIMEOUT_MS = 180_000;
-const TERMINAL_CONNECT_KEY_PATTERN = /([#&]key=)[^&\s]+/gu;
+const TERMINAL_CONNECT_KEY_PATTERN = /([#&](?:key|pairingSecret)=)[^&\s]+/gu;
 
 function redactTerminalConnectKeys(text: string): string {
   return text.replace(TERMINAL_CONNECT_KEY_PATTERN, '$1[redacted]');
@@ -245,6 +245,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   env: NodeJS.ProcessEnv;
   cliLaunchSpec?: CliTestLaunchSpec;
 }>): Promise<StartedCliTerminalConnect> {
+  await mkdir(params.testDir, { recursive: true });
   const sanitizedEnv = sanitizeCliTestEnv(params.env);
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
   if (currentOwnerInspection.ok) {
