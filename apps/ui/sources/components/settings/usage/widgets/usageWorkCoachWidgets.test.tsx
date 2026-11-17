@@ -563,6 +563,23 @@ describe('Work and Coach widget bodies', () => {
     // The Coach's own view lists freely: nothing is held there.
     expect(await heldRoom('large')).toBe(0);
   });
+  it('keeps managed Project names without inventing a Machine identity', async () => {
+    const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
+    const previous = storage.getState();
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    try {
+      const { useUsageProjectNames } = await import('./usageBodyKit');
+      const names = await renderBareHook(() => useUsageProjectNames(scope.serverId));
+      await act(async () => storage.setState({ profileScope: scope, projectAccountRows: { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: [WorkspaceRefV1Schema.parse({ v: 2, kind: 'managed', id: 'guest-checkout', serverId: scope.serverId,
+          projectKey: 'managed-project', managedId: 'sandbox', controller: { machineId: 'controller', installationId: 'installation' },
+          rootPath: '/home/guest/repo', createdAtMs: 1 })], relationships: [], revisionsByPhysicalKey: {}, organizations: [] } }));
+      expect(names.getCurrent().machineIds.get('managed-project')).toEqual([]);
+      await names.unmount();
+    } finally {
+      storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows });
+    }
+  });
   it.each(['plain', 'e2ee'] as const)('names Work from the admitted protected Project producer and retires it on Account loss (%s)', async mode => {
     const previous = storage.getState();
     const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };

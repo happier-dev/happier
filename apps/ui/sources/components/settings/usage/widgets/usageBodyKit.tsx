@@ -189,7 +189,7 @@ export function useUsageProjectNames(serverId: string, fallbacks: readonly Usage
         const key = group.projectKey.projectKey;
         const ref = group.items[0];
         if (ref) name(key, namesByRef.get(JSON.stringify([ref.serverId, ref.id])));
-        machineIds.set(key, [...new Set([...(machineIds.get(key) ?? []), ...group.items.map(ref => ref.machineId)])]);
+        machineIds.set(key, [...new Set([...(machineIds.get(key) ?? []), ...group.items.flatMap(ref => ref.machineId === undefined ? [] : [ref.machineId])])]);
       }
       // Native keys retain their producing CLI namespace, admitted by this
       // opened Account snapshot. It supplies names, never routing authority.
