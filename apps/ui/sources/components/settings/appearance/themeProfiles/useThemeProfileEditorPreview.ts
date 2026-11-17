@@ -51,7 +51,9 @@ export function useThemeProfileEditorPreview(input: Readonly<{
                 .then(result => {
                     if (cancelled) revert(result.previewRef);
                     else receipt.current = result.previewRef;
-                }, input.onFailure);
+                }, error => {
+                    if (!cancelled) input.onFailure(error);
+                });
         }, 150);
         return () => { cancelled = true; clearTimeout(timeout); };
     }, [css, document, draft, input.onFailure, input.preview, mode, presented, revert]);

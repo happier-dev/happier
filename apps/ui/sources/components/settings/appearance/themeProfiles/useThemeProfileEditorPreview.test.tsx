@@ -131,6 +131,40 @@ describe('useThemeProfileEditorPreview', () => {
         expect(state.writes()).toBe(0);
     });
 
+    it('reports a failed preview only while its editor draft remains presented', async () => {
+        vi.useFakeTimers();
+        const state = fixture();
+        const previousAction = createDeferred<Awaited<ReturnType<typeof state.preview>>>();
+        const currentAction = createDeferred<Awaited<ReturnType<typeof state.preview>>>();
+        const dismissedFailure = new Error('Preview rejected after leaving the editor');
+        const currentFailure = new Error('Preview rejected while the editor is open');
+        let presented = true;
+        const onFailure = vi.fn();
+        const preview = vi.fn()
+            .mockReturnValueOnce(previousAction.promise)
+            .mockReturnValueOnce(currentAction.promise);
+        const wrapper = ({ children }: React.PropsWithChildren) => (
+            <PluginSurfaceFocusEligibilityProvider active={presented}>
+                {children}
+            </PluginSurfaceFocusEligibilityProvider>
+        );
+        const hook = await renderHook(() => useThemeProfileEditorPreview({ owner: state.owner,
+            draft: { document: state.document, draft: state.document.profile, mode: 'light' },
+            preview, onFailure }), { wrapper });
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        presented = false;
+        await hook.rerender();
+        await act(async () => { previousAction.reject(dismissedFailure); });
+        expect(onFailure).not.toHaveBeenCalled();
+
+        presented = true;
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        await act(async () => { currentAction.reject(currentFailure); });
+        expect(onFailure).toHaveBeenCalledExactlyOnceWith(currentFailure);
+        await hook.unmount();
+    });
+
     it('preserves a newer shared preview when its stale Action receipt arrives after unmount', async () => {
         vi.useFakeTimers();
         const state = fixture();
