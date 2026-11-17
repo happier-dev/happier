@@ -110,6 +110,7 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                                                 header: destination.header, body: destination.body, dataEncryptionKey: destination.dataEncryptionKey, blob,
                                                 provenance: destination.provenance, provenanceDataEncryptionKey: destination.provenanceDataEncryptionKey })
                                             : await updateArtifactHttpMutation(request.userId, destination.artifactId, {
+                                                updateOperationId: destination.updateOperationId,
                                                 kind: destination.artifactKind,
                                                 header: destination.header, expectedHeaderVersion: destination.expectedHeaderVersion,
                                                 body: destination.body, expectedBodyVersion: destination.expectedBodyVersion, blob,

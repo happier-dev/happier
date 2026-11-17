@@ -639,6 +639,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
             },
             data: {
                 header: Buffer.from(replacement.header),
+                lastUpdateOperation: null,
                 headerVersion: item.expectedHeaderVersion + 1,
                 body: Buffer.from(replacement.body),
                 bodyVersion: item.expectedBodyVersion + 1,
@@ -1081,6 +1082,7 @@ export type UpdateArtifactResult =
     | ({ ok: false } & ArtifactQuotaExceeded)
     | {
         ok: true;
+        didWrite: boolean;
         legacySocketPublication: boolean;
         cursor?: Cursor;
         recipientUpdates: readonly Readonly<{
@@ -1111,6 +1113,7 @@ export type UpdateArtifactResult =
       };
 
 export async function updateArtifact(params: {
+    updateOperationKey?: string;
     transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1;
     approvalInputCustody?: ApprovalInputCustody;
     actorUserId: string;
@@ -1160,6 +1163,7 @@ export async function updateArtifact(params: {
             preparedBlob = await prepareArtifactBlobWrite({ accountId: owner.accountId, artifactId, blob: params.blob }) ?? undefined;
         }
         const result = await inTx(async (tx) => await updateArtifactTx(tx, {
+            updateOperationKey: params.updateOperationKey,
             transcriptVisualPublication: params.transcriptVisualPublication,
             approvalInputCustody: params.approvalInputCustody,
             actorUserId,
@@ -1175,7 +1179,7 @@ export async function updateArtifact(params: {
             memoryDecisionSource: params.memoryDecisionSource, authentication: params.authentication,
             blob: params.blob, preparedBlob,
         }), { transactionClass: "artifact-update" });
-        admitted = result.ok;
+        admitted = result.ok && result.didWrite;
         if (result.ok && (header || body)) await cleanupArtifactOrphanBlobsAfterCommit(artifactId);
         return result;
     } catch (error) {
@@ -1190,6 +1194,7 @@ export async function updateArtifact(params: {
 export async function updateArtifactTx(
     tx: Tx,
     params: {
+        updateOperationKey?: string;
         transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1;
         approvalInputCustody?: ApprovalInputCustody;
         actorUserId: string;
@@ -1260,6 +1265,7 @@ export async function updateArtifactTx(
             approvalState: true, approvalSessionId: true,
             header: true,
             headerVersion: true,
+            lastUpdateOperation: true,
             body: !kindOnly,
             bodyVersion: true,
             dataEncryptionKey: true,
@@ -1297,6 +1303,14 @@ export async function updateArtifactTx(
         return { ok: false, error: "internal" };
     }
 
+    // Authorization and content-mode admission above still apply to each request.
+    // The stored effect acknowledges only this exact operation, never a competing claim.
+    if (params.updateOperationKey && current.lastUpdateOperation === params.updateOperationKey) {
+        return { ok: true, didWrite: false, legacySocketPublication: false, recipientUpdates: [],
+            ...(params.header ? { header: { bytes: openedCurrent.header, version: current.headerVersion } } : {}),
+            ...(params.body ? { body: { bytes: openedCurrent.body!, version: current.bodyVersion } } : {}),
+        };
+    }
     const headerMismatch = (params.header && current.headerVersion !== params.header.expectedVersion)
         || (params.expectedHeaderVersion !== undefined && current.headerVersion !== params.expectedHeaderVersion)
         || (params.expectedRevision && current.headerVersion !== params.expectedRevision.headerVersion);
@@ -1340,7 +1354,7 @@ export async function updateArtifactTx(
     }
     if (!params.header && !params.body && nextKind?.kind === current.kind
         && nextKind?.approvalState === current.approvalState && nextKind?.approvalSessionId === current.approvalSessionId) {
-        return { ok: true, legacySocketPublication, recipientUpdates: [] };
+        return { ok: true, didWrite: false, legacySocketPublication, recipientUpdates: [] };
     }
 
     // Opaque older-client body writes cannot prove whether the file is retained
@@ -1357,6 +1371,7 @@ export async function updateArtifactTx(
         provenance: params.body ? params.provenance : null, provenanceDataEncryptionKey })) return { ok: false, error: "invalid-params" };
 
     const updateData: {
+        lastUpdateOperation: string | null;
         updatedAt: Date;
         seq: number;
         header?: Uint8Array<ArrayBuffer>;
@@ -1370,6 +1385,7 @@ export async function updateArtifactTx(
         approvalState?: string | null;
         approvalSessionId?: string | null;
     } = {
+        lastUpdateOperation: params.updateOperationKey ?? null,
         // Prisma's @updatedAt must be set explicitly for an index-only label.
         updatedAt: kindOnly ? current.updatedAt : new Date(),
         seq: kindOnly ? current.seq : current.seq + 1,
@@ -1512,7 +1528,7 @@ export async function updateArtifactTx(
     // hint's own Session facts move.
     if (kindOnly && !decodeArtifactKindV1(current.kind).classified) {
         await markApprovalSessionsChangedInTx(tx, ownerAccountId, [current.approvalSessionId, nextKind?.approvalSessionId ?? null]);
-        return { ok: true, legacySocketPublication, recipientUpdates: [] };
+        return { ok: true, didWrite: true, legacySocketPublication, recipientUpdates: [] };
     }
     const recipients = await resolveArtifactAudienceInTx(tx, params.artifactId);
     const recipientCursors = await markAccountsChanged(tx, { accountIds: recipients, kind: "artifact", entityId: params.artifactId,
@@ -1551,7 +1567,7 @@ export async function updateArtifactTx(
     if (cursor === undefined) throw new Error("Artifact writer is missing from its authorized audience");
     const ownerCursor = recipientCursors.find((recipient) => recipient.accountId === ownerAccountId);
     if (ownerCursor === undefined) throw new Error("Artifact owner is missing from its authorized audience");
-    return { ok: true, legacySocketPublication, cursor, recipientUpdates,
+    return { ok: true, didWrite: true, legacySocketPublication, cursor, recipientUpdates,
         ...(headerUpdate ? { header: headerUpdate } : {}), ...(bodyUpdate ? { body: bodyUpdate } : {}) };
 }
 

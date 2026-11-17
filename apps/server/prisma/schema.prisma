@@ -3666,6 +3666,7 @@ model Artifact {
     account           Account  @relation(fields: [accountId], references: [id])
     header            Bytes // Encrypted header (can contain JSON)
     headerVersion     Int      @default(0)
+    lastUpdateOperation String?
     body              Bytes // Encrypted body
     bodyVersion       Int      @default(0)
     provenance        Bytes?

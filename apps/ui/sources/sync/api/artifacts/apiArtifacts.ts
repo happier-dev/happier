@@ -1,4 +1,5 @@
 import { pick } from 'zod/mini';
+import { randomUUID } from '@/platform/randomUUID';
 import { ArtifactTemplateAcceptedVersionResponseV1Schema, type ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1, type ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { requireArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
@@ -640,6 +641,7 @@ export async function updateArtifact(
     opts: ArtifactApiOptions = {},
 ): Promise<ArtifactUpdateResponse & Readonly<{ writeCommitted?: false }>> {
     throwIfAborted(opts.signal);
+    request = { ...request, updateOperationId: request.updateOperationId ?? randomUUID() };
     if (request.memoryDecisionSource && request.blob)
         throw new HappyError('memory_decision_source_unsupported', false, { code: 'memory_decision_source_unsupported' });
     const active = opts.request ? undefined : getActiveServerSnapshot();
@@ -658,7 +660,7 @@ export async function updateArtifact(
         }
         writeAttempts += 1;
         const response = request.blob?.content && request.body !== undefined && request.expectedBodyVersion !== undefined
-            ? await uploadArtifactContent(credentials, { kind: 'update', artifactId, blobId: request.blob.blobId,
+            ? await uploadArtifactContent(credentials, { kind: 'update', updateOperationId: request.updateOperationId, artifactId, blobId: request.blob.blobId,
                 ...(request.kind ? { artifactKind: request.kind } : {}),
                 header: request.header, expectedHeaderVersion: request.expectedHeaderVersion,
                 body: request.body, expectedBodyVersion: request.expectedBodyVersion,

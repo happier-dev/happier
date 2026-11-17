@@ -23,6 +23,7 @@ describe('Artifact private-byte Account conversion (real SQLite and private stor
     it.each(['anonymous', 'signed_in'] as const)('retains %s links without mutation when conversion cannot rewrap them, then converts after revocation', async audience => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', ...createSignedAccountContentBinding() } });
         const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
+            lastUpdateOperation: 'previous-accepted-operation',
             header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Linked' }), 'base64'),
             body: Buffer.from(encodePlainArtifactStoredContent({ body: 'Released content' }), 'base64'),
             dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'), headerVersion: 1, bodyVersion: 1 } });
@@ -60,6 +61,7 @@ describe('Artifact private-byte Account conversion (real SQLite and private stor
         expect((await inventory())?.items).toMatchObject([{ id: artifact.id, publicAudience: 'none' }]);
         expect(await convert()).toEqual({ status: 'applied' });
         expect((await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } })).bodyVersion).toBe(2);
+        expect((await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } })).lastUpdateOperation).toBeNull();
     });
 
     async function sourceFixture() {

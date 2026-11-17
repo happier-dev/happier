@@ -944,7 +944,7 @@ export function createAccountArtifactStore(params: Readonly<{
     const approval = approvalArtifactBodyMatchesHeaderV1(nextHeader, typeof content.body === 'string' ? content.body : null);
     const approvalInputCustody = approval?.family === 'target_action' ? readSettledApprovalInputCustodyV1(approval.request) : undefined;
     const transcriptVisualPublication = readApprovalTranscriptVisualPublicationV1({ artifactId: input.artifactId, approval });
-    const wire = { header, expectedHeaderVersion: input.expectedRevision.headerVersion,
+    const wire = { updateOperationId: randomUUID(), header, expectedHeaderVersion: input.expectedRevision.headerVersion,
       ...(approvalInputCustody ? { approvalInputCustody } : {}),
       ...(transcriptVisualPublication ? { transcriptVisualPublication } : {}),
       body, expectedBodyVersion: input.expectedRevision.bodyVersion,
@@ -975,7 +975,7 @@ export function createAccountArtifactStore(params: Readonly<{
         let requestHeaders: Record<string, string>;
         if (blob?.content) {
           const uploadBody = Buffer.from(encodeArtifactUploadFrameV1({
-            kind: 'update', artifactId: input.artifactId, blobId: blob.blobId, header, body, ...provenance.wire,
+            kind: 'update', updateOperationId: wire.updateOperationId, artifactId: input.artifactId, blobId: blob.blobId, header, body, ...provenance.wire,
             ...(kind === undefined ? {} : { artifactKind: kind }),
             expectedHeaderVersion: input.expectedRevision.headerVersion, expectedBodyVersion: input.expectedRevision.bodyVersion,
           }, blob.content));

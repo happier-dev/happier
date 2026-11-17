@@ -3121,6 +3121,19 @@ failure settles for that bootstrap; it does not retry on reads or timers. The
 next attempt is the next bootstrap. Load the matching server before changed
 clients; general older-Home compatibility is not implied by this operation gate.
 
+In unreleased 0.3, Artifact JSON and framed binary updates accept optional
+`updateOperationId` (UUID). UI and daemon writers allocate it once before their
+existing transport retry. The Artifact CAS owner stores a fingerprint of that
+operation and its complete mutation input atomically with the accepted write.
+An exact repeat returns the stored effect's versions without another mutation,
+revision or publication. A different operation or changed input still conflicts.
+Later writes and Account encryption conversion replace or clear the fingerprint;
+this is recovery of the current accepted operation, not an operation history.
+Access and content-mode admission still precede recovery. Replay discards any
+unused binary upload candidate. Older requests may omit the field and retain
+ordinary version-CAS behavior. Load the matching migrated 0.3 server before these
+writers; older servers do not provide acknowledgement recovery.
+
 The in-progress 0.3 ordinary binary extension uses a strict body reference
 `{blobId,mime,sizeBytes,sha256}` within the normal plain/E2EE body envelope.
 Private bytes are not public uploaded-file URLs. Its transport contract is

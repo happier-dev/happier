@@ -2781,6 +2781,20 @@ control admission, while present-user calls take over control. Supported native 
 typed unsupported result. This addition does not reinterpret an old input
 kind or provide an older daemon with a fallback clipboard path.
 
+## Artifact update acknowledgement recovery (unreleased 0.3)
+
+JSON and framed binary update inputs add optional UUID `updateOperationId`.
+Matching UI/daemon writers retain it across their existing transport retries;
+the Artifact CAS owner stores its request fingerprint in nullable
+`Artifact.lastUpdateOperation`. Exact replay of the current accepted operation
+returns its versions without writing again. Different operations and changed
+input retain normal conflict behavior. Subsequent writes, including Account
+encryption conversion, invalidate that receipt. Requests without the field
+remain valid. Apply the additive migration and load the matching server before
+new writers; older servers cannot guarantee recovery after a lost acknowledgement.
+The released 0.2 ordinary update reader accepts and drops unknown keys, so it
+does not acquire this guarantee merely by accepting a new writer's request.
+
 ## Custom theme library (unreleased 0.3)
 
 Saved custom definitions are Account-scoped `theme_profile.v1` Artifacts. The

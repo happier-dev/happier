@@ -448,7 +448,7 @@ describe('UI approval Artifact writer', () => {
         expect(stored()).toMatchObject({ status: 'executing' });
     });
 
-    it('does not label a retried claim conflict as uncommitted after its first acknowledgement was lost', async () => {
+    it('recovers its accepted claim after its first acknowledgement was lost', async () => {
         const approved = approve(openRequest());
         await seed(approved);
         let claimAttempts = 0;
@@ -472,8 +472,7 @@ describe('UI approval Artifact writer', () => {
                 getArtifact: () => basis, updateArtifact: () => {},
             }),
         });
-        expect(result).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
-        expect(result).not.toHaveProperty('writeCommitted');
+        expect(result).toEqual({ ok: true });
         expect(stored().status).toBe('executing');
         expect(claimAttempts).toBe(2);
     });

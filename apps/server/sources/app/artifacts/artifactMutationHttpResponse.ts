@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { projectArtifactHttpRead } from './artifactHttpRead';
 import { eventRouter, buildNewArtifactUpdate, buildUpdateArtifactUpdate } from '@/app/events/eventRouter';
 import { inReadSnapshot } from '@/storage/inTx';
@@ -17,7 +20,7 @@ import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protoco
 
 export type ArtifactHttpMutationResult = Awaited<ReturnType<typeof createArtifactHttpMutation | typeof updateArtifactHttpMutation>>;
 export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
-export type ArtifactUpdateHttpInput = Readonly<{ transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; approvalInputCustody?: ApprovalInputCustody; kind?: string; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; approvalInputCustody?: ApprovalInputCustody; kind?: string; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
 
 function memoryDecisionHttpFailure(error: string) {
     if (error === 'memory_decision_source_unavailable') return { statusCode: 404 as const, body: { error: 'memory_decision_source_unavailable' as const } };
@@ -119,7 +122,13 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
                 return { statusCode: 400 as const, body: { error: 'Invalid parameters' as const } };
             }
 
+            // The nonce distinguishes independent claims even when their content is identical.
+            // Bind it to the entire admitted request; uploaded bytes already belong to blobId.
+            const updateOperationKey = input.updateOperationId ? createHash('sha256').update(
+                createCanonicalJsonSigningInput(projectNativeJsonValueForTransport({ ...input, blob: input.blob ? { blobId: input.blob.blobId } : input.blob })),
+            ).digest('hex') : undefined;
             const result = await updateArtifact({
+                updateOperationKey,
                 transcriptVisualPublication: input.transcriptVisualPublication,
                 approvalInputCustody: input.approvalInputCustody,
                 actorUserId: userId,

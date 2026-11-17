@@ -96,6 +96,7 @@ export const ArtifactBlobUploadInitV1Schema = lazyZodSchema(() => z.discriminate
     header: z.string(), body: z.string(), dataEncryptionKey: z.string(),
     provenance: z.optional(z.nullable(z.string())), provenanceDataEncryptionKey: z.optional(z.nullable(z.string())) }),
   z.strictObject({ kind: z.literal('update'), ...uploadIdentity,
+    updateOperationId: z.optional(z.string().check(z.uuid())),
     artifactKind: z.optional(ArtifactStoredKindV1Schema),
     header: z.optional(z.string()), expectedHeaderVersion: z.optional(z.number().check(z.int(), z.nonnegative())),
     body: z.string(), expectedBodyVersion: z.number().check(z.int(), z.nonnegative()),

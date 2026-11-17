@@ -46,6 +46,7 @@ export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisi
     requiresMemoryDecisionSource: RequiresMemoryDecisionSource;
 }>) {
     return lazyZodSchema(() => z.strictObject({
+        updateOperationId: z.optional(z.string().check(z.uuid())),
         transcriptVisualPublication: z.optional(lazyZodSchema(() => ApprovalTranscriptVisualPublicationV1Schema)),
         approvalInputCustody: z.optional(ApprovalInputCustodySchema),
         header: z.optional(z.string()),

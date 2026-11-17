@@ -1,3 +1,4 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactCoarseKindV1Schema, ArtifactStoredKindV1Schema, ArtifactKindWriteBatchInputV1Schema,
     ArtifactKindWriteBatchResponseV1Schema, type ArtifactCoarseKindV1, ArtifactKindCoverageV1Schema, decodeArtifactKindV1, deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -331,6 +332,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
         return json({ ...projectArtifactBoundaryReadRow(row), created: true });
     };
 
+    const acceptedUpdates = new Map<string, Record<string, unknown>>();
     const update = async (callerAccountId: string, artifactId: string, input: Record<string, unknown> | null): Promise<Response> => {
         const { header, expectedHeaderVersion, body, expectedBodyVersion, provenance, provenanceDataEncryptionKey } = input ?? {};
         const headerChange = typeof header === 'string' && isVersion(expectedHeaderVersion)
@@ -349,6 +351,11 @@ export function createArtifactStoreBoundary(params: Readonly<{
         await hook?.();
         const current = rows.get(artifactId);
         if (!current || !writableRow(current, callerAccountId)) return json({ error: 'Artifact not found' }, 404);
+        if (input?.updateOperationId && sameStrictJsonValue(acceptedUpdates.get(artifactId), input)) {
+            return json({ success: true,
+                ...(headerChange ? { headerVersion: current.headerVersion } : {}),
+                ...(bodyChange ? { bodyVersion: current.bodyVersion } : {}) });
+        }
         if ((headerChange && headerChange.expected !== current.headerVersion) || (kindOnly && expectedHeaderVersion !== current.headerVersion)
             || (bodyChange && bodyChange.expected !== current.bodyVersion)) {
             return json({
@@ -375,6 +382,8 @@ export function createArtifactStoreBoundary(params: Readonly<{
         };
         if (classification && !Object.hasOwn(classification, 'kindHint')) delete next.kindHint;
         rows.set(artifactId, next);
+        if (input?.updateOperationId) acceptedUpdates.set(artifactId, structuredClone(input));
+        else acceptedUpdates.delete(artifactId);
         publish(next);
         return json({
             success: true,
@@ -550,6 +559,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
         replaceStoredRow(artifact: Artifact): void {
             const row = { ...artifact, ...(artifact.kind === undefined ? kindProjection(artifact.header, undefined) : {}) };
             rows.set(artifact.id, row);
+            acceptedUpdates.delete(artifact.id);
             publish(row);
         },
         seedAccountGrant(artifactId: string, accountId: string, accessLevel: ArtifactAccessLevelV1): void {
@@ -586,6 +596,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
         clear(): void {
             for (const row of rows.values()) publish(row);
             rows.clear();
+            acceptedUpdates.clear();
             grants.clear();
             pendingBeforeUpdate = null;
             pendingAfterCreate = null;

@@ -188,6 +188,7 @@ export interface ArtifactUpdateRequest {
     blob?: ArtifactBlobWriteV1 | null;
     header?: string;  // Base64 encoded encrypted header
     expectedHeaderVersion?: number;
+    updateOperationId?: string;
     body?: string;  // Base64 encoded encrypted body
     expectedBodyVersion?: number;
 }
