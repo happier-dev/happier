@@ -787,13 +787,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['es'],
   switchToDarkTheme: 'Cambiar al tema oscuro',
   switchToLightTheme: 'Cambiar al tema claro',
-  collectionColumns: {
-    title: "Columnas",
-    alwaysFirst: "Siempre primera",
-    builtIn: "Integradas",
-    reset: "Restablecer valores predeterminados",
-    tooNarrow: "Oculta: demasiado estrecho",
-  },
   themeToggle: {
     title: 'Interruptor claro y oscuro',
     description: 'Muestra un círculo medio lleno en la parte superior de la ventana. Haz clic para cambiar; mantén pulsado o haz clic derecho para más opciones.',
@@ -1424,6 +1417,13 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const es: TranslationStructure = {
+  collectionColumns: {
+    title: "Columnas",
+    alwaysFirst: "Siempre primera",
+    builtIn: "Integradas",
+    reset: "Restablecer valores predeterminados",
+    tooNarrow: "Oculta: demasiado estrecho",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `Administrado por ${organization}`,
     lockedExplanation: "Tu organización establece esta opción. Contacta con tu administrador para cambiarla.",

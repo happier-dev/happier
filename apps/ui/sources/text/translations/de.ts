@@ -883,13 +883,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['de'],
   switchToDarkTheme: 'Zum dunklen Design wechseln',
   switchToLightTheme: 'Zum hellen Design wechseln',
-  collectionColumns: {
-    title: "Spalten",
-    alwaysFirst: "Immer zuerst",
-    builtIn: "Integriert",
-    reset: "Auf Standard zurücksetzen",
-    tooNarrow: "Ausgeblendet: zu schmal",
-  },
   themeToggle: {
     title: 'Hell-Dunkel-Schalter',
     description: 'Zeigt oben im Fenster einen halb gefüllten Kreis. Klicken zum Wechseln; gedrückt halten oder Rechtsklick für mehr.',
@@ -1216,6 +1209,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const de: TranslationStructure = {
+  collectionColumns: {
+    title: "Spalten",
+    alwaysFirst: "Immer zuerst",
+    builtIn: "Integriert",
+    reset: "Auf Standard zurücksetzen",
+    tooNarrow: "Ausgeblendet: zu schmal",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `Verwaltet von ${organization}`,
     lockedExplanation: "Deine Organisation legt diese Auswahl fest. Wende dich für Änderungen an die Administration.",

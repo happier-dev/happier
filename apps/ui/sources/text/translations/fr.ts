@@ -787,13 +787,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['fr'],
   switchToDarkTheme: 'Passer au thème sombre',
   switchToLightTheme: 'Passer au thème clair',
-  collectionColumns: {
-    title: "Colonnes",
-    alwaysFirst: "Toujours en premier",
-    builtIn: "Intégrées",
-    reset: "Rétablir par défaut",
-    tooNarrow: "Masquée : trop étroit",
-  },
   themeToggle: {
     title: 'Bascule clair et sombre',
     description: 'Affiche un cercle à moitié plein en haut de la fenêtre. Clique pour basculer ; maintiens appuyé ou fais un clic droit pour plus d’options.',
@@ -1381,6 +1374,13 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const fr: TranslationStructure = {
+  collectionColumns: {
+    title: "Colonnes",
+    alwaysFirst: "Toujours en premier",
+    builtIn: "Intégrées",
+    reset: "Rétablir par défaut",
+    tooNarrow: "Masquée : trop étroit",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `Géré par ${organization}`,
     lockedExplanation: "Ce choix est défini par votre organisation. Contactez votre administrateur pour le modifier.",

@@ -788,13 +788,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['ru'],
   switchToDarkTheme: 'Переключить на тёмную тему',
   switchToLightTheme: 'Переключить на светлую тему',
-  collectionColumns: {
-    title: "Столбцы",
-    alwaysFirst: "Всегда первый",
-    builtIn: "Встроенные",
-    reset: "Сбросить по умолчанию",
-    tooNarrow: "Скрыт: слишком узко",
-  },
   themeToggle: {
     title: 'Переключатель светлой и тёмной темы',
     description: 'Показывает наполовину закрашенный круг вверху окна. Нажмите, чтобы переключить; удерживайте или нажмите правой кнопкой, чтобы увидеть больше.',
@@ -1438,6 +1431,13 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const ru: TranslationStructure = {
+  collectionColumns: {
+    title: "Столбцы",
+    alwaysFirst: "Всегда первый",
+    builtIn: "Встроенные",
+    reset: "Сбросить по умолчанию",
+    tooNarrow: "Скрыт: слишком узко",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `Управляется: ${organization}`,
     lockedExplanation: "Этот выбор задан вашей организацией. Для изменения обратитесь к администратору.",

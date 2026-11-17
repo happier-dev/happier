@@ -787,13 +787,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['ca'],
   switchToDarkTheme: 'Canvia al tema fosc',
   switchToLightTheme: 'Canvia al tema clar',
-  collectionColumns: {
-    title: "Columnes",
-    alwaysFirst: "Sempre primera",
-    builtIn: "Integrades",
-    reset: "Restableix els valors per defecte",
-    tooNarrow: "Amagada: massa estret",
-  },
   themeToggle: {
     title: 'Commutador clar i fosc',
     description: 'Mostra un cercle mig ple a la part superior de la finestra. Fes-hi clic per canviar; mantén-lo premut o fes clic dret per a més opcions.',
@@ -1391,6 +1384,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const ca: TranslationStructure = {
+  collectionColumns: {
+    title: "Columnes",
+    alwaysFirst: "Sempre primera",
+    builtIn: "Integrades",
+    reset: "Restableix els valors per defecte",
+    tooNarrow: "Amagada: massa estret",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `Gestionat per ${organization}`,
     lockedExplanation: "La teva organització estableix aquesta opció. Contacta amb l’administrador per canviar-la.",

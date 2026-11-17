@@ -85,6 +85,8 @@ const PAGE_HEADER_CONTROL: HeaderControlMetrics = Object.freeze({
 const TRAILING_EDGE_PORTAL = {
   ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
   anchorAlign: 'end',
+  // The menu is as wide as its rows (the content-sized popover bounds), attached to its "⋯".
+  sizeToContent: true,
 } as const;
 
 /**

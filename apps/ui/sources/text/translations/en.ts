@@ -897,13 +897,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['en'],
   switchToDarkTheme: 'Switch to dark theme',
   switchToLightTheme: 'Switch to light theme',
-  collectionColumns: {
-    title: "Columns",
-    alwaysFirst: "Always first",
-    builtIn: "Built in",
-    reset: "Reset to default",
-    tooNarrow: "Hidden: too narrow",
-  },
   themeToggle: {
     title: 'Light and dark switch',
     description:
@@ -24404,6 +24397,13 @@ const enOrganizationPolicy = {
   };
 
 export const en: TranslationStructure = {
+  collectionColumns: {
+    title: "Columns",
+    alwaysFirst: "Always first",
+    builtIn: "Built in",
+    reset: "Reset to default",
+    tooNarrow: "Hidden: too narrow",
+  },
   organizationPolicy: enOrganizationPolicy,
   botTemplates: botTemplateTranslations['en'],
   botTemplateRecipient: botTemplateRecipientTranslations['en'],
@@ -24958,6 +24958,7 @@ type DeepTranslationShape<T> = T extends (...args: infer Args) => infer Return
 type TranslationOverlay<Base, Overlay> = Omit<Base, keyof Overlay> & Overlay;
 
 type EnglishNamespaces0 = {
+  readonly collectionColumns: Readonly<{ title: string; alwaysFirst: string; builtIn: string; reset: string; tooNarrow: string }>;
   readonly llmTaskRunner: typeof llmTaskRunnerTranslations.en;
   readonly transcriptPassage: Readonly<{ quote: string; annotate: string; noteTitle: string; note: string; notePlaceholder: string; saveError: string; quoteError: string }>;
   readonly resourceProposal: typeof resourceProposalTranslations.en;

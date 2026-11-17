@@ -794,13 +794,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['ja'],
   switchToDarkTheme: 'ダークテーマに切り替え',
   switchToLightTheme: 'ライトテーマに切り替え',
-  collectionColumns: {
-    title: "列",
-    alwaysFirst: "常に先頭",
-    builtIn: "組み込み",
-    reset: "デフォルトに戻す",
-    tooNarrow: "非表示：幅が足りません",
-  },
   themeToggle: {
     title: 'ライト／ダーク切り替え',
     description: 'ウィンドウ上部に半分塗りの円を表示します。クリックで切り替え、長押しまたは右クリックでその他の操作。',
@@ -1408,6 +1401,13 @@ const settingsSessionHandoffTranslationExtensions = {
 
 
 export const ja: TranslationStructure = {
+  collectionColumns: {
+    title: "列",
+    alwaysFirst: "常に先頭",
+    builtIn: "組み込み",
+    reset: "デフォルトに戻す",
+    tooNarrow: "非表示：幅が足りません",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `管理元: ${organization}`,
     lockedExplanation: "この選択は組織によって設定されています。変更するには管理者にお問い合わせください。",

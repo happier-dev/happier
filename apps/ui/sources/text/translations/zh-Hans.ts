@@ -794,13 +794,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['zh-Hans'],
   switchToDarkTheme: '切换到深色主题',
   switchToLightTheme: '切换到浅色主题',
-  collectionColumns: {
-    title: "列",
-    alwaysFirst: "始终第一",
-    builtIn: "内置",
-    reset: "恢复默认",
-    tooNarrow: "已隐藏：宽度不足",
-  },
   themeToggle: {
     title: '浅色/深色切换',
     description: '在窗口顶部显示一个半填充的圆。点击即可切换；长按或右键可查看更多选项。',
@@ -1424,6 +1417,13 @@ function plural({
 
 
 export const zhHans: TranslationStructure = {
+  collectionColumns: {
+    title: "列",
+    alwaysFirst: "始终第一",
+    builtIn: "内置",
+    reset: "恢复默认",
+    tooNarrow: "已隐藏：宽度不足",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `管理方： ${organization}`,
     lockedExplanation: "此选项由您的组织设置。请联系管理员进行更改。",

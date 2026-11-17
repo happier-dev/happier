@@ -787,13 +787,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['pl'],
   switchToDarkTheme: 'Przełącz na ciemny motyw',
   switchToLightTheme: 'Przełącz na jasny motyw',
-  collectionColumns: {
-    title: "Kolumny",
-    alwaysFirst: "Zawsze pierwsza",
-    builtIn: "Wbudowane",
-    reset: "Przywróć domyślne",
-    tooNarrow: "Ukryta: za wąsko",
-  },
   themeToggle: {
     title: 'Przełącznik jasny i ciemny',
     description: 'Pokazuje u góry okna do połowy wypełnione kółko. Kliknij, aby przełączyć; przytrzymaj lub kliknij prawym przyciskiem, aby zobaczyć więcej.',
@@ -1437,6 +1430,13 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const pl: TranslationStructure = {
+  collectionColumns: {
+    title: "Kolumny",
+    alwaysFirst: "Zawsze pierwsza",
+    builtIn: "Wbudowane",
+    reset: "Przywróć domyślne",
+    tooNarrow: "Ukryta: za wąsko",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `Zarządzane przez ${organization}`,
     lockedExplanation: "Tę opcję ustala Twoja organizacja. Aby ją zmienić, skontaktuj się z administratorem.",

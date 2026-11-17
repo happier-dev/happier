@@ -788,13 +788,6 @@ const settingsAppearanceTranslationExtension = {
   newSessionBackdropStrength: newSessionBackdropStrengthTranslations['it'],
   switchToDarkTheme: 'Passa al tema scuro',
   switchToLightTheme: 'Passa al tema chiaro',
-  collectionColumns: {
-    title: "Colonne",
-    alwaysFirst: "Sempre prima",
-    builtIn: "Integrate",
-    reset: "Ripristina predefiniti",
-    tooNarrow: "Nascosta: troppo stretto",
-  },
   themeToggle: {
     title: 'Interruttore chiaro e scuro',
     description: 'Mostra un cerchio pieno a metà in cima alla finestra. Fai clic per cambiare; tieni premuto o fai clic destro per altre opzioni.',
@@ -1423,6 +1416,13 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const it: TranslationStructure = {
+  collectionColumns: {
+    title: "Colonne",
+    alwaysFirst: "Sempre prima",
+    builtIn: "Integrate",
+    reset: "Ripristina predefiniti",
+    tooNarrow: "Nascosta: troppo stretto",
+  },
   organizationPolicy: {
     managedBy: ({ organization }: { organization: string }) => `Gestito da ${organization}`,
     lockedExplanation: "Questa scelta è definita dalla tua organizzazione. Contatta l’amministratore per modificarla.",
