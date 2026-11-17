@@ -11,6 +11,8 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -85,7 +87,7 @@ export const StorePetListing = React.memo(function StorePetListing(
     state.kind === 'couldntAdd' || state.kind === 'libraryFull';
   return (
     <ItemList testID={props.testID} presentation="grouped">
-      <View style={[styles.root, phone ? styles.rootPhone : null]}>
+      <View style={styles.root}>
         <View style={styles.identity}>
           <Text variant="meta" style={styles.kicker}>
             {t('settingsPets.store.kicker')}
@@ -236,11 +238,14 @@ export const StorePetListing = React.memo(function StorePetListing(
         </View>
 
         {facts.length > 0 ? (
-          <ItemGroup testID={id('facts')}>
+          // The facts card stands on the listing's edges like everything above it: a contained scope adds no second inset.
+          <ListPresentationProvider value="page" pageInsets="contained">
+          <ItemGroup testID={id('facts')} header="none">
             {facts.map((fact) => (
               <FactRow key={fact.key} fact={fact} />
             ))}
           </ItemGroup>
+          </ListPresentationProvider>
         ) : null}
 
         {props.reportUrl ? (
@@ -334,11 +339,11 @@ function FactRow(props: Readonly<{ fact: StorePetListingFact }>) {
 
 const styles = StyleSheet.create((theme) => ({
   root: {
-    paddingHorizontal: theme.space.s24,
+    // The Store listing frame (StoreThemeListing, STORE-UI-1117): every block on the pane's text edge.
+    paddingHorizontal: PANE_TEXT_INSET_PX,
     paddingVertical: theme.space.s16,
     gap: theme.space.s16,
   },
-  rootPhone: { paddingHorizontal: theme.space.s16 },
   identity: { gap: theme.space.s2 },
   kicker: { color: theme.colors.text.tertiary },
   name: { color: theme.colors.text.primary },

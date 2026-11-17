@@ -107,10 +107,11 @@ function NewSessionScreenInner(props: Readonly<{
                 presentation={props.presentation}
             >
                 {props.presentation === 'embedded'
-                    ? <NewSessionEmbeddedComposerCard
+                    // On web, /new is the dock: a seeded draft's first screen stands above its card there too.
+                    ? <>{props.intro ?? null}<NewSessionEmbeddedComposerCard
                         panelProps={embeddedPanelProps ?? model.simpleProps}
                         creationProfile={creationProfile}
-                        controlPreset={props.composerControlPreset} />
+                        controlPreset={props.composerControlPreset} /></>
                     : <NewSessionSimplePanel {...withBotDraftPresentation(model.simpleProps, model.botCreation)} intro={props.intro} />}
             </NewSessionLaunchSurface>
         );
