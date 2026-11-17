@@ -8,6 +8,8 @@ import { IntervalTimeline, selectIntervalTrackRun, stepIntervalTrackRun } from '
 import { OutcomeScatter } from './OutcomeScatter.js';
 import { readHitAreaReach } from '../interaction/hitArea.testSupport.js';
 import { ChartInteractionProvider } from './ChartDatum.js';
+import { HappierPageSectionContext } from '../layout/PageSection.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 
 const query = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 
@@ -280,6 +282,20 @@ describe('neutral intervals and outcomes', () => {
       expect(narrowLine.style.flexDirection).not.toBe('row');
       expect(query(mount.container, 'wf-select-receipt')!.textContent).toBe('buildReceiptthrew58 ms');
     } finally { mount.unmount(); }
+  });
+
+  it('keeps the rows inset off a section sheet edge, and draws edge to edge elsewhere', () => {
+    const timeline = <IntervalTimeline testID="wf" theme={SURFACE_CONTEXT_THEME_FIXTURE} label="Request timeline" size="full"
+      intervals={[{ id: 'root', label: 'POST /checkout', start: 0, end: 412, value: '412 ms' }]} domain={{ start: 0, end: 412 }} />;
+    const onSheet = mountThroughReactNativeWeb(<HappierPageSectionContext.Provider value={{ rowDividerColor: 'rgb(0, 0, 0)', rowInsetPx: 16, framed: true }}>
+      {timeline}</HappierPageSectionContext.Provider>);
+    const bare = mountThroughReactNativeWeb(timeline);
+    try {
+      const sheetBox = query(onSheet.container, 'wf')!.parentElement!;
+      expect(sheetBox.style.paddingLeft).toBe('16px');
+      expect(sheetBox.style.paddingTop).toBe(`${HAPPIER_PAGE_METRICS.rowPaddingVerticalPx}px`);
+      expect(query(bare.container, 'wf')!.parentElement!.style.paddingLeft).toBe('');
+    } finally { onSheet.unmount(); bare.unmount(); }
   });
 
   it('preserves every interval boundary, draws only witnessed spans and retains selection on resize', async () => {

@@ -12,6 +12,8 @@ import { useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { formatHappierDataValue, resolveHappierDataDomainFraction } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
 import { ChartDatum, type HappierChartDatum } from './ChartDatum.js';
+import { useHappierPageSection } from '../layout/PageSection.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 
 export type IntervalTimelineInterval = Readonly<{
   id: string;
@@ -181,6 +183,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [valuesExpanded, setValuesExpanded] = useState(false);
   const localization = useOptionalHappierUiLocalization();
+  // Laid straight on a section's sheet (a request's waterfall), the timeline keeps the rows' insets off the sheet edge.
+  const pageSection = useHappierPageSection();
   const unknown = props.unknownLabel ?? 'Unknown';
   const startLabel = props.startLabel ?? 'Start';
   const endLabel = props.endLabel ?? 'End';
@@ -251,7 +255,9 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
   const collapseLabel = props.valuesCollapseLabel ?? (props.valuesLabel === undefined
     ? localization?.translate('happier.plugin-ui.state.collapseDetails', 'Collapse') ?? 'Collapse' : valuesLabel);
 
-  return <View testID={props.testID} onLayout={(event: HappierLayoutChangeEvent) => setMeasuredWidth(event.nativeEvent.layout.width)}
+  const sheetInset = pageSection?.framed === true
+    ? { paddingHorizontal: pageSection.rowInsetPx, paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx } : null;
+  const timeline = <View testID={props.testID} onLayout={(event: HappierLayoutChangeEvent) => setMeasuredWidth(event.nativeEvent.layout.width)}
     style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
     {props.basis ? <HappierText style={text.caption}>{props.basis}</HappierText> : null}
     {showPlot ? <View testID={props.testID ? `${props.testID}-plot` : undefined} style={lanesLayout ? { gap: HAPPIER_DATA_METRICS.blockGapPx } : undefined}>
@@ -414,4 +420,5 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
       columns={[...(lanesLayout ? [{ label: props.laneLabel ?? '' }] : []), { label: props.label }, { label: startLabel }, ...(hasIntervals ? [{ label: endLabel }] : []), { label: '' }]}
       rows={props.intervals.map(rowValues)} />}
   </View>;
+  return sheetInset ? <View style={sheetInset}>{timeline}</View> : timeline;
 }
