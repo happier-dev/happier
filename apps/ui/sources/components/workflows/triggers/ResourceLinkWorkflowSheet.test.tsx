@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import type { TriggerWhenValue } from './sessionTriggerForm';
+import type { ResourceWorkflowTriggerStartOption } from './workflowTriggerStarts';
 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -27,6 +29,7 @@ vi.mock('@/components/ui/popover', async (importOriginal) =>
 
 const { ResourceLinkWorkflowSheet } =
   await import('./ResourceLinkWorkflowSheet');
+const { TriggerPluginEventRows } = await import('./TriggerPluginEventRows');
 const { ValueFieldSelect } =
   await import('@/components/ui/forms/ValueFieldSelect');
 const { SegmentedTabBar } =
@@ -84,6 +87,37 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
 
 // 05 S5 Link + D8: Workflow, When from the resource's starts, the before wait policy, and the same-step share question.
 describe('Link a workflow to a resource', () => {
+  it.each([false, true])('retains configured Event input when choosing another Workflow (configured first: %s)', async configuredFirst => {
+    const eventRef = { pluginId: 'acme.deploy', localId: 'released' };
+    const eventOption = {
+      id: 'event:acme.deploy/released', label: 'Released', relation: 'event', subject,
+      setupRequired: true, when: { kind: 'pluginEvent', value: null, eventRef }, trigger: null,
+      eventSeed: { eventRef, monitoringMachineId: 'runner', setupInput: {} },
+    } satisfies ResourceWorkflowTriggerStartOption;
+    const configured: Extract<TriggerWhenValue, { kind: 'pluginEvent' }> = {
+      kind: 'pluginEvent', value: {
+        kind: 'pluginEvent', enabled: true, eventRef, sourceInstanceId: 'production', sourceContractVersion: 1,
+        sourceConfig: { environment: 'production' }, displayLabel: 'Production release', filter: null,
+        maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull',
+          watcherMaterializationRef: { machineId: 'runner', pluginId: 'acme.deploy', materializationId: 'deploy' } },
+      },
+    };
+    const link = { ...linkFor([]), whenOptions: [eventOption] };
+    const screen = await renderScreen(<ResourceLinkWorkflowSheet anchorRef={React.createRef<never>()}
+      resourceName="Production" link={link} serverId={null} machineId={null} accountLifetime={null}
+      onRequestClose={() => undefined} onLinked={() => undefined} />);
+    try {
+      const [workflowSelect, whenSelect] = screen.findAllByType(ValueFieldSelect);
+      if (!configuredFirst) await act(async () => workflowSelect!.props.onSelect('builtin:review-and-converge'));
+      await act(async () => whenSelect!.props.onSelect(eventOption.id));
+      // The real Event editor's accepted configuration is the presentation owner's input.
+      await act(async () => screen.findAllByType(TriggerPluginEventRows)[0]!.props.onChange(configured));
+      expect(screen.findAllByType(TriggerPluginEventRows)[0]!.props.when).toMatchObject(configured);
+      await act(async () => workflowSelect!.props.onSelect('builtin:plan-with-a-panel'));
+      expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:plan-with-a-panel', trigger: configured.value });
+    } finally { await screen.unmount(); }
+  });
+
   it('drafts a before link that waits by default, offers If it fails, and asks to share on a shared resource', async () => {
     const link = linkFor([
       { kind: 'team', teamId: 'team-studio' } as PrincipalRefV1,

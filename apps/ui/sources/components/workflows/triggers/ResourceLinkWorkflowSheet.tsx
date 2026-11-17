@@ -23,7 +23,6 @@ import { TriggerPluginEventRows } from './TriggerPluginEventRows';
 import {
   ActionWaitPolicyRows,
   TrackRow,
-  type ActionWhen,
 } from './WorkflowTriggerBlock';
 import type { ResourceAutomationsSectionRead } from './useResourceAutomationsSection';
 import { useTriggerThenOptions } from './useTriggerThenOptions';
@@ -85,7 +84,7 @@ export function ResourceLinkWorkflowSheet(
   });
   const [workflow, setWorkflow] = React.useState<string | null>(null);
   const [whenId, setWhenId] = React.useState<string | null>(null);
-  const [policy, setPolicy] = React.useState<ActionWhen | null>(null);
+  const [when, setWhen] = React.useState<ResourceWorkflowTriggerStartOption['when'] | null>(null);
   const [failure, setFailure] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const choice = React.useMemo(
@@ -96,13 +95,14 @@ export function ResourceLinkWorkflowSheet(
   const draftFor = React.useCallback(
     (
       ref: string | null,
-      start: ResourceWorkflowTriggerStartOption | null,
-      when: ActionWhen | null,
+      nextWhen: ResourceWorkflowTriggerStartOption['when'] | null,
     ) => {
       // An Event start is configured in its own rows first; the draft follows once its value exists.
-      if (!ref || !start || start.relation === 'event' || !when)
-        return setDraft(null);
-      setDraft({ workflow: ref, trigger: { ...when, enabled: true } });
+      if (!ref || !nextWhen) return setDraft(null);
+      if (nextWhen.kind === 'pluginEvent') {
+        return setDraft(nextWhen.value ? { workflow: ref, trigger: nextWhen.value } : null);
+      }
+      setDraft({ workflow: ref, trigger: { ...nextWhen, enabled: true } });
     },
     [setDraft],
   );
@@ -238,7 +238,7 @@ export function ResourceLinkWorkflowSheet(
                   searchPlaceholder={t('workflows.triggers.link.findWorkflow')}
                   onSelect={(id) => {
                     setWorkflow(id);
-                    draftFor(id, choice, policy);
+                    draftFor(id, when);
                   }}
                 />
               </View>
@@ -273,34 +273,35 @@ export function ResourceLinkWorkflowSheet(
                               ? { mode: 'wait' as const }
                               : {}),
                           }
-                        : null;
+                        : next?.when ?? null;
                     setWhenId(id);
-                    setPolicy(when);
-                    draftFor(workflow, next, when);
+                    setWhen(when);
+                    draftFor(workflow, when);
                   }}
                 />
               </View>
             </TrackRow>
-            {policy?.phase === 'before' ? (
+            {when?.kind === 'action' && when.phase === 'before' ? (
               <ActionWaitPolicyRows
                 testID="resource-link-policy"
-                when={policy}
+                when={when}
                 onChange={(next) => {
-                  setPolicy(next);
-                  draftFor(workflow, choice, next);
+                  setWhen(next);
+                  draftFor(workflow, next);
                 }}
               />
             ) : null}
-            {choice?.relation === 'event' ? (
+            {choice?.relation === 'event' && when?.kind === 'pluginEvent' ? (
               <TriggerPluginEventRows
                 testID="resource-link-event"
-                when={choice.when}
+                when={when}
                 initialEventSeed={choice.eventSeed}
                 machineId={props.machineId}
                 serverId={props.serverId}
                 onChange={(next) => {
-                  if (workflow && next.kind === 'pluginEvent' && next.value) {
-                    setDraft({ workflow, trigger: next.value });
+                  if (next.kind === 'pluginEvent') {
+                    setWhen(next);
+                    draftFor(workflow, next);
                   }
                 }}
               />
