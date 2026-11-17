@@ -11,6 +11,8 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
 import { allowRealServerSocketBoundary, configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { HomeGovernanceGetInputV1Schema } from '@happier-dev/protocol/home/governance/actionsV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { encodeBase64 } from '@/encryption/base64';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -118,7 +120,10 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['native authored failure', false, null, false, false, false, false],
 ] : [
     ['browser', true, null, false, false, false, false],
+    ['browser Home payload export', true, null, false, false, false, false],
+    ['browser Home payload export opaque Plain preset', true, null, false, false, true, false],
     ['browser bootstrap failure recovery', true, null, false, false, false, false],
+    ['browser bootstrap failure recovery Home payload export', true, null, false, false, false, false],
     ['browser bootstrap failure recovery Delete', true, 'machines.managed.delete', false, false, false, false],
     ['browser refused roles seed', true, null, false, false, false, false],
     ['browser delete', false, 'machines.managed.delete', false, false, false, false],
@@ -132,6 +137,12 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['browser retained acquisition Delete unknown', false, 'machines.managed.delete', false, false, false, false, 'unknown'],
 ];
 it.each(cases)('%s host carries the designed Create/Send review through the public Account path', async (label, startAgent, cleanupAction, alreadyAbsent, stoppedCleanup, opaquePreset, keylessE2ee, uncertainDelete) => {
+    const homePayload = label.includes('Home payload');
+    const exportedHomePayload = label.includes('Home payload export');
+    const homePayloadArchive = { target: { os: 'linux' as const, arch: 'x64' as const },
+        sha256: '4b'.repeat(32), url: '/v1/runtime/guest-cli/payloads/linux/x64' };
+    const homeRetryArchive = { ...homePayloadArchive, sha256: '6d'.repeat(32),
+        url: '/v1/runtime/guest-cli/payloads/retry/linux/x64' };
     const missingPolicy = label.includes('missing policy');
     const delegatedPolicy = label.includes('delegated policy');
     const refusedRoles = label.includes('refused roles seed');
@@ -139,7 +150,6 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     const presetMode = plainPreset ? 'plain' as const : 'e2ee' as const;
     const e2eeAccount = opaquePreset && !plainPreset || label === 'native E2EE one-off';
     if (host === 'native') vi.stubGlobal('__TAURI_INTERNALS__', { invoke: () => null });
-    const homePayload = label.includes('Home payload');
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -172,24 +182,25 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     const homeFeatures = FeaturesResponseSchema.parse(await (await homes.request(`${serverUrl}/v1/features`)).json());
     homeFeatures.features.encryption.plaintextStorage.enabled = true;
     homeFeatures.features.e2ee.keylessAccounts.enabled = true;
+    // This HTTP fixture serves the captured signed stable release below, not
+    // the source Home's development payload.
+    homeFeatures.capabilities.guestCli = { source: homePayload ? 'home-payload' : 'public-release',
+        line: signedRelease.version.split('.').slice(0, 2).join('.'), channel: 'stable',
+        ...(exportedHomePayload ? { payloads: [homePayloadArchive] } : {}) };
+    if (label.endsWith('unknown source')) homeFeatures.capabilities.guestCli = undefined;
     homes.answer(serverId, '/v1/features', { body: homeFeatures });
     homes.answer(serverId, '/v1/features/authenticated', { body: homeFeatures });
+    // Match the connection's pushed public snapshot to this Home's HTTP identity.
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: homeFeatures } });
     homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
     const declaredProvisioner = PLUGIN_MANIFEST.contributes.machineProvisioners?.[0];
     if (!declaredProvisioner) throw new Error('Missing Vercel declaration');
     const provisioner = { ...declaredProvisioner,
         retention: RetentionCapabilitiesV1Schema.parse(declaredProvisioner.retention) };
     const selected = { service: { pluginId: PLUGIN_MANIFEST.id, localId: 'vercel-account' }, accountId: 'explicit-selected' };
-    // This HTTP fixture serves the captured signed stable release below, not
-    // the source Home's development payload.
-    homeFeatures.capabilities.guestCli = { source: homePayload ? 'home-payload' : 'public-release',
-        line: signedRelease.version.split('.').slice(0, 2).join('.'), channel: 'stable' };
-    if (label.endsWith('unknown source')) homeFeatures.capabilities.guestCli = undefined;
     const secret = 'private-selected-vercel-token';
     let credential: unknown;
-    // Match the connection's pushed public snapshot to this Home's HTTP identity.
-    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: homeFeatures } });
     let configuration: unknown;
     let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | undefined;
     let admissions = 0;
@@ -252,6 +263,9 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         if (!override) throw new Error('Expected a same-DEK private acquire override');
         presetContentOverride = override;
         return ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: 'opaque-preset', revision: 1 },
+            ...(startAgent ? { agentStart: { directory: { kind: 'managed' }, agentTarget: {
+                kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            } } } : {}),
             ...(missingPolicy ? {} : { retention, wakeOnAcceptedMessage: false }), presetContentOverride: override });
     };
     // The guest's published mode and Action envelopes must match this Account.
@@ -335,7 +349,6 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 if (event.includes('rpc')) { machineRpcs++; throw new Error('Unexpected Machine operation RPC'); }
                 return { ok: true };
             });
-        if (address.origin === 'https://api.github.com') return releaseResponse(address);
         },
         request });
     async function requestHome(url: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
@@ -343,6 +356,11 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             const path = address.pathname;
             homePaths.push(path);
             if (typeof init?.body === 'string') homeBodies.push(init.body);
+            if (path === '/v1/home/governance/get') {
+                expect(HomeGovernanceGetInputV1Schema.parse(await new Response(init?.body).json()))
+                    .toEqual({ projection: 'session_defaults' });
+                return Response.json(HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }));
+            }
             if (path === '/v1/machines/presets/get') {
                 if (!sourcePresetContent) throw new Error('Missing exact preset content');
                 return Response.json({ kind: 'found', preset: {
@@ -454,6 +472,16 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 admissions++;
                 const body = await new Response(init?.body).json();
                 admittedPresetPolicy = body.presetPolicy;
+                const admittedGuestCli = homeFeatures.capabilities.guestCli;
+                if (exportedHomePayload) {
+                    expect(body).not.toHaveProperty('guestCli');
+                    expect(body.input).not.toHaveProperty('guestCli');
+                    // Publishing a newer build after this admission must not
+                    // change the archive this already accepted guest installs.
+                    homeFeatures.capabilities.guestCli = { ...homeFeatures.capabilities.guestCli!, payloads: [
+                        { ...homePayloadArchive, sha256: '5c'.repeat(32), url: '/v1/runtime/guest-cli/payloads/newer/linux/x64' },
+                    ] };
+                }
                 if (delegatedPolicy) {
                     const { resolveMachineRetentionPolicyV1 } = await import('@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1');
                     const expected = resolveMachineRetentionPolicyV1({ billing: provisioner.billing, nativeCapabilities: provisioner.retention });
@@ -488,6 +516,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     }
                     managed = ManagedMachineV1Schema.parse({ id: 'managed-1', homeId, custodianAccountId: accountId,
                         enrollmentAccountId: accountId,
+                        ...(admittedGuestCli === undefined ? {} : { guestCli: admittedGuestCli }),
                         preset: { id: acquire.selection.id, revision: acquire.selection.revision, contentEncryptionMode: presetMode },
                         retention: expectedPolicy.retention, wakeOnAcceptedMessage: expectedPolicy.wakeOnAcceptedMessage,
                         allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0 });
@@ -495,6 +524,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 }
                 managed = ManagedMachineV1Schema.parse({ id: 'managed-1', homeId, custodianAccountId: accountId,
                     enrollmentAccountId: accountId, enrollmentIdentity: body.input.enrollmentIdentity,
+                    ...(admittedGuestCli === undefined ? {} : { guestCli: admittedGuestCli }),
                     launch: body.input.selection.launch, retention: body.input.selection.retention,
                     reviewedFacts: body.input.reviewedFacts,
                     allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
@@ -552,6 +582,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             }
             if (path.endsWith('/controller/current') || path.endsWith('/controller/enrollment-context')) return Response.json({ machine: managed });
             if (path.endsWith('/controller/context')) return Response.json({ machine: managed,
+                ...(exportedHomePayload ? { guestCli: { ...homeFeatures.capabilities.guestCli!, payloads: [homeRetryArchive] } } : {}),
                 ...(opaquePreset && admittedPresetContent ? { presetContent: admittedPresetContent,
                     ...(presetContentOverride === undefined ? {} : { presetContentOverride }) } : {}),
                 requestId: 'native-managed-create', enrollmentInstallation: { machineId: 'joined', installationId: guest.installationId, installationPublicKey } });
@@ -892,6 +923,14 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         const context = bindPresentUserActionConfirmation('machines.managed.acquire', input, { surface: 'ui', authority: 'present_user',
             serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: 'native-managed-create',
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+        if (homePayload && !exportedHomePayload) {
+            const refused = await executor.execute('machines.managed.acquire', input, context);
+            expect({ admissions, allocations, machineRpcs, approvals }, JSON.stringify(refused)).toEqual({ admissions: 0, allocations: 0, machineRpcs: 0, approvals: 0 });
+            expect(refused).toMatchObject({ ok: false, failureCause: { errorCode: label.endsWith('unknown source')
+                ? 'guest_cli_identity_unavailable' : 'guest_payload_missing' } });
+            expect(managed).toBeUndefined();
+            return;
+        }
         if (uncertainDelete) {
             const handle = { contributionRef: launch.provider, schemaVersion: 1,
                 value: { kind: 'acquire', name: 'happier-managed-1', managedId: 'managed-1', teamId: 'team_one', projectId: 'prj_one' } };
@@ -946,14 +985,6 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             });
             expect(JSON.stringify(failure)).not.toContain(secret);
             expect(allocations).toBe(0);
-        if (homePayload) {
-            const refused = await executor.execute('machines.managed.acquire', input, context);
-            expect({ admissions, allocations, machineRpcs, approvals }, JSON.stringify(refused)).toEqual({ admissions: 0, allocations: 0, machineRpcs: 0, approvals: 0 });
-            expect(refused).toMatchObject({ ok: false, failureCause: { errorCode: label.endsWith('unknown source')
-                ? 'guest_cli_identity_unavailable' : 'provider_unavailable' } });
-            expect(managed).toBeUndefined();
-            return;
-        }
             return;
         }
         const stages = new Set<string>();
@@ -978,7 +1009,8 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             let acquisition: ManagedMachineAcquisitionDraft = { requestId: 'native-managed-create', selection: input.selection };
             const progress: ManagedMachineCreationProgress[] = [];
             const created = await runManagedMachineCreation({
-                draft: { selection: input.selection, receipt: reviewedFacts, enrollmentIdentity },
+                draft: { selection: input.selection, receipt: reviewedFacts, enrollmentIdentity,
+                    ...('presetContentOverride' in input ? { presetContentOverride: input.presetContentOverride } : {}) },
                 acquisition,
                 agentStart: input.agentStart, scope: lifetime.scope, signal: new AbortController().signal,
                 isCurrent: () => lifetime.isCurrent(), onAcquisitionChange: value => { acquisition = value; }, onProgress: value => { progress.push(value); },
@@ -1021,6 +1053,13 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                     onApprovalPending: () => { throw new Error('The designed review must answer default confirmation'); },
                 });
                 expect(homeBoundaryFailures).toEqual([]);
+                if (exportedHomePayload) {
+                    expect(managed?.guestCli?.payloads).toEqual([homePayloadArchive]);
+                    const installed = [...commands.values()].filter(command => command.includes(homeRetryArchive.url));
+                    expect(installed, JSON.stringify({ retried, progress })).toHaveLength(1);
+                    expect(installed[0]).toContain(homeRetryArchive.sha256);
+                    expect(releaseRequests).toBe(0);
+                }
                 expect(retried, JSON.stringify({ retried, progress, homePaths })).toMatchObject({ kind: 'enrolled', machine: { id: 'managed-1', enrolledMachineId: 'joined' } });
                 expect({ allocations, admissions, guestDispatches }).toEqual({ allocations: 1, admissions: 1, guestDispatches: 0 });
                 return;
@@ -1111,6 +1150,13 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         });
         expect(roleDispatches).toBe(refusedRoles ? 0 : 1);
         expect(guestContinuation).toEqual({ managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 });
+        if (exportedHomePayload) {
+            expect(releaseRequests).toBe(0);
+            const installCommands = [...commands.values()].filter(command => command.includes(homePayloadArchive.url));
+            expect(installCommands).toHaveLength(1);
+            expect(installCommands[0]).toContain(homePayloadArchive.sha256);
+            expect(installCommands[0]).toContain(serverUrl);
+        }
         expect(JSON.stringify({ interrupted, retried })).not.toContain(secret);
         if (missingPolicy) {
             expect(homePaths.filter(path => path === '/v1/machines/presets/get')).toHaveLength(plainPreset ? 1 : 2);

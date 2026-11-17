@@ -6821,8 +6821,13 @@ which CLI the user's terminal and the service run.
 
 In unreleased 0.3, a provisioned guest's Update delegates to
 `machines.managed.bootstrap.retry`, the same enrollment and payload-transfer owner
-used by acquire and Retry install. The connected Home's guest payload is the
-target; a public release-channel version is never a substitute. Missing Home
+used by acquire and Retry install. The connected Home's `capabilities.guestCli`
+selects its source payload or signed release line and channel. A source Home can
+opt in to exporting its producer archives; Create retains the advertised target
+list and archive hashes in its existing admission, and Update/Retry captures a new
+snapshot for its own operation. The guest verifies the selected archive hash before
+extracting or running it. See [source guest payloads](binary-runtime.md#runtime-contract).
+Missing Home
 payloads or transports without Home-payload transfer settle as
 `guest_payload_missing`. Explicit Retry install replaces a retained native-process
 guest's payload before restarting its daemon; ordinary boot recovery only repairs

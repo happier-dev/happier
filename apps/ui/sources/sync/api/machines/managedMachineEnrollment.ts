@@ -33,11 +33,11 @@ export type UiManagedMachineEnrollmentDependencies = Omit<ManagedMachineEnrollme
     readBootstrapCredential?(): Promise<string>;
 }>;
 
-/** The default downloader cannot deliver Home-owned payload bytes, even on a native HTTP host. */
+/** The default downloader consumes pinned Home archives; local bytes need an injected installer. */
 export function readUiManagedMachineEnrollmentCapabilities(
     deps?: Pick<UiManagedMachineEnrollmentDependencies, 'installNativePayload'>,
-): Readonly<{ localPayloadAvailable: boolean }> {
-    return { localPayloadAvailable: typeof deps?.installNativePayload === 'function' };
+): Readonly<{ localPayloadAvailable: boolean; remotePayloadAvailable: true }> {
+    return { localPayloadAvailable: typeof deps?.installNativePayload === 'function', remotePayloadAvailable: true };
 }
 
 /** Invoking-app IO and private questions for the shared ordinary enrollment recipe. */
@@ -74,6 +74,7 @@ export async function runUiManagedMachineEnrollment(input: UiManagedMachineEnrol
         ...deps,
         installNativePayload: deps.installNativePayload ?? (installation => installManagedGuestCliViaRemoteDownload({
             homeUrl: installation.homeUrl, channel: installation.channel, os: installation.os, arch: installation.arch,
+            ...(installation.guestCliPayload ? { guestCliPayload: installation.guestCliPayload } : {}),
             remoteHomeDir: installation.remoteHomeDir, signal: installation.signal, fetchImpl: runtimeFetch,
             runRemoteText: command => installation.exec({ command, signal: installation.signal }),
         })),

@@ -5,6 +5,7 @@ import { executeManagedMachineAcquire, reconcileManagedMachine, createManagedNat
     ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -50,6 +51,7 @@ type UiManagedAccountRecipeParams = Readonly<{
     input: ManagedAcquireInputV1 | ManagedMachineActionInputV1<'machines.managed.bootstrap.retry'>;
     signal?: AbortSignal;
     installNativePayload?: UiManagedMachineEnrollmentDependencies['installNativePayload'];
+    retryGuestCli?: GuestCliIdentityV1;
 }>;
 
 /** The Home carrier remains opaque until this captured Account opens its exact admitted snapshot. */
@@ -370,7 +372,7 @@ export async function executeUiManagedAccountRecovery(params: Omit<UiManagedAcco
         homeId: params.machine.homeId, managedId: params.machine.id,
         expectedIntentRevision: 'expectedIntentRevision' in params.input ? params.input.expectedIntentRevision : params.machine.intentRevision,
     }, ManagedControllerContextOutputV1Schema);
-    const recipe = { ...params, requestId: retained.requestId };
+    const recipe = { ...params, requestId: retained.requestId, retryGuestCli: retained.guestCli };
     const opaque = isUiManagedOpaquePresetCarrier(retained)
         ? await hydrateUiManagedOpaquePreset({ account: params.account, carrier: retained, signal: params.signal }) : null;
     try {
@@ -443,6 +445,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                     const target = await params.account.resolveHomeTarget();
                     await runUiManagedMachineEnrollment({
                         replacePayload: action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
+                        ...(params.retryGuestCli ? { guestCli: params.retryGuestCli } : {}),
                         correlation: enrollment.correlation, homeCorrelation: enrollment.homeCorrelation,
                         carrier: enrollment.carrier, target,
                         channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), operationId: params.context.operationAcceptance?.operationId ?? params.requestId,
