@@ -16,6 +16,9 @@ export { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1, PET_ACTION_IDS_V1, is
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const REVIEW_PREPARE_ROUND_ACTION_ID_V1 = 'review.prepare_round' as const;
+export const REVIEW_SETTLE_ROUND_ACTION_ID_V1 = 'review.settle_round' as const;
+export const REVIEW_NEW_ROUND_ACTION_ID_V1 = 'review.new_round' as const;
 export const PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 = 'projects.sessionDefaults.get' as const;
 /** Public defaults layers read while preparing one admitted creation selection. */
 export function isProjectSessionDefaultsPreparationReadActionIdV1(actionId: string): boolean {
@@ -548,6 +551,9 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   collection_space_membership: ['collection.space.membership.set'],
   intent_start: [
     'review.start',
+    REVIEW_PREPARE_ROUND_ACTION_ID_V1,
+    REVIEW_SETTLE_ROUND_ACTION_ID_V1,
+    REVIEW_NEW_ROUND_ACTION_ID_V1,
     'review.apply',
     'review.walkthrough',
     'review.explain_findings',
