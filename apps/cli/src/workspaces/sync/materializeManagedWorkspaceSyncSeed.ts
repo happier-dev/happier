@@ -3,6 +3,7 @@ import { lstat, mkdtemp, readFile, readdir, readlink, rm } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
 import type { ActionOperationProgressUpdate } from '@/daemon/actionOperations/actionOperationTypes';
@@ -99,7 +100,10 @@ export async function materializeManagedWorkspaceSyncSeed(input: Readonly<{
     }, { includeHostingProviders: false }));
   } catch (cause) {
     if (input.signal.aborted) throw cause;
-    throw Object.assign(new Error('Project files could not be copied into the target', { cause }), { code: 'project_files_copy_failed' });
+    throw Object.assign(new Error('Project files could not be copied into the target', { cause }), {
+      code: 'project_files_copy_failed',
+      failureCause: projectActionFailureCauseV1(cause, 'session.target.prepare'),
+    });
   } finally {
     if (directory) await rm(directory, { recursive: true, force: true });
     if (stagedTarget) await input.target.exec(`rm -rf ${q(stagedTarget)}`, input.signal).catch(() => undefined);

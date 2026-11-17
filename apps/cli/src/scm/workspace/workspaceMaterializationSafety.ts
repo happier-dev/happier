@@ -1,7 +1,15 @@
 import { isAbsolute, join, relative, resolve, dirname, sep } from 'node:path';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { resolveWorkspaceRelativePath } from './workspaceExportPackaging/resolveWorkspaceRelativePath';
 import { resolveNativeFilesystemPathForAuthorization } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+
+function workspaceMaterializationPathError(message: string) {
+    const error = Object.assign(new Error(message), { code: SCM_OPERATION_ERROR_CODES.INVALID_PATH });
+    return Object.assign(error, { failureCause: projectActionFailureCauseV1(error,
+        'workspace.materialization.path', { allowUnknownErrorCode: true }) });
+}
 
 export function resolveContainedWorkspaceMaterializationPath(params: Readonly<{
     workspaceRoot: string;
@@ -14,7 +22,7 @@ export function resolveContainedWorkspaceMaterializationPath(params: Readonly<{
         const nativePath = resolve(root, params.candidatePath);
         const nativeRelative = relative(root, nativePath);
         if (isAbsolute(nativeRelative) || nativeRelative === '..' || nativeRelative.startsWith(`..${sep}`)) {
-            throw new Error(params.errorMessage);
+            throw workspaceMaterializationPathError(params.errorMessage);
         }
         return nativePath;
     }
@@ -23,7 +31,7 @@ export function resolveContainedWorkspaceMaterializationPath(params: Readonly<{
         candidatePath: params.candidatePath,
     });
     if (!resolvedPath.ok) {
-        throw new Error(params.errorMessage);
+        throw workspaceMaterializationPathError(params.errorMessage);
     }
     return join(resolve(params.workspaceRoot), resolvedPath.relativePath);
 }
@@ -36,7 +44,7 @@ export function assertWorkspaceMaterializationSymlinkTarget(params: Readonly<{
     installed?: true;
 }>): void {
     if (!params.target || isAbsolute(params.target)) {
-        throw new Error(`Workspace transfer symlink target escapes target: ${params.target}`);
+        throw workspaceMaterializationPathError(`Workspace transfer symlink target escapes target: ${params.target}`);
     }
     resolveContainedWorkspaceMaterializationPath({
         workspaceRoot: params.workspaceRoot,

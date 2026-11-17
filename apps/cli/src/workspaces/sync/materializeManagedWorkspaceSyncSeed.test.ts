@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectSessionTargetLaunchFailure } from '@/daemon/spawn/prepareSessionTargetPlacement';
 
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
@@ -65,6 +69,39 @@ describe.skipIf(process.platform === 'win32')('managed target workspace seed', (
     expect(await readlink(join(result.targetRoot, 'link'))).toBe('nested/uncommitted.bin');
   });
 
+  it('projects an absolute contained source link refusal before guest file writes without exposing source paths', async () => {
+    const f = await fixture();
+    const bytes = Buffer.from([0, 255, 1]);
+    await mkdir(join(f.source, 'private'));
+    await writeFile(join(f.source, 'sentinel.bin'), bytes);
+    const linkPath = join(f.source, 'private', 'app-server.sock');
+    await symlink('../sentinel.bin', linkPath);
+    let guestFileWrites = 0;
+    const target = { ...f.target, putFile: async (...args: Parameters<typeof f.target.putFile>) => {
+      guestFileWrites += 1;
+      await f.target.putFile(...args);
+    } };
+    const input = { ...f, target, sourcePath: f.source, activeServerDir: f.root, registry: createScmBackendRegistry([]) };
+    const copied = await materializeManagedWorkspaceSyncSeed(input);
+    expect(await readFile(join(copied.targetRoot, 'private', 'app-server.sock'))).toEqual(bytes);
+    expect(guestFileWrites).toBeGreaterThan(0);
+
+    await rm(linkPath);
+    await symlink(join(f.source, 'sentinel.bin'), linkPath);
+    guestFileWrites = 0;
+    const refusedTarget = join(f.root, 'guest', 'refused');
+    const failure = await materializeManagedWorkspaceSyncSeed({ ...input, targetPath: refusedTarget }).catch(error => error);
+    expect(failure).toMatchObject({ code: 'project_files_copy_failed' });
+    expect(guestFileWrites).toBe(0);
+    await expect(lstat(refusedTarget)).rejects.toMatchObject({ code: 'ENOENT' });
+    const launch = projectSessionTargetLaunchFailure(failure);
+    expect(launch).toMatchObject({ errorDetail: { code: 'project_files_copy_failed', failureCause: {
+      actionCause: { phase: 'workspace.materialization.path', errorClass: 'Error', errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, httpStatus: null },
+    } } });
+    expect(JSON.stringify(launch)).not.toContain(f.source);
+    expect(JSON.stringify(launch)).not.toContain('app-server.sock');
+  });
+
   it('keeps the existing shared target work even when the host folder has changed', async () => {
     const f = await fixture();
     await mkdir(f.targetPath, { recursive: true });
@@ -120,9 +157,17 @@ describe.skipIf(process.platform === 'win32')('managed target workspace seed', (
   it('reports a typed copy failure without publishing a partial target root', async () => {
     const f = await fixture();
     await writeFile(join(f.source, 'sentinel.txt'), 'copy');
-    const target = { ...f.target, putFile: async () => { throw new Error('provider file transfer failed'); } };
-    await expect(materializeManagedWorkspaceSyncSeed({ ...f, target, sourcePath: f.source, activeServerDir: f.root,
-      registry: createScmBackendRegistry([]) })).rejects.toMatchObject({ code: 'project_files_copy_failed' });
+    const failureCause = projectActionFailureCauseV1(Object.assign(new Error('PRIVATE_PROVIDER_OUTPUT'), { code: 'EACCES', status: 503 }),
+      'machines.native.put_file');
+    const refusal = ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: 'provider_unavailable',
+      error: 'PRIVATE_PROVIDER_OUTPUT', failureCause }, 'machines.managed.acquire');
+    const target = { ...f.target, putFile: async () => { throw refusal; } };
+    const failure = await materializeManagedWorkspaceSyncSeed({ ...f, target, sourcePath: f.source, activeServerDir: f.root,
+      registry: createScmBackendRegistry([]) }).catch(error => error);
+    expect(failure).toMatchObject({ code: 'project_files_copy_failed' });
+    const launch = projectSessionTargetLaunchFailure(failure);
+    expect(launch).toMatchObject({ errorDetail: { code: 'project_files_copy_failed', failureCause: { actionCause: failureCause } } });
+    expect(JSON.stringify(launch)).not.toContain('PRIVATE_PROVIDER_OUTPUT');
     await expect(lstat(f.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
