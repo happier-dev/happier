@@ -55,8 +55,9 @@ export type BundledDeclarationValuesV1 = Readonly<{
   valuesByActionId: Readonly<Record<string, unknown>>;
 }>;
 
-export function digestBundledDeclarationText(manifestText: string): string {
-  return createHash('sha256').update(manifestText).digest('hex');
+/** The same digest for the manifest's UTF-8 text or its file bytes; readers hash bytes and never decode to verify. */
+export function digestBundledDeclarationText(manifest: string | Uint8Array): string {
+  return createHash('sha256').update(manifest).digest('hex');
 }
 
 /** Derive the summary and deferred values from one serialized manifest (build time and drift tests). */

@@ -94,14 +94,14 @@ function readDeferredActionValues(params: Readonly<{
     if (!valuesByActionId || typeof valuesByActionId !== 'object') {
         // The schema file is missing or from another publication: complete the
         // admitted summary from its own verified manifest, loudly.
-        const manifestText = readFileSync(params.manifestPath, 'utf8');
-        if (digestBundledDeclarationText(manifestText) !== params.declarationDigest) {
+        const manifestBytes = readFileSync(params.manifestPath);
+        if (digestBundledDeclarationText(manifestBytes) !== params.declarationDigest) {
             throw new BundledPluginDeclarationChangedError(params.pluginId);
         }
         logger.warn('[PLUGINS] Bundled declaration schema asset is stale; reading the manifest', {
             code: 'bundled_declaration_asset_stale', pluginId: params.pluginId, asset: basename(params.valuesPath),
         });
-        valuesByActionId = projectBundledDeclarationAssets(manifestText)[params.key].valuesByActionId;
+        valuesByActionId = projectBundledDeclarationAssets(manifestBytes.toString('utf8'))[params.key].valuesByActionId;
     }
     const values = shareRepeatedJsonSubtrees(valuesByActionId) as DeferredActionValues;
     deferredActionValuesByPath.set(params.valuesPath, { declarationDigest: params.declarationDigest, values });
@@ -197,9 +197,11 @@ function deferSummaryActions(manifestPath: string, summary: BundledDeclarationSu
 export function readBundledPluginManifest(locator: BundledManifestLocator, runtimeRoot?: string): unknown {
     if ('manifest' in locator) return locator.manifest;
     const manifestPath = resolveBundledPluginManifestPath(locator, runtimeRoot);
-    const manifestText = readFileSync(manifestPath, 'utf8');
-    const summary = readVerifiedSummary(manifestPath, digestBundledDeclarationText(manifestText));
-    const manifest = shareRepeatedJsonSubtrees(summary ? deferSummaryActions(manifestPath, summary) : JSON.parse(manifestText));
+    // Verified as bytes: with a matching summary the manifest text is never decoded.
+    const manifestBytes = readFileSync(manifestPath);
+    const summary = readVerifiedSummary(manifestPath, digestBundledDeclarationText(manifestBytes));
+    const manifest = shareRepeatedJsonSubtrees(summary ? deferSummaryActions(manifestPath, summary)
+        : JSON.parse(manifestBytes.toString('utf8')));
     if (summary && manifest && typeof manifest === 'object') {
         // Exact verified bytes, attached after subtree sharing. An authored
         // projection's object spread intentionally drops this identity.
@@ -218,7 +220,7 @@ export function readBundledPluginCanonicalDeclarationDigest(
     runtimeRoot?: string,
 ): string | null {
     const manifestPath = resolveBundledPluginManifestPath(locator, runtimeRoot);
-    return readVerifiedSummary(manifestPath, digestBundledDeclarationText(readFileSync(manifestPath, 'utf8')))
+    return readVerifiedSummary(manifestPath, digestBundledDeclarationText(readFileSync(manifestPath)))
         ?.canonicalDeclarationDigest ?? null;
 }
 
