@@ -1,6 +1,6 @@
 import { open, stat } from 'node:fs/promises';
 import { isUtf8 } from 'node:buffer';
-import { readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
+import { projectExternalSessionCandidateTitle, readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     isPluginError,
@@ -95,7 +95,7 @@ function readWorkingDirectory(value: unknown): string | null {
 
 function coerceTextContent(content: unknown): string | null {
     if (typeof content === 'string') {
-        return readTitleCandidate(readSessionInputPromptUserTextV1(content));
+        return readTitleCandidate(projectExternalSessionCandidateTitle(readSessionInputPromptUserTextV1(content), { source: 'prompt' }));
     }
     if (!Array.isArray(content)) return null;
 
@@ -105,7 +105,7 @@ function coerceTextContent(content: unknown): string | null {
         })
         .filter((part) => part.trim().length > 0)
         .join(' ');
-    return readTitleCandidate(readSessionInputPromptUserTextV1(text));
+    return readTitleCandidate(projectExternalSessionCandidateTitle(readSessionInputPromptUserTextV1(text), { source: 'prompt' }));
 }
 
 function readClaudeTitleIndexState(value: unknown): ClaudeTitleIndexState | null {
@@ -129,7 +129,7 @@ function readClaudeTitleIndexState(value: unknown): ClaudeTitleIndexState | null
     // Older checkpoints treated a host prompt echo as the first user title.
     // Re-derive it from the same native file, including the unchanged-EOF path.
     if (typeof value.fallbackTitle === 'string'
-        && readSessionInputPromptUserTextV1(value.fallbackTitle) !== value.fallbackTitle) return null;
+        && coerceTextContent(value.fallbackTitle) !== value.fallbackTitle) return null;
     return Object.freeze({
         v: 1,
         kind: 'claude_title_index',

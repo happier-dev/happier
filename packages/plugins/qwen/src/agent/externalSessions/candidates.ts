@@ -1,6 +1,6 @@
 import { isRecord } from '@happier-dev/plugin-sdk';
 import type { AgentExternalSessionCandidate, AgentExternalSessionTranscriptItem, AgentExternalSessionsListCandidatesRequest, AgentExternalSessionsListCandidatesResult, AgentExternalSessionsResult } from '@happier-dev/plugin-sdk/sessions/external';
-import { isAgentExternalSessionsResultWithinByteBudget } from '@happier-dev/plugin-sdk/sessions/external';
+import { isAgentExternalSessionsResultWithinByteBudget, projectExternalSessionCandidateTitle, readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
 import { createExternalSessionContentSearchControl, ExternalSessionContentSearchYield, searchExternalSessionContent,
   type ExternalSessionContentSearchPageProgress } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { listQwenFiles, QwenSourceError, type QwenSource } from './source.js';
@@ -21,7 +21,8 @@ export function visibleText(item: AgentExternalSessionTranscriptItem): string | 
 function promptTitle(text: string): string {
   // Pinned SessionService.truncatePromptForDisplay uses 200 Unicode code
   // points for native list previews. This never bounds searchable body text.
-  const points = [...text]; return points.length > 200 ? points.slice(0, 200).join('') + '...' : text;
+  const title = projectExternalSessionCandidateTitle(readSessionInputPromptUserTextV1(text), { source: 'prompt' });
+  const points = [...title]; return points.length > 200 ? points.slice(0, 200).join('') + '...' : title;
 }
 type Scan = { v: 1; source: string; query: string; target: string; threads: boolean; after: string;
   partial: boolean; pending?: { path: string; digest: string; progress: ExternalSessionContentSearchPageProgress } };

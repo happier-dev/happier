@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 
 import { describe, expect, it } from 'vitest';
 import { buildHappierBaseSystemPromptV1 } from '@happier-dev/protocol/prompts/systemPromptBaseV1';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 
 import {
   discoverNewAntigravityConversationId,
@@ -79,6 +80,19 @@ describe('Antigravity cliPrint conversation store', () => {
       conversationId: 'conv-title',
     });
     expect(candidate?.title).toBe('Review the candidate titles');
+  });
+
+  it('projects delivery metadata out of the native user request title', async () => {
+    const brainDir = join(tmpdir(), `antigravity-title-context-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const prompt = renderSessionInputContextPromptV1({ inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
+      transformedUserText: 'Review the candidate titles' });
+    await createConversation(brainDir, 'conv-title-context', [JSON.stringify({ step_index: 0, type: 'USER_INPUT',
+      content: `<USER_REQUEST>\n${prompt}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nnoise\n</ADDITIONAL_METADATA>`,
+    })]);
+    try {
+      const candidate = await resolveAntigravityConversationCandidate({ brainDir, conversationId: 'conv-title-context' });
+      expect(candidate?.title).toBe('Review the candidate titles');
+    } finally { await rm(brainDir, { recursive: true, force: true }); }
   });
 
   it('authorizes only physical regular transcripts below the physical brain root', async () => {

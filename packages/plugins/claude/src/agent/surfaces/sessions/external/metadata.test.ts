@@ -204,11 +204,13 @@ describe('Claude external-session metadata', () => {
             await rm(root, { recursive: true, force: true });
         }
     });
-    it('re-derives an unchanged native title when the stored fallback still contains an injected-only first turn', async () => {
+    it.each(['legacy', 'context'] as const)('re-derives an unchanged native title when the stored fallback still contains a %s delivery frame', async (kind) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-old-title-'));
         try {
             const filePath = join(root, 'native-1.jsonl');
-            const prefix = buildHappierBaseSystemPromptV1();
+            const prefix = kind === 'legacy' ? buildHappierBaseSystemPromptV1()
+                : renderSessionInputContextPromptV1({ transformedUserText: 'Review the release branch',
+                    inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' } });
             await writeFile(filePath, [
                 { type: 'user', message: { content: prefix } },
                 { type: 'user', message: { content: 'Review the release branch' } },
@@ -227,10 +229,10 @@ describe('Claude external-session metadata', () => {
         const content = `${buildHappierBaseSystemPromptV1()}\n\nStabilise CI on the release branch`;
         const variable = renderSessionInputContextPromptV1({
             provenanceBlock: renderSessionInputContextBlockV1({ provenance: { v: 1, kind: 'legacyUnknown' } }),
-            transformedUserText: `${buildHappierBaseSystemPromptV1()}\n\nStabilise CI on the release branch`,
+            transformedUserText: 'Stabilise CI on the release branch',
         });
         expect(resolveClaudeTitle(applyClaudeTitleRecord({ customTitle: null, aiTitle: null, fallbackTitle: null },
-            { type: 'user', message: { content: variable } }, 'native-variable'))).toContain('happier_input_context');
+            { type: 'user', message: { content: variable } }, 'native-variable'))).toBe('Stabilise CI on the release branch');
         const fallback = applyClaudeTitleRecord({ customTitle: null, aiTitle: null, fallbackTitle: null },
             { type: 'user', message: { content } }, 'native-1');
         expect(resolveClaudeTitle(fallback)).toBe('Stabilise CI on the release branch');

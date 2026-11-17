@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ExternalSessionCandidateV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { AgentExternalSessionsContribution, AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
 import { activate, PLUGIN_MANIFEST } from '../../manifest.js';
@@ -31,6 +32,22 @@ async function fixture() {
 }
 
 describe('Qwen v0.25.3 native reader', () => {
+  it('projects prompt-derived titles without delivery metadata and preserves native custom titles', async () => {
+    const f = await fixture();
+    try {
+      const prompt = renderSessionInputContextPromptV1({ inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
+        transformedUserText: 'Find the missing allowance' });
+      const user = record('u1', null, 'user', { message: { role: 'user', parts: [{ text: prompt }] } });
+      await writeFile(f.path, jsonl([user]));
+      expect(await f.reader.listCandidates(f.request)).toMatchObject({ ok: true,
+        value: { candidates: [{ title: 'Find the missing allowance' }] } });
+      await appendFile(f.path, jsonl([record('custom', 'u1', 'system', {
+        subtype: 'custom_title', systemPayload: { title: 'A native custom title' },
+      })]));
+      expect(await f.reader.listCandidates(f.request)).toMatchObject({ ok: true,
+        value: { candidates: [{ title: 'A native custom title' }] } });
+    } finally { await f.kit.dispose(); }
+  });
   it('honors native runtime-root precedence and keeps the admitted source pinned', async () => {
     const f = await fixture();
     try {
