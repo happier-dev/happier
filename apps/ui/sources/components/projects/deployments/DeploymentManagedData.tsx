@@ -207,9 +207,10 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
           localizedTextPluginId={target.pluginId} accountsOnly disabled={busy || uncertain || partial} value={account ? { kind: 'account', account } : null}
           declaration={{ ...operation.credential, title: t('projects.deployments.platformLink.connection'), required: true }}
           onChange={next => { setAccount(next?.kind === 'account' ? next.account : null); reset(); }} /> : null}
-        <ManagedDataActionFields fields={fields} operation={operation} input={seeded} draft={draft}
+        {/* The operation's fields read the provider through its account: they follow the first Connect. */}
+        {needsConnect ? null : <ManagedDataActionFields fields={fields} operation={operation} input={seeded} draft={draft}
           lifetime={props.lifetime} busy={busy} editable={!busy && !partial} onPatch={patch}
-          cursors={fieldCursors} setCursors={setFieldCursors} />
+          cursors={fieldCursors} setCursors={setFieldCursors} />}
       </ItemGroup>
       {needsConnect ? <ManagedDataFirstConnection target={target} onConnect={firstConnection.connect} /> : null}
       {uncertain ? <SurfaceStateCard testID="managed-data.unknown" size="line" kind="unavailable"
