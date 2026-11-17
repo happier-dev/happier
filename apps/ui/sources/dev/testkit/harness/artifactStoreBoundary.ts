@@ -7,6 +7,7 @@ import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessRecipientCensus
     type ArtifactAccessGrantRowV1, type ArtifactAccessLevelV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { Buffer } from 'buffer';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
@@ -487,8 +488,15 @@ export function createArtifactStoreBoundary(params: Readonly<{
             if (grantsTarget && method === 'GET') {
                 const row = rows.get(decodeURIComponent(grantsTarget[1]!));
                 const access = row ? accessFor(row, callerAccountId) : null;
+                const selected = [...(grants.get(row?.id ?? '')?.values() ?? [])];
+                // The Home answers a requested audience with whoever no grant reaches yet (exact principal grants here).
+                const audienceQuery = url.searchParams.get('requestedAudience');
+                const requested: readonly PrincipalRefV1[] | null = audienceQuery === null ? null : JSON.parse(audienceQuery);
+                const missingAudience = requested?.filter(principal => !(principal.kind === 'account' && principal.accountId === row?.ownerAccountId)
+                    && !selected.some(grant => principalKey(grant.principal) === principalKey(principal)));
                 return Promise.resolve(row && access ? json(ArtifactAccessGrantsListResponseV1Schema.parse({
-                    artifactId: row.id, ownerAccountId: row.ownerAccountId, access, grants: [...(grants.get(row.id)?.values() ?? [])],
+                    artifactId: row.id, ownerAccountId: row.ownerAccountId, access, grants: selected,
+                    ...(missingAudience ? { missingAudience } : {}),
                 })) : json({ error: 'artifact_not_found' }, 404));
             }
             if (grantsTarget && method === 'PUT') {

@@ -26,6 +26,16 @@ const STATES = [
 ] as const;
 
 const ignore = () => {};
+/** Team, Group and project defaults: inherited (shows what applies), a named profile, and None. */
+const DEFAULT_STATES = [
+  { key: 'inherited', value: undefined },
+  { key: 'chosen', value: 'release-week' },
+  { key: 'none', value: null },
+] as const;
+const DEFAULT_CHOICES = {
+  inherit: { title: 'Use the default · Reviewed writes', subtitle: 'Payments', detail: 'Reviewed writes' },
+  none: { title: 'None', subtitle: 'New sessions start without a profile.' },
+};
 
 export default function ApprovalProfileChoicesDevScreen() {
   return (
@@ -45,6 +55,24 @@ export default function ApprovalProfileChoicesDevScreen() {
             onChange={ignore}
             presentation="row"
             icon={<Icon name="shield-check" />}
+          />
+        ))}
+      </ItemGroup>
+      <ItemGroup
+        title="Defaults field"
+        description="Team, Group and project defaults: inherited, chosen, None."
+      >
+        {DEFAULT_STATES.map((state) => (
+          <ApprovalProfileSelect
+            key={state.key}
+            mode="default"
+            testID={`dev-profile-default-${state.key}`}
+            value={state.value}
+            source={SOURCE}
+            defaultChoices={DEFAULT_CHOICES}
+            description="Members keep their own approval profile until they choose this one."
+            layout="adaptive"
+            onChange={ignore}
           />
         ))}
       </ItemGroup>

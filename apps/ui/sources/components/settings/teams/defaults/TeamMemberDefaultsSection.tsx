@@ -5,6 +5,7 @@ import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAcco
 import { sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import type { ManagedSessionDefaultsV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
@@ -35,6 +36,7 @@ import { t } from '@/text';
 
 import type { ResolvedInheritedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import { describeInheritedDefaultSource } from './inheritedDefaultSourceLabel';
+import { ApprovalProfileDefaultRow } from './ApprovalProfileDefaultRow';
 import { TeamMemberMachineDefaultRow } from './TeamMemberMachineDefaultRow';
 import type { TeamSectionContext } from '../teamSectionContext';
 import type { HomeAdministrationContext } from '@/components/settings/home/governance/homeAdministrationContext';
@@ -43,6 +45,7 @@ import {
   buildMemberDefaultsPatch,
   memberDefaultsConflicts,
   readMemberDefaults,
+  withApprovalProfile,
   withConnectedService,
   withModel,
   withPermissionMode,
@@ -162,6 +165,18 @@ export const TeamMemberDefaultsSection = React.memo(
       [enabledAgentIds],
     );
 
+    const sessionConflicts = home ? NO_CONFLICTS : memberDefaultsConflicts(stored, scope, '', policy?.homeDefaults);
+    // The people a Team or Group default reaches: the audience a picked profile is offered to.
+    const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(() => {
+      if (!('address' in context)) return undefined;
+      const teamId = context.address.teamId;
+      return [scope.kind === 'group' ? { kind: 'group', teamId, groupId: scope.groupId } : { kind: 'team', teamId }];
+    }, [context, scope]);
+    const saveApprovalProfile = React.useCallback(
+      (approvalProfileId: string | null | undefined) => save(withApprovalProfile(defaults, approvalProfileId)),
+      [defaults, save],
+    );
+
     const row: RowState = {
       serverId: context.scope.serverId,
       teamId: 'address' in context ? context.address.teamId : '',
@@ -209,10 +224,23 @@ export const TeamMemberDefaultsSection = React.memo(
         >
           <TeamMemberMachineDefaultRow
             state={row}
-            conflict={home ? false : memberDefaultsConflicts(stored, scope, '', policy?.homeDefaults).placement}
+            conflict={sessionConflicts.placement}
             testID={`${props.testID}-machine`}
             onApprovalPending={context.requestApproval}
           />
+          {home ? null : (
+            <ApprovalProfileDefaultRow
+              scopeOrHome={context.scope}
+              value={defaults.approvalProfileId}
+              audience={audience}
+              description={t('teams.settings.memberDefaults.approvalProfileMembers')}
+              conflictNote={sessionConflicts.approvalProfile ? row.conflictNote : undefined}
+              editable={editable}
+              disabled={row.disabled}
+              save={saveApprovalProfile}
+              testID={`${props.testID}-approvalProfile`}
+            />
+          )}
           {agents.map((entry) => (
             <AgentDefaultsItem
               key={entry.backendTargetKey}
@@ -743,7 +771,13 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
   testID: string;
 }>) {
   const { defaults } = props;
-  const { save, selectAgent, error, inheritance } = useProjectSessionDefaultsSectionAdapter(props);
+  const { save, selectAgent, selectApprovalProfile, error, inheritance } = useProjectSessionDefaultsSectionAdapter(props);
+  // A project default reaches everyone admitted to it (owner 2026-11-16 ~19:15Z); "For me" reaches only me.
+  const shared = props.scope === 'project';
+  const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(
+    () => (shared && props.teamId ? [{ kind: 'team', teamId: props.teamId }] : undefined),
+    [shared, props.teamId],
+  );
   const enabledAgentIds = useEnabledAgentIds();
   const agents = React.useMemo(
     () => getResolvedAgentCatalogEntries({ enabledAgentIds }).filter((entry) => entry.backendTargetKey !== null),
@@ -769,6 +803,10 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
         <TeamMemberMachineDefaultRow state={row} conflict={false} testID={`${props.testID}-machine`} />
         <ProjectAgentDefaultRow agents={agents} state={row} current={defaults.defaultAgentTarget}
           onSelect={selectAgent} testID={`${props.testID}-agent`} />
+        <ApprovalProfileDefaultRow scopeOrHome={props.serverId} value={defaults.approvalProfileId} audience={audience}
+          inherited={inheritance.approvalProfileId}
+          description={shared ? t('teams.settings.memberDefaults.approvalProfileProject') : undefined}
+          editable={props.editable} disabled={props.busy} save={selectApprovalProfile} testID={`${props.testID}-approvalProfile`} />
         {agents.map((entry) => (
           <AgentDefaultsItem key={entry.backendTargetKey} entry={entry} state={row} conflicts={NO_CONFLICTS}
             testID={`${props.testID}-agent:${entry.agentId}`} />
