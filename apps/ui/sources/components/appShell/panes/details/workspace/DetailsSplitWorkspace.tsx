@@ -14,6 +14,8 @@ import {
     useModalPaneBoundary,
 } from '@/components/ui/panels/ModalPaneBoundary';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { DetailsTabLifetimeScope } from './detailsTabLifetime';
+import { selectedPaneDestinationTabKey } from '../../model/selectedPaneDestination';
 import { Text } from '@/components/ui/text/Text';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
@@ -416,7 +418,9 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
         />
     ) : renderEmptyWorkspace();
     const overlayContent = overlay && props.renderOverlay
-        ? props.renderOverlay(overlay)
+        ? <DetailsTabLifetimeScope scopeId={props.pane.scopeId} tabKey={selectedPaneDestinationTabKey('detailsOverlay')}>
+            {props.renderOverlay(overlay)}
+        </DetailsTabLifetimeScope>
         : overlay
             ? (
                 <SurfaceStateCard

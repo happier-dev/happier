@@ -3572,13 +3572,17 @@ presents. The page's location owner (`pluginPageLocation.ts`) holds it with the 
 Absent `view`, and any location the owner did not settle (deep link, reload, history walk), name the
 mounted page. The request stays closed; matching development host and SDK source is required.
 
-### Unsaved plugin page edits (0.3 development source)
+### Unsaved plugin edits (0.3 development source)
 
-Mounted `appPage` surfaces may negotiate `setUnsavedChanges(isDirty)` through
+Mounted plugin surfaces may negotiate `setUnsavedChanges(isDirty)` through
 the same native/hosted Host API. Its closed request carries one boolean; the
-page/Account/target mount owns that ephemeral dirty fact, not the plugin text or
-a durable draft. Equal declarations publish nothing. `PluginPageContent` binds
-the fact to `useUnsavedDraftNavigationGuard`; `runUnsavedChangesGuard` remains
+physical surface/Account/target mount owns that ephemeral dirty fact, not the plugin text or
+a durable draft. Equal declarations publish nothing. `PluginPageContent` supplies its
+existing page/history dirty owner; other mounts bind the fact through
+`usePluginSurfaceUnsavedChanges` to the same `useUnsavedDraftNavigationGuard`.
+Details mounts publish through the existing tab chrome owner, which pins a dirty preview.
+Inline rails and Details overlays use their existing exact pane/tab navigation identity
+for close and selection changes. `runUnsavedChangesGuard` remains
 the sole discard/keep decision and serialization owner. The active/tab and
 native-removal hooks are registration/transport layers. `RouteRemovalStepConsumer`
 spends an embedded guest's document history and makes no independent dirty decision.
@@ -3598,7 +3602,7 @@ that option because it replaces the document. Browser unload retains the platfor
 confirmation. Account/credential
 retirement still erases private state without asking, and stale facades cannot
 publish into a replacement mount. No plugin callback participates in navigation
-admission. Non-page mounts do not advertise the method. This is an unreleased
+admission. This is an unreleased
 Host API V1 operation, not a new persistence format or released SDK guarantee.
 
 ### Shared access picker and code editor (0.3 development source)

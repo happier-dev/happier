@@ -10,6 +10,7 @@ import type { PluginPageLaunchOpen } from '@/components/plugins/pages/pluginPage
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { usePluginSurfaceActionApproval } from './usePluginSurfaceActionApproval';
+import { usePluginSurfaceUnsavedChanges } from './usePluginSurfaceUnsavedChanges';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById, subscribeServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useFindSurfaceRegistrationHost } from '@/keyboard/KeyboardShortcutProvider';
 import { usePluginHostReadiness, useWidgetPresentation } from '@happier-dev/plugin-ui';
@@ -3003,6 +3004,11 @@ function PluginSurfaceHostMount(props: Readonly<(
             : needsMachineExecution ? { isExecutionOriginCurrent: pluginExecution.isExecutionOriginCurrent } : {}),
     }), [controllerBinding, needsMachineExecution, openConnectedAccounts, readActionInputAnchor, pluginExecution.isExecutionOriginCurrent, targetedMount?.isExecutionOriginCurrent]);
     const baseCreateMountedHostApiHandlers = controllerBindingWithConnectedAccounts.createMountedHostApiHandlers;
+    const unsavedChanges = usePluginSurfaceUnsavedChanges({
+        scopeKey: JSON.stringify([mountedSurfaceId, surfaceTargetAuthorityKey, props.mountInstanceKey ?? null]),
+        accountLifetime,
+        focused: presentationFocusEligible,
+    });
     const configurationTarget = resolvedSurfaceTarget.resolved && resolvedSurfaceTarget.target.kind === 'machine'
         ? resolvedSurfaceTarget.target : null;
     const createMountedHostApiHandlers = React.useCallback<BoundPluginSurfaceMountedHostApiHandlersFactory>((input) => {
@@ -3118,21 +3124,23 @@ function PluginSurfaceHostMount(props: Readonly<(
             }
             : undefined;
         return Object.freeze({
-            handlers: { ...mountedBundle?.handlers, ...hostedEntity?.handlers,
+            handlers: { ...(!controllerBindingWithConnectedAccounts.mountedHostApiHandlers?.setUnsavedChanges
+                ? { setUnsavedChanges: unsavedChanges.createHandler(input.isCurrent) } : {}), ...mountedBundle?.handlers, ...hostedEntity?.handlers,
                 ...(openManagedMachineConfiguration ? { openManagedMachineConfiguration } : {}),
                 ...(openDeployment ? { openDeployment } : {}) },
             ...(currentUiContext ? { currentUiContext } : {}),
             ...(activate ? { activate } : {}),
             ...(setCurrentUiContextEligibility ? { setCurrentUiContextEligibility } : {}),
             dispose: () => {
+                unsavedChanges.clear();
                 hostedEntity?.dispose();
                 entityBinding?.dispose();
                 mountedBundle?.dispose?.();
                 if (entityDragBindingRef.current === entityBinding) entityDragBindingRef.current = null;
             },
         });
-    }, [accountLifetime, baseCreateMountedHostApiHandlers, controllerFacts.sessionId, currentUiContextMountPublisher, entityDragMountKey, entityDragRuntime, mountedPluginId,
-        configurationTarget?.serverId, configurationTarget?.machineId, configurationTarget?.homeId, configurationTarget?.installationId, router]);
+    }, [accountLifetime, baseCreateMountedHostApiHandlers, controllerBindingWithConnectedAccounts.mountedHostApiHandlers?.setUnsavedChanges, controllerFacts.sessionId, currentUiContextMountPublisher, entityDragMountKey, entityDragRuntime, mountedPluginId,
+        configurationTarget?.serverId, configurationTarget?.machineId, configurationTarget?.homeId, configurationTarget?.installationId, router, unsavedChanges]);
     const { approval: pluginActionApproval, pendingApproval, execute: defaultPluginActionExecute } = usePluginSurfaceActionApproval({
         accountLifetime,
         scopeKey: JSON.stringify([accountLifetime?.scope ?? null, mountedSurfaceId, surfaceTargetAuthorityKey, props.mountInstanceKey ?? null]),

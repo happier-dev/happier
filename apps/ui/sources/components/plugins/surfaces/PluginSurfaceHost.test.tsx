@@ -263,7 +263,6 @@ const GENERATED_DESTINATION_UNAVAILABLE_HOST_METHODS = new Set<PluginUiHostMetho
     // own to replace. The navigation family stays factually uninstalled here.
     'replacePageLocation',
     'setPageNavigation',
-    'setUnsavedChanges',
     // Widget areas require a page-owned area composition, not a destination.
     'widgetArea',
 ]);
@@ -3698,21 +3697,48 @@ describe('PluginSurfacePlacementHost', () => {
         }
     });
 
-    it('protects the host when a plugin page bypasses its dirty guard', async () => {
+    it.each(['appPage', 'rightPane', 'bottomPane', 'detailsPane'] as const)('protects a standalone %s plugin mount through the host dirty owner', async container => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { runGuardedNavigation, clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
+        const { DetailsTabChromeProvider, useDetailsTabUnsavedKeys } = await import('@/components/appShell/panes/details/workspace/detailsTabChrome');
+        const { Modal } = await import('@/modal');
+        let buttons: import('@/modal/types').AlertButton[] = [];
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation((_title, _message, next) => { buttons = next ?? []; });
+        onTestFinished(() => { alert.mockRestore(); clearActiveUnsavedChangesGuard(); });
         const placement = surfacePlacementFixture({
-            binding: { pluginId: 'acme.browser', destinationId: 'notes', rendererId: 'native-panel', container: 'appPage', target: { kind: 'app' } },
+            binding: { pluginId: 'acme.browser', destinationId: 'notes', rendererId: 'native-panel', container,
+                target: container === 'appPage' ? { kind: 'app' } : { kind: 'session', sessionIdPath: '/session/id' } },
             renderer: { kind: 'reactNative', contributionId: 'native-panel' }, display: { label: 'Notes' },
         });
         const target = primeExactTargetedContributions({ pluginId: 'acme.browser', occurrenceId: placement.occurrenceId! });
         const model = withMountedTargetPackage(generatedReactNativeProjection, target, { displayName: 'Notes', version: '3.2.1' });
-        const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement} pluginUiProjection={model}
-            machineId="machine_1" serverId="server-a" platform="web" />);
+        const pinTab = vi.fn();
+        let unsavedKeys: ReadonlySet<string> = new Set();
+        function MountedNotes() {
+            const chrome = useDetailsTabUnsavedKeys(pinTab);
+            unsavedKeys = chrome.unsavedKeys;
+            const surface = <PluginSurfaceFocusEligibilityProvider active><PluginSurfacePlacementHost placement={placement} pluginUiProjection={model}
+                machineId="machine_1" serverId="server-a" sessionId={container === 'appPage' ? undefined : 'session_1'} platform="web" /></PluginSurfaceFocusEligibilityProvider>;
+            return container === 'detailsPane' ? <DetailsTabChromeProvider value={chrome.chromeFor('notes')}>{surface}</DetailsTabChromeProvider> : surface;
+        }
+        const screen = await renderScreen(<MountedNotes />);
         try {
             await vi.waitFor(() => expect(reactNativeSurfaceProps.length, surfaceFixtureDiagnostics(screen, 'acme.browser')).toBeGreaterThan(0));
             const api = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext.hostApi;
-            expect(api.version().methods).not.toContain('setUnsavedChanges');
-            await expect(api.setUnsavedChanges(true)).rejects.toMatchObject({ code: 'unsupported_method' });
+            await act(async () => { await api.setUnsavedChanges(true); });
+            if (container === 'detailsPane') {
+                expect(unsavedKeys.has('notes')).toBe(true);
+                expect(pinTab).toHaveBeenCalledWith('notes', { persist: false });
+            }
+            const leave = vi.fn();
+            let leaving: true | Promise<boolean> = true;
+            await act(async () => { leaving = runGuardedNavigation(leave); });
+            await act(async () => { buttons.find(button => button.style === 'cancel')?.onPress?.(); expect(await leaving).toBe(false); });
+            expect(leave).not.toHaveBeenCalled();
+            await act(async () => { leaving = runGuardedNavigation(leave); });
+            await act(async () => { buttons.find(button => button.style === 'destructive')?.onPress?.(); expect(await leaving).toBe(true); });
+            expect(leave).toHaveBeenCalledOnce();
+            expect(unsavedKeys.size).toBe(0);
         } finally { await screen.unmount(); }
     });
 

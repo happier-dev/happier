@@ -16,6 +16,7 @@ export type { UnsavedChangesDecision };
 
 export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
     enabled?: boolean;
+    focused?: boolean;
     ignoreRef?: React.MutableRefObject<boolean>;
     isDirty: boolean;
     isDirtyRef: React.MutableRefObject<boolean>;
@@ -102,7 +103,7 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
         navigation: null,
         guard,
         enabled,
-        focused: destinationFocused,
+        focused: destinationFocused && params.focused !== false,
         tabId: mountedTabId || null,
     });
 

@@ -10,6 +10,9 @@ import { AppPaneProvider, useAppPaneContext } from '../AppPaneProvider';
 import { useAppPaneScope, useOptionalDetailsRegionTabOpener, type AppPaneScopeApi } from './useAppPaneScope';
 import { useLocalSettingPreview } from '@/sync/store/settingsPreview';
 import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { registerMountedTabUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { detailsTabNavigationKey } from '../details/workspace/detailsTabLifetime';
+import { selectedPaneDestinationTabKey } from '../model/selectedPaneDestination';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,6 +32,62 @@ function PaneWrapper(props: React.PropsWithChildren) {
 }
 
 describe('useAppPaneScope identity', () => {
+    it('retains the dirty Details overlay until its close or replacement is admitted', async () => {
+        const harness = await renderHook(() => useAppPaneScope(SCOPE_ID), { wrapper: PaneWrapper });
+        const { act } = await import('react-test-renderer');
+        let decision: 'keepEditing' | 'discard' = 'keepEditing';
+        const dirty = { current: false };
+        const release = registerMountedTabUnsavedChangesGuard(detailsTabNavigationKey(SCOPE_ID, selectedPaneDestinationTabKey('detailsOverlay')), {
+            isDirtyRef: dirty, requestDecision: async () => decision, onDiscard: () => { dirty.current = false; }, tag: 'overlay-unsaved-editor',
+        });
+        const original = { destination: { pluginId: 'acme.browser', localId: 'first' } };
+        const replacement = { destination: { pluginId: 'acme.browser', localId: 'second' } };
+        try {
+            await act(async () => { expect(await harness.getCurrent().openDetailsOverlay?.(original)).toBe(true); });
+            dirty.current = true;
+            await act(async () => { harness.getCurrent().closeDetailsOverlay?.(); });
+            expect(harness.getCurrent().scopeState?.details.overlay?.destination).toEqual(original.destination);
+            await act(async () => { expect(await harness.getCurrent().openDetailsOverlay?.(replacement)).toBe(false); });
+            expect(harness.getCurrent().scopeState?.details.overlay?.destination).toEqual(original.destination);
+            decision = 'discard';
+            await act(async () => { expect(await harness.getCurrent().openDetailsOverlay?.(replacement)).toBe(true); });
+            expect(harness.getCurrent().scopeState?.details.overlay?.destination).toEqual(replacement.destination);
+            dirty.current = true;
+            await act(async () => { harness.getCurrent().closeDetailsOverlay?.(); });
+            expect(harness.getCurrent().scopeState?.details.overlay).toBeNull();
+        } finally { release(); await harness.unmount(); }
+    });
+    it.each(['right', 'bottom'] as const)('preserves dirty %s pane edits when closing or replacing its selection is refused', async slot => {
+        const harness = await renderHook(() => useAppPaneScope(SCOPE_ID), { wrapper: PaneWrapper });
+        const { act } = await import('react-test-renderer');
+        let decision: 'keepEditing' | 'discard' = 'keepEditing';
+        const dirty = { current: true };
+        const release = registerMountedTabUnsavedChangesGuard(detailsTabNavigationKey(SCOPE_ID, selectedPaneDestinationTabKey(slot)), {
+            isDirtyRef: dirty,
+            requestDecision: async () => decision,
+            onDiscard: () => { dirty.current = false; },
+            tag: 'pane-unsaved-editor',
+        });
+        try {
+            const open = () => slot === 'right' ? harness.getCurrent().openRight({ tabId: 'git' }) : harness.getCurrent().openBottom({ tabId: 'git' });
+            const close = () => slot === 'right' ? harness.getCurrent().closeRight() : harness.getCurrent().closeBottom();
+            const select = () => slot === 'right' ? harness.getCurrent().selectRightDestination({ kind: 'builtin', id: 'find' })
+                : harness.getCurrent().selectBottomDestination({ kind: 'builtin', id: 'find' });
+            dirty.current = false;
+            await act(async () => open());
+            dirty.current = true;
+            await act(async () => close());
+            expect(harness.getCurrent().scopeState?.[slot].isOpen).toBe(true);
+            await act(async () => select());
+            expect(harness.getCurrent().scopeState?.[slot].selectedDestination).toEqual({ kind: 'builtin', id: 'git' });
+            decision = 'discard';
+            await act(async () => select());
+            expect(harness.getCurrent().scopeState?.[slot].selectedDestination).toEqual({ kind: 'builtin', id: 'find' });
+            dirty.current = true;
+            await act(async () => close());
+            expect(harness.getCurrent().scopeState?.[slot].isOpen).toBe(false);
+        } finally { release(); await harness.unmount(); }
+    });
     it('keeps the Details command stable while reading the current stored and preview tab preference on invocation', async () => {
         const harness = await renderHook(() => ({
             open: useOptionalDetailsRegionTabOpener(),

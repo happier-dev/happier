@@ -11,6 +11,9 @@ import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/pane
 import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import type { SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
+import { registerMountedTabUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { detailsTabNavigationKey } from './details/workspace/detailsTabLifetime';
+import { selectedPaneDestinationTabKey } from './model/selectedPaneDestination';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
@@ -440,12 +443,14 @@ describe('AppPaneScopeHost plugin destinations', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const rightPlacement = createPlacement({ descriptorId: 'side', container: 'rightPane' });
         const bottomPlacement = createPlacement({ descriptorId: 'bottom', container: 'bottomPane' });
-        const projection = projectionWith(rightPlacement, bottomPlacement);
+        const previousBottom = createPlacement({ descriptorId: 'previous-bottom', container: 'bottomPane' });
+        const projection = projectionWith(rightPlacement, bottomPlacement, previousBottom);
         setPaneState({
             right: {
                 kind: 'plugin',
                 destination: rightPlacement.binding.destination,
             },
+            bottom: { kind: 'plugin', destination: previousBottom.binding.destination },
         });
 
         await renderScreen(
@@ -470,12 +475,24 @@ describe('AppPaneScopeHost plugin destinations', () => {
         expect(openSurface).toBeTypeOf('function');
         if (!openSurface) throw new Error('AppPane did not supply its destination handler');
 
-        await act(async () => {
-            await expect(openSurface({
-                destination: bottomPlacement.binding.destination,
-                input: { activity: 'run-1' },
-            })).resolves.toEqual({ ok: true });
+        let decision: 'keepEditing' | 'discard' = 'keepEditing';
+        const dirty = { current: true };
+        const release = registerMountedTabUnsavedChangesGuard(detailsTabNavigationKey('scope1', selectedPaneDestinationTabKey('bottom')), {
+            isDirtyRef: dirty, requestDecision: async () => decision, onDiscard: () => { dirty.current = false; }, tag: 'bottom-plugin-draft',
         });
+        try {
+            const before = runtime.pane.scopeState?.bottom.selectedDestination;
+            await act(async () => {
+                await expect(openSurface({ destination: bottomPlacement.binding.destination, input: { activity: 'refused-run' } }))
+                    .resolves.toMatchObject({ ok: false });
+            });
+            expect(runtime.pane.scopeState?.bottom.selectedDestination).toEqual(before);
+            decision = 'discard';
+            await act(async () => {
+                await expect(openSurface({ destination: bottomPlacement.binding.destination, input: { activity: 'run-1' } }))
+                    .resolves.toEqual({ ok: true });
+            });
+        } finally { release(); }
 
         expect(runtime.pane.scopeState?.bottom.selectedDestination).toEqual({
             kind: 'plugin', destination: bottomPlacement.binding.destination,

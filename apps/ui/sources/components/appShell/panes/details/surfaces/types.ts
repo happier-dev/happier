@@ -77,7 +77,7 @@ export type DetailsSurfaceHostCallbacksV1 = Readonly<{
     openOverlay?: (input: Readonly<{
         destination: PluginUiDestinationReferenceV1;
         instanceKey?: PluginUiInstanceKeyV1;
-    }>) => boolean;
+    }>) => boolean | Promise<boolean>;
     closeTab?: (tabKey: string) => void;
     pinTab?: (tabKey: string) => void;
     unpinTab?: (tabKey: string) => void;

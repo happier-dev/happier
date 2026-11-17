@@ -31,6 +31,7 @@ type NavigationDispatcher = Readonly<{ dispatch?: (action: unknown) => void }>;
  */
 export function useUnsavedDraftNavigationGuard(params: Readonly<{
     navigation: unknown;
+    focused?: boolean;
     isDirty: boolean;
     /** A mounted producer can publish its dirty fact before React commits its notification. */
     isDirtyRef?: React.MutableRefObject<boolean>;
@@ -97,6 +98,7 @@ export function useUnsavedDraftNavigationGuard(params: Readonly<{
     }), [canLeaveHistoryWithoutDiscard, discard, isDirtyRef, onBack, onSave, requestDecision, tag]);
 
     useUnsavedChangesBeforeRemoveGuard({
+        focused: params.focused,
         isDirty,
         isDirtyRef,
         ignoreRef,

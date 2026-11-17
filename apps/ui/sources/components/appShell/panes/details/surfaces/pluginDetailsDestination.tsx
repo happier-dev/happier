@@ -566,7 +566,7 @@ export type PluginDetailsDestinationOpenSurfaceCallbacks = Readonly<{
     /** The existing Details workspace tab owner; no plugin tab reducer exists. */
     openTab?: (...args: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openTab']>>) => void | Promise<PluginSurfaceOpenOutcome>;
     /** The existing Details workspace overlay owner; no plugin overlay store exists. */
-    openOverlay?: (...args: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openOverlay']>>) => boolean | Promise<PluginSurfaceOpenOutcome>;
+    openOverlay?: (...args: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openOverlay']>>) => boolean | Promise<boolean | PluginSurfaceOpenOutcome>;
     openTabWindow?: (tab: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openTab']>>[0]) => Promise<PluginSurfaceOpenOutcome>;
     openOverlayWindow?: (overlay: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openOverlay']>>[0]) => Promise<PluginSurfaceOpenOutcome>;
 }>;
@@ -672,7 +672,12 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
                 return { ok: false, code: 'internal_error', reason: 'details_destination_open_failed' };
             });
             const opened = input.openOverlay?.(overlay);
-            if (opened instanceof Promise) return opened.catch(() => {
+            if (opened instanceof Promise) return opened.then(result => {
+                if (typeof result !== 'boolean') return result;
+                if (result) return { ok: true as const };
+                input.store.retire();
+                return unavailableDetailsDestination('details_destination_overlay_owner_unavailable');
+            }).catch(() => {
                 input.store.retire();
                 return { ok: false, code: 'internal_error', reason: 'details_destination_open_failed' };
             });

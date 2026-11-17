@@ -1,7 +1,7 @@
 import type { DetailsOpenerRegion } from '@/components/ui/panels/paneBreakpoints';
 import { usePaneRegion } from '../paneRegion';
 import { usePanePresentation } from '../panePresentation';
-import { createBuiltinPaneDestination } from '../model/selectedPaneDestination';
+import { areSelectedPaneDestinationsEqual, createBuiltinPaneDestination } from '../model/selectedPaneDestination';
 import { selectedPaneDestinationTabKey } from '../model/selectedPaneDestination';
 import { useOpenPaneDestinationWindow } from '../useOpenPaneDestinationWindow';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -31,6 +31,8 @@ import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
 import { useWorkspaceRouterFacts } from '../../workspace/WorkspaceNavigationContext';
 import { closePaneDetailsWindowGroup } from '../paneTabWindowTransfer';
 import { normalizeFileDetailsTab } from '../details/fileDetailsTab';
+import { detailsTabNavigationKey } from '../details/workspace/detailsTabLifetime';
+import { runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 type AppPaneScopeDetailsStateView = {
     isOpen: boolean;
@@ -104,7 +106,7 @@ export type AppPaneScopeApi = {
     openDetailsOverlay?: (input: Readonly<{
         destination: PluginUiDestinationReferenceV1;
         instanceKey?: PluginUiInstanceKeyV1;
-    }>) => boolean;
+    }>) => boolean | Promise<boolean>;
     closeDetailsOverlay?: () => void;
     closeDetailsTab: (tabKey: string) => void;
     setActiveDetailsTab: (tabKey: string) => void;
@@ -272,21 +274,29 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
     }, [recordNativeFocusTarget]);
 
     const openPaneWindow = useOpenPaneDestinationWindow();
-    const selectPlacedPane = React.useCallback((slot: 'right' | 'bottom', commit: () => void): boolean => {
-        if (!getReadState().scopes[scopeId]?.[slot].presentation) return false;
-        fireAndForget(openPaneWindow(scopeId, selectedPaneDestinationTabKey(slot), commit), { tag: 'Pane.selectPlacedDestination' });
-        return true;
+    const selectPane = React.useCallback((slot: 'right' | 'bottom', destination: SelectedPaneDestinationV1, commit: () => void): void => {
+        const current = getReadState().scopes[scopeId]?.[slot];
+        if (current?.presentation) {
+            fireAndForget(openPaneWindow(scopeId, selectedPaneDestinationTabKey(slot), commit), { tag: 'Pane.selectPlacedDestination' });
+        } else if (areSelectedPaneDestinationsEqual(current?.selectedDestination ?? null, destination)) {
+            commit();
+        } else {
+            void runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey(slot))], commit);
+        }
     }, [getReadState, openPaneWindow, scopeId]);
     const openRight = React.useCallback((options?: Readonly<{ tabId?: string; present?: boolean }>) => {
-        if (options?.tabId && selectPlacedPane('right', () => dispatch({ type: 'openRight', scopeId, tabId: options.tabId }))) return;
         const destination = options?.tabId ? createBuiltinPaneDestination(options.tabId)
             : getReadState().scopes[scopeId]?.right.selectedDestination ?? null;
-        dispatch({ type: 'openRight', scopeId, tabId: options?.tabId });
-        if (options?.present !== false) presentPane?.({ scopeId, pane: 'right', destination });
-    }, [dispatch, getReadState, presentPane, scopeId, selectPlacedPane]);
+        const commit = () => {
+            dispatch({ type: 'openRight', scopeId, tabId: options?.tabId });
+            if (options?.present !== false) presentPane?.({ scopeId, pane: 'right', destination });
+        };
+        if (options?.tabId && destination) selectPane('right', destination, commit);
+        else commit();
+    }, [dispatch, getReadState, presentPane, scopeId, selectPane]);
 
     const closeRight = React.useCallback(() => {
-        dispatch({ type: 'closeRight', scopeId });
+        void runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey('right'))], () => dispatch({ type: 'closeRight', scopeId }));
     }, [dispatch, scopeId]);
 
     const setMainTab = React.useCallback((tabId: string | null) => {
@@ -294,40 +304,41 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
     }, [dispatch, scopeId]);
 
     const setRightTab = React.useCallback((tabId: string) => {
-        if (selectPlacedPane('right', () => dispatch({ type: 'setRightTab', scopeId, tabId }))) return;
         const destination = createBuiltinPaneDestination(tabId);
-        dispatch({ type: 'setRightTab', scopeId, tabId });
-        presentPane?.({ scopeId, pane: 'right', destination });
-    }, [dispatch, presentPane, scopeId, selectPlacedPane]);
+        selectPane('right', destination, () => {
+            dispatch({ type: 'setRightTab', scopeId, tabId });
+            presentPane?.({ scopeId, pane: 'right', destination });
+        });
+    }, [dispatch, presentPane, scopeId, selectPane]);
 
     const selectRightDestination = React.useCallback((destination: SelectedPaneDestinationV1) => {
-        if (selectPlacedPane('right', () => dispatch({ type: 'selectRightDestination', scopeId, destination }))) return;
-        dispatch({ type: 'selectRightDestination', scopeId, destination });
-        presentPane?.({ scopeId, pane: 'right', destination });
-    }, [dispatch, presentPane, scopeId, selectPlacedPane]);
+        selectPane('right', destination, () => {
+            dispatch({ type: 'selectRightDestination', scopeId, destination });
+            presentPane?.({ scopeId, pane: 'right', destination });
+        });
+    }, [dispatch, presentPane, scopeId, selectPane]);
 
     const setRightTabState = React.useCallback((tabId: string, nextState: unknown) => {
         dispatch({ type: 'setRightTabState', scopeId, tabId, nextState });
     }, [dispatch, scopeId]);
 
     const openBottom = React.useCallback((options?: Readonly<{ tabId?: string }>) => {
-        if (options?.tabId && selectPlacedPane('bottom', () => dispatch({ type: 'openBottom', scopeId, tabId: options.tabId }))) return;
-        dispatch({ type: 'openBottom', scopeId, tabId: options?.tabId });
-    }, [dispatch, scopeId, selectPlacedPane]);
+        const commit = () => dispatch({ type: 'openBottom', scopeId, tabId: options?.tabId });
+        if (options?.tabId) selectPane('bottom', createBuiltinPaneDestination(options.tabId), commit);
+        else commit();
+    }, [dispatch, scopeId, selectPane]);
 
     const closeBottom = React.useCallback(() => {
-        dispatch({ type: 'closeBottom', scopeId });
+        void runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey('bottom'))], () => dispatch({ type: 'closeBottom', scopeId }));
     }, [dispatch, scopeId]);
 
     const setBottomTab = React.useCallback((tabId: string) => {
-        if (selectPlacedPane('bottom', () => dispatch({ type: 'setBottomTab', scopeId, tabId }))) return;
-        dispatch({ type: 'setBottomTab', scopeId, tabId });
-    }, [dispatch, scopeId, selectPlacedPane]);
+        selectPane('bottom', createBuiltinPaneDestination(tabId), () => dispatch({ type: 'setBottomTab', scopeId, tabId }));
+    }, [dispatch, scopeId, selectPane]);
 
     const selectBottomDestination = React.useCallback((destination: SelectedPaneDestinationV1) => {
-        if (selectPlacedPane('bottom', () => dispatch({ type: 'selectBottomDestination', scopeId, destination }))) return;
-        dispatch({ type: 'selectBottomDestination', scopeId, destination });
-    }, [dispatch, scopeId, selectPlacedPane]);
+        selectPane('bottom', destination, () => dispatch({ type: 'selectBottomDestination', scopeId, destination }));
+    }, [dispatch, scopeId, selectPane]);
 
     const setBottomTabState = React.useCallback((tabId: string, nextState: unknown) => {
         dispatch({ type: 'setBottomTabState', scopeId, tabId, nextState });
@@ -368,28 +379,36 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
     }, [dispatch, scopeId]);
 
     const closeDetails = React.useCallback(() => {
-        dispatch({ type: 'closeDetails', scopeId });
-    }, [dispatch, scopeId]);
+        const details = getReadState().scopes[scopeId]?.details;
+        const keys = [...Object.keys(details?.tabsByKey ?? {}), ...(details?.overlay ? [selectedPaneDestinationTabKey('detailsOverlay')] : [])];
+        void runGuardedTabNavigation(keys.map(key => detailsTabNavigationKey(scopeId, key)), () => dispatch({ type: 'closeDetails', scopeId }));
+    }, [dispatch, getReadState, scopeId]);
 
     const openDetailsOverlay = React.useCallback((input: Readonly<{
         destination: PluginUiDestinationReferenceV1;
         instanceKey?: PluginUiInstanceKeyV1;
     }>) => {
-        dispatch({
-            type: 'openDetailsOverlay',
-            scopeId,
-            destination: input.destination,
-            ...(input.instanceKey === undefined ? {} : { instanceKey: input.instanceKey }),
-        });
-        const details = getReadState().scopes[scopeId]?.details;
-        return details?.isOpen === true
-            && details.overlay?.destination.pluginId === input.destination.pluginId
-            && details.overlay.destination.localId === input.destination.localId
-            && details.overlay.instanceKey === input.instanceKey;
+        const commit = () => {
+            dispatch({ type: 'openDetailsOverlay', scopeId, destination: input.destination,
+                ...(input.instanceKey === undefined ? {} : { instanceKey: input.instanceKey }) });
+        };
+        const previous = getReadState().scopes[scopeId]?.details.overlay;
+        const next = { kind: 'plugin' as const, ...input };
+        const accepted = () => {
+            const details = getReadState().scopes[scopeId]?.details;
+            return details?.isOpen === true && details.overlay?.destination.pluginId === input.destination.pluginId
+                && details.overlay.destination.localId === input.destination.localId && details.overlay.instanceKey === input.instanceKey;
+        };
+        if (previous && !areSelectedPaneDestinationsEqual({ kind: 'plugin', destination: previous.destination, instanceKey: previous.instanceKey }, next)) {
+            const admission = runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey('detailsOverlay'))], commit);
+            return admission === true ? accepted() : admission.then(allowed => allowed && accepted());
+        }
+        commit();
+        return accepted();
     }, [dispatch, getReadState, scopeId]);
 
     const closeDetailsOverlay = React.useCallback(() => {
-        dispatch({ type: 'closeDetailsOverlay', scopeId });
+        void runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey('detailsOverlay'))], () => dispatch({ type: 'closeDetailsOverlay', scopeId }));
     }, [dispatch, scopeId]);
 
     const closeDetailsTab = React.useCallback((tabKey: string) => {
