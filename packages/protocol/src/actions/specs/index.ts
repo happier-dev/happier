@@ -167,7 +167,7 @@ function createRuntimeActionSpecFor<
       ...(actionId === 'browser.profile.logins.import' ? { rpc: true, cli: true } : {}),
       ...(isBrowserExtensionActionIdV1(actionId) ? { rpc: true, cli: true } : {}),
       ...(isBrowserProfileActionIdV1(actionId) ? { rpc: true, cli: true } : {}),
-      ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: !requiresAnsweringClient, cli: true, voice: !requiresAnsweringClient } : {}),
+      ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: true, cli: true, voice: !requiresAnsweringClient } : {}),
       ...(domainRpc ? { cli: true, voice: !requiresAnsweringClient, ...(requiresAnsweringClient ? { rpc: false } : {}) } : {}),
       ...(actionId === 'projects.service.relocate' && executorReal ? { cli: true } : {}),
       ...(actionId === 'projects.service.relocate' && executorReal ? { cli: true } : {}),
@@ -218,6 +218,12 @@ function createRuntimeActionSpecFor<
       ...(!requiresAnsweringClient ? { voiceClientToolName: actionId.replaceAll('.', '_') } : {}),
       ...(!requiresAnsweringClient ? { mcpToolName: actionId.replaceAll('.', '_') } : {}) } } : {}),
     ...(requiresAnsweringClient ? { executionPlacement: 'client' as const } : {}),
+    ...(controlKind === 'copy_url' ? {
+      executionPlacements: ['client', 'machine'] as const,
+      // The RPC returns Machine eligibility; the invoking client owns presentation.
+      executionPlacementForInput: (_input: unknown, _caller: Readonly<{ kind: string }> | undefined, surface: keyof PreNormalizedActionSurfaces) =>
+        surface === 'rpc' ? 'machine' as const : 'client' as const,
+    } : {}),
     ...(actionId === 'projects.service.relocate' ? {
       executionPlacement: 'machine' as const,
       operation: { version: 1 as const, visibility: 'activity' as const, progress: 'reported' as const,

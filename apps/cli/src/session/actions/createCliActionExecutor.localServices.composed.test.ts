@@ -20,6 +20,13 @@ import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview
 import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
+import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
+import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
+import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
+import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
 
 const { io, uiPreviewRpc, openOsBrowser } = vi.hoisted(() => ({ io: vi.fn(), uiPreviewRpc: vi.fn(), openOsBrowser: vi.fn() }));
 // Opening the platform browser is an OS boundary; the headless/TTY owner stays real.
@@ -80,6 +87,44 @@ function receivingMachineBoundary(response: unknown, actionId: ActionId = 'local
 
 describe('credentialed CLI Local Services runtime dispatch', () => {
     afterEach(() => vi.restoreAllMocks());
+
+    it('reaches the canonical registered Copy RPC from the CLI without executing a daemon client effect', async () => {
+        const routes = createLocalServiceActionRoutes({ machineId: 'machine-a', inventoryRegistry: createLocalServiceInventoryRegistry() });
+        const featureGate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({
+            status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+                localServices: { enabled: true, inventory: { enabled: true }, launcher: { enabled: true },
+                    managed: { enabled: true }, actions: { enabled: true }, preview: { enabled: true } },
+                browser: { enabled: true, viewTargets: { enabled: true } },
+            }, capabilities: {} }),
+        }) });
+        await featureGate.refresh();
+        const daemonExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+            readActionsSettings: () => normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+                'localServices.actions.copyUrl': ['rpc'], 'localServices.actions.forget': ['rpc'],
+            } }),
+            // Reverse UI delivery is a network boundary. Machine eligibility must never use it.
+            clientActionExecute: async () => { throw new Error('Daemon Copy cannot execute a client presentation effect'); },
+            runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate, routes: { actionRoutes: routes } }),
+        });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionMode: 'plain', logger() {} });
+        registerDaemonLocalServicesMachineRpcHandlers(rpc, { machineId: 'machine-a', localServicesActions: routes,
+            resolveLauncherActionExecutor: () => daemonExecutor });
+        const target = { kind: 'inventory_entry' as const, inventoryEntryId: 'absent-entry', machineId: 'machine-a' };
+        // The same registered Action ingress is healthy before testing the missing Copy leaf.
+        expect(await rpc.handleRequest({ method: `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_FORGET}`,
+            params: { requestId: 'registered-control', action: 'forget', target } }))
+            .toMatchObject({ status: 'denied', reasonCode: 'unknown_inventory_entry' });
+        let rawResponse: unknown;
+        const { executor, context } = receivingMachineBoundary(null, 'localServices.actions.copyUrl', false, 'cli', async payload => {
+            if (!payload || typeof payload !== 'object' || !('method' in payload)
+                || typeof payload.method !== 'string' || !('params' in payload)) throw new Error('Missing RPC request');
+            rawResponse = await rpc.handleRequest({ method: payload.method, params: payload.params });
+            return rawResponse;
+        });
+        const result = await executor.execute('localServices.actions.copyUrl', { requestId: 'registered-copy', action: 'copy_url', target }, context);
+        expect(rawResponse).toMatchObject({ status: 'denied', reasonCode: 'unknown_inventory_entry' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'unknown_inventory_entry' } });
+    });
 
     it.each([
         { actionId: 'localServices.preview.openOrCreate', input: { launchTargetId: 'registered-preview', sessionId: 'session-a' },
