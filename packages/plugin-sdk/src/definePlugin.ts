@@ -815,6 +815,7 @@ type PluginStructuredContributionDefinitions<
     databaseEngines?: Readonly<Record<PluginContributionLocalId, PluginDatabaseEngineDefinitionV1>>;
     serviceLaunchEnvironments?: Readonly<Record<PluginContributionLocalId, PluginServiceLaunchEnvironmentDefinitionV1>>;
     projectNativeAdapters?: Readonly<Record<PluginContributionLocalId, PluginProjectNativeAdapterDefinitionV1>>;
+    deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>>;
     hooks?: Readonly<Record<PluginContributionLocalId, PluginHookDefinition>>;
     events?: Readonly<Record<PluginContributionLocalId, PluginEventDefinition>>;
     mcp?: PluginMcpDefinition;

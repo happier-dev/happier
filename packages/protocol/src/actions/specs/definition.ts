@@ -591,6 +591,7 @@ export type ActionSpecWithoutApproval = Readonly<{
   irreversible?: ParsedActionSpec['irreversible'];
   permissionChanging?: ParsedActionSpec['permissionChanging'];
   permissionChangingForInput?: ParsedActionSpec['permissionChangingForInput'];
+  automationPrimarySubject?: ParsedActionSpec['automationPrimarySubject'];
   approvalScope?: ParsedActionSpec['approvalScope'];
   description?: ParsedActionSpec['description'];
   safety: ParsedActionSpec['safety'];

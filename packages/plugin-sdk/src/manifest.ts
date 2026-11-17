@@ -1,4 +1,5 @@
 import type { PluginDatabaseEngineContributionV1 } from './databaseEngines.js';
+import type { PluginSubjectKindContributionV1 } from '@happier-dev/protocol/plugins/contributions/subjectKinds';
 import type { PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 import type { PluginServiceLaunchEnvironmentContributionV1 } from '@happier-dev/protocol/plugins/contributions/serviceLaunchEnvironments';
 // Portable declarative grammar is projected by the single Action DTO producer.
@@ -649,6 +650,7 @@ export interface PluginManifest {
     }>)[];
     /** Read-only definitions available through the host's workflow library. */
     workflows?: readonly PluginWorkflowContributionV1[];
+    subjectKinds?: readonly PluginSubjectKindContributionV1[];
     inputTypes?: readonly PluginInputTypeContributionV1[];
     atmospherePictures?: readonly PluginAtmospherePictureContributionV1[];
     themes?: readonly PluginThemeContributionV1[];
@@ -788,6 +790,7 @@ export type PluginContributes = Readonly<{
   executionRunProfiles: NonNullable<NonNullable<PluginManifest['contributes']>['executionRunProfiles']>;
   roles: NonNullable<NonNullable<PluginManifest['contributes']>['roles']>;
   workflows: NonNullable<NonNullable<PluginManifest['contributes']>['workflows']>;
+  subjectKinds: NonNullable<NonNullable<PluginManifest['contributes']>['subjectKinds']>;
   inputTypes: NonNullable<NonNullable<PluginManifest['contributes']>['inputTypes']>;
   atmospherePictures: NonNullable<NonNullable<PluginManifest['contributes']>['atmospherePictures']>;
   themes: NonNullable<NonNullable<PluginManifest['contributes']>['themes']>;
