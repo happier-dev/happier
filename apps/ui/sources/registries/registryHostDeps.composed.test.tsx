@@ -13,7 +13,7 @@ import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
 import { createPromptRegistrySkillFixture } from '@/dev/testkit/harness/promptMachineTransferBoundary';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import { SkillLockV1Schema, encodeSkillRevisionV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
@@ -37,7 +37,8 @@ import { createUiRegistryHttpV1 } from './registryHttpV1';
 import type { DirectoryGroup } from '@/components/store/StoreKindPage';
 import type { StoreDirectorySectionInput } from '@/components/store/discover/StoreDirectorySection';
 
-const transport = vi.hoisted(() => ({ calls: [] as ServerScopedMachineRpcParams<RegistryFetchRequestV1>[], platform: 'web', unreachableList: false }));
+const transport = vi.hoisted(() => ({ calls: [] as ServerScopedMachineRpcParams<RegistryFetchRequestV1>[], platform: 'web', unreachableList: false,
+    petFetch: undefined as undefined | ((request: RegistryFetchRequestV1) => Promise<unknown>) }));
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 // Machine RPC leaves this process; source ownership, supplier selection and REACH stay real.
@@ -45,6 +46,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: async (request: ServerScopedMachineRpcParams<RegistryFetchRequestV1>) => {
         transport.calls.push(request);
         const input = RegistryFetchRequestV1Schema.parse(request.payload);
+        if ('kind' in input && input.kind === 'pet' && transport.petFetch) return transport.petFetch(input);
         if (input.op === 'link') return { op: 'error', status: { state: 'unreachable' } };
         if (input.op === 'read' && input.kind === 'browserExtension') return { op: 'read', item: {
             summary: { sourceId: input.sourceId, kind: 'browserExtension', itemId: input.itemId, title: 'Dark Reader', version: `sha256:${'a'.repeat(64)}` },
@@ -325,6 +327,91 @@ it('opens an empty web skill recommendation shelf without a daemon browse even w
 });
 
 await initializeArtifactInventoryDemandHarness();
+
+it('browses browser pets through the existing Machine carrier and preserves selected sheet bytes', async () => {
+    const daemonReads: string[] = [];
+    const externalReads: string[] = [];
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-browser-pets.test', {
+        key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
+    }, 'updated', { handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init), handleExternalRequest: async url => {
+        externalReads.push(url);
+        throw new TypeError('Pet APIs do not allow browser CORS');
+    } });
+    onTestFinished(async () => {
+        transport.petFetch = undefined;
+        await standardCleanup();
+        await fixture.dispose();
+    });
+    await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_registry_browser_pets');
+    const account = await captureLazyActionAccountContext(fixture.home.id);
+    onTestFinished(() => account.dispose());
+    await publishMachineInventoryForTest(account.accountLifetime.scope, []);
+    transport.calls.length = 0;
+    const sourceIds = ['builtin:codex-pets', 'builtin:petdex'];
+    const sheets = {
+        winter: 'https://codex-pets.net/assets/winter/spritesheet.webp',
+        boba: 'https://assets.petdex.dev/boba/sprite.webp',
+    };
+    const sheetBytes = new Uint8Array([0, 127, 128, 255]);
+    const downloads: string[] = [];
+    const codexPet = { id: 'winter', displayName: 'Winter', description: 'A white cat', spritesheetUrl: sheets.winter };
+    const daemon = createRegistryHostV1({ host: 'node', readSources: async () => listRegistrySourcesV1({
+        record: { v: 2, sources: [], disabledSourceIds: [] }, pluginSources: [],
+    }), http: {
+        getText: async () => { throw new Error('Unexpected text request'); },
+        getBytes: async url => { downloads.push(url); return { ok: true, fetchedAt: 1, value: sheetBytes }; },
+        getJson: async url => {
+            daemonReads.push(url);
+            const address = new URL(url);
+            const value = address.hostname === 'codex-pets.net' && address.pathname === '/api/pets'
+                ? { pets: [codexPet], page: 1, total: 1, totalPages: 1 }
+                : url === 'https://codex-pets.net/api/pets/winter' ? { pet: codexPet }
+                : address.hostname === 'petdex.dev' && address.pathname === '/api/pets/search'
+                    ? { pets: [{ slug: 'boba', displayName: 'Boba', description: 'A companion', spritesheetPath: sheets.boba }], nextCursor: null, total: 1 }
+                : url === 'https://petdex.dev/api/manifest' ? { pets: [{ slug: 'boba', displayName: 'Boba', spritesheetUrl: sheets.boba,
+                    petJsonUrl: 'https://assets.petdex.dev/boba/pet.json' }] }
+                : url === 'https://assets.petdex.dev/boba/pet.json' ? { id: 'Boba Cat', displayName: 'Boba', description: 'A companion' }
+                : undefined;
+            if (!value) throw new Error(`Unexpected pet request: ${url}`);
+            return { ok: true, fetchedAt: 1, value };
+        },
+    } });
+    // Machine RPC is a JSON boundary; the real daemon host, adapters and UI parser run beneath it.
+    transport.petFetch = async request => JSON.parse(JSON.stringify(await daemon.fetchRequest(request)));
+    const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
+    const host = await createUiRegistryHostV1(account, port, {});
+    for (const query of [undefined, 'cat']) {
+        expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list',
+            { kind: 'pet', sourceIds, query })).pages.map(page => page.status.state))
+            .toEqual(['needs_machine', 'needs_machine']);
+    }
+    await expect(host.readRegistryPet({ sourceId: sourceIds[0]!, itemId: 'winter' }))
+        .rejects.toMatchObject({ status: { state: 'needs_machine' } });
+    expect(transport.calls).toEqual([]);
+    const machine = createHydratedPlainMachineFixture({ id: 'pet-registry-carrier', accountId: account.accountId,
+        machine: { activeAt: Date.now() } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]);
+    for (const query of [undefined, 'cat']) {
+        for (const [index, sourceId] of sourceIds.entries()) {
+            expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list',
+                { kind: 'pet', sourceIds: [sourceId], query })).pages.flatMap(page => page.items.map(item => item.itemId)))
+                .toEqual([index === 0 ? 'winter' : 'boba']);
+        }
+    }
+    expect(daemonReads.filter(url => new URL(url).searchParams.get('q') === 'cat')).toHaveLength(2);
+    for (const [sourceId, itemId, packageId] of [[sourceIds[0]!, 'winter', 'winter'], [sourceIds[1]!, 'boba', 'Boba Cat']]) {
+        expect(await host.readRegistryPet({ sourceId: sourceId!, itemId: itemId! })).toMatchObject({
+            manifest: { id: packageId }, spritesheetBytes: sheetBytes, mediaType: 'image/webp',
+            origin: { kind: 'registry', sourceId, itemId },
+        });
+    }
+    expect(downloads).toEqual([sheets.winter, sheets.boba]);
+    expect(transport.calls.filter(call => call.payload.op === 'read').map(call => call.payload))
+        .toEqual(sourceIds.map((sourceId, index) => ({ op: 'read', kind: 'pet', sourceId,
+            itemId: index === 0 ? 'winter' : 'boba', petContent: true })));
+    expect(new Set(transport.calls.map(call => call.machineId))).toEqual(new Set([machine.id]));
+    expect(externalReads).toEqual([]);
+});
 
 it('opens authenticated Open VSX theme faces through captured requester custody while public reads stay metadata-only', async () => {
     const machineId = 'private-theme-machine', installationId = 'private-theme-installation', homeIdentityId = 'srv_private_theme_home';

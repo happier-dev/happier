@@ -72,6 +72,46 @@ describe('pet Actions through their import and Account boundaries', () => {
         expect(effects[1]).toMatchObject({ path: '/v1/account/pets/account-winter', method: 'DELETE' });
     });
 
+    it('imports browser registry bytes through a Machine carrier and preserves needs_machine without an Account write', async () => {
+        const writes: unknown[] = [];
+        const request: ServerFetch = async (_path, init) => {
+            writes.push(JSON.parse(String(init?.body)));
+            return new Response(JSON.stringify({ ok: true, pet }));
+        };
+        const browserHttp: RegistryHttpV1 = { getText: unused, getJson: unused, getBytes: unused };
+        const missingCarrier = createRegistryHostV1({ host: 'web', http: browserHttp,
+            readSources: async () => BUILT_IN_REGISTRY_SOURCES_V1 });
+        const input = { source: { kind: 'registry', sourceId: 'builtin:codex-pets', itemId: 'winter' } };
+        const unavailable = createActionExecutor({ petAction: createUiPetActionExecute(account(request), async () => missingCarrier) });
+        expect(await unavailable.execute(PET_IMPORT_ACTION_ID_V1, input, context)).toMatchObject({
+            ok: false, errorCode: 'needs_machine', details: { registryStatus: { state: 'needs_machine' } },
+        });
+        expect(writes).toEqual([]);
+
+        const daemonHttp: RegistryHttpV1 = { getText: unused,
+            getJson: async () => ({ ok: true, fetchedAt: 1, value: { pet: {
+                id: 'winter', displayName: 'Winter', description: 'A companion',
+                spritesheetUrl: 'https://codex-pets.net/assets/winter.webp',
+            } } }),
+            getBytes: async () => ({ ok: true, fetchedAt: 1, value: new Uint8Array([0, 128, 255]) }),
+        };
+        const daemon = createRegistryHostV1({ host: 'node', http: daemonHttp,
+            readSources: async () => BUILT_IN_REGISTRY_SOURCES_V1 });
+        const browser = createRegistryHostV1({ host: 'web', http: browserHttp,
+            readSources: async () => BUILT_IN_REGISTRY_SOURCES_V1,
+            // The daemon transport is the process boundary; both registry hosts and adapters stay real.
+            daemonFetch: async request => JSON.parse(JSON.stringify(await daemon.fetchRequest(request))),
+        });
+        const execute = createActionExecutor({ petAction: createUiPetActionExecute(account(request), async () => browser) });
+        expect(await execute.execute(PET_IMPORT_ACTION_ID_V1, input, context)).toMatchObject({
+            ok: true, result: { pet: { accountPetId: pet.accountPetId } },
+        });
+        expect(writes).toEqual([expect.objectContaining({ manifest: pet.manifest,
+            origin: { kind: 'registry', sourceId: 'builtin:codex-pets', itemId: 'winter' },
+            spritesheet: expect.objectContaining({ encoding: 'base64', data: 'AID/', sizeBytes: 3, mediaType: 'image/webp' }),
+        })]);
+    });
+
     it('imports a Machine package through the existing daemon importer and preserves server refusals', async () => {
         boundary.machineRpc.mockResolvedValueOnce({ ok: true, target: 'account', account: { ok: true, pet } });
         const execute = createActionExecutor({ petAction: createUiPetActionExecute(account(unused), unused) });
