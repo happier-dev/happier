@@ -16,14 +16,16 @@ type ConnectionEndpointStatus =
 type ConnectionSyncErrorKind = 'auth' | 'config' | 'network' | 'server' | 'unknown';
 type ConnectionEndpointReason = 'server_restarting' | string | null;
 
-export function resolveConnectionHealth(params: Readonly<{
-    socketStatus: ConnectionSocketStatus;
+export function resolveConnectionHealth(input: Readonly<{
+    /** `paused`: the applied socket's intentional visibility pause, presented as reconnecting until it settles. */
+    socketStatus: ConnectionSocketStatus | 'paused';
     endpointStatus?: ConnectionEndpointStatus;
     endpointReason?: ConnectionEndpointReason;
     hasSyncError?: boolean;
     syncErrorKind?: ConnectionSyncErrorKind;
     machineGroups: ReadonlyArray<ConnectionHealthMachineGroup>;
 }>): ConnectionHealth {
+    const params = { ...input, socketStatus: input.socketStatus === 'paused' ? 'connecting' as const : input.socketStatus };
     let hasUnknownReadyCount = false;
     let readyCount = 0;
     const machines = computeMachinesSummary(

@@ -565,6 +565,14 @@ function noteConcurrentSessionListObserved(entry: ManagedConcurrentServer): void
     publishConcurrentSessionListObservation({ entry, phase: 'ready' });
 }
 
+function isConcurrentHomePresentationSettled(serverIdRaw: string): boolean {
+    const serverId = normalizeServerId(serverIdRaw);
+    if (!serverId) return false;
+    const state = storage.getState();
+    return state.machineListStatusByServerId[serverId] === 'idle'
+        && state.concurrentSessionListCacheByServerId?.[serverId]?.listObservation?.phase === 'ready';
+}
+
 function areMachineListsEqual(previous: Machine[] | null | undefined, next: Machine[] | null | undefined): boolean {
     if (previous === next) return true;
     if (!Array.isArray(previous) || !Array.isArray(next)) return previous === next;
@@ -1490,6 +1498,9 @@ async function connectManagedServer(
             // A retry probe is `connecting` too, but only the first attempt means "never reached";
             // a still-failing retry keeps presenting the steady offline/error state.
             const isInitialConnection = state.phase === 'idle' || (state.phase === 'connecting' && !isRetryOfKnownFailure(state, true));
+            // A first attempt of a Home that already presents settled rows (the resume after a pause
+            // restarts supervision) revalidates them: keep presenting them until it settles.
+            if (isInitialConnection && isConcurrentHomePresentationSettled(entry.id)) return;
             const cachedMachines = storage.getState().machineListByServerId?.[entry.id] ?? null;
             updateConcurrentMachineListCache({
                 serverId: entry.id,

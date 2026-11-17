@@ -328,6 +328,8 @@ function resolveSocketStatusKey(socketStatus: unknown): 'connected' | 'connectin
         case 'connected':
             return 'connected';
         case 'connecting':
+        // An intentional pause reconnects on resume; it is never presented as a loss.
+        case 'paused':
             return 'connecting';
         case 'error':
             return 'error';
@@ -824,7 +826,8 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             homeSummaryStatusKey: homeSummary.statusKey,
         });
     const relayPresentation = resolveStatusPresentation(theme, relayStatusKey);
-    const isRetrying = connectionHealth.endpointStatus === 'connecting' || socketStatus.status === 'connecting';
+    const isRetrying = connectionHealth.endpointStatus === 'connecting' || socketStatus.status === 'connecting'
+        || socketStatus.status === 'paused';
     const nextRetryAt = connectionHealth.nextRetryAt ?? activeSyncError?.nextRetryAt;
     const canRetryRelayConnection = irohTransportPresentation.permitsRetry && (
         relayStatusKey === 'connecting'

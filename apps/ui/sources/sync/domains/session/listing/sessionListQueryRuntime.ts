@@ -3,6 +3,7 @@ import { isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
 import { EMPTY_ORDINARY_SESSION_LIST_FRONTIER } from '@/sync/engine/sessions/ordinarySessionListFrontier';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
+import type { SocketStatus } from '@/sync/store/domains/realtime';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { readHomeAccountReadRevision } from '@/sync/runtime/orchestration/homeAccountChange';
 import { sync } from '@/sync/sync';
@@ -55,11 +56,21 @@ export function getSessionListQueryHomeAvailability(
         return 'pending';
     }
     if (runtimeAvailable && isApplied) {
-        return storage.getState().socketStatus === 'connected' ? 'online' : 'offline';
+        return presentsAppliedSocketOnline(storage.getState().socketStatus) ? 'online' : 'offline';
     }
     const concurrentAvailability = getConcurrentSessionListQueryHomeAvailability(serverId);
     if (concurrentAvailability !== 'offline') return concurrentAvailability;
     return 'offline';
+}
+
+/** A pause (hidden tab, backgrounded app) is not evidence of an outage: the Home keeps what it presented. */
+function presentsAppliedSocketOnline(status: SocketStatus): boolean {
+    return status === 'connected' || status === 'paused';
+}
+
+/** The applied Home's socket fact that availability reads; a pause and its resume leave it unchanged. */
+export function useAppliedSessionListQuerySocketOnline(): boolean {
+    return storage((state) => presentsAppliedSocketOnline(state.socketStatus));
 }
 
 export function isSessionListQueryHomeOnline(serverIdRaw: string): boolean {

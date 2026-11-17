@@ -17,6 +17,8 @@ import type { SessionListHomeObservation } from './sessionListHomeObservation';
 import { invalidateSessionListQueryHome, retireSessionListQueryAddress } from './sessionListQueryInvalidation';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { planSyncActionsFromChanges, plannedChangesAffectSessionListQuery } from '@/sync/runtime/orchestration/changesPlanner';
+import { setServerReachabilityNetworkAllowed } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { sync } from '@/sync/sync';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -111,6 +113,49 @@ describe('session list query source: subscription locality', () => {
             expect(renders - settled.renders).toBe(0);
             expect(state.current).toBe(settled.result);
         } finally { await screen.unmount(); }
+    });
+    it('does no index renders across a hidden-tab pause and resume of the applied Home, and still reads a real socket loss', async () => {
+        // P03-JOURNEYS-3: the pause's own disconnect read as an offline applied Home, so every list row
+        // redrew on hide (~1.26k renders live) and again on show.
+        const serverId = boundary.focusedHome();
+        const homes = [{ serverId, query: QUERY }];
+        let renders = 0;
+        const state: { current: SessionListQuerySourceState | null } = { current: null };
+        function Host() {
+            state.current = useSessionListQuerySourceState({ enabled: true, homes });
+            renders += 1;
+            return null;
+        }
+        // The test platform has no document visibility or AppState source: drive Sync's own pause and resume
+        // steps (the routine teardown a hidden tab runs, and its foreground resume).
+        const pauseOwner = sync as unknown as Readonly<{
+            teardownRoutineConnectivity: (tag?: string) => void;
+            resumeAfterForegroundTransition: (tag: string) => void;
+        }>;
+        const screen = await mount(<Host />);
+        try {
+            await waitForSessionListQueryState(() => expect(state.current?.statesByServerId[serverId]?.phase).toBe('ready'));
+            const settled = { renders, result: state.current };
+            const statuses: string[] = [];
+            const unsubscribe = storage.subscribe((next, previous) => {
+                if (next.socketStatus !== previous.socketStatus) statuses.push(next.socketStatus);
+            });
+            try {
+                await act(async () => { pauseOwner.teardownRoutineConnectivity('test.hide'); });
+                await waitForSessionListQueryState(() => expect(statuses.length).toBeGreaterThan(0));
+                await act(async () => {
+                    setServerReachabilityNetworkAllowed(true);
+                    pauseOwner.resumeAfterForegroundTransition('test.show');
+                });
+                await waitForSessionListQueryState(() => expect(storage.getState().socketStatus).toBe('connected'));
+            } finally { unsubscribe(); }
+            expect({ statuses, renders: renders - settled.renders }).toEqual({ statuses: ['paused', 'connected'], renders: 0 });
+            expect(state.current).toBe(settled.result);
+            boundary.loseTransport(serverId);
+            await waitForSessionListQueryState(() => expect(state.current).not.toBe(settled.result));
+        } finally {
+            await screen.unmount();
+        }
     });
     it('advances a cold read-to-end consumer during finite known-row Home changes instead of repeating page one', async () => {
         const serverId = boundary.focusedHome();

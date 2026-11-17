@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/protocol/sessions';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { apiSocket } from '@/sync/api/session/apiSocket';
+import { apiSocket, type SyncSocketState } from '@/sync/api/session/apiSocket';
 import { storage } from '@/sync/domains/state/storage';
 import {
     getFocusedSessionAddress,
@@ -336,7 +336,7 @@ export const CurrentSessionPresentationRuntime = React.memo(function CurrentSess
         };
 
         syncAll();
-        let previousSocketStatus: 'disconnected' | 'connecting' | 'connected' | 'error' | null = null;
+        let previousSocketStatus: SyncSocketState['connectionStatus'] | null = null;
         const unsubscribeSocketStatus = apiSocket.onStatusChange((status) => {
             const previous = previousSocketStatus;
             previousSocketStatus = status;

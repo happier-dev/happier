@@ -1,11 +1,13 @@
 import type { StoreSet } from './_shared';
+import type { ApiSocketStatus } from '@/sync/api/session/apiSocket';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
   createAccountSettingsIdleStatus,
   type AccountSettingsSyncStatus,
 } from '@/sync/domains/settings/accountSettingsSyncStatus';
 
-export type SocketStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+/** The applied Home's socket status, as `apiSocket` publishes it (`paused` = an intentional visibility pause). */
+export type SocketStatus = ApiSocketStatus;
 
 export type SyncError = {
   message: string;

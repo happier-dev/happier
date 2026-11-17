@@ -37,7 +37,7 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
     };
     const connectionStatus = (): FeedState['status'] => {
         const status = storage.getState().socketStatus;
-        return status === 'connected' ? 'live' : status === 'connecting' ? 'connecting' : 'offline';
+        return status === 'connected' ? 'live' : status === 'connecting' || status === 'paused' ? 'connecting' : 'offline';
     };
     const releaseDemand = () => {
         const release = close;

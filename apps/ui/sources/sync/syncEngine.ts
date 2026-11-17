@@ -37,6 +37,7 @@ import {
 } from '@happier-dev/agents';
 import {
     apiSocket,
+    type ApiSocketStatus,
 } from '@/sync/api/session/apiSocket';
 import { bindAccountEncryptionObservation, readAccountEncryptionObservationBinding,
     type AccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
@@ -1611,7 +1612,7 @@ class Sync {
 	      private lastSocketDisconnectedAtMs: number | null = null;
       private lastSocketOfflineDurationMs: number | null = null;
       private socketOfflineCatchUpConsumedSessionIds = new Set<string>();
-      private socketStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
+      private socketStatus: ApiSocketStatus = 'disconnected';
       /** A native pause began with this socket connected and it has not been lost since. */
       private nativeSocketKeptWhileAway = false;
       /** A changes wake arrived while not in the foreground and has not been caught up yet. */
@@ -13020,8 +13021,8 @@ class Sync {
 	                  }
 		                  return;
 		              }
-		              if (status === 'disconnected' || status === 'error') {
-                          if (this.nativeSocketKeptWhileAway) {
+		              if (status === 'disconnected' || status === 'error' || status === 'paused') {
+                          if (this.nativeSocketKeptWhileAway && status !== 'paused') {
                               // The socket kept through a native pause is gone: tear down now, so nothing
                               // reconnects in the background; the return to the foreground resumes fully.
                               this.nativeSocketKeptWhileAway = false;
@@ -13030,7 +13031,8 @@ class Sync {
                           markAccountSettingsHeadUnverified();
                           // A socket closed by a pause (hidden web tab, backgrounded app: the network is not
                           // allowed) is not an outage; the Home keeps presenting what it showed.
-                          if (!this.embedSessionScope && !isEmbedWindowContext() && isServerReachabilityNetworkAllowed()) {
+                          if (status !== 'paused' && !this.embedSessionScope && !isEmbedWindowContext()
+                              && isServerReachabilityNetworkAllowed()) {
                               this.publishActiveSessionListObservation('offline');
                           }
 		                  if (this.lastSocketDisconnectedAtMs == null) {

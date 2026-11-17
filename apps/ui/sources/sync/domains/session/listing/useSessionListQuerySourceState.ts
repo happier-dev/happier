@@ -12,7 +12,6 @@ import {
     useSessionListHomeObservations,
     useSessionListRowsByServerId,
     useSetting,
-    useSocketStatus,
     storage,
 } from '@/sync/domains/state/storage';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -47,6 +46,7 @@ import {
     fetchSessionListQueryPageForHome,
     getSessionListQueryHomeAvailability,
     loadNextOrdinarySessionListPage,
+    useAppliedSessionListQuerySocketOnline,
     readOrdinarySessionListHomeState,
     refreshOrdinarySessionList,
     resolveOrdinarySessionListHomeOwner,
@@ -430,7 +430,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
     const ordinaryObservationsByServerId = useSessionListHomeObservations();
     const queryMembershipByKey = useSessionListQueryMembershipByKey();
     const machineStatusesByServerId = useMachineListStatusByServerId();
-    const socketStatus = useSocketStatus();
+    const appliedSocketOnline = useAppliedSessionListQuerySocketOnline();
     const accountScopesByServerId = useServerCredentialAccountScopes(remoteHomeIds);
     // Homes whose corpus an incumbent runtime already owns — the local demo,
     // Sync for the applied Home, the concurrent cache for every other managed Home. Their
@@ -562,7 +562,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
                 ordinaryAdapter: home.ordinaryAdapter ?? null,
             });
         }
-    }, [accountScopesByServerId, followingSupportByServerId, homes, input.enabled, machineStatusesByServerId, socketStatus, supportByServerId]);
+    }, [accountScopesByServerId, followingSupportByServerId, homes, input.enabled, machineStatusesByServerId, appliedSocketOnline, supportByServerId]);
 
     React.useLayoutEffect(() => () => {
         for (const [serverId, controller] of [...controllersRef.current]) {
@@ -712,7 +712,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
         readRetainedRenderMembership,
         refresh,
         retry,
-        socketStatus,
+        appliedSocketOnline,
     ]);
     // Remember only what was committed; an abandoned render must not become the reference point.
     React.useLayoutEffect(() => {

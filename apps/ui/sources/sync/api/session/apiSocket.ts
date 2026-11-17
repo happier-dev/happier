@@ -331,9 +331,16 @@ type PreparedSocketRequestTarget = Readonly<
     & { serverId: string; generation: number }
 >;
 
+/**
+ * `paused`: we stopped listening on purpose (a hidden web tab or backgrounded app) while the socket was
+ * connected. It is not evidence that the Home is unreachable; consumers keep presenting what they showed.
+ * The resume's reconnect attempt stays `paused` until it settles (`connected`, or a real failure).
+ */
+export type ApiSocketStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'paused';
+
 export interface SyncSocketState {
     isConnected: boolean;
-    connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
+    connectionStatus: ApiSocketStatus;
     lastError: Error | null;
 }
 
@@ -384,10 +391,10 @@ class ApiSocket {
     private messageHandlers: Map<string, Set<SyncSocketMessageHandler>> = new Map();
     private reconnectedListeners: Set<() => void | Promise<unknown>> = new Set();
     private sessionConsumptionAdmittedListeners = new Set<(event: Readonly<{ serverId: string; sessionIds: readonly string[] }>) => void>();
-    private statusListeners: Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void> = new Set();
+    private statusListeners: Set<(status: ApiSocketStatus) => void> = new Set();
     private connectionStateListeners: Set<(state: ManagedConnectionState) => void> = new Set();
     private errorListeners: Set<(error: Error | null) => void> = new Set();
-    private currentStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
+    private currentStatus: ApiSocketStatus = 'disconnected';
     private currentConnectionState: ManagedConnectionState = {
         phase: 'idle',
         reason: null,
@@ -598,6 +605,10 @@ class ApiSocket {
 
     disconnect(options?: Readonly<{ preserveHttpRequests?: boolean; visibilityPause?: boolean }>) {
         clearMachineRpcDirectRouteGrants();
+        // Pausing a connected socket is not a loss: publish `paused` once, and keep it through this teardown.
+        const pausesConnected = options?.visibilityPause === true
+            && (this.currentStatus === 'connected' || this.currentStatus === 'paused');
+        if (pausesConnected) this.updateStatus('paused');
         this.visibilityPauseOnDetach = options?.visibilityPause === true;
         if (this.visibilityPauseOnDetach && this.socketTransport) this.pausedSockets.add(this.socketTransport);
         if (this.accountEncryptionObservation) {
@@ -652,7 +663,7 @@ class ApiSocket {
                 lastDisconnectedAt: Date.now(),
             });
         }
-        this.updateStatus('disconnected');
+        if (!pausesConnected) this.updateStatus('disconnected');
     }
 
     /** Cancel direct HTTP that belongs to a retired socket configuration. */
@@ -711,7 +722,7 @@ class ApiSocket {
         return () => { this.sessionConsumptionAdmittedListeners.delete(listener); };
     };
 
-    onStatusChange = (listener: (status: 'disconnected' | 'connecting' | 'connected' | 'error') => void) => {
+    onStatusChange = (listener: (status: ApiSocketStatus) => void) => {
         this.statusListeners.add(listener);
         // Immediately notify with current status
         listener(this.currentStatus);
@@ -1644,8 +1655,10 @@ class ApiSocket {
     // Private Methods
     //
 
-    private updateStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error') {
+    private updateStatus(status: ApiSocketStatus) {
         if (status !== 'connected') clearMachineRpcDirectRouteGrants();
+        // The resume's reconnect attempt continues the pause; only a settled result ends it.
+        if (this.currentStatus === 'paused' && status === 'connecting') return;
         if (this.currentStatus !== status) {
             this.currentStatus = status;
             this.statusListeners.forEach(listener => listener(status));
@@ -1890,7 +1903,8 @@ class ApiSocket {
                     }
                     return;
                 }
-                this.updateStatus('disconnected');
+                // The paused socket's own close notification is the pause, already published.
+                if (!visibilityPause || this.currentStatus !== 'paused') this.updateStatus('disconnected');
                 if (event.intentional) {
                     return;
                 }
@@ -2192,9 +2206,12 @@ class ApiSocket {
                     this.updateStatus('connecting');
                 }
                 return;
-            case 'offline':
             case 'idle':
             case 'shutting_down':
+                // Our own stopped or not-yet-started supervision, not a server observation: a pause stays paused.
+                if (this.currentStatus !== 'paused') this.updateStatus('disconnected');
+                return;
+            case 'offline':
                 this.updateStatus('disconnected');
                 return;
             default:
