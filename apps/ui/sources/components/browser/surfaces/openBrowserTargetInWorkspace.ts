@@ -48,7 +48,7 @@ import type { BrowserViewState } from '@/sync/domains/browser/types';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { selectLocalServicePreviewByBrowserTarget } from '@/sync/domains/local/services/preview/store';
 import { getLocalServicePreviewState } from '@/sync/domains/local/services/preview/sharedStore';
-import { resolveLocalServiceBrowserTarget } from '@/sync/domains/local/services/preview/resolveLaunchTarget';
+import { resolveLocalServiceBrowserTarget, type LocalServiceBrowserOpenTarget } from '@/sync/domains/local/services/preview/resolveLaunchTarget';
 import type { BrowserAddressFacts } from '@/sync/domains/browser/actions/address';
 
 import {
@@ -529,9 +529,9 @@ type ServicesOpenInBrowserDeps = Readonly<{
 
 export function bindServicesOpenInBrowser(
     deps: ServicesOpenInBrowserDeps,
-): (target: LocalServiceLaunchTargetV1) => Promise<ServicesOpenInBrowserResult> {
+): (target: LocalServiceBrowserOpenTarget) => Promise<ServicesOpenInBrowserResult> {
     const openBrowserViewTarget = deps.onOpenTarget;
-    return async (target: LocalServiceLaunchTargetV1): Promise<ServicesOpenInBrowserResult> => {
+    return async (target: LocalServiceBrowserOpenTarget): Promise<ServicesOpenInBrowserResult> => {
         const resolved = await resolveLocalServiceBrowserTarget(target, {
             serverId: deps.serverId, sessionId: deps.sessionId, accountLifetime: deps.accountLifetime,
             ...(deps.actionExecute ? { execute: async (request, context) => {

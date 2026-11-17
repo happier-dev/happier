@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { LocalServiceBrowserOpenTarget } from '@/sync/domains/local/services/preview/resolveLaunchTarget';
 import { BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -50,10 +50,12 @@ export type UseServicesOpenInBrowserInput = Readonly<{
  *
  * Centralizing this here keeps the Session/Project panels, mobile cockpits, and Companion glance
  * from each re-deriving the same opener wiring.
+ * Stable declaration routes pass their protocol locator with its bound Account lifetime;
+ * the preview Action resolves the current serving occurrence without launching it.
  */
 export function useServicesOpenInBrowser(
     input: UseServicesOpenInBrowserInput,
-): (target: LocalServiceLaunchTargetV1) => Promise<ServicesOpenInBrowserResult> {
+): (target: LocalServiceBrowserOpenTarget) => Promise<ServicesOpenInBrowserResult> {
     const pane = useAppPaneScope(input.scopeId);
     const openDetailsTab = pane.openDetailsTab;
     const platform = resolveBrowserSurfacePlatform();

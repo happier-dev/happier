@@ -22,6 +22,7 @@ import type {
   LocalServiceSetupConsentReview,
 } from './localServiceActionAdmission';
 import type { LocalServiceEntryHandlers } from './localServiceEntryActions';
+import type { LocalServiceLogOccurrence } from './localServiceOccurrenceActions';
 import { LocalServiceEffectReviewCard } from './LocalServiceEffectReviewCard';
 import { LocalServiceSetupConsentContinuation } from './LocalServiceSetupConsentContinuation';
 import { useLocalServicePublicPreviewActions } from './publicPreviewActions';
@@ -57,6 +58,9 @@ export type LocalServiceEntryActionsWiring = Readonly<{
   review: React.ReactElement;
   /** The Account the surface acts as: its own services carry no "Started by". */
   viewerAccountId: string | null;
+  /** The selected retained occurrence; the surface mounts the canonical service log viewer. */
+  logOccurrence: LocalServiceLogOccurrence | null;
+  dismissServiceLogs: () => void;
 }>;
 
 /**
@@ -120,6 +124,14 @@ export function useLocalServiceEntryActions(
       Boolean(credentialBinding?.isCurrent()) && !cancellation.signal.aborted,
     [credentialBinding, cancellation],
   );
+  const [selectedLogs, setSelectedLogs] = React.useState<Readonly<{
+    scope: AbortController; occurrence: LocalServiceLogOccurrence;
+  }> | null>(null);
+  const onShowServiceLogs = React.useCallback<NonNullable<LocalServiceEntryHandlers['onShowServiceLogs']>>(
+    occurrence => {
+      if (isActionScopeCurrent()) setSelectedLogs({ scope: cancellation, occurrence });
+    }, [cancellation, isActionScopeCurrent]);
+  const dismissServiceLogs = React.useCallback(() => setSelectedLogs(null), []);
   const effectReview = useLocalServiceReview<LocalServiceEffectReview>();
   const setupReview = useLocalServiceReview<LocalServiceSetupConsentReview>();
   const actionAdmission: LocalServiceActionAdmission = {
@@ -180,12 +192,14 @@ export function useLocalServiceEntryActions(
       onStartLauncherTarget,
       onClearLauncherHistory,
       ...(input.terminalScopeId ? { onShowServiceTerminal } : {}),
+      onShowServiceLogs,
       publicPreviewActions,
     }),
     [
       onClearLauncherHistory,
       input.terminalScopeId,
       onShowServiceTerminal,
+      onShowServiceLogs,
       onCopyServiceUrl,
       onForgetDetectedService,
       onRestartManagedService,
@@ -227,6 +241,8 @@ export function useLocalServiceEntryActions(
     handlers,
     review,
     viewerAccountId: credentialBinding?.accountId ?? null,
+    logOccurrence: selectedLogs?.scope === cancellation && isActionScopeCurrent() ? selectedLogs.occurrence : null,
+    dismissServiceLogs,
   };
 }
 

@@ -11,7 +11,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { SessionViewerSourceAccountScopeProvider } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { Modal } from '@/modal';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { OpenBrowserTargetScope } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import { useOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/useOpenBrowserTargetInWorkspace';
@@ -30,9 +30,12 @@ import { LocalServicesSurfaceHost } from './LocalServicesSurfaceHost';
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { useRegisterSessionPaneDriver } from '@/components/sessions/panes/useRegisterSessionPaneDriver';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 const machineRpcMock = vi.hoisted(() => vi.fn());
 const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpcMock }));
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
 vi.mock('@react-navigation/native', async importOriginal => ({
@@ -137,6 +140,8 @@ function RetainedBrowserOwner(props: Readonly<{ scopeId: string; platform?: 'web
 describe('useServicesOpenInBrowser', () => {
     beforeEach(() => {
         standardCleanup();
+        machineRpcMock.mockReset();
+        vi.mocked(Modal.confirm).mockClear();
         openExternalUrlMock.mockClear();
         const resource = {
             previewId: 'preview-open', sessionId: 'session-a', machineId: 'machine-a',
@@ -150,12 +155,23 @@ describe('useServicesOpenInBrowser', () => {
     beforeEach(async () => {
         actionPolicy = {};
         const features = createRootLayoutFeaturesResponse({ features: { browser: { enabled: true } } });
+        // The real preview Action crosses Home HTTP with its sealed requester. Only the
+        // remote Machine response is supplied here; custody and Action admission stay real.
+        const previewBoundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://services-browser.test', serverIdentityId: 'srv_services_phone_home',
+            accountId: 'artifact-account', machineId: 'machine-a', actionId: 'localServices.preview.openOrCreate',
+            tokenEpoch: 0, requesterInvocation: 'credentials', failure: readActionFailureEnvelope,
+            execute: input => machineRpcMock({ machineId: 'machine-a', serverId: 'srv_services_phone_home',
+                method: RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE, payload: input }),
+        });
         fixture = await createPlainArtifactHomeFixture('https://services-browser.test', {
+            currentAccount: true,
             serverFeatures: features,
-            handleRequest: async path => path === '/v2/account/settings' ? Response.json({ version: 1,
+            handleRequest: async (path, init) => await previewBoundary.handle(new URL(path, 'https://services-browser.test'), init)
+                ?? (path === '/v2/account/settings' ? Response.json({ version: 1,
                 content: { t: 'plain', v: { actionsSettingsV1: { v: 1, actions: { 'browser.workspace.open': actionPolicy },
                     approvalWaivedSurfaces: { 'browser.workspace.open': ['ui'] },
-                } } } }) : null,
+                } } } }) : null),
         });
         expect(await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_services_phone_home'))
             .toMatchObject({ serverIdentityId: 'srv_services_phone_home' });
@@ -272,6 +288,45 @@ describe('useServicesOpenInBrowser', () => {
         expect(onAfterOpen).toHaveBeenCalledOnce();
     });
 
+    it('opens a stable declaration locator through its bound Home without starting a service', async () => {
+        const captured: Captured = { open: null };
+        const screen = await renderServicesHook({ scopeId: 'stable-preview:browser', scope: 'workspaceDetails', captured });
+        await act(async () => {
+            expect(await captured.open?.({ serverId: fixture!.home.id, machineId: 'machine-a', targetId: 'declared-web' }))
+                .toEqual({ status: 'succeeded' });
+        });
+        const calls = machineRpcMock.mock.calls.map(([request]) => request);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({ method: RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE,
+            payload: { machineId: 'machine-a', launchTargetId: 'declared-web' } });
+        expect(screen.tree.findByType('HookProbe' as never).props.detailsTabKinds).toEqual(['browser-view']);
+    });
+
+    it('refuses a stable declaration locator for another Home before preview admission', async () => {
+        const captured: Captured = { open: null };
+        const screen = await renderServicesHook({ scopeId: 'foreign-preview:browser', scope: 'workspaceDetails', captured });
+        await act(async () => {
+            expect(await captured.open?.({ serverId: 'different-home', machineId: 'machine-a', targetId: 'declared-web' }))
+                .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+        });
+        expect(machineRpcMock).not.toHaveBeenCalled();
+        expect(screen.tree.findByType('HookProbe' as never).props.detailsTabKinds).toEqual([]);
+    });
+
+    it.each(['service_not_listening', 'stale_service'])('preserves the declaration preview owner refusal %s without a process effect', async reasonCode => {
+        machineRpcMock.mockResolvedValue({ ok: false, errorCode: reasonCode,
+            error: `local_service_preview_lifecycle_refused:${reasonCode}` });
+        const captured: Captured = { open: null };
+        const screen = await renderServicesHook({ scopeId: `refused-preview:${reasonCode}`, scope: 'workspaceDetails', captured });
+        await act(async () => {
+            const result = await captured.open?.({ serverId: fixture!.home.id, machineId: 'machine-a', targetId: 'declared-web' });
+            expect(readLocalServiceActionOutcome(result)).toMatchObject({ kind: 'failed', reasonCode });
+        });
+        expect(machineRpcMock.mock.calls.map(([request]) => request.method))
+            .toEqual([RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE]);
+        expect(screen.tree.findByType('HookProbe' as never).props.detailsTabKinds).toEqual([]);
+    });
+
     it('keeps a phone Service open current when cockpit presentation changes during preview registration', async () => {
         const captured: Captured = { open: null };
         const onAfterOpen = vi.fn();
@@ -358,27 +413,32 @@ describe('useServicesOpenInBrowser', () => {
         expect(onAfterDetailsOpen).not.toHaveBeenCalled();
     });
 
-    it.each(['reject', 'approve'] as const)('keeps surfaces unchanged while approval is pending and follows the %s decision', async decision => {
+    it.each(['reject', 'approve'] as const)('keeps surfaces unchanged during native Ask confirmation and follows the %s decision', async decision => {
         actionPolicy = { approvalRequiredSurfaces: ['ui'] };
         await fixture!.hydrateAccountSettings();
         const onAfterOpen = vi.fn();
         const onAfterDetailsOpen = vi.fn();
         const captured: Captured = { open: null };
         const screen = await renderServicesHook({ scopeId: `session:${decision}:browser`, scope: 'sessionMobile', captured, onAfterOpen, onAfterDetailsOpen });
+        const choice = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => choice.promise);
         let pendingOpen: ReturnType<NonNullable<Captured['open']>> | undefined;
+        let settled = false;
         await act(async () => {
             pendingOpen = captured.open!(openableTarget);
-            await vi.waitFor(() => expect(fixture!.boundary.list().some(row =>
-                fixture!.boundary.readPlainBody(row.id)?.includes('browser.workspace.open'))).toBe(true));
+            void pendingOpen.then(() => { settled = true; });
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledOnce());
         });
+        expect(settled).toBe(false);
+        expect(fixture!.boundary.list()).toHaveLength(0);
         expect(screen.tree.findByType('HookProbe' as never).props.detailsTabKinds).toEqual([]);
         expect(onAfterOpen).not.toHaveBeenCalled();
         expect(onAfterDetailsOpen).not.toHaveBeenCalled();
-        const approval = fixture!.boundary.list().find(row => fixture!.boundary.readPlainBody(row.id)?.includes('browser.workspace.open'));
-        expect(approval).toBeDefined();
         await act(async () => {
-            expect(await decideApprovalAsInbox(fixture!.home.id, approval!.id, decision)).toMatchObject({ ok: true });
+            choice.resolve(decision === 'approve');
+            await pendingOpen;
         });
+        expect(fixture!.boundary.list()).toHaveLength(0);
         expect(readLocalServiceActionOutcome(await pendingOpen!)).toMatchObject({ kind: decision === 'approve' ? 'succeeded' : 'cancelled' });
         expect(screen.tree.findByType('HookProbe' as never).props.detailsTabKinds).toEqual(decision === 'approve' ? ['browser-view'] : []);
         expect(onAfterOpen).toHaveBeenCalledTimes(decision === 'approve' ? 1 : 0);
