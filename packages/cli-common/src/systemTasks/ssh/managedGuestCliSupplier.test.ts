@@ -1,14 +1,100 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, chmod, rm, mkdir, readFile, access } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity, resolveManagedGuestCliSource } from './managedGuestCliSupplier.js';
+import { join, dirname, basename } from 'node:path';
+import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity, resolveManagedGuestCliSource, installManagedGuestCliViaRemoteDownload, selectManagedGuestCliPayload } from './managedGuestCliSupplier.js';
+import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
+import { createCliPayloadFixture } from '../testkit/createCliPayloadFixture.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
+import { installRemoteFirstPartyComponentPayload } from '../kinds/remoteFirstPartyPayloadInstaller.js';
+import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { readServerGuestCliIdentity } from '../../../../../apps/server/sources/app/runtime/serverRelease.js';
 
 const exec = promisify(execFile);
 describe('managed guest CLI source supplier', () => {
+  it('refuses a missing guest target or an archive from another Home without downloading a substitute', () => {
+    const guestCli = GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{
+      target: { os: 'linux', arch: 'x64' }, sha256: 'a'.repeat(64), url: 'https://other-home.example/payload.tar.gz',
+    }] });
+    for (const target of [{ os: 'linux', arch: 'arm64' }, { os: 'linux', arch: 'x64' }] as const) {
+      expect(() => selectManagedGuestCliPayload({ guestCli, homeUrl: 'https://home.example', target }))
+        .toThrow(expect.objectContaining({ code: 'guest_payload_missing' }));
+    }
+  });
+  it.each([{ matching: false, transport: 'native' }, { matching: true, transport: 'native' },
+    { matching: false, transport: 'ssh' }, { matching: true, transport: 'ssh' }])(
+    'uses the admitted Home archive pin before extraction or execution ($transport matching=$matching)', async ({ matching, transport }) => {
+    if (process.platform === 'win32') return; // Guest download/extraction is a POSIX remote boundary.
+    const root = await mkdtemp(join(tmpdir(), 'happier-home-guest-export-'));
+    const fixture = await createCliPayloadFixture();
+    const home = join(root, 'home');
+    const archivePath = join(root, 'payload.tar.gz');
+    const requested: string[] = [];
+    let archive = new Uint8Array();
+    const server = createServer((request, response) => {
+      requested.push(request.url ?? '');
+      if (request.url === '/v1/runtime/guest-cli/payloads/linux/x64') response.end(archive);
+      else response.writeHead(404).end();
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      await mkdir(home);
+      await exec('tar', ['-czf', archivePath, '-C', dirname(fixture.payloadRoot), basename(fixture.payloadRoot)]);
+      const tools = join(root, 'tools');
+      const extraction = join(root, 'extracted');
+      const actualTar = (await exec('/bin/sh', ['-c', 'command -v tar'])).stdout.trim();
+      await mkdir(tools);
+      await writeFile(join(tools, 'tar'), `#!/bin/sh\nprintf extracted > ${safeBashSingleQuote(extraction)}\nexec ${safeBashSingleQuote(actualTar)} "$@"\n`, { mode: 0o755 });
+      archive = new Uint8Array(await readFile(archivePath));
+      const sha256 = createHash('sha256').update(archive).digest('hex');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected HTTP listener');
+      const homeUrl = `http://127.0.0.1:${address.port}`;
+      const guestCli = readServerGuestCliIdentity({ HAPPIER_DEV_GUEST_CLI_EXPORT: '1',
+        HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: fixture.payloadRoot, identity: 'producer', archives: [
+          { target: { os: 'linux', arch: 'arm64' }, sha256: 'b'.repeat(64), archivePath },
+          { target: { os: 'linux', arch: 'x64' }, sha256, archivePath },
+        ] }),
+      });
+      // The admitted producer descriptor remains fixed while download bytes change.
+      if (!matching) archive = new Uint8Array([...archive, 0]);
+      const guestCliPayload = selectManagedGuestCliPayload({ guestCli, homeUrl, target: { os: 'linux', arch: 'x64' } });
+      const runRemoteText = async (command: string) => {
+          try { return { status: 0, ...await exec('/bin/sh', ['-c', command], { env: { ...process.env, HOME: home, PATH: `${tools}:${process.env.PATH}` } }) }; }
+          catch (error) {
+            if (!(error instanceof Error) || !('stdout' in error) || !('stderr' in error)) throw error;
+            return { status: 1, stdout: String(error.stdout), stderr: String(error.stderr) };
+          }
+        };
+      const install = transport === 'native' ? installManagedGuestCliViaRemoteDownload({ homeUrl, channel: 'stable', os: 'linux', arch: 'x64', guestCliPayload,
+        fetchImpl: async () => { throw new Error('Admitted export must not reread live Home metadata'); }, runRemoteText,
+      }) : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable', guestCli }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: request => runRemoteText(request.remoteCommand),
+        copyLocalDirectoryToRemote: async () => { throw new Error('Admitted HTTP export must not upload local payload'); },
+      });
+      if (matching) {
+        const result = await install;
+        expect(await readFile(join(home, '.happier/cli/current.version'), 'utf8')).toBe(`${result.versionId}\n`);
+        await exec(join(home, '.happier/cli/current/happier'), []);
+        expect(await readFile(extraction, 'utf8')).toBe('extracted');
+      } else {
+        await expect(install).rejects.toMatchObject({ code: 'remote_command_failed' });
+        await expect(access(join(home, '.happier/cli/current/happier'))).rejects.toThrow();
+        await expect(access(extraction)).rejects.toThrow();
+      }
+      expect(requested).toEqual(['/v1/runtime/guest-cli/payloads/linux/x64']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      await fixture.cleanup();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   afterEach(() => vi.unstubAllGlobals());
   const homeFetch = (source: 'home-payload' | 'public-release', releases: readonly string[] = [], channel = 'stable') => {
     const urls: string[] = [];

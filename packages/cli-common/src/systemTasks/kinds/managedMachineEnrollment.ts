@@ -1,4 +1,6 @@
 import type { ResolvedHomeTarget } from '../../homeTarget/homeTarget.js';
+import type { GuestCliIdentityV1, GuestCliPayloadV1 } from '@happier-dev/protocol/features';
+import { selectManagedGuestCliPayload } from '../ssh/managedGuestCliSupplier.js';
 import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
@@ -37,6 +39,7 @@ export type ManagedNativeBootstrapIO = Readonly<{
 
 type NativeTaskOptions = Parameters<typeof createRemoteNativeBootstrapMachineTaskKind>[0];
 export type ManagedNativePayloadInstallation = Readonly<{
+  guestCliPayload?: GuestCliPayloadV1;
   channel: 'stable' | 'preview' | 'dev';
   homeUrl: string;
   os: 'linux' | 'darwin'; arch: 'x64' | 'arm64'; home: string;
@@ -59,6 +62,8 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   operationId?: string;
   /** Explicit Retry install replaces the payload; ordinary boot recovery reuses it. */
   replacePayload?: boolean;
+  /** Home-issued snapshot from this Retry root's admission; Create uses its retained row. */
+  guestCli?: GuestCliIdentityV1;
   /** Persist successful installation before ordinary Account pairing starts. */
   onInstalled?(): Promise<void>;
   /** Host-private admitted Create carrier; never part of task params or a wire input. */
@@ -136,6 +141,10 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     throw new SystemTaskExecutionError('admission_unavailable', 'Requester enrollment requires its owning Account pairing delivery.');
   }
   const dedicatedIdentity = row.enrollmentIdentity?.kind === 'dedicatedDaemonUser' ? row.enrollmentIdentity : undefined;
+  const guestCli = input.replacePayload ? input.guestCli : row.guestCli;
+  if (input.replacePayload && row.guestCli?.payloads && !guestCli) {
+    throw new SystemTaskExecutionError('guest_payload_missing', 'Update requires the Home payload captured by its admission.');
+  }
   const nativeGuestHome = carrier.kind === 'native' && !dedicatedIdentity ? carrier.guestHome : undefined;
   let nativeProcess = carrier.kind === 'native' && !dedicatedIdentity
     && (nativeGuestHome !== undefined || row.enrollmentIdentity?.kind === 'guestProcess');
@@ -146,6 +155,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     enrollmentIdentity: row.enrollmentIdentity,
     requireLocalApproval: true,
     channel: input.channel,
+    ...(guestCli ? { guestCli } : {}),
     serviceMode: nativeProcess ? 'none' as const : 'user' as const,
   };
   const runPreparedTask = deps.runTask;
@@ -223,6 +233,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
       transport: { exec, install: async placement => {
         const { os, arch, home } = await probeManagedNativeGuestPlatform(exec, signal);
         const installation = { channel: configuration.channel, homeUrl: input.target.applicationUrl, signal, os, arch, home,
+          ...(guestCli?.source === 'home-payload' && guestCli.payloads ? { guestCliPayload: selectManagedGuestCliPayload({ guestCli,
+            homeUrl: input.target.applicationUrl, target: { os, arch } }) } : {}),
           remoteHomeDir: placement.remoteHomeDir ?? nativeGuestHome?.happyHomeDir, dedicatedIdentity: !!dedicatedIdentity,
           resource: correlation.resource.value, exec: payloadExec, putFile, bootstrapExec: exec,
           cleanupExec: (request: Parameters<ManagedNativeBootstrapIO['exec']>[0]) => native.exec(request),

@@ -1,4 +1,5 @@
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
+import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -262,6 +263,7 @@ export async function preflightRemoteBackgroundServiceReplacement(params: Readon
 }
 
 export interface RemoteBootstrapMachineParams {
+  guestCli?: import('@happier-dev/protocol/features').GuestCliIdentityV1;
   ssh: SystemTaskSshConnectionConfig;
   identityPrivateKey?: string;
   relay: Readonly<{
@@ -622,6 +624,7 @@ export function parseRemoteBootstrapMachineParams(params: unknown): RemoteBootst
       ...(typeof relayRecord.publicRelayUrl === 'string' ? { publicRelayUrl: relayRecord.publicRelayUrl } : {}),
     },
     ...(value.homeTarget !== undefined ? { homeTarget: parseResolvedHomeTarget(value.homeTarget) } : {}),
+    ...(value.guestCli !== undefined ? { guestCli: GuestCliIdentityV1Schema.parse(value.guestCli) } : {}),
     ...(value.managedEnrollment !== undefined ? { managedEnrollment: ManagedEnrollmentCorrelationV1Schema.parse(value.managedEnrollment) } : {}),
     ...(value.machineDisplayName !== undefined ? { machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(value.machineDisplayName) } : {}),
     ...(value.enrollmentIdentity !== undefined ? { enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema.parse(value.enrollmentIdentity) } : {}),

@@ -512,7 +512,7 @@ describe('portable managed reconciliation', () => {
             bootstrap: { ...run.input.bootstrap, enroll: async () => { throw failure; } },
             home: { ...run.input.home, row: async (...args: Parameters<typeof run.input.home.row>) => {
                 const report = args[0] === 'report' ? ManagedControllerReportV1Schema.parse(args[1]) : null;
-                if (reportFails && report?.observation?.availability === 'unavailable'
+                if (reportFails && report?.observation?.availability === 'unavailable' && 'reason' in report.observation
                     && report.observation.reason === 'bootstrap.remote_command_failed') throw reportFailure;
                 return run.input.home.row(...args);
             } },

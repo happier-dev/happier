@@ -7,7 +7,8 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/executor/types';
-import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { isManagedResizeActionIdV1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
@@ -109,7 +110,7 @@ async function matchesSelectedProvisioner(provider: ManagedProvisionerDiscoveryE
 }
 
 /** Review facts name roles only; a denied read leaves control permission to Home admission. */
-export async function prepareManagedPowerProvisionerAdmissionV1(machine: ManagedMachineFullV1 | ActionExecuteFailure,
+export async function prepareManagedPowerProvisionerAdmissionV1(machine: ManagedMachineV1 | ActionExecuteFailure,
     readSelected: ManagedProvisionerSelectionRead,
     actionId: 'machines.managed.power.set' | 'machines.managed.inspect' | 'machines.managed.bootstrap.retry'
         | 'machines.managed.delete' | 'machines.managed.cancel' | 'machines.managed.resize' = 'machines.managed.power.set',
@@ -117,6 +118,7 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
 ): Promise<HostReviewedChildrenPlanV1 | ActionExecuteFailure | null> {
     if ('ok' in machine) return machine.errorCode === 'permission_denied' ? { children: [] } : machine;
     if (machine.controller) return null;
+    if (isManagedOpaquePresetMachineV1(machine)) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
     const resize = isManagedResizeActionIdV1(actionId);
     const selected = resize ? (await readSelected(machine.launch.provider.pluginId))?.find(entry => sameStrictJsonValue(entry.contribution, machine.launch.provider)) : undefined;
     const provisioner = resize ? selected?.descriptor : machine.reviewedFacts?.provisioner;

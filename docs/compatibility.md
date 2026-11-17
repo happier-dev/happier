@@ -134,10 +134,26 @@ signed acquisition, and refuse an installed-version downgrade. Missing or malfor
 identity refuses with `guest_cli_identity_unavailable`, including on an older
 Home that has not gained the producer; no version-based fallback is inferred.
 
+Source-built Dev/QA Homes may opt in to HTTP payload export with
+`HAPPIER_DEV_GUEST_CLI_EXPORT=1`; the default is off and released builds compile
+this capability out. Their identity may additionally carry `payloads`, each with
+its canonical guest build target, exact archive-byte SHA256 and Home URL/path.
+Home captures its own list once in the existing admitted Create input; requester
+copies have no authority. The native target probe selects one entry from that frozen list; the guest verifies
+its pinned SHA256 before extraction or execution and uses ordinary payload
+promotion. Explicit Update/Retry captures a new Home-issued list without changing
+the Create pin: a Machine root uses its signed managed admission, while an Account
+root uses its existing authenticated controller-context response.
+Approval replay reuses the already bound input. Neither download rereads live
+Home metadata nor silently substitutes a public release. Missing target archives
+refuse with `guest_payload_missing`. Controller-local payload installation remains
+available when HTTP export is off.
+
 The capability root is additive: released 0.2 readers discard the unknown family.
-The new identity itself is closed because its source, line and channel select executable
-artifacts. Matching 0.3 server and controller/app consumers must reload together;
-this adds no persisted state, migration, endpoint or SDK epoch.
+The identity and archive descriptors are closed because they select executable
+artifacts. Matching unreleased 0.3 server and controller/app consumers reload
+together. This extends existing admission JSON and adds the source-only payload
+endpoint; it adds no table, migration, signing authority or SDK epoch.
 
 
 Home identity readiness retains the existing unsupported-feature refusal codes
@@ -145,7 +161,7 @@ Home identity readiness retains the existing unsupported-feature refusal codes
 connection failures. A successful HTTP response does not establish protocol
 compatibility. The daemon settles these failures with the same typed reason;
 it does not replace its executable or reinterpret them as authentication errors.
-A development Home still requires its controller payload for managed recovery.
+A development Home without HTTP export still requires its controller payload for managed recovery.
 
 ## Managed guest Home network context (unreleased 0.3)
 
@@ -207,24 +223,6 @@ provenance retains the host sandbox default. Matching Protocol, SDK projections,
 provisioners and daemon Action hosts reload together under the unreleased 0.3 direct
 cut. The optional field reuses existing resource/metadata persistence; it adds no
 table, migration, settings key or compatibility epoch.
-
-## Home guest CLI source (unreleased 0.3)
-
-`/v1/features` advertises optional `capabilities.guestCli` with the closed identity
-`{ source: 'home-payload' | 'public-release', line: 'major.minor', channel: 'stable' | 'preview' | 'publicdev' }`. This selects
-installation artifacts; it is independent of feature enablement and the server's
-diagnostic package version. The current program line is explicitly `0.3`.
-Development source builds select Home payloads; released server binaries and
-Docker images select public releases. Updated managed installers require this
-identity, choose the newest published CLI on its line and channel through exact
-signed acquisition, and refuse an installed-version downgrade. Missing or malformed
-identity refuses with `guest_cli_identity_unavailable`, including on an older
-Home that has not gained the producer; no version-based fallback is inferred.
-
-The capability root is additive: released 0.2 readers discard the unknown family.
-The new identity itself is closed because its source, line and channel select executable
-artifacts. Matching 0.3 server and controller/app consumers must reload together;
-this adds no persisted state, migration, endpoint or SDK epoch.
 
 ## Connected Account Team-share constraints (unreleased 0.3)
 

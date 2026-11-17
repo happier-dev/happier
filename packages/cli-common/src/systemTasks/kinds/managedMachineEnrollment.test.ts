@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import { runManagedMachineEnrollment, type ManagedNativeBootstrapIO } from './managedMachineEnrollment.js';
+import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
 
 const resource = { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained-1' } };
 const correlation = { homeId: 'srv_managed_home', managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1,
@@ -16,6 +17,43 @@ const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerI
   authority: 'trusted_enrollment' });
 
 describe('portable managed enrollment', () => {
+  it('refuses Update without its own admitted payload instead of reusing the original Create pin', async () => {
+    const guestCli = GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{
+      target: { os: 'linux', arch: 'x64' }, sha256: 'a'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/x64',
+    }] });
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable', replacePayload: true,
+      carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
+      readCurrentManagedRow: async () => ({ ...machine, guestCli }), createPromptId: () => 'prompt',
+      runTask: async () => { throw new Error('Update cannot start enrollment without its pin'); },
+      approveLocalAuthRequest: async () => { throw new Error('Update cannot start approval without its pin'); },
+      native: { putFile: async () => { throw new Error('No guest IO before payload admission'); },
+        exec: async () => { throw new Error('No guest IO before payload admission'); } },
+    })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+  });
+  it.each([false, true])('selects a frozen archive after the target probe and gives Update its own pin (Update=%s)', async replacePayload => {
+    const pin = (sha256: string) => GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'stable', payloads: [
+      { target: { os: 'linux', arch: 'arm64' }, sha256: 'c'.repeat(64), url: '/wrong-target' },
+      { target: { os: 'linux', arch: 'x64' }, sha256, url: '/v1/runtime/guest-cli/payloads/linux/x64' },
+    ] });
+    const original = pin('a'.repeat(64));
+    const updated = pin('b'.repeat(64));
+    const stop = new Error('stop before payload IO');
+    let selected: unknown;
+    let rowReads = 0;
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable', replacePayload,
+      ...(replacePayload ? { guestCli: updated } : {}),
+      carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
+      readCurrentManagedRow: async () => { rowReads++; return { ...machine, guestCli: original }; },
+      createPromptId: () => 'prompt', runTask: async () => { throw new Error('Unexpected pairing'); },
+      approveLocalAuthRequest: async () => { throw new Error('Unexpected approval'); },
+      installNativePayload: async installation => { selected = installation; throw stop; },
+      native: { putFile: async () => {}, exec: async () => ({ status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }) },
+    })).rejects.toBe(stop);
+    expect(selected).toHaveProperty('guestCliPayload', { target: { os: 'linux', arch: 'x64' },
+      sha256: (replacePayload ? 'b' : 'a').repeat(64), url: 'https://home.example.test/v1/runtime/guest-cli/payloads/linux/x64' });
+    expect(original.payloads?.[1]?.sha256).toBe('a'.repeat(64));
+    expect(rowReads).toBe(1);
+  });
   it.each([false, true])('pins generated identity only when the provider installed it: %s', async generated => {
     const credentialRef = { kind: 'shared_resource' as const, resourceId: 'retained-key' };
     const publicKey = 'ssh-ed25519 AQIDBA== generated-comment';

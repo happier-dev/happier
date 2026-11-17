@@ -1,4 +1,4 @@
-import { GuestCliIdentityV1Schema, type GuestCliIdentityV1 } from '@happier-dev/protocol/features';
+import { GuestCliIdentityV1Schema, type GuestCliIdentityV1, type GuestCliPayloadV1 } from '@happier-dev/protocol/features';
 import type { ManagedGuestCliBuildInputV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationBuildInputV1';
 import { ManagedGuestCliBuildTargetV1Schema, type ManagedGuestCliBuildTargetV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
@@ -7,7 +7,8 @@ import { assertManagedGuestCliVersion, ManagedGuestCliReleaseError, resolveManag
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
 import { buildRemoteFirstPartyPromotionCommand, resolveRemoteFirstPartyInstallLayout, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyInstallPath.js';
-import { executeRemoteSelfDownloadFirstPartyInstallPlan, resolveRemoteSelfDownloadFirstPartyInstallPlan } from './remoteSelfDownloadFirstPartyInstallCommand.js';
+import { buildRemoteSelfDownloadFirstPartyInstallCommand, executeRemoteSelfDownloadFirstPartyInstallPlan, resolveRemoteSelfDownloadFirstPartyInstallPlan,
+  type RemoteSelfDownloadFirstPartyInstallPlan } from './remoteSelfDownloadFirstPartyInstallCommand.js';
 
 type RemoteText = (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
 export type ManagedGuestCliSourceRequest = Readonly<{
@@ -21,7 +22,7 @@ export type ManagedGuestCliSourceRequest = Readonly<{
   localPayloadVersion?: string;
 }>;
 
-async function readManagedGuestCliIdentity(input: Pick<ManagedGuestCliSourceRequest, 'homeUrl' | 'signal' | 'fetchImpl'>): Promise<GuestCliIdentityV1> {
+export async function readManagedGuestCliIdentity(input: Pick<ManagedGuestCliSourceRequest, 'homeUrl' | 'signal' | 'fetchImpl'>): Promise<GuestCliIdentityV1> {
   input.signal?.throwIfAborted();
   const response = await (input.fetchImpl ?? globalThis.fetch)(`${input.homeUrl.replace(/\/+$/u, '')}/v1/features`, {
     method: 'GET', credentials: 'omit', redirect: 'error', signal: input.signal,
@@ -32,6 +33,20 @@ async function readManagedGuestCliIdentity(input: Pick<ManagedGuestCliSourceRequ
   const parsed = GuestCliIdentityV1Schema.safeParse(capabilities && typeof capabilities === 'object' && 'guestCli' in capabilities ? capabilities.guestCli : undefined);
   if (!parsed.success) throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'This Home does not advertise a valid guest CLI source, release line and channel.');
   return parsed.data;
+}
+
+/** Select only from this enrollment's frozen Home export; never refresh the pin beside a download. */
+export function selectManagedGuestCliPayload(input: Readonly<{
+  guestCli: GuestCliIdentityV1; homeUrl: string; target: ManagedGuestCliBuildTargetV1;
+}>): GuestCliPayloadV1 {
+  const payload = input.guestCli.source === 'home-payload' ? input.guestCli.payloads?.find(candidate =>
+    candidate.target.os === input.target.os && candidate.target.arch === input.target.arch) : undefined;
+  if (!payload) throw new SystemTaskExecutionError('guest_payload_missing', 'The admitted Home CLI archive for this guest target is unavailable.');
+  const url = new URL(payload.url, input.homeUrl);
+  if (url.origin !== new URL(input.homeUrl).origin) {
+    throw new SystemTaskExecutionError('guest_payload_missing', 'The admitted CLI archive does not belong to this Home.');
+  }
+  return { ...payload, url: url.href };
 }
 
 /** One source and version decision for controller, Account-native and SSH installs. */
@@ -171,14 +186,26 @@ export async function installManagedGuestCliViaRemoteDownload(input: Readonly<{
   runRemoteText: RemoteText;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  /** Selected once from the admitted source-Home snapshot, after the native target probe. */
+  guestCliPayload?: GuestCliPayloadV1;
 }>): Promise<Readonly<{ binaryPath: string; versionId: string; source: string }>> {
   const binaryPath = resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli', channel: input.channel, remoteHomeDir: input.remoteHomeDir });
-  const source = await resolveManagedGuestCliSource({ ...input, binaryPath });
-  if (source.kind !== 'public-release') throw new SystemTaskExecutionError('guest_payload_missing', 'The Home guest CLI payload is unavailable to this transport.');
   input.signal?.throwIfAborted();
-  const plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: normalizePublicReleaseRingId(input.channel) ?? 'stable',
-    versionId: source.versionId, os: input.os, arch: input.arch, remoteHomeDir: input.remoteHomeDir,
-    runRemoteText: input.runRemoteText, ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}) });
+  let plan: RemoteSelfDownloadFirstPartyInstallPlan;
+  if (input.guestCliPayload) {
+    const versionId = `local-${input.guestCliPayload.sha256}`;
+    plan = { binaryPath, versionId, source: 'home-payload', command: buildRemoteSelfDownloadFirstPartyInstallCommand({
+      componentId: 'happier-cli', channel: input.channel, versionId, remoteHomeDir: input.remoteHomeDir, managedGuest: true,
+      archive: { name: `happier-${input.os}-${input.arch}.tar.gz`, url: input.guestCliPayload.url },
+      expectedSha256: input.guestCliPayload.sha256,
+    }) };
+  } else {
+    const source = await resolveManagedGuestCliSource({ ...input, binaryPath });
+    if (source.kind !== 'public-release') throw new SystemTaskExecutionError('guest_payload_missing', 'The Home guest CLI payload is unavailable to this transport.');
+    plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: normalizePublicReleaseRingId(input.channel) ?? 'stable',
+      versionId: source.versionId, os: input.os, arch: input.arch, remoteHomeDir: input.remoteHomeDir,
+      runRemoteText: input.runRemoteText, ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}) });
+  }
   input.signal?.throwIfAborted();
   const result = await executeRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel, remoteHomeDir: input.remoteHomeDir,
     plan, runRemoteText: input.runRemoteText });

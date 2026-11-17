@@ -17,6 +17,8 @@ import {
   readAcquisitionFailureCause,
 } from '../../firstPartyRuntime/index.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
+import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
+import { selectManagedGuestCliPayload, installManagedGuestCliViaRemoteDownload } from '../ssh/managedGuestCliSupplier.js';
 
 import { createScpReadyPayloadArchive } from './createScpReadyPayloadArchive.js';
 import type { SystemTaskSshConnectionConfig } from './relayRuntimeKinds.js';
@@ -160,8 +162,13 @@ async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: '
   return payloadRoot;
 }
 
+/** The existing controller-local installer owns whether a payload collection is configured. */
+export function readManagedGuestCliLocalPayloadRoot(): string {
+  return String(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
+}
+
 async function readManagedGuestCliLocalBuildPayloadSource(target: ManagedGuestCliBuildTarget) {
-  const root = String(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
+  const root = readManagedGuestCliLocalPayloadRoot();
   let metadata: unknown;
   try { metadata = JSON.parse(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA ?? ''); }
   catch { throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'The source runtime has no finalized guest CLI payload identity.'); }
@@ -224,6 +231,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
   requireHomePayload?: boolean;
+  guestCli?: GuestCliIdentityV1;
   homeUrl?: string;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
@@ -248,6 +256,7 @@ export async function installRemoteFirstPartyComponentPayload(
   remoteHomeDir?: string;
   strategy?: 'scp-upload' | 'remote-self-download';
   requireHomePayload?: boolean;
+  guestCli?: GuestCliIdentityV1;
   homeUrl?: string;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
@@ -262,7 +271,7 @@ export async function installRemoteFirstPartyComponentPayload(
   } satisfies Required<RemoteFirstPartyPayloadInstallDeps>;
   const channel = normalizeBootstrapReleaseChannel(params.channel);
   let localCliPayloadRoot = params.componentId === 'happier-cli'
-    ? String(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim()
+    ? readManagedGuestCliLocalPayloadRoot()
     : '';
   if (params.requireHomePayload && !params.homeUrl) {
     throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'Managed installation requires its selected Home URL.');
@@ -280,6 +289,14 @@ export async function installRemoteFirstPartyComponentPayload(
   const target = await resolvedDeps.resolveRemoteReleaseTarget({
     ...(params.signal ? { signal: params.signal } : {}),
   });
+  if (params.componentId === 'happier-cli' && params.homeUrl && params.guestCli?.source === 'home-payload' && params.guestCli.payloads) {
+    const guestCliPayload = selectManagedGuestCliPayload({ guestCli: params.guestCli, homeUrl: params.homeUrl, target });
+    params.onPhase?.('transfer');
+    return await installManagedGuestCliViaRemoteDownload({ homeUrl: params.homeUrl, channel, ...target,
+      guestCliPayload, remoteHomeDir: params.remoteHomeDir, signal: params.signal,
+      runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
+    });
+  }
   let versionId: string | undefined;
   if (params.componentId === 'happier-cli' && params.homeUrl) {
     const localPayloadDirectory = localCliPayloadRoot ? await resolveLocalCliPayloadDirectory(localCliPayloadRoot, target) : undefined;

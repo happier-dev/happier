@@ -55,5 +55,6 @@ export { assertAgentIsolationLaunchPrincipal, buildAgentIsolationBootstrapSteps,
 export { buildUserManagerGroupRefreshStep } from '../machineSetup/userManagerGroups.js';
 
 export { resolveManagedGuestCliSource, installManagedGuestCliViaRemoteDownload, prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity,
+  readManagedGuestCliIdentity, selectManagedGuestCliPayload,
   type ManagedGuestCliSourceRequest, type ManagedGuestCliBuildInput, type ManagedGuestCliBuildTarget,
   type ManagedGuestCliLocalBuildPayload, type ManagedGuestCliLocalBuildMetadata } from './ssh/managedGuestCliSupplier.js';

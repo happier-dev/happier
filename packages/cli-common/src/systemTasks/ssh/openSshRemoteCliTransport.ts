@@ -45,6 +45,7 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
     install: async placement => installRemoteFirstPartyComponent({
       requireHomePayload: placement.requireHomePayload,
       homeUrl: placement.homeUrl,
+      guestCli: placement.guestCli,
       componentId: 'happier-cli', channel: input.channel, ssh: input.ssh, knownHostsMode: input.knownHostsMode,
       ...(placement.remoteHomeDir ? { remoteHomeDir: placement.remoteHomeDir } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
