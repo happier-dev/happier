@@ -41,7 +41,7 @@ async function fixture(response: Readonly<{ result?: JsonValue; error?: JsonValu
       const prelude = `const fs=require('node:fs'),path=require('node:path');
         const auth=JSON.parse(fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME,'muse/auth.json'),'utf8'));
         if(process.env.META_API_KEY || auth.providers.meta.mechanism!=='oauth' || auth.providers.meta.access_token!=='synthetic-oauth-token') throw new Error('incorrect native auth lane');
-        fs.writeFileSync(${JSON.stringify(launchPath)},JSON.stringify({home:process.env.HOME,cwd:process.cwd(),config:process.env.XDG_CONFIG_HOME,keyKept:auth.providers.meta.api_key==='synthetic-selected-key'}));\n`;
+        fs.writeFileSync(${JSON.stringify(launchPath)},JSON.stringify({home:process.env.HOME,cwd:process.cwd(),config:process.env.XDG_CONFIG_HOME,credentialBackend:process.env.TBH_CREDENTIAL_BACKEND??null,keyKept:auth.providers.meta.api_key==='synthetic-selected-key'}));\n`;
       return { ...resolved, args: ['-e', prelude + resolved.args[1], '--'] };
     },
   });
@@ -57,6 +57,9 @@ async function fixture(response: Readonly<{ result?: JsonValue; error?: JsonValu
       expect(launch.keyKept).toBe(key);
       expect(launch.config).toBe(join(launch.home, 'config'));
       expect(launch.home).not.toBe(process.env.HOME);
+      // The temp HOME has no macOS keychain; Muse's default store raises a
+      // "Keychain Not Found" dialog when the refresh mints a key (mac-host 11-16).
+      expect(launch.credentialBackend).toBe('file');
       await expect(access(launch.home)).rejects.toMatchObject({ code: 'ENOENT' });
     },
     async dispose() { await rm(directory, { recursive: true, force: true }); },

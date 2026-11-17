@@ -30,7 +30,8 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       // Sessions retain their selected key; usage/refresh requires this OAuth-only host.
       msp = await openMuseMsp({ exec: context.services.exec, signal,
         launch: { executable: { kind: 'systemTool', id: 'muse-cli' }, cwd: root,
-          env: { HOME: root, [MUSE_NATIVE_HOME.environmentKey]: configRoot,
+          // A temporary HOME has no user keychain; keep minted keys in this isolated home.
+          env: { HOME: root, TBH_CREDENTIAL_BACKEND: 'file', [MUSE_NATIVE_HOME.environmentKey]: configRoot,
             XDG_DATA_HOME: join(root, 'data'), XDG_CACHE_HOME: join(root, 'cache'),
             // Muse treats blank as absent; mask any inherited Machine key.
             [META_API_KEY_ENV_KEY]: '' } },
