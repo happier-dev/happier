@@ -1,5 +1,4 @@
-import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
-import type { ReviewStartInput } from '@happier-dev/protocol';
+import { ReviewStartInputSchema, type ReviewStartInput } from '@happier-dev/protocol/reviews/reviewStart';
 
 import {
   ReviewFollowUpIntentInputSchema,
@@ -32,7 +31,9 @@ export function resolveReviewExecutionRunIntentInput(
 
   if (defaults && intentInput && typeof intentInput === 'object' && !Array.isArray(intentInput)) {
     const normalized = ReviewStartInputSchema.safeParse({
-      engineIds: [defaults.engineId],
+      ...(!('reviewers' in intentInput) && !('engineIds' in intentInput)
+        ? { reviewers: [{ kind: 'engine', engineId: defaults.engineId }] }
+        : {}),
       instructions: defaults.instructions,
       ...intentInput,
     });

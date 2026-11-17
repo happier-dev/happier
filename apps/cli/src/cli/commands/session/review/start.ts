@@ -35,14 +35,14 @@ export async function cmdSessionReviewStart(
     startIndex: 2,
     maxPositionals: 1,
     workflowValueFlags: ['--engines', '--engine', '--base-branch', '--base-commit'],
-    workflowOwnedFields: ['sessionId', 'engineIds', 'base'],
+    workflowOwnedFields: ['sessionId', 'reviewers', 'base'],
   });
   const json = wantsJson(argv);
   const [idOrPrefix = ''] = args.positionals;
   if (!idOrPrefix.trim()) throw invalidCommandArguments(usage, 'Missing Session.');
 
   const engineIds = splitCsv(args.readWorkflowValue('--engines') ?? args.readWorkflowValue('--engine'));
-  if (engineIds.length === 0 && !args.supplies('engineIds')) throw invalidCommandArguments(usage, 'Missing --engines.');
+  if (engineIds.length === 0 && !args.supplies('reviewers')) throw invalidCommandArguments(usage, 'Provide --engines or reviewers in --input-json.');
   if (!args.supplies('instructions')) throw invalidCommandArguments(usage, 'Missing --instructions.');
   const baseCommit = args.readWorkflowValue('--base-commit');
   const baseBranch = args.readWorkflowValue('--base-branch');
@@ -52,7 +52,7 @@ export async function cmdSessionReviewStart(
       ? { kind: 'branch', baseBranch }
       : undefined;
   const composed = args.compose({
-    ...(engineIds.length > 0 ? { engineIds } : {}),
+    ...(engineIds.length > 0 ? { reviewers: engineIds.map((engineId) => ({ kind: 'engine', engineId })) } : {}),
     ...(base ? { base } : {}),
   });
   if (!composed.ok) throw invalidCommandArguments(usage, composed.message);

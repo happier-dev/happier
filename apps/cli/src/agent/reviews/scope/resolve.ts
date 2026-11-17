@@ -63,7 +63,7 @@ function parseReviewInput(intentInput: unknown): Readonly<{
 }> {
   const raw = isRecord(intentInput) ? intentInput : {};
   const parsed = ReviewStartInputSchema.safeParse({
-    engineIds: ['review-scope'],
+    reviewers: [{ kind: 'engine', engineId: 'review-scope' }],
     instructions: 'Review.',
     ...raw,
   });
