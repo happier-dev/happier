@@ -1,7 +1,8 @@
 import { DeploymentPendingDeployStoredIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { DatabaseTargetsListResultV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseTargetsListResultV1Schema, type DatabaseTargetsListResultV1,
+    type AutomationDatabaseSubjectReadV1 } from '@happier-dev/database-protocol';
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
@@ -146,21 +147,32 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const row = readDeploymentEnvironmentArtifactV1(environment, artifact?.status === 'fulfilled' ? artifact.value : null);
                 if (!row.ok) { coverage = 'partial'; continue; }
                 const previous = previousById.get(environment.id);
+                let databaseTargets: DatabaseTargetsListResultV1 | undefined;
                 // The host's active receipt supplies the exact database and execution placement.
                 const databaseSizes = await readDeploymentDatabaseSizesV1({ environment, content: row.content,
                     previous: previous?.databaseSizes,
                     readTargets: async () => {
                         if (!environment.controllerMachineId) throw Object.assign(new Error('active_deployment_required'), { code: 'active_deployment_required' });
-                        return DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
+                        databaseTargets = DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
                             action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
                             input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
                                 projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
                         }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
+                        return databaseTargets;
                     },
                     run: (input, placement) => execute('action.invoke', {
                         action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) }, input,
                     }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: placement.machineId } }) });
-                items.push({ environment, title: row.title, content: row.content, databaseSizes });
+                const databaseSubjects = Object.fromEntries<AutomationDatabaseSubjectReadV1>((databaseTargets?.targets ?? []).flatMap<readonly [string, AutomationDatabaseSubjectReadV1]>(descriptor => {
+                    const target = descriptor.target;
+                    if (!descriptor.automationSubject) return [];
+                    if (target.kind === 'deployment_service') return [[target.serviceId, descriptor.automationSubject]];
+                    if (target.kind === 'managed_deployment' && !descriptor.automationSubject.ok) {
+                        return [[target.targetLinkId, descriptor.automationSubject]];
+                    }
+                    return [];
+                }));
+                items.push({ environment, title: row.title, content: row.content, databaseSizes, databaseSubjects });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),

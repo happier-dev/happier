@@ -16,6 +16,7 @@ import type { DeploymentDatabaseSizeV1, DeploymentDomainHealthFactsV1, Deploymen
 import type { DeploymentMemberVersionV1 } from '../projection/deploymentStepProjection.js';
 import type { DeploymentActivityV1, DeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
 import type { DeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFacts.js';
+import type { AutomationDatabaseSubjectReadV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
 /** Local read projection over admitted link and demand-loaded receipt content, never a stored member vector. */
 export type DeploymentEnvironmentReadDetailV1 = DeploymentEnvironmentDetailV1 & Readonly<{
@@ -95,6 +96,8 @@ export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Rea
 export type DeploymentDataServiceReadItemV1 = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
     databaseSizes?: readonly DeploymentDatabaseSizeV1[];
+    /** Keys are the incumbent database page's service or data-link address. */
+    databaseSubjects?: Readonly<Record<string, AutomationDatabaseSubjectReadV1>>;
 }>;
 export type DeploymentAccountReadPageV1<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;

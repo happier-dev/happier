@@ -63,7 +63,9 @@ describe('deployment scoped read transport', () => {
         const selected: DatabaseDescriptorV1 = { target: { kind: 'deployment_service', environment: environmentRef,
             targetLinkId: 'runtime-link', deploymentId: 'serving-receipt', serviceId: 'postgres', database: 'receipt-database' },
             engine: 'postgresql', label: 'Postgres', origin: { label: 'Active deployment' }, capabilities: [],
-            placement: { serverId, accountId: 'account-owner', machineId: 'member', installationId: 'member-installation' } };
+            placement: { serverId, accountId: 'account-owner', machineId: 'member', installationId: 'member-installation' },
+            automationSubject: { ok: true, subject: { kind: 'database', serverId,
+                target: { kind: 'environment', environmentId: detail.environment.id, service: 'postgres', database: 'receipt-database' } } } };
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const writer = await captureLazyActionAccountContext(serverId);
         try { await writer.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
@@ -115,6 +117,9 @@ describe('deployment scoped read transport', () => {
             const page = await createDeploymentReadTransport(lifetime).listDataServicePage!(lifetime.scope, {}, { signal: new AbortController().signal });
             expect(page, JSON.stringify(page.ok ? page.value.items[0]?.databaseSizes : page)).toMatchObject({ ok: true, value: { items: [{ databaseSizes: [{ service: 'postgres',
                 deploymentId: 'serving-receipt', size: { status: 'available', bytes: 4096 } }] }] } });
+            expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
+                postgres: selected.automationSubject,
+            } }] } });
             expect(invocations).toMatchObject([{ target: { kind: 'machine', machineId: 'controller' }, input: {
                 action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: listLocalId }, input: { scope: { kind: 'environment', environment: environmentRef } } } },
             { target: { kind: 'machine', machineId: 'member' }, input: { action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: runLocalId },

@@ -6,7 +6,7 @@ import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import { DeploymentBackupRestoreDatabaseDestinationV1Schema } from '../deployments/deploymentBackupRestoreV1.js';
-import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
+import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema, type DatabaseTargetV1 } from '../databases/databaseTargetIdentityV1.js';
 import { SavedHealthCheckSelectorV1Schema } from '../deployments/healthCheckSourceV1.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfileIdV1.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
@@ -34,6 +34,20 @@ export type AutomationDatabaseSubjectV1 = z.infer<typeof AutomationDatabaseSubje
 /** Accept only a sanitized, structured selector; never an endpoint or execution value. */
 export function projectAutomationDatabaseSubjectV1(subject: AutomationDatabaseSubjectV1): AutomationDatabaseSubjectV1 {
     return AutomationDatabaseSubjectV1Schema.parse(subject);
+}
+
+export const AutomationDatabaseSubjectReadV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), subject: AutomationDatabaseSubjectV1Schema }),
+    z.strictObject({ ok: z.literal(false), code: z.literal('subject_kind_unavailable') }),
+]));
+export type AutomationDatabaseSubjectReadV1 = z.infer<typeof AutomationDatabaseSubjectReadV1Schema>;
+
+/** Resolve an admitted Database binding once, before a read consumer receives it. */
+export function readAutomationDatabaseSubjectV1(serverId: string, target: DatabaseTargetV1): AutomationDatabaseSubjectReadV1 {
+    if (target.kind === 'managed_deployment') return { ok: false, code: 'subject_kind_unavailable' };
+    return { ok: true, subject: projectAutomationDatabaseSubjectV1({ kind: 'database', serverId,
+        target: target.kind === 'deployment_service' ? { kind: 'environment',
+            environmentId: target.environment.environmentId, service: target.serviceId, database: target.database } : target }) };
 }
 
 export const AutomationSessionSubjectV1Schema = lazyZodSchema(() => z.strictObject({

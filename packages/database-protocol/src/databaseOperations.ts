@@ -1,6 +1,8 @@
 import { z } from 'zod/mini';
 import { WorkspaceAddressV2Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { DeploymentEnvironmentRefV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
+import { AutomationDatabaseSubjectReadV1Schema } from '@happier-dev/protocol/automations/automationSubjectV1';
+export { readAutomationDatabaseSubjectV1, type AutomationDatabaseSubjectReadV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { DatabaseEngineIdV1Schema, DatabaseTargetV1Schema } from './databaseTargets.js';
 import { DatabaseAccessSummaryV1Schema, DatabaseOperationClassV1Schema } from './databaseAccess.js';
 import { DatabaseStatsObservationV1Schema } from './databaseStats.js';
@@ -139,6 +141,8 @@ export const DatabaseDescriptorV1Schema = z.strictObject({
     origin: z.strictObject({ label: z.string(), environment: z.optional(z.enum(['development', 'preview', 'production'])) }),
     capabilities: z.array(DatabaseCapabilityV1Schema),
     access: z.optional(DatabaseAccessSummaryV1Schema),
+    /** Authored identity projected by the public Database read producer. */
+    automationSubject: z.optional(AutomationDatabaseSubjectReadV1Schema),
     placement: z.strictObject({ serverId: name, accountId: name, machineId: name, installationId: name }),
 });
 export type DatabaseDescriptorV1 = z.infer<typeof DatabaseDescriptorV1Schema>;

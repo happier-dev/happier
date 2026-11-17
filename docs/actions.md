@@ -6051,6 +6051,14 @@ Machine or Project references do not establish a shared Database grant. Private
 paths and Saved Secret references stay in protected authored intent, while the
 structural selector contains only the canonical subject digest.
 
+The Database list, Connect and describe read producers return an optional
+`automationSubject` result on their descriptors. The producer resolves worktree
+and manual bindings directly, and deployment services to the existing Environment,
+service and database tuple. Deployment data-service reads retain that result for
+the resource page without enumerating targets again. Managed target bindings have
+no service identity in this contract and return `subject_kind_unavailable` until
+their subject contract is approved.
+
 Trigger admission seals only referenced leaves in the private accepted snapshot.
 Other Events, Run now, schedules and Session lifecycle admissions leave the value
 absent. Text substitutes an empty string, conditions treat it as unset, and a

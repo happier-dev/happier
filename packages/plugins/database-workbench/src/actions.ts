@@ -7,6 +7,10 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 
 export { databaseActionMetadata };
 
+function projectDescriptor(descriptor: database.DatabaseDescriptorV1): database.DatabaseDescriptorV1 {
+    return { ...descriptor, automationSubject: database.readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
+}
+
 /** Admission and execution consume the declaration's canonical input predicate. */
 export function databaseActionOperationClass(actionId: database.DatabaseActionIdV1, input: unknown): database.DatabaseOperationClassV1 {
     return pluginActionDeclarationIsReadOnlyForInput(databaseActionMetadata[actionId], input) ? 'read' : 'write';
@@ -40,8 +44,10 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             inputSchema: database.DatabaseTargetsListInputV1ProtocolSchema,
             resultSchema: database.DatabaseTargetsListResultV1ProtocolSchema,
             // definePlugin supplies the value admitted by this exact input schema.
-            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
-                await listTargets(input as database.DatabaseTargetsListInputV1, context)),
+            run: async (input: JsonValue, context: PluginInvocationContext) => {
+                const result = await listTargets(input as database.DatabaseTargetsListInputV1, context);
+                return projectNativeJsonValueForTransport({ ...result, targets: result.targets.map(projectDescriptor) });
+            },
         };
     }
     const connectTarget = producers.connectTarget;
@@ -53,7 +59,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             resultSchema: database.DatabaseTargetsConnectResultV1ProtocolSchema,
             // The SDK admits the canonical association input before acquiring a connection.
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
-                await connectTarget(input as database.DatabaseTargetsConnectInputV1, context)),
+                projectDescriptor(await connectTarget(input as database.DatabaseTargetsConnectInputV1, context))),
         };
     }
     const forgetTarget = producers.forgetTarget;
@@ -78,8 +84,11 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             ...common, ...metadata, inputSchema,
             resultSchema: database.DatabaseOperationResultV1ProtocolSchema,
             // All entries come from the P1 operation union; the SDK has already parsed the input.
-            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
-                await executeOperation(input as database.DatabaseOperationInputV1, context)),
+            run: async (input: JsonValue, context: PluginInvocationContext) => {
+                const result = await executeOperation(input as database.DatabaseOperationInputV1, context);
+                return projectNativeJsonValueForTransport(result.ok && result.operation === 'describe'
+                    ? { ...result, descriptor: projectDescriptor(result.descriptor) } : result);
+            },
         };
     }
     const listFindings = producers.listFindings;
