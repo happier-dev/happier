@@ -4,8 +4,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Text, View } from 'react-native';
 import { expect, it, vi } from 'vitest';
-import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
+import { PageHeaderMenu } from '../PageHeaderEntityParts';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -80,18 +81,21 @@ it('keeps wrapped inline actions on the content\'s right edge, never floating mi
     const controls = layout.rect('controls');
     // Too narrow for both: the actions wrap beneath the identity...
     expect(controls.top).toBeGreaterThanOrEqual(name.bottom);
-    // ...and keep the trailing edge they had on the title line.
-    expect(Math.abs(controls.right - row.right)).toBeLessThanOrEqual(1);
+    // ...and keep the sheets' and fields' edge, just outside the title's text edge (fb7ec10d1ac).
+    const controlEdge = row.right + HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx;
+    expect(Math.abs(controls.right - controlEdge)).toBeLessThanOrEqual(1);
 });
 
 it('draws the header overflow with the shared keyboard focus ring, not the browser default', async () => {
-    const { PageHeaderMenu } = await import('../PageHeaderEntityParts');
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
     try {
         await act(async () => root.render(<PageHeaderMenu testID="menu" actions={[{ id: 'export', title: 'Export', onSelect: () => {} }]} />));
-        await act(async () => host.querySelector<HTMLElement>('[data-testid="menu.trigger"]')!.focus());
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+            host.querySelector<HTMLElement>('[data-testid="menu.trigger"]')!.focus();
+        });
         const layout = await measureWebLayout(host, { viewport: { width: 390, height: 400 }, focusedTestId: 'menu.trigger' });
         // IconButton delegates its one visible ring to the drawn square; its
         // focusable frame must not also paint the browser's default outline.

@@ -111,13 +111,13 @@ it('keeps the naked add invitation inside a measured settings collection detail 
     }
 });
 
-it('puts a list line\'s links under its sentence on the sentence\'s edge, not beside it', async () => {
+it('keeps a list line\'s action beside its wrapping sentence when the column has room', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
     try {
         await act(async () => root.render(
-            <View style={{ width: 360 }}>
+            <View style={{ width: 560 }}>
                 <ItemList>
                     <EmptyState
                         layout="line"
@@ -137,9 +137,9 @@ it('puts a list line\'s links under its sentence on the sentence\'s edge, not be
         const sentence = layout.rect('line-sentence');
         const link = layout.rect('line-link');
         const row = layout.rect('line');
-        expect(link.top).toBeGreaterThanOrEqual(sentence.bottom - 1);
+        expect(link.top).toBeLessThan(sentence.bottom);
+        expect(link.left).toBeGreaterThanOrEqual(sentence.right);
         expect(link.left).toBeGreaterThanOrEqual(row.left);
-        expect(Math.abs(link.left - sentence.left)).toBeLessThanOrEqual(8);
         expect(link.right).toBeLessThanOrEqual(row.right);
     } finally {
         await act(async () => root.unmount());

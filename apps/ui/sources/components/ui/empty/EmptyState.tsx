@@ -172,9 +172,8 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
 
     if (props.layout === 'line') {
         // In a list line the ways forward are quiet inline links, never buttons: the rows around it
-        // stay the content. After a one-line statement ("Nothing in My work. Show all sessions") they
-        // follow it on the line; under an explanatory sentence they sit below it on its edge, so a
-        // wrapping sentence keeps the whole row width (lab ST "Nothing started yet").
+        // stay the content. The shared line keeps the action on the trailing edge beside its sentence;
+        // when the column cannot keep the sentence readable, the action wraps beneath on its edge.
         const lineLinks = [props.primaryAction, props.secondaryAction].filter(
             (entry): entry is EmptyStatePrimaryAction => entry !== undefined,
         );
