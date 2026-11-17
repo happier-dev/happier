@@ -8,7 +8,7 @@ import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighl
 import { useCodeSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeSyntaxHighlighting';
 import { evaluateCodeHighlightingBudget } from '@/components/ui/code/highlighting/evaluateCodeHighlightingBudget';
 import type { ShikiInlineToken } from '@/components/ui/code/highlighting/shiki/shikiTokenize';
-import { readShikiTokenizedLinesSync, shikiTokenizeLines } from '@/components/ui/code/highlighting/shiki/shikiTokenize';
+import { shikiTokenizeLines } from '@/components/ui/code/highlighting/shiki/shikiTokenize';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveCodeMonoFontFamily } from '../codeTypography';
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
@@ -65,16 +65,10 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
         && Boolean(syntax.language)
         && budget.withinBudget;
 
-    const [asyncTokensByLine, setTokensByLine] = React.useState<readonly (readonly ShikiInlineToken[])[] | null>(null);
+    const [tokensByLine, setTokensByLine] = React.useState<readonly (readonly ShikiInlineToken[])[] | null>(null);
     const [tokensRevision, setTokensRevision] = React.useState(0);
 
     const lines = budget.lines;
-    // A warm highlighter tokenizes in render: the block mounts with its tokens instead of painting plain
-    // text and redrawing itself when tokenization resolves (a transcript scrolled over code mounts many).
-    const syncTokensByLine = React.useMemo(() => (shikiEnabled && syntax.language && lines
-        ? readShikiTokenizedLinesSync({ isDark, language: syntax.language, lines, colors: theme.colors })?.tokensByLine ?? null
-        : null), [isDark, lines, shikiEnabled, syntax.language, theme.colors]);
-    const tokensByLine = syncTokensByLine ?? asyncTokensByLine;
     const hasFindRanges = Boolean(findRanges?.length);
     // Shiki consumes normalized lines; Find's ranges retain the original UTF-16 source offsets.
     const sourceLineOffsets = React.useMemo(() => {
@@ -102,7 +96,6 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
             setTokensByLine(null);
             return;
         }
-        if (syncTokensByLine) return;
 
         let cancelled = false;
         fireAndForget((async () => {
@@ -120,7 +113,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
         return () => {
             cancelled = true;
         };
-    }, [isDark, lines, shikiEnabled, syncTokensByLine, syntax.language, theme.colors]);
+    }, [isDark, lines, shikiEnabled, syntax.language, theme.colors]);
 
     const webWhitespaceStyle: TextStyle | null = React.useMemo(() => {
         // React Native Web supports CSS `white-space` and `word-break`, but React Native's `TextStyle` typing does not.
