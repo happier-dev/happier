@@ -31,6 +31,7 @@ import {
   omitWorkspaceSourceCondition,
   parsePackageNameSegments,
   publishStagedDirectoryMountedSync,
+  resolveInstalledRuntimeDependency,
   resolveInstalledRuntimePackage,
   resolveInternalWorkspacePackageNameClosure as resolveInternalWorkspacePackageNameClosureCanonical,
   resolveWorkspaceSourceDir as resolveWorkspaceSourceDirCanonical,
@@ -1318,6 +1319,11 @@ export function hasBundledWorkspaceRuntimeDependencyTreeHealthy(
   opts?: { visited?: Set<string> },
 ): boolean {
   if (!existsSync(packageJsonPath)) return false;
+  try {
+    packageJsonPath = realpathSync(packageJsonPath);
+  } catch {
+    return false;
+  }
 
   const visited = opts?.visited ?? new Set<string>();
   if (visited.has(packageJsonPath)) return true;
@@ -1334,33 +1340,24 @@ export function hasBundledWorkspaceRuntimeDependencyTreeHealthy(
     return false;
   }
 
-  const packageDir = dirname(packageJsonPath);
   const deps = collectExternalRuntimeDependencies(pkg);
 
   for (const dep of deps) {
-    const depPackageDir = resolve(packageDir, 'node_modules', ...dep.name.split('/'));
-    if (!existsSync(depPackageDir)) {
-      if (dep.optional) continue;
-      return false;
-    }
-
-    const depPackageJsonPath = resolve(depPackageDir, 'package.json');
-    if (!existsSync(depPackageJsonPath)) {
-      if (dep.optional) continue;
-      return false;
-    }
-
     try {
+      const resolvedPackage = resolveInstalledRuntimeDependency({
+        dependency: dep,
+        resolveFromPackageJsonPath: packageJsonPath,
+      });
+      if (!resolvedPackage) continue;
       assertResolvedRuntimeDependencyMatchesDeclaration({
         dependency: dep,
-        resolvedPackageJsonPath: depPackageJsonPath,
-        resolvedPackageJson: readJson(depPackageJsonPath),
+        resolvedPackageJsonPath: resolvedPackage.packageJsonPath,
+        resolvedPackageJson: resolvedPackage.packageJson,
       });
+      if (!hasBundledWorkspaceRuntimeDependencyTreeHealthy(resolvedPackage.packageJsonPath, { visited })) {
+        return false;
+      }
     } catch {
-      return false;
-    }
-
-    if (!hasBundledWorkspaceRuntimeDependencyTreeHealthy(depPackageJsonPath, { visited })) {
       return false;
     }
   }

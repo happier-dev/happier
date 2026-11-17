@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
@@ -27,6 +28,7 @@ import {
   bundleWorkspacePackageWithRuntimeDependencies,
   bundleWorkspacePackagesWithRuntimeDependencies,
   hasBundledWorkspacePackagesHealthy,
+  hasBundledWorkspaceRuntimeDependencyTreeHealthy,
   materializePrepublicationWorkspacePackageRoots,
   resolveWorkspaceBundlesFromPackageJson,
   sanitizeBundledPackageJson,
@@ -325,6 +327,32 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
 
     expect(readFileSync(join(destinationDir, 'README.md'), 'utf8')).toBe('author documentation');
     expect(readFileSync(join(destinationDir, 'API.md'), 'utf8')).toBe('public API inventory');
+  });
+
+  it('accepts Node-resolvable hoisted dependencies from a linked package physical location', () => {
+    const root = createTempRoot('workspace-linked-runtime-health-');
+    const consumerDir = join(root, 'consumer');
+    const dependencyDir = join(root, 'runtime', 'node_modules', 'color');
+    const transitiveDir = join(root, 'runtime', 'node_modules', 'color-convert');
+    writePackage(consumerDir, { name: 'consumer', version: '1.0.0', main: './index.js',
+      dependencies: { color: '^4.0.0' } });
+    writePackage(dependencyDir, { name: 'color', version: '4.0.0', main: './index.js',
+      dependencies: { 'color-convert': '^2.0.0', 'color-string': '^1.0.0' },
+      optionalDependencies: { 'missing-optional-color-runtime': '^1.0.0' } });
+    writePackage(transitiveDir, { name: 'color-convert', version: '2.0.0', main: './index.js' });
+    writePackage(join(root, 'runtime', 'node_modules', 'color-string'), {
+      name: 'color-string', version: '1.0.0', main: './index.js',
+    });
+    mkdirSync(join(consumerDir, 'node_modules'), { recursive: true });
+    symlinkSync(dependencyDir, join(consumerDir, 'node_modules', 'color'),
+      process.platform === 'win32' ? 'junction' : 'dir');
+    const require = createRequire(realpathSync(join(dependencyDir, 'package.json')));
+    expect(require.resolve('color-convert')).toBe(join(transitiveDir, 'index.js'));
+    expect(require.resolve('color-string')).toBe(join(root, 'runtime', 'node_modules', 'color-string', 'index.js'));
+    expect(hasBundledWorkspaceRuntimeDependencyTreeHealthy(join(consumerDir, 'package.json'))).toBe(true);
+
+    rmSync(transitiveDir, { recursive: true });
+    expect(hasBundledWorkspaceRuntimeDependencyTreeHealthy(join(consumerDir, 'package.json'))).toBe(false);
   });
 
   it('accepts absent third-party declarations while requiring their runtime exports', () => {
