@@ -1,3 +1,4 @@
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logger } from '@/ui/logger';
 import axios from 'axios';
 import nacl from 'tweetnacl';
@@ -51,6 +52,8 @@ afterEach(async () => {
 });
 
 it.each([
+    { placementChange: false, mode: 'plain' as const, external: false, uncodedReadFailure: true,
+        name: 'keeps an uncoded bindings read failure private and diagnosable through daemon preparation' },
     { placementChange: false, mode: 'plain' as const, external: false, ownDataRole: true, name: 'refuses read-role setup without an active deployment before acquiring its password' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, name: 'authors plain backup credential references before any target exists' },
     { placementChange: false, mode: 'e2ee' as const, external: false, preTarget: true, name: 'authors E2EE backup credential references before any target exists' },
@@ -76,7 +79,7 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole, uncodedReadFailure }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (ownDataRole) delete detail.targetLinks[0]!.targetLink.activeDeploymentId;
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
@@ -272,6 +275,7 @@ it.each([
                 ...(buildMachineId === installation.machineId ? { proposedBuildInstallation: installation } : {}),
                 ...(dataRoleTargetLinkIds.length ? { controllerInstallation: controller } : {}) } } };
         }
+        if (uncodedReadFailure) throw new Error('binding_read_unavailable token=private-boundary-token');
         environmentReads++;
         const data = { ok: true, environment, targetLinks: detail.targetLinks.map(item => item.targetLink) };
         const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(data);
@@ -338,6 +342,24 @@ it.each([
         const daemon = createDaemonDeploymentActionDeps({
             resolveRequesterIdentity: async () => requesterIdentity,
             ...host, runtime });
+        if (uncodedReadFailure) {
+            const warnings = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+            const result = await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home',
+                environmentId: environment.id, expectedRevision: environment.revision, set: bindings, remove: [] }, {});
+            expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', error: 'action_failed',
+                failureCause: { phase: 'deployment.bindings.prepare', errorClass: 'Error', errorCode: null, httpStatus: null } });
+            const diagnostic = readActionOutputDiagnostic(result);
+            expect(diagnostic).toMatchObject({ phase: 'deployment.bindings.prepare',
+                exception: { errorClass: 'Error' } });
+            expect(diagnostic?.exception?.message).toContain('binding_read_unavailable');
+            expect(warnings).toHaveBeenCalledWith('[Deployment] Unavailable', diagnostic);
+            expect(warnings).toHaveBeenCalledTimes(1);
+            expect(JSON.stringify([diagnostic, warnings.mock.calls])).not.toContain('private-boundary-token');
+            expect(JSON.stringify(result)).not.toContain('binding_read_unavailable');
+            expect(writes).toHaveLength(0);
+            expect(materialReads).toBe(0);
+            return;
+        }
         if (ownDataRole) {
             const result = await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home',
                 environmentId: environment.id, expectedRevision: environment.revision, set: bindings, remove: [] }, {});
