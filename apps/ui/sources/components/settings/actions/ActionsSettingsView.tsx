@@ -367,7 +367,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                                 )}
                             />
                             <ApprovalProfilesSection
-                                profiles={targetSettings.profiles}
+                                profileRows={targetSettings.profileRows}
                                 machineApprovalProfiles={targetSettings.machineApprovalProfiles}
                                 write={writePolicy}
                             />

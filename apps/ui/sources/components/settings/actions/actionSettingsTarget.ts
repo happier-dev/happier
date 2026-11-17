@@ -4,6 +4,7 @@ import {
   setApprovalProfileActionPolicyV1,
 } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import type { ActionPolicySetInput } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   applyApprovalProfileOverlayV1,
   type ApprovalProfileV1,
@@ -18,6 +19,7 @@ import {
 
 import { useSetting } from '@/sync/domains/state/storage';
 import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
+import { readArtifactAccessCapabilities, type ArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 
 /** Whose Approval settings the Actions screens edit: the Account's own rows, or one saved profile's overlay of them. */
 export type ActionSettingsTarget =
@@ -26,6 +28,22 @@ export type ActionSettingsTarget =
 
 export const ACCOUNT_ACTION_SETTINGS_TARGET: ActionSettingsTarget =
   Object.freeze({ kind: 'account' });
+
+export type ApprovalProfileCapabilities = ArtifactAccessCapabilities & Readonly<{
+  isOwner: boolean;
+  canDelete: boolean;
+  canCopy: boolean;
+}>;
+
+export type ActionSettingsTargetWrite = ActionPolicySetInput | ActionExecuteFailure;
+
+const FORBIDDEN_PROFILE_WRITE: ActionExecuteFailure = { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+
+function readApprovalProfileCapabilities(access: ReadableApprovalProfileV1['access'] | null): ApprovalProfileCapabilities | null {
+  if (access === null) return null;
+  const isOwner = access === 'owner';
+  return { ...readArtifactAccessCapabilities(access), isOwner, canDelete: isOwner, canCopy: true };
+}
 
 /**
  * The settings a target's rows show: the Account's own, or the Account with the profile laid over it by the
@@ -38,6 +56,7 @@ export function useActionSettingsForTarget(
   account: ActionsSettingsV1;
   profile: ApprovalProfileV1 | null;
   profileRow: ReadableApprovalProfileV1 | null;
+  profileCapabilities: ApprovalProfileCapabilities | null;
   profiles: readonly ApprovalProfileV1[];
   profileRows: readonly ReadableApprovalProfileV1[];
   machineApprovalProfiles: Readonly<Record<string, string>>;
@@ -50,13 +69,15 @@ export function useActionSettingsForTarget(
     profileId, undefined, { demand: target.kind === 'profile' || options?.demandProfiles === true },
   );
   const profile = profileRow?.profile ?? null;
+  const profileAccess = profileRow?.access ?? null;
+  const profileCapabilities = React.useMemo(() => readApprovalProfileCapabilities(profileAccess), [profileAccess]);
   const settings = React.useMemo(
     () => (profile ? applyApprovalProfileOverlayV1(account, profile) : account),
     [account, profile],
   );
   return React.useMemo(
-    () => ({ account, profile, profileRow, profiles, profileRows, machineApprovalProfiles, settings }),
-    [account, profile, profileRow, profiles, profileRows, machineApprovalProfiles, settings],
+    () => ({ account, profile, profileRow, profileCapabilities, profiles, profileRows, machineApprovalProfiles, settings }),
+    [account, profile, profileRow, profileCapabilities, profiles, profileRows, machineApprovalProfiles, settings],
   );
 }
 
@@ -84,11 +105,21 @@ export function resolveActionSettingsTargetWrite(
     profileRows: readonly ReadableApprovalProfileV1[];
     input: ActionPolicySetInput;
   }>,
-): ActionPolicySetInput | null {
+): ActionSettingsTargetWrite | null {
   const { target, account, profileRows, input } = params;
-  if (target.kind === 'account' || 'profileChange' in input) return input;
+  if (target.kind === 'account') return input;
+  if ('profileChange' in input) {
+    const change = input.profileChange;
+    if (change.kind === 'create' || change.kind === 'machine_default') return input;
+    const row = profileRows.find(candidate => candidate.id === change.id);
+    if (!row) return null;
+    const capabilities = readApprovalProfileCapabilities(row.access);
+    return (change.kind === 'delete' ? capabilities?.canDelete : capabilities?.canEdit)
+      ? input : FORBIDDEN_PROFILE_WRITE;
+  }
   const row = profileRows.find((candidate) => candidate.id === target.id);
   if (!row || ('scope' in input && input.scope !== undefined)) return null;
+  if (!readApprovalProfileCapabilities(row.access)?.canEdit) return FORBIDDEN_PROFILE_WRITE;
   const profile = row.profile;
   const actionId = input.actionId as ActionSettingsActionId;
   if ('change' in input) {
@@ -134,7 +165,8 @@ export function resolveActionSettingsTargetWrite(
 export function buildApprovalProfileActionResetChange(
   row: ReadableApprovalProfileV1,
   actionId: ActionSettingsActionId,
-): ActionPolicySetInput {
+): ActionSettingsTargetWrite {
+  if (!readApprovalProfileCapabilities(row.access)?.canEdit) return FORBIDDEN_PROFILE_WRITE;
   return {
     profileChange: {
       kind: 'update',

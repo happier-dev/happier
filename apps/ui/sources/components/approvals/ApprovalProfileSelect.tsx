@@ -91,7 +91,7 @@ export function approvalProfileChipLabel(params: Readonly<{
 export function ApprovalProfileSelect(props: Choice & Readonly<{
     testID: string;
     source: Pick<ReturnType<typeof useApprovalProfiles>, 'profiles' | 'ready' | 'unavailable'>
-        & Partial<Pick<ReturnType<typeof useApprovalProfiles>, 'requestCatalog' | 'displayProfiles' | 'selectedDescriptor'>>;
+        & Partial<Pick<ReturnType<typeof useApprovalProfiles>, 'profileRows' | 'requestCatalog' | 'displayProfiles' | 'selectedDescriptor'>>;
     machineDefault?: ApprovalProfileMachineDefault;
     disabled?: boolean;
     titleMeta?: React.ReactNode;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions';
+import type { ApprovalProfileV1, ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -30,7 +30,7 @@ function describeProfile(profile: ApprovalProfileV1, defaultOn: readonly string[
  * context; New profile starts Blank or as a copy of one already saved.
  */
 export const ApprovalProfilesSection = React.memo(function ApprovalProfilesSection(props: Readonly<{
-    profiles: readonly ApprovalProfileV1[];
+    profileRows: readonly ReadableApprovalProfileV1[];
     machineApprovalProfiles: Readonly<Record<string, string>> | undefined;
     write: ApprovalProfileWriter;
 }>) {
@@ -39,12 +39,12 @@ export const ApprovalProfilesSection = React.memo(function ApprovalProfilesSecti
     const machineNames = useApprovalProfileMachineNames(props.machineApprovalProfiles);
     const starts = React.useMemo<DropdownMenuItem[]>(() => [
         { id: BLANK_START_ID, testID: 'settings-actions:approval-profile-add:blank', title: t('workflows.triggers.guided.profile.startBlank') },
-        ...props.profiles.map(profile => ({ id: profile.id, testID: `settings-actions:approval-profile-add:copy:${profile.id}`,
+        ...props.profileRows.map(({ profile }) => ({ id: profile.id, testID: `settings-actions:approval-profile-add:copy:${profile.id}`,
             title: t('workflows.triggers.guided.profile.startCopyOf', { name: profile.name }) })),
-    ], [props.profiles]);
+    ], [props.profileRows]);
     const start = async (startId: string) => {
         setOpen(false);
-        const source = startId === BLANK_START_ID ? null : props.profiles.find(profile => profile.id === startId) ?? null;
+        const source = startId === BLANK_START_ID ? null : props.profileRows.find(row => row.id === startId)?.profile ?? null;
         const created = await createApprovalProfileFromStart(props.write, source);
         if (created) router.push(buildApprovalProfileSettingsRoute(created.id));
     };
@@ -77,10 +77,10 @@ export const ApprovalProfilesSection = React.memo(function ApprovalProfilesSecti
                 />
             )}
         >
-            {props.profiles.length === 0 ? (
+            {props.profileRows.length === 0 ? (
                 <Item testID="settings-actions:approval-profiles:empty" title={t('workflows.triggers.guided.profile.empty')}
                     mode="info" showChevron={false} />
-            ) : props.profiles.map(profile => (
+            ) : props.profileRows.map(({ profile }) => (
                 <Item
                     key={profile.id}
                     testID={`settings-actions:approval-profile:${profile.id}`}

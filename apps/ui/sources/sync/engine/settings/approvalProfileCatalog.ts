@@ -2,7 +2,6 @@ import { bindApprovalProfileV1, listReadableApprovalProfilesV1, loadReadableAppr
     executeApprovalProfileArtifactChangeV1, APPROVAL_PROFILE_ARTIFACT_KIND_V1,
     type ApprovalProfileArtifactChangeV1, type ApprovalProfileArtifactChangeResultV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { artifactKindsMayIncludeKindV1 } from '@happier-dev/protocol/changes';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { captureServerCredentialAccountScopeLifetime } from '@/sync/domains/scope/serverCredentialAccountScope';
@@ -17,6 +16,7 @@ import { getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifact
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type Account = Awaited<ReturnType<typeof captureLazyActionAccountContext>>;
@@ -37,14 +37,8 @@ function copyDescriptors(previous?: Snapshot['descriptors']): Record<string, App
 function publish(entry: Entry, snapshot: Snapshot) {
     if (!entry.target.lifetime.isCurrent()) return;
     const previous = entry.snapshot;
-    const oldRows = new Map(previous.rows?.map(row => [row.id, row]));
-    const nextRows = snapshot.rows?.map(row => {
-        const old = oldRows.get(row.id);
-        return old && sameStrictJsonValue(old, row) ? old : row;
-    }) ?? null;
-    const rows = nextRows && previous.rows && nextRows.length === previous.rows.length
-        && nextRows.every((row, index) => row === previous.rows![index]) ? previous.rows : nextRows;
-    const descriptors = sameStrictJsonValue(previous.descriptors, snapshot.descriptors) ? previous.descriptors : snapshot.descriptors;
+    const rows = snapshot.rows === null ? null : retainKeyedRows(previous.rows, snapshot.rows, row => row.id);
+    const descriptors = retainDeep(previous.descriptors, snapshot.descriptors);
     if (rows === previous.rows && descriptors === previous.descriptors
         && previous.stale === snapshot.stale && previous.unavailable === snapshot.unavailable) return;
     entry.snapshot = { ...snapshot, rows, descriptors };
