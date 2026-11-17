@@ -96,6 +96,8 @@ export function createInstalledSessionExternalActionStorage() {
             if (query === 'SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS milliseconds') {
                 return [{ milliseconds: Date.now() }];
             }
+            // Ordinary installed Machines have no managed wake binding in this database fixture.
+            if (query.includes('FROM "ManagedMachine"')) return [];
             return homeConfigSnapshotPostgresQueryMock.$queryRawUnsafe.call(reader, query, id);
         },
         // The real transaction owner now establishes a PostgreSQL read snapshot.
@@ -108,7 +110,7 @@ export function createInstalledSessionExternalActionStorage() {
                 where.id.in.includes(state.machineId) ? [machine()] : [],
         },
         ephemeralRunnerActivation: { findFirst: async () => null },
-        managedMachine: { findFirst: async () => null },
+        managedMachine: { findFirst: async () => null, findMany: async () => [] },
         session: {
             fields: sessionFields,
             findFirst: async ({ where }: { where: unknown }) => readSessions().find(row => matchesDbMockWhere(row, where)) ?? null,

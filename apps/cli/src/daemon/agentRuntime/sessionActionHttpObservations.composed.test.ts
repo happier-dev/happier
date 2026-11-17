@@ -40,6 +40,7 @@ import { installedSessionExternalActionStorage as storage } from '../../../../se
 import { registerExternalActionRoutes } from '../../../../server/sources/app/api/routes/actions/registerExternalActionRoutes';
 import type { Fastify } from '../../../../server/sources/app/api/types';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createCompactSessionListQueryResponseFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { createExternalActionAuthorizedRequestHeaders, prepareExternalActionRequesterAccountAuthorization, resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { createSessionListActionDeps } from '@/session/actions/sessionListActionDependency';
@@ -1464,7 +1465,8 @@ it('executes an authored Account Action through restricted Agent capability cust
     const capabilities: AgentRuntimeDaemonServiceRequestV1[] = [];
     const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true } },
       capabilities: { serverIdentity: { serverIdentityId: storage.state.homeId } } });
-    vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+    vi.stubGlobal('fetch', async () => Response.json(features));
+    stubUndiciFetch(async (_url: unknown, init?: RequestInit) => {
       if (!init?.body) return Response.json(features);
       const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init.body)));
       capabilities.push(request);
