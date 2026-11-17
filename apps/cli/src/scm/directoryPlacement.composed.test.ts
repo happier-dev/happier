@@ -29,10 +29,13 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
     const commit = { method: RPC_METHODS.SCM_COMMIT_CREATE, operation: { message: 'panel change', scope: { kind: 'all-pending' } } };
     const push = { method: RPC_METHODS.SCM_REMOTE_PUSH, operation: { remote: 'origin', branch: 'main' } };
     it.each([
-        ...[true, false].flatMap(placed => [status, commit, push].map(request => ({ placed, memberFolder: false, ...request }))),
+        ...[true, false].flatMap(placed => [status, commit, push].map(request => ({ placed, caller: 'none', ...request }))),
         // SEC1116H §4b: Manage on a member's folder whose placed Session shares the root.
-        ...[status, commit].map(request => ({ placed: true, memberFolder: true, ...request })),
-    ])('keeps $method hooks at their workspace authority (placed=$placed, member folder=$memberFolder)', async ({ placed, memberFolder, method, operation }) => {
+        ...[status, commit].map(request => ({ placed: true, caller: 'manage', ...request })),
+        // SEC1116I item 1: the member's own read of their placed root; another member stays in their own child.
+        { placed: true, caller: 'member', ...status },
+        { placed: true, caller: 'other-member', ...status },
+    ] as const)('keeps $method hooks at their workspace authority (placed=$placed, caller=$caller)', async ({ placed, caller, method, operation }) => {
         const directory = await mkdtemp(join(tmpdir(), 'scm-directory-'));
         const root = join(directory, 'workspace-sync');
         const destination = join(directory, 'destination.git');
@@ -133,8 +136,11 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             const requester = { serverId: 'home', accountId: 'member-account', machineId: 'machine', installationId: 'installation' };
             registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, root,
                 { registry, selectWorkspaceSource: admission.selectWorkspaceSource,
-                    ...(memberFolder ? {
-                        resolveRequester: async () => ({ identity: { kind: 'owner_person' as const, requester: { ...requester, accountId: 'owner-account' } },
+                    ...(caller !== 'none' ? {
+                        resolveRequester: async () => ({ identity: caller === 'manage'
+                            ? { kind: 'owner_person' as const, requester: { ...requester, accountId: 'owner-account' } }
+                            : { kind: 'isolated' as const, separationRequired: true,
+                                requester: caller === 'member' ? requester : { ...requester, accountId: 'other-member-account' } },
                             dispose: async () => {} }),
                         nativeOperationRuntime: {
                             readMemberFolderOwner: async () => ({ kind: 'isolated' as const, separationRequired: true, requester }),
@@ -145,7 +151,13 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                         },
                     } : {}) });
             const response = await handlers.get(method)!({ cwd: root, ...operation },
-                memberFolder ? { signal: new AbortController().signal } : undefined);
+                caller !== 'none' ? { signal: new AbortController().signal } : undefined);
+            if (caller === 'other-member') {
+                // Another person's placed root is never reached through its holder; their own child decides.
+                expect(memberLaunches).toEqual([method]);
+                await expect(readFile(join(root, '.git/executions'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+                return;
+            }
             expect(memberLaunches).toEqual([]);
             // A target may refuse a capability, but must never retry it on the host.
             expect(response, JSON.stringify(response)).toMatchObject({ success: placed ? expect.any(Boolean) : true });

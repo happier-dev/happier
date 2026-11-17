@@ -217,8 +217,17 @@ export function registerScmHandlers(
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
             if (!isScmLocalRepositoryReadRpcMethod(method)) return await run();
-            return identity.kind === 'isolated' ? await runAsMember(context, identity, method, projectRoot, input)
-                : refused('agent_isolation_unavailable');
+            if (identity.kind !== 'isolated') return refused('agent_isolation_unavailable');
+            // The member's own placed Session already selected its target: their read runs there, never
+            // on this Machine as them (SEC1116I item 1). Another person's placed root stays in the
+            // member's own child, whose OS account decides.
+            if (selected.kind !== 'local') {
+                const owner = await deps.nativeOperationRuntime?.readMemberFolderOwner?.(readRequestCwd(input, projectRoot))
+                    .catch(() => null);
+                if (owner && owner.requester.serverId === identity.requester.serverId
+                    && owner.requester.accountId === identity.requester.accountId) return await run();
+            }
+            return await runAsMember(context, identity, method, projectRoot, input);
         } finally { await requester.dispose(); }
     };
     const selectSource = (request: unknown, context: RpcHandlerContext | undefined): WorkspaceSource => {
