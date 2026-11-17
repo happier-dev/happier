@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios from '@/api/client/credentialAxios';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -69,12 +70,12 @@ export function createCliConnectedServiceAction(params: Readonly<{
         signal?.throwIfAborted();
         const operation = params.operationContext;
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-          throw Object.assign(new Error('Captured Connected Account retired'), { code: 'scope-retired' });
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         }
         const { getActiveAccountSettingsSnapshotLifetimeToken } = await import("@/settings/accountSettings/activeAccountSettingsSnapshot");
         if (operation ? operation.credentials.token !== params.credentials.token || !await operation.isCurrent()
           : getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken) {
-          throw Object.assign(new Error('Captured Connected Account retired'), { code: 'scope-retired' });
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         }
         signal?.throwIfAborted();
       };
@@ -92,7 +93,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
             ...(params.operationContext ? { savedSecretOperationContext: params.operationContext } : {}),
           } }));
         const authenticationHost = (await authenticationRuntime).registry.connectedAccountAuthenticationHost;
-        if (!authenticationHost) throw Object.assign(new Error('connected_account_service_unavailable'), { code: 'connected_account_service_unavailable' });
+        if (!authenticationHost) throw createActionExecuteFailureError({ ok: false, errorCode: 'connected_account_service_unavailable', error: 'connected_account_service_unavailable' });
         return authenticationHost;
       };
       const resolveCredentialStorage = async () => {

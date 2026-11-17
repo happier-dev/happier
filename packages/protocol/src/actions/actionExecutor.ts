@@ -98,7 +98,7 @@ import type { ReviewCommentV1 } from '../reviews/comments/v1.js';
 import { buildAcceptedReviewFindingsForVerifyV1,
   REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '../reviews/reviewFindingsApplyInputV1.js';
 import { ReviewCommentGetResponseV1Schema } from '../reviews/comments/actions.js';
-import { isActionOutcomeUnknownErrorCodeV1, projectApprovalExecutionOutcomeUnknownV1, projectActionExecuteFailure, parseActionExecuteFailure, projectActionFailureCauseV1 } from './actionExecutionResult.js';
+import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, projectApprovalExecutionOutcomeUnknownV1, projectActionExecuteFailure, parseActionExecuteFailure, projectActionFailureCauseV1 } from './actionExecutionResult.js';
 import { createApprovalReplay } from './executor/approvalReplay.js';
 import { createBlockingApprovalDecisionResolver } from './executor/blockingApprovalDecision.js';
 import { approvalReadFailure as approvalContextUnavailable } from './executor/approvalRead.js';
@@ -775,12 +775,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     } while (cursor);
   };
   const prepareApprovalExecutionOrigin = async (params: Parameters<typeof buildApprovalExecutionOriginV1>[0]) => {
-    if (params.context.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+    if (params.context.signal?.aborted) throw createActionExecuteFailureError({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
     const prepared = await (params.context.prepareAdmittedExecutionOrigin?.() ?? deps.prepareApprovalExecutionOriginContext?.({
       targetSessionId: params.targetSessionId,
       ...(params.context.signal ? { signal: params.context.signal } : {}),
     }));
-    if (params.context.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+    if (params.context.signal?.aborted) throw createActionExecuteFailureError({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
     return buildApprovalExecutionOriginV1({
       ...params,
       context: prepared ? { ...params.context, ...prepared } : params.context,

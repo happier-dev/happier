@@ -1,4 +1,5 @@
 import { ActionIdSchema } from './actionIds.js';
+import { createActionExecuteFailureError } from './actionExecutionResult.js';
 import { describe, expect, it, vi } from 'vitest';
 import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
@@ -3311,7 +3312,9 @@ describe('createActionExecutor (approvals)', () => {
       // below shares durable Artifact storage, never the original CLI closure.
       connectedServiceAction: async ({ input }) => {
         effects.push(input);
-        if (nativeFailure) throw Object.assign(new Error('Service unavailable'), { code: 'connected_account_service_unavailable' });
+        // Mirrors the native producer's typed carrier (connectedServiceActionDeps); a bare Error code is not authority.
+        if (nativeFailure) throw createActionExecuteFailureError({ ok: false, errorCode: 'connected_account_service_unavailable',
+          error: 'connected_account_service_unavailable' });
         return { status: 'awaitingManual', attemptId: 'connected-attempt' };
       },
       approvalsWaitForDecision: async () => { throw new Error('Deferred CLI requests must not retain a waiter'); },

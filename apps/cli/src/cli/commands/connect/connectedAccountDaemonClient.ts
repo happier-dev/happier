@@ -95,7 +95,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
     if (!executor) {
       const owner = await readRegistry();
       const host = owner.connectedAccountAuthenticationHost;
-      if (!host) throw Object.assign(new Error('connected_account_service_unavailable'), { code: 'connected_account_service_unavailable' });
+      if (!host) throw createActionExecuteFailureError({ ok: false, errorCode: 'connected_account_service_unavailable', error: 'connected_account_service_unavailable' });
       const executorOptions = { credentials: params.credentials, savedSecretOperationContext,
         serverId: params.serverId, serverApiUrl: serverHttpBaseUrl,
         ...(params.onApprovalRequested ? { onApprovalRequested: params.onApprovalRequested } : {}),
@@ -176,7 +176,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
       })));
       if (!params.actionExecutor) {
         const host = (await readRegistry()).connectedAccountAuthenticationHost;
-        if (!host) throw Object.assign(new Error('connected_account_service_unavailable'), { code: 'connected_account_service_unavailable' });
+        if (!host) throw createActionExecuteFailureError({ ok: false, errorCode: 'connected_account_service_unavailable', error: 'connected_account_service_unavailable' });
         return readDiagnosticResponse(await host.controlCommand(machineId, normalized, { signal: params.signal, native }));
       }
       const request = ConnectedAccountControlCommandRequestSchema.parse({ v: 1, machineId, command: normalized });
