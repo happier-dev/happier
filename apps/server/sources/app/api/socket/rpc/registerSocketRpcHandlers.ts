@@ -638,11 +638,20 @@ function createEphemeralRunnerMachineRpcTargetGuard(params: Readonly<{
     /** The composed raw Session guard owns this receiver's binding and Machine role. */
     protectedSessionTarget: boolean;
 }>): RpcForwardTargetGuard {
-    const authorizeTarget = async (target: SocketDataCarrier): Promise<boolean> => {
+    // Candidate selection is a local match. The receiver's authority (a persistent Machine of the
+    // target Account, or a Runner principal with a current Session capability) is checked fresh
+    // once, on the latest target immediately before the operation.
+    const matchesTarget = (target: SocketDataCarrier): boolean => {
         if (params.protectedSessionTarget && readSocketClientType(target) === 'session-scoped') return true;
-        const socketData = readSocketData(target);
         if (readMachineScopedSocketMachineId(target) !== params.machineId) return false;
-        if (socketData.ephemeralRunnerAdmission === undefined) {
+        if (readSocketData(target).ephemeralRunnerAdmission === undefined) return true;
+        const principal = readMachineRuntimeRunnerPrincipal(target);
+        return principal !== null && principal.accountId === params.targetAccountId && principal.machineId === params.machineId;
+    };
+    const authorizeTarget = async (target: SocketDataCarrier): Promise<boolean> => {
+        if (!matchesTarget(target)) return false;
+        if (params.protectedSessionTarget && readSocketClientType(target) === 'session-scoped') return true;
+        if (readSocketData(target).ephemeralRunnerAdmission === undefined) {
             const machine = await db.machine.findFirst({
                 where: { accountId: params.targetAccountId, id: params.machineId },
                 select: { kind: true },
@@ -650,14 +659,7 @@ function createEphemeralRunnerMachineRpcTargetGuard(params: Readonly<{
             return machine !== null && machine.kind !== "ephemeral_session_runner";
         }
         const principal = readMachineRuntimeRunnerPrincipal(target);
-        if (
-            !principal
-            || principal.accountId !== params.targetAccountId
-            || principal.machineId !== params.machineId
-            || !await verifyCurrentMaterializedRunnerPrincipal(principal)
-        ) {
-            return false;
-        }
+        if (!principal || !await verifyCurrentMaterializedRunnerPrincipal(principal)) return false;
         const decision = await resolveSessionAccessForOperation(db, {
             accountId: params.accountId,
             sessionId: principal.sessionId,
@@ -667,12 +669,8 @@ function createEphemeralRunnerMachineRpcTargetGuard(params: Readonly<{
         return decision.status === "allowed" && decision.access.capabilities[params.authority];
     };
     return {
-        filterTargets: async (targets) => {
-            const decisions = await Promise.all(targets.map(async (target) => await authorizeTarget(target)));
-            return targets.filter((_target, index) => decisions[index] === true);
-        },
-        runOperation: async ({ target, operation, readLatestTarget }) => {
-            if (!await authorizeTarget(target)) return { status: "unavailable" };
+        filterTargets: async (targets) => targets.filter(matchesTarget),
+        runOperation: async ({ operation, readLatestTarget }) => {
             const latest = await readLatestTarget();
             if (!latest || !await authorizeTarget(latest)) return { status: "unavailable" };
             return { status: "current", value: await operation() };
