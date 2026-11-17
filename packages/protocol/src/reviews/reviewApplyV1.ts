@@ -5,7 +5,7 @@ import { SessionMessageSendResultV1Schema } from '../sessions/messages/sessionIn
 import { ReviewFindingSchema } from './ReviewFinding.js';
 
 /** Reviewed findings are untrusted data; current acceptance and CAS always come from ReviewComment. */
-export const ReviewFindingsApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
+export const ReviewFindingsApplyInputV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   sessionId: SessionTargetV1Schema,
   reviews: z.array(z.strictObject({
     runId: z.string().check(z.minLength(1)),
@@ -13,7 +13,10 @@ export const ReviewFindingsApplyInputV1Schema = lazyZodSchema(() => z.strictObje
       threadRefs: z.optional(z.array(z.string().check(z.minLength(1)))),
     })),
   })).check(z.minLength(1)),
-}));
+}), z.strictObject({
+  sessionId: SessionTargetV1Schema,
+  reviewId: z.string().check(z.minLength(1)),
+})]));
 export type ReviewFindingsApplyInputV1 = z.infer<typeof ReviewFindingsApplyInputV1Schema>;
 export const ReviewFindingsApplyResultV1Schema = lazyZodSchema(() => z.union([
   SessionMessageSendResultV1Schema,

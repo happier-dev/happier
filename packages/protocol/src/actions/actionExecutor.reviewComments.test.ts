@@ -46,6 +46,45 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (review comments)', () => {
+  it('applies accepted durable Review findings beyond the first page exactly once', async () => {
+    const comment = ReviewCommentV1Schema.parse({
+      v: 1, id: 'accepted', accountId: 'account', reviewId: 'review', workspace: { machineId: 'machine', path: '/repo' },
+      runId: 'review-run', findingId: 'finding', findingIdentity: 'a'.repeat(64),
+      body: 'The accepted defect beyond the first page', bodyVersion: 1, edits: [], flags: {}, dispositions: {},
+      threadId: 'accepted', transitions: [], anchor: { kind: 'file', filePath: 'reader.ts' },
+      snapshot: { kind: 'none', capturedAt: 1 }, author: { kind: 'workflow', runId: 'workflow' },
+      state: 'open', reviewTriageStatus: 'accept', serverRevision: 7, createdAt: 1, updatedAt: 1,
+    });
+    const requests: unknown[] = [];
+    const sent: string[] = [];
+    const executor = createActionExecutor(createDeps({
+      resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
+      reviewCommentAction: async ({ actionId, input }) => {
+        expect(actionId).toBe('reviews.comments.list');
+        const request = ReviewCommentActionInputSchemasV1['reviews.comments.list'].parse(input);
+        requests.push(request);
+        return request.cursor ? { items: [comment], cursor: null }
+          : { items: [{ ...comment, id: 'rejected', threadId: 'rejected', findingIdentity: 'b'.repeat(64),
+            body: 'Rejected finding', reviewTriageStatus: 'reject' },
+          { ...comment, id: 'reply', parentCommentId: comment.id, body: 'Accepted discussion reply' },
+          { ...comment, id: 'general-comment', threadId: 'general-comment', findingIdentity: undefined,
+            body: 'Accepted general comment' }], cursor: 'second-page' };
+      },
+      sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'apply-review' }; },
+    }));
+    const applied = await executor.execute('review.apply', { sessionId: 'origin', reviewId: 'review' },
+      { surface: 'ui', serverId: 'home' });
+    expect(applied, JSON.stringify(applied)).toMatchObject({ ok: true });
+    expect(requests).toEqual([expect.objectContaining({ reviewId: 'review' }),
+      expect.objectContaining({ reviewId: 'review', cursor: 'second-page' })]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain(comment.body);
+    expect(sent[0]).toContain('"expectedServerRevision": 7');
+    expect(sent[0]).not.toContain('Rejected finding');
+    expect(sent[0]).not.toContain('Accepted discussion reply');
+    expect(sent[0]).not.toContain('Accepted general comment');
+  });
+
   it('applies current accepted findings through review scope and the canonical message Action', async () => {
     const finding = { id: 'finding-1', title: 'Unsafe read', summary: 'Check the read', severity: 'high', category: 'correctness' };
     const comment = ReviewCommentV1Schema.parse({

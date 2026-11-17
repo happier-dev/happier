@@ -4,6 +4,7 @@ import type { WorkflowSessionScopeV1 } from '../../../workflows/workflowSessionS
 import { normalizeId } from '../inputReading.js';
 import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import type { ReviewCommentV1 } from '../../../reviews/comments/v1.js';
+import { reviewCommentFindingScopeV1 } from '../../../reviews/comments/findingIdentity.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { ReviewCommentGetResponseV1Schema } from '../../../reviews/comments/actions.js';
 import { buildAcceptedReviewFindingsForVerifyV1, REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '../../../reviews/reviewFindingsApplyInputV1.js';
@@ -99,12 +100,14 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
           // SessionTarget preparation owns selector resolution; leaves accept only its exact address.
           if (typeof apply.sessionId !== 'string') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const comments: ReviewCommentV1[] = [];
-          for (const runId of new Set(apply.reviews.map(review => review.runId))) {
+          const scopes = 'reviewId' in apply ? [{ reviewId: apply.reviewId }]
+            : [...new Set(apply.reviews.map(review => review.runId))].map(runId => ({ sessionId: apply.sessionId, runId }));
+          for (const scope of scopes) {
             let cursor: string | undefined;
             do {
               ctx.signal?.throwIfAborted();
               const result = await deps.reviewCommentAction({ actionId: 'reviews.comments.list',
-                input: ReviewCommentListActionRequestV1Schema.parse({ sessionId: apply.sessionId, runId, includeHistory: true,
+                input: ReviewCommentListActionRequestV1Schema.parse({ ...scope, includeHistory: true,
                   limit: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ...(cursor ? { cursor } : {}) }),
                 ...requestContext });
               const failure = readActionFailureEnvelope(result);
@@ -115,7 +118,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             } while (cursor !== undefined);
           }
           // A materialized finding can reuse an earlier round's canonical comment.
-          for (const id of new Set(apply.reviews.flatMap(review => review.findings.flatMap(finding => finding.comment ? [finding.comment.id] : [])))) {
+          for (const id of new Set('reviewId' in apply ? [] : apply.reviews.flatMap(review => review.findings.flatMap(finding => finding.comment ? [finding.comment.id] : [])))) {
             if (comments.some(comment => comment.id === id)) continue;
             ctx.signal?.throwIfAborted();
             const result = await deps.reviewCommentAction({ actionId: 'reviews.comments.get', input: { commentId: id, includeHistory: true }, ...requestContext });
@@ -123,11 +126,24 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             if (failure) return failure;
             comments.push(ReviewCommentGetResponseV1Schema.parse(result).comment);
           }
-          if (comments.some(comment => comment.sessionId !== apply.sessionId)) {
+          if (!('reviewId' in apply) && comments.some(comment => comment.sessionId !== apply.sessionId)) {
             return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
           }
-          const findings = buildAcceptedReviewFindingsForVerifyV1(apply.reviews, comments);
+          const reviews = 'reviewId' in apply ? comments.filter(comment => reviewCommentFindingScopeV1(comment) !== null).map(comment => ({ runId: comment.runId ?? comment.id,
+            findings: [{ id: comment.findingId ?? comment.id, title: 'Review finding',
+              summary: typeof comment.body === 'string' ? comment.body : '',
+              engineId: comment.engineId, anchor: comment.anchor,
+              comment: { id: comment.id, serverRevision: comment.serverRevision, state: comment.state,
+                reviewId: apply.reviewId, ...(comment.projectId ? { projectId: comment.projectId } : {}),
+                ...(comment.workspace ? { workspace: comment.workspace } : {}),
+                ...(comment.sessionId ? { sessionId: comment.sessionId } : {}),
+                ...(comment.runId ? { runId: comment.runId } : {}) },
+            }] })) : apply.reviews;
+          const findings = buildAcceptedReviewFindingsForVerifyV1(reviews, comments);
           if (findings.length === 0) return { ok: true, result: { status: 'unchanged', commentIds: [] } };
+          if ('reviewId' in apply && findings.some(finding => typeof comments.find(comment => comment.id === finding.comment?.id)?.body !== 'string')) {
+            return { ok: false, errorCode: 'review_comment_encryption_material_unavailable', error: 'review_comment_encryption_material_unavailable' };
+          }
           ctx.signal?.throwIfAborted();
           // Plugin delivery retains the existing host invocation identity; the message owner
           // still owns admission, local-id derivation and idempotency. Never mint a second id.

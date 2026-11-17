@@ -476,6 +476,12 @@ marks over retained evidence keep their existing local Home, Session-access and
 saved-scope checks. Live capture, generation, commit-plan application and live
 content-key marks need the daemon's installed backend owner. Machine-wide saved
 inventory still requires an explicit Machine target.
+In unreleased 0.3, `review.apply` also accepts a Review id and a destination
+Session. Its existing executor reads the Review's canonical finding pages,
+selects accepted findings through the shared acceptance owner, and sends one
+verification-and-fix request through `session.message.send`. It does not start
+another review. Historical requests carrying raw findings retain their existing
+input contract and consume current persisted acceptance at the same owner.
 Prepared review-workspace materialization remains at the host-stamped source
 plugin owner; it has no public CLI, Agent, MCP or Machine RPC entry point.
 

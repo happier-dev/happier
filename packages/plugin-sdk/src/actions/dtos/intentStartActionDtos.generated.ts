@@ -2656,6 +2656,9 @@ export type IntentStartActionInputById = {
     };
     readonly "review.apply": {
         sessionId: SessionTargetV1<true>;
+        reviewId: string;
+    } | {
+        sessionId: SessionTargetV1<true>;
         reviews: {
             runId: string;
             findings: {
@@ -2672,12 +2675,14 @@ export type IntentStartActionInputById = {
                 confidence?: number | undefined;
                 suggestion?: string | undefined;
                 patch?: string | undefined;
+                extensions?: unknown;
                 comment?: undefined | {
                     id: string;
                     state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                     serverRevision: number;
                     sessionId?: string | undefined;
                     runId?: string | undefined;
+                    reviewId?: string | undefined;
                     projectId?: string | undefined;
                     workspace?: undefined | {
                         machineId: string;
@@ -2685,6 +2690,7 @@ export type IntentStartActionInputById = {
                     };
                 };
                 attributionConfidence?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 threadRefs?: string[] | undefined;
             }[];
         }[];

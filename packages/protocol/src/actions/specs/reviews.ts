@@ -203,8 +203,10 @@ function createReviewActionSpecs() {
     bindings: { mcpToolName: 'review_apply', voiceClientToolName: 'review_apply' },
     inputHints: { title: 'Apply accepted review findings', fields: [
       { path: 'sessionId', title: 'Session', widget: 'select', required: true, optionsSourceId: 'sessions' },
-      { path: 'reviews', title: 'Reviewed findings', widget: 'json', required: true,
-        description: 'Review Run identities and selected findings. Current acceptance and revisions are rechecked before sending.' },
+      { path: 'reviewId', title: 'Review', widget: 'text',
+        description: 'Apply accepted persisted findings from this Review.' },
+      { path: 'reviews', title: 'Reviewed findings', widget: 'json',
+        description: 'Historical Run identities and findings, instead of a Review id. Current acceptance and revisions are read before sending.' },
     ] },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputSchema: ReviewFindingsApplyInputV1Schema,
