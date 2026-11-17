@@ -152,6 +152,8 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     return (
         <ApprovalPromptChrome
             testID="permission-prompt-card"
+            // An agent's ask the person did not start: the shared needs-you edge, for whoever can answer it.
+            tone={props.canApprovePermissions ? 'attention' : 'neutral'}
             title={mcp ? mcp.title : headerText.title}
             subtitle={effectiveSubtitle}
             titleNumberOfLines={1}

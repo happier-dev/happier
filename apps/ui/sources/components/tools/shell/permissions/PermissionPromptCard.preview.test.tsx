@@ -72,6 +72,19 @@ const [{ PermissionPromptCard }, { ToolInlineBody }, { AppPaneProvider }] = awai
 const InlineBody = (ToolInlineBody as React.MemoExoticComponent<React.ComponentType<React.ComponentProps<typeof ToolInlineBody>>>).type;
 
 describe('PermissionPromptCard (preview)', () => {
+    it('marks an agent\'s pending ask as needing this person only when they can answer it', async () => {
+        const request = { id: 'perm-tone', tool: 'edit', arguments: { path: 'file.ts' } } as PendingPermissionRequest;
+        const toneFor = async (canApprovePermissions: boolean) => {
+            const screen = await renderWithSessionTranscriptSource(<PermissionPromptCard request={request}
+                location={{ kind: 'top', messageId: 'tone', seq: null }} sessionId="session-1" metadata={null}
+                canApprovePermissions={canApprovePermissions} />);
+            // The chrome element is the one carrying the card's testID and its tone.
+            return screen.tree.root.findAll((node) => node.props.testID === 'permission-prompt-card' && 'tone' in node.props)[0]?.props.tone;
+        };
+        expect(await toneFor(true)).toBe('attention');
+        expect(await toneFor(false)).not.toBe('attention');
+    });
+
     it('rounds the card with the theme approval card radius', async () => {
         toolDetailSetting = 'summary';
 

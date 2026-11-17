@@ -11,6 +11,10 @@ import { createReadOnlySessionTranscriptSource } from '@/components/sessions/tra
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import { PermissionAnswerOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 export type NativeApprovalSpecimenState =
   | 'two'
@@ -194,10 +198,49 @@ const ANSWERED = [
   },
 ];
 
+/**
+ * The asking Session, client-local and removed on unmount, so the real card names who asks and where
+ * ("Codex · nl2") exactly as it does in a live Session. It never becomes a server Session.
+ */
+function useSeededAskingSession(serverId: string): boolean {
+  const [seeded, setSeeded] = React.useState(false);
+  React.useEffect(() => {
+    const session = createSessionFixture({
+      id: SESSION_ID,
+      serverId,
+      active: true,
+      metadata: {
+        path: '/Users/dev/harbor-ledger',
+        host: 'nl2',
+        homeDir: '/Users/dev',
+        machineId: 'dev-native-approvals',
+        flavor: 'codex',
+      } as Session['metadata'],
+    });
+    const state = storage.getState();
+    // Never replace an existing local entry, even in a dev specimen.
+    if (state.sessions[SESSION_ID]) return;
+    storage.setState({ sessions: { ...state.sessions, [SESSION_ID]: session } });
+    setSeeded(true);
+    return () => {
+      storage.setState((current) => {
+        if (current.sessions[SESSION_ID] !== session) return current;
+        const sessions = { ...current.sessions };
+        delete sessions[SESSION_ID];
+        return { sessions };
+      });
+    };
+  }, [serverId]);
+  return seeded;
+}
+
 /** Dev-only: the native-choice approval card and its answered line, credential-free for side-by-side lab QA. */
 export function NativeApprovalSpecimen(
   props: Readonly<{ state: NativeApprovalSpecimenState }>,
 ) {
+  const accountScope = useActiveServerAccountScope();
+  const serverId = accountScope?.serverId ?? getActiveServerSnapshot().serverId;
+  useSeededAskingSession(serverId);
   const source = React.useMemo(
     () =>
       createReadOnlySessionTranscriptSource({
@@ -247,6 +290,7 @@ export function NativeApprovalSpecimen(
         location={null}
         metadata={null}
         sessionId={SESSION_ID}
+        serverId={serverId}
         canApprovePermissions
       />
     </SessionTranscriptSourceProvider>
