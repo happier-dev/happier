@@ -1956,12 +1956,8 @@ export class ApiMachineClient {
                 createFileDownloadPublisher: context => this.createFileDownloadPublisher(this.machineRuntimeServerId,
                     buildActionExecutorContextForRpc({ ...context, serverId: this.machineRuntimeServerId,
                         externalActionTarget: { kind: 'machine', machineId: this.machine.id } })),
-                resolveServerFeaturesSnapshot: async () => this.lifecycleDependencies.getServerFeaturesSnapshot
-                    ? this.lifecycleDependencies.getServerFeaturesSnapshot()
-                    : (
-                        await this.lifecycleDependencies.resolveServerFeaturesSnapshot?.()
-                        ?? await fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() })
-                    ),
+                resolveServerFeaturesSnapshot: () => this.readObservedServerFeaturesSnapshot(
+                    () => fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() })),
                 resolvePluginProjectionExecutionOriginContext: async () =>
                     await resolveCurrentMachineExecutionOriginContext(),
                 resolveMessageActionReference: async ({ reference, signal }) => {
@@ -1994,8 +1990,8 @@ export class ApiMachineClient {
             resolveHomeServerIdentityId: this.machineRpcAdmissionBoundary.resolveHomeServerIdentityId,
             machineId: this.machine.id, resolveActionExecutor: resolveWorkspaceMutationActionExecutor,
             inlineSuggestionDependencies: {
-                getServerFeaturesSnapshot: async () => await this.lifecycleDependencies.resolveServerFeaturesSnapshot?.()
-                    ?? await fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() }),
+                getServerFeaturesSnapshot: () => this.readObservedServerFeaturesSnapshot(
+                    () => fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() })),
                 resolveSharedGateway: createMachineSharedProviderGatewayResolver({ machineId: this.machine.id,
                     readAccountId: () => readAccountIdFromToken(this.token), readOrigin: resolveCurrentMachineExecutionOriginContext }),
             },
@@ -2506,8 +2502,8 @@ export class ApiMachineClient {
                 ...(this.lifecycleDependencies.workspaceSync
                     ? { workspaceSync: this.lifecycleDependencies.workspaceSync }
                     : {}),
-                ...(this.lifecycleDependencies.resolveServerFeaturesSnapshot
-                    ? { resolveServerFeaturesSnapshot: this.lifecycleDependencies.resolveServerFeaturesSnapshot }
+                ...(this.lifecycleDependencies.getServerFeaturesSnapshot || this.lifecycleDependencies.resolveServerFeaturesSnapshot
+                    ? { resolveServerFeaturesSnapshot: () => this.readObservedServerFeaturesSnapshot() }
                     : {}),
                 ...(this.lifecycleDependencies.workspaceSyncHandoffAdapter
                     ? {
@@ -5226,6 +5222,14 @@ export class ApiMachineClient {
         return Object.keys(capabilities).length > 0 ? capabilities : null;
     }
 
+    /** The installed Home snapshot remains authoritative, including its absence. */
+    private async readObservedServerFeaturesSnapshot(acquire?: () => ReturnType<typeof fetchServerFeaturesSnapshot>) {
+        if (this.lifecycleDependencies.getServerFeaturesSnapshot) {
+            return this.lifecycleDependencies.getServerFeaturesSnapshot();
+        }
+        return await this.lifecycleDependencies.resolveServerFeaturesSnapshot?.() ?? await acquire?.();
+    }
+
     private async resolveCurrentMachineOperationProtocolCapabilitiesForPublication(
         includeSessionCapabilities = true,
         currentServerFeatures?: FeaturesResponse,
@@ -5235,7 +5239,7 @@ export class ApiMachineClient {
         // with the capability snapshot from before that target became ready.
         const snapshot = currentServerFeatures
             ? { status: 'ready' as const, features: currentServerFeatures }
-            : await this.lifecycleDependencies.resolveServerFeaturesSnapshot?.();
+            : await this.readObservedServerFeaturesSnapshot();
         let capabilities = this.currentMachineOperationProtocolCapabilities(includeSessionCapabilities);
 
         if (capabilities?.sessionMessageReply && !await this.sessionMessageReplyRecovery?.isCurrent?.()) {

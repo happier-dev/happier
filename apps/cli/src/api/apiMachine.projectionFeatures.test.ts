@@ -10,6 +10,7 @@ import * as persistence from '@/persistence';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 describe('machine projection reads the incumbent daemon feature snapshot', () => {
     let fixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
@@ -25,6 +26,35 @@ describe('machine projection reads the incumbent daemon feature snapshot', () =>
         } finally { credentials.mockRestore(); }
     });
     afterAll(async () => { await fixture?.dispose(); });
+
+    it('publishes protected requester support from the observed Home snapshot and withdraws it when retired', async () => {
+        const features = FeaturesResponseSchema.parse({ features: {}, capabilities: {
+            machines: { requesterExecutionIsolation: { protocolVersions: [1] } },
+        } });
+        const api = await ApiClient.create({ token: 'fixture-token', encryption: null });
+        api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features }));
+        const machine = await api.machineSyncClient({ id: 'publication-feature-machine', encryptionMode: 'plain',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+        const published: unknown[] = [];
+        // Only the Socket.IO transport is substituted; the ApiClient producer,
+        // Machine capability negotiation and publication remain real.
+        const socket = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+            if (event !== 'machine-update-operation-protocol-capabilities') throw new Error('Unexpected publication transport');
+            published.push(payload);
+            return { v: 1, result: 'success', revision: published.length };
+        } });
+        Reflect.set(machine, 'socket', socket);
+        try {
+            await machine.setProjectFiniteExecutionLive(true);
+            expect(published.at(-1)).toMatchObject({ machineId: 'publication-feature-machine', capabilities: {
+                requesterExecutionIsolation: { protocolVersions: [1] }, projectFiniteExecution: { protocolVersions: [1] },
+            } });
+            api.setServerFeaturesSnapshotProvider(() => undefined);
+            await machine.refreshProviderBrokerIngressAdvertisement();
+            expect(published.at(-1)).toEqual({ machineId: 'publication-feature-machine',
+                capabilities: { projectFiniteExecution: { protocolVersions: [1] } } });
+        } finally { await machine.shutdown(); }
+    });
 
     it('does not multiply feature acquisition/reconciliation by manifest and section pages', async () => {
         let featureFetches = 0;
