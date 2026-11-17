@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 
 import { openSqliteDatabaseSync } from '@/daemon/persistence/sqliteSync';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -146,6 +147,8 @@ describe('plugin daemon database owner', () => {
         const { localCaptureBackground: publisher } = await import('@happier-dev/plugins-telemetry');
         const { DATABASE_CAPTURE_PLUGIN } = await import('@happier-dev/plugins-telemetry/manifest');
         const definition = DATABASE_CAPTURE_PLUGIN.daemonDatabases.capture;
+        const parsedManifest = ingestPluginManifestV2(DATABASE_CAPTURE_PLUGIN.manifest);
+        if (!parsedManifest.ok) throw new Error('Invalid telemetry retention fixture manifest');
         const home = await makeHappyHome();
         const limits = { maximumDatabaseBytes: 1_048_576, maximumInputBytes: 16_384,
             maximumResultBytes: 16_384, maximumResultRows: 100,
@@ -168,7 +171,7 @@ describe('plugin daemon database owner', () => {
         try {
             await host.prepare({ pluginId: DATABASE_CAPTURE_PLUGIN.manifest.id, occurrenceId: 'retention',
                 signal: controller.signal, isOccurrenceCurrent: () => true, runtime: { capture: definition },
-                declarations: DATABASE_CAPTURE_PLUGIN.manifest.contributes.daemonDatabases });
+                declarations: parsedManifest.manifest.contributes.daemonDatabases });
             database = await host.bind({ pluginId: DATABASE_CAPTURE_PLUGIN.manifest.id, occurrenceId: 'retention',
                 signal: controller.signal, isOccurrenceCurrent: () => true }).database('capture', definition);
             await database.execute("WITH RECURSIVE batch(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM batch WHERE n<1000) INSERT INTO captureSummaries(id,worktree,kind,source,at) SELECT 'event', CASE WHEN n BETWEEN 2 AND 220 THEN 'expired-' || n || '-' || printf('%0200d',n) ELSE 'expired-' || n END, 'span', 'otlp', 0 FROM batch");
