@@ -444,7 +444,11 @@ function botFaceLoopFrameAt(loop: BotFaceLoop, seed: number, now: number): Reado
 export function botFaceLoopLookAt(loop: BotFaceLoop, seed: number, now: number): BotFaceLook {
   return loop.drawings[botFaceLoopFrameAt(loop, seed, now).drawing] ?? BOT_FACE_LOOK_REST;
 }
+/** How far a Bot's loops run ahead of the wall clock, ms: a row of Bots never moves in step. */
+export function botFaceSeedOffsetMs(seed: number): number {
+  return seed * 97;
+}
 /** Where a Bot's loop is at `now`, ms: in step with its live mutter on every surface. */
 export function botFaceLoopPhase(loop: BotFaceLoop, seed: number, now: number): number {
-  return (((now + seed * 97) % loop.periodMs) + loop.periodMs) % loop.periodMs;
+  return (((now + botFaceSeedOffsetMs(seed)) % loop.periodMs) + loop.periodMs) % loop.periodMs;
 }
