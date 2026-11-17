@@ -8,9 +8,8 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
 import { buildSessionDetailsRouteQuery } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
-import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
+import { useSessionCockpitLegacyLeafRedirect } from '@/components/workspaceCockpit/session/useSessionCockpitLegacyLeafRedirect';
 import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
@@ -42,6 +41,9 @@ export function FilesScreenRoute() {
     );
     const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
+    const redirectingToCockpit = useSessionCockpitLegacyLeafRedirect({
+        leaf: 'files', sessionId, params, cockpitEnabled, terminalTabAvailable: true,
+    });
     const scopeId = useDestinationPaneScopeId(createSessionPaneScopeId(sessionId, routeScope.serverId));
     const pane = useAppPaneScope(scopeId);
     const openRight = pane.openRight;
@@ -91,44 +93,26 @@ export function FilesScreenRoute() {
         onNavigate: handleNavigateToDetails,
     });
 
-    usePersistSessionMobileSurface({
-        sessionId,
-        surface: cockpitEnabled ? 'browse' : null,
-        serverId: routeScope.serverId,
-    });
-
     const onRequestClose = React.useCallback(() => {
         closeRight();
         safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
     }, [closeRight, navigation, routeScope, router, sessionId]);
+
+    if (redirectingToCockpit) return null;
 
     if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
         return <SessionInvalidLinkFallback />;
     }
 
     return (
-        <SessionFullscreenPaneSafeAreaView
-            testID={cockpitEnabled ? 'session-cockpit-route-screen' : 'session-files-screen'}
-            includeTopInset={!cockpitEnabled}
-        >
+        <SessionFullscreenPaneSafeAreaView testID="session-files-screen" includeTopInset>
             {sessionHydrated ? (
-                cockpitEnabled ? (
-                    <SessionCockpitShell
-                        sessionId={sessionId}
-                        scopeId={scopeId}
-                        surface="browse"
-                        safeAreaPadding={false}
-                        routeServerId={routeScope.serverId}
-                        routeHydrationState={routeHydrationState}
-                    />
-                ) : (
-                    <SessionRightPanel
-                        sessionId={sessionId}
-                        scopeId={scopeId}
-                        presentation="screen"
-                        onRequestClose={onRequestClose}
-                    />
-                )
+                <SessionRightPanel
+                    sessionId={sessionId}
+                    scopeId={scopeId}
+                    presentation="screen"
+                    onRequestClose={onRequestClose}
+                />
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivitySpinner />

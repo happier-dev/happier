@@ -7,7 +7,7 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 
-const route = vi.hoisted(() => ({ pathname: '/', params: {} as Record<string, string>, navigate: vi.fn(), replace: vi.fn(), listeners: new Set<() => void>() }));
+const route = vi.hoisted(() => ({ pathname: '/', params: {} as Record<string, string>, navigate: vi.fn(), replace: vi.fn(), dismissTo: vi.fn(), setParams: vi.fn(), listeners: new Set<() => void>() }));
 const native = vi.hoisted(() => ({
     os: 'web' as 'ios' | 'android' | 'web', width: 390, keyboardVisible: false,
     dimensionsListeners: new Set<() => void>(),
@@ -16,7 +16,8 @@ const native = vi.hoisted(() => ({
 vi.mock('expo-router', async () => {
     const router = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
         pathname: () => route.pathname, params: () => route.params,
-        router: { navigate: (href: unknown) => route.navigate(href), replace: (href: unknown) => route.replace(href) },
+        router: { navigate: (href: unknown) => route.navigate(href), replace: (href: unknown) => route.replace(href), dismissTo: (href: unknown) => route.dismissTo(href),
+            setParams: (params: unknown) => route.setParams(params) },
     });
     // The host is memoized; changing the external route must notify its mounted subscriber.
     return { ...router.module, usePathname: () => React.useSyncExternalStore(
@@ -109,6 +110,13 @@ async function finishAnimations() {
 async function navigateTo(pathname: string) {
     await act(async () => { route.pathname = pathname; for (const listener of route.listeners) listener(); });
 }
+/** The host writes the route from an effect after the cockpit's registration settles; let real time pass. */
+async function waitForRouteWrite(spy: ReturnType<typeof vi.fn>) {
+    for (let attempt = 0; attempt < 50 && spy.mock.calls.length === 0; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(spy).toHaveBeenCalled();
+}
 function expectChatRoute() {
     expect(route.replace).toHaveBeenCalled();
     const href = new URL(String(route.replace.mock.lastCall?.[0]), 'https://chrome.test');
@@ -118,7 +126,7 @@ function expectChatRoute() {
 }
 beforeEach(() => {
     route.pathname = '/'; route.params = { serverId: runtime.serverId };
-    route.navigate.mockClear(); route.replace.mockClear();
+    route.navigate.mockClear(); route.replace.mockClear(); route.dismissTo.mockClear(); route.setParams.mockClear();
     native.os = 'web'; native.width = 390; native.keyboardVisible = false; native.animations = [];
     storage.setState(state => ({ settings: { ...state.settings, mobileWorkspaceExperienceV1: 'classic' } }));
 });
@@ -197,11 +205,13 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         await navigateTo('/');
         expect(screen.findByType(MainAppTabBar)).toBe(before);
     });
+    // Owner 2026-11-17: main tabs are peer views. Sessions, Inbox and Projects share the root screen, so pressing one
+    // from a pushed section returns to that retained screen instead of stacking a second root and a history entry.
     it('navigates from route-owned Workflows to Home and back through the real controls', async () => {
         route.pathname = '/workflows';
         const screen = await renderScreen(<Harness />);
         await screen.pressByTestIdAsync('tabbar-tab-sessions');
-        expect(route.navigate).toHaveBeenCalledWith('/');
+        expect({ dismissTo: route.dismissTo.mock.calls, navigate: route.navigate.mock.calls }).toEqual({ dismissTo: [['/']], navigate: [] });
         await navigateTo('/');
         route.navigate.mockClear();
         await screen.pressByTestIdAsync('tabbar-tab-workflows');
@@ -276,6 +286,32 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         await screen.pressByTestIdAsync('session-cockpit-tab-chat');
         await vi.waitFor(() => expect(screen.findHostByTestId('mounted-surface')?.props.children).toBe('chat'));
         expectChatRoute();
+    });
+    // Owner 2026-11-17: cockpit tabs are peer views of the one Session route. A press keeps the route and adds no
+    // history (Back leaves the Session); on a native stack only the route's query moves, so the retained cockpit and
+    // its scenes are reused instead of rebuilt under a new child route.
+    it.each(['browse', 'git', 'terminal'] as const)('a %s tab press on the web replaces the Session route with its surface query', async surface => {
+        route.pathname = '/session/session-1'; route.params.mobileSurface = 'chat'; enableCockpit();
+        const screen = await renderScreen(<Harness mounted />);
+        // The host mirrors only presses after the cockpit's own registration (a restored deep link is never rewritten).
+        await vi.waitFor(() => expect(screen.findByType(SessionCockpitTabBar).props.activeSurface).toBe('chat'));
+        // The web bar also draws preview copies of its cells; press the bar the host owns.
+        await act(async () => screen.findByType(SessionCockpitTabBar).props.onSurfacePress(surface));
+        await waitForRouteWrite(route.replace);
+        const href = new URL(String(route.replace.mock.lastCall?.[0]), 'https://chrome.test');
+        expect({ path: href.pathname, surface: href.searchParams.get('mobileSurface'), serverId: href.searchParams.get('serverId'),
+            pushes: route.navigate.mock.calls.length })
+            .toEqual({ path: '/session/session-1', surface, serverId: runtime.serverId, pushes: 0 });
+    });
+    it.each(['browse', 'git', 'terminal'] as const)('a %s tab press on a native phone moves only the Session route query', async surface => {
+        native.os = 'android'; route.pathname = '/session/session-1'; route.params.mobileSurface = 'chat'; enableCockpit();
+        const screen = await renderScreen(<Harness mounted />);
+        // The host mirrors only presses after the cockpit's own registration (a restored deep link is never rewritten).
+        await vi.waitFor(() => expect(screen.findByType(SessionCockpitTabBar).props.activeSurface).toBe('chat'));
+        await screen.pressByTestIdAsync(`session-cockpit-tab-${surface}`);
+        await waitForRouteWrite(route.setParams);
+        expect({ params: route.setParams.mock.lastCall?.[0], replaces: route.replace.mock.calls.length, pushes: route.navigate.mock.calls.length })
+            .toEqual({ params: { mobileSurface: surface }, replaces: 0, pushes: 0 });
     });
     it('retains the selected cockpit tab after incidental native vertical movement', async () => {
         native.os = 'android'; route.pathname = '/session/session-1'; enableCockpit();

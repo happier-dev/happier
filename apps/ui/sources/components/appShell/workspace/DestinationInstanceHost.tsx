@@ -395,6 +395,9 @@ export function useOpenAppSection(): (href: string, replace?: boolean) => void {
     return React.useCallback((href, replace = false) => {
         if (!workspace?.openHref(href, { section: true, replace })) {
             if (replace) router.replace(href as never);
+            // The root screen holds Sessions, Inbox and Projects as peer tabs: a section returns to it (popping what
+            // was pushed over it) instead of stacking a second root screen and a history entry.
+            else if (href === '/') router.dismissTo(href as never);
             else router.navigate(href as never);
         }
     }, [router, workspace]);

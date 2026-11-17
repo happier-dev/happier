@@ -103,19 +103,17 @@ describe('/session/[id]/git', () => {
         expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'files' });
     });
 
-    it('renders the actual phone cockpit with the hydrated Home', async () => {
+    // Owner 2026-11-17: the phone cockpit's tabs are peer views of the Session route. An old `/git` link
+    // (deep link, saved tab) lands on that surface there, so this leaf never builds a second cockpit.
+    it('redirects an old phone cockpit link to its surface on the Session route without building a cockpit', async () => {
         phone = true;
         storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'cockpit' });
         const { SessionCockpitShell } = await import('@/components/workspaceCockpit/session/SessionCockpitShell');
         const { SessionRightPanel } = await import('@/components/sessions/panes/SessionRightPanel');
         const { screen } = await renderRouteScreen();
-        expect(screen.findByType(SessionCockpitShell).props).toMatchObject({
-            sessionId: 'session-1', routeServerId: runtime.serverId, surface: 'git', safeAreaPadding: false,
-        });
-        const root = screen.findHostByTestId('session-cockpit-route-screen');
-        if (!root) throw new Error('Expected cockpit route');
-        expect(getStyleValue(root, 'paddingTop')).toBe(0);
-        expect(getStyleValue(root, 'paddingBottom')).toBe(27);
+        expect(routerReplaceSpy).toHaveBeenCalledWith(`/session/session-1?mobileSurface=git&serverId=${encodeURIComponent(runtime.serverId)}`);
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(screen.findAllByType(SessionCockpitShell)).toHaveLength(0);
         expect(screen.findAllByType(SessionRightPanel)).toHaveLength(0);
     });
 

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
-import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { resolveSessionPaneScreenRoutePath } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { useWorkspaceFilePaneNavigation } from '@/components/workspaces/files/useWorkspaceFilePaneNavigation';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSetting } from '@/sync/domains/state/storage';
@@ -38,7 +38,7 @@ export function useSessionFilePaneNavigation(params: Readonly<{ scopeId: string;
             detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
         }).kind === 'single';
         if (single) {
-            router.push(resolveSessionRoutePathForSurface(params.sessionId, surface, { serverId: params.serverId }));
+            router.push(resolveSessionPaneScreenRoutePath(params.sessionId, surface, { serverId: params.serverId }));
         }
     }, [switchSurface, deviceType, multiPaneEnabled, paneSupportsMultiPane, params.serverId, params.sessionId, router, width]);
     return useWorkspaceFilePaneNavigation(params.scopeId, onNavigate);

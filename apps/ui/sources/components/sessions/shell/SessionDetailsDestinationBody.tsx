@@ -20,6 +20,7 @@ import { usePersistSessionLastMobileSurface } from '@/sync/domains/state/storage
 import { useFullscreenDetailsRouteController } from '@/components/workspaceCockpit/useFullscreenDetailsRouteController';
 import { useFullscreenDetailsRouteParamSync } from '@/components/workspaceCockpit/useFullscreenDetailsRouteParamSync';
 import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
+import { useSessionCockpitLegacyLeafRedirect } from '@/components/workspaceCockpit/session/useSessionCockpitLegacyLeafRedirect';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
@@ -77,6 +78,10 @@ export function SessionDetailsDestinationBody() {
     // sits beside the cockpit's one Chat composer (phone Ask raises it over the page).
     const cockpitEnabled = mobileExperience.cockpitEnabled;
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability(routeScope.serverId);
+    // A phone cockpit's Tabs surface lives on the Session route; only a link that names a page stays here.
+    const redirectingToCockpit = useSessionCockpitLegacyLeafRedirect({
+        leaf: 'details', sessionId, params, cockpitEnabled, terminalTabAvailable,
+    });
     const scopeId = createSessionPaneScopeId(sessionId, routeScope.serverId, instanceKey);
     const pane = useAppPaneScope(scopeId);
     const detailsState = pane.scopeState?.details ?? null;
@@ -184,6 +189,8 @@ export function SessionDetailsDestinationBody() {
         surface: cockpitEnabled ? 'tabs' : null,
         serverId: routeScope.serverId,
     });
+
+    if (redirectingToCockpit) return null;
 
     if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
         return <SessionInvalidLinkFallback />;

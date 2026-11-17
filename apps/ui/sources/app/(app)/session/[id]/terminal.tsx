@@ -8,9 +8,8 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { SessionRightPanel } from '@/components/sessions/panes/SessionRightPanel';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
 import { buildSessionDetailsRouteQuery } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
-import { usePersistSessionMobileSurface } from '@/components/workspaceCockpit/session/usePersistSessionMobileSurface';
+import { useSessionCockpitLegacyLeafRedirect } from '@/components/workspaceCockpit/session/useSessionCockpitLegacyLeafRedirect';
 import { resolveFullscreenDetailsRouteSelection } from '@/components/workspaceCockpit/resolveFullscreenDetailsRouteSelection';
 import { useFullscreenDetailsRouteAutoRedirect } from '@/components/workspaceCockpit/useFullscreenDetailsRouteAutoRedirect';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
@@ -51,6 +50,9 @@ export function TerminalScreenRoute() {
 
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const { terminalEnabled, dockLocation, sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability(routeScope.serverId);
+    const redirectingToCockpit = useSessionCockpitLegacyLeafRedirect({
+        leaf: 'terminal', sessionId, params, cockpitEnabled, terminalTabAvailable,
+    });
 
     const detailsState = pane.scopeState?.details ?? null;
     const detailsSelection = React.useMemo(() => resolveFullscreenDetailsRouteSelection({
@@ -63,6 +65,7 @@ export function TerminalScreenRoute() {
     // A desktop Terminal entry addresses the same destination's bottom dock,
     // not whichever scene happens to precede this child route in history.
     React.useEffect(() => {
+        if (redirectingToCockpit) return;
         if (!isFocused) return;
         if (!sessionId) return;
         if (!sessionHydrated) return;
@@ -71,7 +74,7 @@ export function TerminalScreenRoute() {
         } else if (!terminalEnabled) {
             safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
         }
-    }, [isFocused, navigation, routeScope, router, sessionId, sessionHydrated, terminalEnabled, dockLocation]);
+    }, [isFocused, navigation, redirectingToCockpit, routeScope, router, sessionId, sessionHydrated, terminalEnabled, dockLocation]);
 
     React.useEffect(() => {
         if (!isFocused) return;
@@ -108,45 +111,26 @@ export function TerminalScreenRoute() {
         onNavigate: handleNavigateToDetails,
     });
 
-    usePersistSessionMobileSurface({
-        sessionId,
-        surface: cockpitEnabled && terminalTabAvailable ? 'terminal' : null,
-        serverId: routeScope.serverId,
-    });
-
     const onRequestClose = React.useCallback(() => {
         closeRight();
         safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
     }, [closeRight, navigation, routeScope, router, sessionId]);
+
+    if (redirectingToCockpit) return null;
 
     if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
         return <SessionInvalidLinkFallback />;
     }
 
     return (
-        <SessionFullscreenPaneSafeAreaView
-            testID={cockpitEnabled ? 'session-cockpit-route-screen' : 'session-terminal-screen'}
-            includeTopInset={!cockpitEnabled}
-        >
+        <SessionFullscreenPaneSafeAreaView testID="session-terminal-screen" includeTopInset>
             {sessionHydrated ? (
-                cockpitEnabled ? (
-                    <SessionCockpitShell
-                        sessionId={sessionId}
-                        scopeId={scopeId}
-                        surface="terminal"
-                        safeAreaPadding={false}
-                        terminalTabAvailable={terminalTabAvailable}
-                        routeServerId={routeScope.serverId}
-                        routeHydrationState={routeHydrationState}
-                    />
-                ) : (
-                    <SessionRightPanel
-                        sessionId={sessionId}
-                        scopeId={scopeId}
-                        presentation="screen"
-                        onRequestClose={onRequestClose}
-                    />
-                )
+                <SessionRightPanel
+                    sessionId={sessionId}
+                    scopeId={scopeId}
+                    presentation="screen"
+                    onRequestClose={onRequestClose}
+                />
             ) : (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <ActivitySpinner />

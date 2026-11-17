@@ -403,6 +403,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     name="projects/index"
                     options={rootStackRouteOptions['projects/index']}
                 />
+                {/* Bar destinations a phone can pin from More: declared so their tab options apply. */}
+                <Stack.Screen name="projects/deployments" options={rootStackRouteOptions['projects/deployments']} />
+                <Stack.Screen name="machines/index" options={rootStackRouteOptions['machines/index']} />
+                <Stack.Screen name="monitoring/index" options={rootStackRouteOptions['monitoring/index']} />
                 <Stack.Screen
                     name="projects/[workspaceRefId]/index"
                     options={rootStackRouteOptions['projects/[workspaceRefId]/index']}

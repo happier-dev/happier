@@ -69,7 +69,9 @@ describe('root route identity ownership', () => {
     it('gives the Store Bots page the Store chrome with its way back on a phone', () => {
         const options = createRootStackRouteOptions('auto');
         const bots = resolveRootStackRouteOptions(options, workspaceRouteFiles['plugins/bots']);
-        expect(bots).toBe(options['plugins/index']);
+        // The Store root is also a bar destination, which alone adds the tab rule's `animation: 'none'`.
+        const { animation: _tabAnimation, ...storeChrome } = options['plugins/index'];
+        expect(bots).toEqual(storeChrome);
         expect(bots).toMatchObject({ headerShown: true, headerBackTitle: 'common.back' });
     });
     it('gives the secret requirement picker the same way back as the other New pickers', () => {
@@ -88,6 +90,31 @@ describe('root route identity ownership', () => {
         // A `happier://terminal` link lands on the index route; its surface titles itself (the welcome
         // pane signed out, the approval card signed in), so a shell bar would be a second title.
         expect(createRootStackRouteOptions('auto')['terminal/index']).toMatchObject({ headerShown: false });
+    });
+    // Owner 2026-11-17: a tab shows its screen directly. Every destination the phone bar can hold (the catalog's
+    // rail destinations, pinned from More) and every Project page tab switches with no stack slide.
+    it('switches every tab-bar destination and Project page tab in place, with no push slide', async () => {
+        const { isCompactAppDestinationVisible, resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { matchWorkspaceDestinationRoute } = await import('@/components/appShell/workspace/workspaceRoutes');
+        const { PROJECT_PAGES } = await import('@/components/workspaceCockpit/project/projectCockpitState');
+        const options = createRootStackRouteOptions('auto');
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: true, inbox: true, discussions: true, search: true, workflows: true, friends: true, bots: true, botsRoster: true,
+        } });
+        const tabRoutes = [
+            ...catalog.filter(destination => destination.placement.kind === 'rail' && destination.activation === 'navigate'
+                && isCompactAppDestinationVisible(destination)).map(destination => destination.routePath),
+            ...PROJECT_PAGES.map(page => `/projects/p1/${page}`),
+        ];
+        const animations = Object.fromEntries(tabRoutes.map((path) => {
+            const routeKey = matchWorkspaceDestinationRoute(path)?.routeKey;
+            const routeOptions = routeKey === undefined ? undefined
+                : resolveRootStackRouteOptions(options, workspaceRouteFiles[routeKey as keyof typeof workspaceRouteFiles]) ?? options[routeKey];
+            return [path, routeOptions?.animation];
+        }));
+        expect(Object.entries(animations).filter(([, animation]) => animation !== 'none')).toEqual([]);
+        // More's Home row (not a catalog destination) opens Home the same way.
+        expect(options['home'].animation).toBe('none');
     });
     it('opens settings as a non-animated app-shell destination, never as a modal', () => {
         const settings = createRootStackRouteOptions('auto')['settings'];

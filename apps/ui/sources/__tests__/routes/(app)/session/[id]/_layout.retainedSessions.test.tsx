@@ -11,7 +11,11 @@ import { createSessionRouteHomesFixture, installSessionRouteCommonModuleMocks } 
 // (Expo's singular navigation moves the route's params). The real layout and index route run under a real
 // React Navigation stack; Expo's Slot renders the index route, as Expo does for the Session view leaf.
 installSessionRouteCommonModuleMocks({
-    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }),
+    // A phone: the cockpit experience is a phone decision (`isMobileWorkspaceCockpitEnabled`).
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }, {
+        Platform: { isPad: false },
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+    }),
     text: async () => vi.importActual('@/text'),
     modal: async () => vi.importActual('@/modal'),
     nativeNavigation: async () => {
@@ -117,12 +121,18 @@ async function renderPhoneSessionScreen() {
             <Root.Navigator><Root.Screen name="Session" component={Layout} /></Root.Navigator>
         </BaseNavigationContainer>
     </WorkspaceNavigationProvider></InjectedAuthProvider>);
-    return async (sessionId: string, options?: Readonly<{ leafFirst?: boolean }>) => {
+    const open = async (sessionId: string, options?: Readonly<{ leafFirst?: boolean }>) => {
         const params = { id: sessionId, serverId: 'home-b' };
         if (options?.leafFirst) await act(async () => { leafRoute.set(params); });
         const route = navigation.getCurrentRoute()!;
         await act(async () => { navigation.dispatch({ ...CommonActions.setParams(params), source: route.key }); });
     };
+    /** Moves the one Session screen to another leaf of the route (what Expo's `screen` param names before its Slot). */
+    const showLeaf = async (screen: string) => {
+        const route = navigation.getCurrentRoute()!;
+        await act(async () => { navigation.dispatch({ ...CommonActions.setParams({ screen }), source: route.key }); });
+    };
+    return Object.assign(open, { showLeaf });
 }
 
 it('switching back to a recently opened Session on the phone stack mounts no Session view again', async () => {
@@ -154,4 +164,22 @@ it('a leaf route that moves before its layout does not re-target the retained Se
         pathnames: { 'session-1': '/session/session-1', 'session-2': '/session/session-2' },
         paramsObjects: { 'session-1': 1, 'session-2': 1 },
     });
+});
+
+it('an old cockpit tab link in the phone Session screen keeps the screen and its Session views (no remount)', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'cockpit' });
+    try {
+        const open = await renderPhoneSessionScreen();
+
+        // The cockpit's old `/files` and `/terminal` links only redirect to the Session route; the route's Slot stays.
+        await open.showLeaf('files');
+        await open.showLeaf('index');
+        await open.showLeaf('terminal');
+        await open.showLeaf('index');
+
+        expect(bodies.mounts).toEqual(['session-1']);
+    } finally {
+        storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'classic' });
+    }
 });

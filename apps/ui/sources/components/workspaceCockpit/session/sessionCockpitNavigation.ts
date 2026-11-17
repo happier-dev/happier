@@ -1,6 +1,7 @@
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 import {
+    resolveSessionPaneScreenRoutePath,
     resolveSessionRoutePathForSurface,
     type SessionMobileSurface,
 } from './sessionCockpitState';
@@ -46,9 +47,10 @@ export function resolveSessionDetailsFallbackHref(input: Readonly<{
         return input.fallbackHref;
     }
 
-    return resolveSessionRoutePathForSurface(input.sessionId, sourceSurface, {
-        serverId: input.serverId,
-    });
+    // The classic phone's Details page returns to the full-screen pane it was opened from.
+    return sourceSurface === 'browse' || sourceSurface === 'git' || sourceSurface === 'terminal'
+        ? resolveSessionPaneScreenRoutePath(input.sessionId, sourceSurface, { serverId: input.serverId })
+        : resolveSessionRoutePathForSurface(input.sessionId, sourceSurface, { serverId: input.serverId });
 }
 
 /**

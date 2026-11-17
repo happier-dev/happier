@@ -4,6 +4,7 @@ import { resolveRightSidebarMobileSurface } from '@/components/appShell/rightSid
 import { resolveRightSidebarTabs } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import {
     resolveSessionCockpitLandingSurface,
+    resolveSessionCockpitLegacyLeafRedirect,
     resolveSessionMobileSurfaceIntent,
     resolveSessionCockpitRouteFromPathname,
     resolveSessionPaneIntentSurface,
@@ -164,12 +165,14 @@ describe('sessionCockpitState', () => {
         expect(resolveSessionRightTabIdForSurface('companion', true)).toBeNull();
     });
 
-    it('builds canonical session cockpit route paths for each surface', () => {
+    // Owner 2026-11-17: every cockpit tab is a peer view of the one Session route, so a press moves only its
+    // `mobileSurface` query (the retained cockpit stays mounted) and never a `/files|git|details|terminal` leaf.
+    it('builds canonical session cockpit route paths for each surface on the Session route itself', () => {
         expect(resolveSessionRoutePathForSurface('session-1', 'chat')).toBe('/session/session-1?mobileSurface=chat');
-        expect(resolveSessionRoutePathForSurface('session-1', 'browse')).toBe('/session/session-1/files');
-        expect(resolveSessionRoutePathForSurface('session-1', 'git')).toBe('/session/session-1/git');
-        expect(resolveSessionRoutePathForSurface('session-1', 'tabs')).toBe('/session/session-1/details');
-        expect(resolveSessionRoutePathForSurface('session-1', 'terminal')).toBe('/session/session-1/terminal');
+        expect(resolveSessionRoutePathForSurface('session-1', 'browse')).toBe('/session/session-1?mobileSurface=browse');
+        expect(resolveSessionRoutePathForSurface('session-1', 'git')).toBe('/session/session-1?mobileSurface=git');
+        expect(resolveSessionRoutePathForSurface('session-1', 'tabs')).toBe('/session/session-1?mobileSurface=tabs');
+        expect(resolveSessionRoutePathForSurface('session-1', 'terminal')).toBe('/session/session-1?mobileSurface=terminal');
         expect(resolveSessionRoutePathForSurface('session-1', 'browser')).toBe('/session/session-1?mobileSurface=browser');
         expect(resolveSessionRoutePathForSurface('session-1', 'services')).toBe('/session/session-1?mobileSurface=services');
         expect(resolveSessionRoutePathForSurface('session-1', 'navigation')).toBe('/session/session-1?mobileSurface=navigation');
@@ -182,7 +185,7 @@ describe('sessionCockpitState', () => {
         })).toBe('/session/session-1?mobileSurface=chat&serverId=server-b');
         expect(resolveSessionRoutePathForSurface('session-1', 'git', {
             serverId: 'server-b',
-        })).toBe('/session/session-1/git?serverId=server-b');
+        })).toBe('/session/session-1?mobileSurface=git&serverId=server-b');
         expect(resolveSessionRoutePathForSurface('session-1', 'tabs', {
             serverId: 'server-b',
             query: {
@@ -190,6 +193,24 @@ describe('sessionCockpitState', () => {
                 path: 'src/index.ts',
             },
         })).toBe('/session/session-1/details?serverId=server-b&details=file&path=src%2Findex.ts');
+    });
+
+    it('reads an old cockpit tab link as a redirect to its surface on the Session route', () => {
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'files', sessionId: 'session-1', params: { serverId: 'server-b', jumpSeq: '4' }, terminalTabAvailable: true }))
+            .toBe('/session/session-1?mobileSurface=browse&serverId=server-b&jumpSeq=4');
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'git', sessionId: 'session-1', params: {}, terminalTabAvailable: true }))
+            .toBe('/session/session-1?mobileSurface=git');
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'terminal', sessionId: 'session-1', params: {}, terminalTabAvailable: true }))
+            .toBe('/session/session-1?mobileSurface=terminal');
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'terminal', sessionId: 'session-1', params: {}, terminalTabAvailable: false }))
+            .toBe('/session/session-1?mobileSurface=chat');
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'details', sessionId: 'session-1', params: { serverId: 'server-b' }, terminalTabAvailable: true }))
+            .toBe('/session/session-1?mobileSurface=tabs&serverId=server-b');
+        // A Details link that names a page is that page's own destination, not the Tabs surface.
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'details', sessionId: 'session-1', params: { details: 'file', path: 'a.ts' }, terminalTabAvailable: true }))
+            .toBeNull();
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'info', sessionId: 'session-1', params: {}, terminalTabAvailable: true })).toBeNull();
+        expect(resolveSessionCockpitLegacyLeafRedirect({ leaf: 'index', sessionId: 'session-1', params: {}, terminalTabAvailable: true })).toBeNull();
     });
 
     it('falls back away from the terminal surface in route parsing when the terminal tab is unavailable', () => {

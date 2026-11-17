@@ -184,9 +184,10 @@ describe('/session/[id]/details', () => {
         expect(getStyleValue(root!, 'paddingTop')).toBe(21);
         expect(getStyleValue(root!, 'paddingBottom')).toBe(31);
     });
-    it('renders the session cockpit shell on phone in cockpit mode', async () => {
+    it('renders a Details page link as the session cockpit shell on phone in cockpit mode', async () => {
         viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         mobileWorkspaceExperience = 'cockpit'; mockServerId = runtime.serverId;
+        mockDetailsParam = 'file'; mockPathParam = 'README.md';
         const screen = await renderScreen();
         const cockpit = screen.findByType(cockpitType);
         expect(cockpit.props.sessionId).toBe('session-1');
@@ -199,10 +200,21 @@ describe('/session/[id]/details', () => {
         expect(getStyleValue(root!, 'paddingBottom')).toBe(31);
         // The real cockpit owns its nested panel; there must be no second classic-route panel.
         expect(screen.findAllByType(detailsPanelType).filter(node => node.props.showHeaderActions !== false)).toHaveLength(0);
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+    });
+    // Owner 2026-11-17: the phone cockpit's Tabs surface lives on the Session route. An old `/details` link that
+    // names no page lands there instead of building a second cockpit.
+    it('redirects a page-less Details link on a phone cockpit to the Tabs surface of the Session route', async () => {
+        viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
+        mobileWorkspaceExperience = 'cockpit'; mockServerId = runtime.serverId;
+        const screen = await renderScreen();
+        expect(routerReplaceSpy).toHaveBeenCalledWith(`/session/session-1?mobileSurface=tabs&serverId=${encodeURIComponent(runtime.serverId)}`);
+        expect(screen.findAllByType(cockpitType)).toHaveLength(0);
     });
     it('does not dismiss the cockpit details route when details pane state closes', async () => {
         viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         mobileWorkspaceExperience = 'cockpit';
+        mockDetailsParam = 'file'; mockPathParam = 'README.md';
         await renderScreen(openReadme);
         await act(async () => runtime.pane.closeDetails());
         expect(runtime.pane.scopeState?.details.isOpen).toBe(false);

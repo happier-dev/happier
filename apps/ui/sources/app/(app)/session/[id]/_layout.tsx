@@ -13,6 +13,8 @@ import { isVoiceTranscriptHistorySession } from '@/voice/persistence/voiceTransc
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
 import { useSessionRouteQualification } from '@/hooks/session/useSessionRouteQualification';
 import { SessionViewerDestinationScope } from '@/components/sessions/viewer/SessionViewerDestinationScope';
+import { resolveSessionCockpitLegacyLeafRedirect } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 type SessionLayoutParams = Record<string, string | string[] | undefined>;
@@ -69,6 +71,7 @@ export default function OrdinarySessionRouteLayout() {
         params, query: routeQuery, pathname, enabled: !mirrorsWorkspace && !hosted,
     });
     const promotedServerId = explicitServerId === null ? resolvedServerId : null;
+    const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     React.useEffect(() => {
         if (qualifiedHref) {
             // The destination navigation owner must update the retained leaf,
@@ -114,7 +117,11 @@ export default function OrdinarySessionRouteLayout() {
     // A native Session switch keeps this one screen (the stack reuses its route). Its Session view keeps the
     // presented Sessions the workspace still lists mounted, each in its own destination scope (index.tsx), so
     // this layout must not rebuild the view per address. Without listed tabs that is the presented one alone.
-    if (Platform.OS !== 'web' && !hosted && leaf === 'index') {
+    // A phone cockpit's tabs are its Session route (owner 2026-11-17): an old `/files|git|terminal` link there only
+    // redirects to the route, so it keeps the route's element type and the screen's Slot is not rebuilt for it.
+    const cockpitTabLeaf = cockpitEnabled && leaf !== null
+        && resolveSessionCockpitLegacyLeafRedirect({ leaf, sessionId, params: routeQuery, terminalTabAvailable: true }) !== null;
+    if (Platform.OS !== 'web' && !hosted && (leaf === 'index' || cockpitTabLeaf)) {
         return <RetainedSessionAddress address={viewerAddress} />;
     }
     return <SessionViewerDestinationScope key={sessionAddressKey(viewerAddress)}

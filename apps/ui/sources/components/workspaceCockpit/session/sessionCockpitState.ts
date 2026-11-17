@@ -220,27 +220,41 @@ export function resolveSessionCockpitLandingSurface(
     return viewerPresenting ? 'chat' : requestedSurface;
 }
 
+/**
+ * The route of a phone cockpit surface: always the Session's own route, the surface in its `mobileSurface` query
+ * (owner 2026-11-17). Every cockpit tab is a peer view of that one route, so a tab press replaces only its query and
+ * the retained cockpit keeps its scenes. The one exception is a Tabs link that names a Details page
+ * (`details=…`): that page is its own destination (`/session/<id>/details`, see `buildSessionDetailsTabHref`).
+ */
 export function resolveSessionRoutePathForSurface(
     sessionId: string,
     surface: SessionMobileSurface,
     options?: SessionRoutePathOptions,
 ): `/session/${string}` {
-    const encodedSessionId = encodeURIComponent(sessionId);
+    const detailsPage = surface === 'tabs' && normalizeRouteQueryValue(options?.query?.details) !== null;
+    return buildSessionRoutePath(sessionId, detailsPage ? 'details' : null, detailsPage ? null : surface, options);
+}
+
+/**
+ * The classic (non-cockpit) phone's full-screen pane screens: `/session/<id>/files|git|terminal`. The cockpit never
+ * routes here; on a cockpit these legacy links redirect to their surface (`resolveSessionCockpitLegacyLeafRedirect`).
+ */
+export function resolveSessionPaneScreenRoutePath(
+    sessionId: string,
+    surface: 'browse' | 'git' | 'terminal',
+    options?: SessionRoutePathOptions,
+): `/session/${string}` {
+    return buildSessionRoutePath(sessionId, surface === 'browse' ? 'files' : surface, null, options);
+}
+
+function buildSessionRoutePath(
+    sessionId: string,
+    leaf: Exclude<SessionLegacyRouteKind, 'index'> | null,
+    mobileSurface: SessionMobileSurface | null,
+    options?: SessionRoutePathOptions,
+): `/session/${string}` {
     const searchParams = new URLSearchParams();
-    if (
-        surface === 'chat'
-        || surface === 'navigation'
-        || surface === 'companion'
-        || surface === 'board'
-        || surface === 'agents'
-        || surface === 'collaboration'
-        || surface === 'skills'
-        || surface === 'browser'
-        || surface === 'services'
-        || surface.startsWith('plugin:')
-    ) {
-        searchParams.set('mobileSurface', surface);
-    }
+    if (mobileSurface) searchParams.set('mobileSurface', mobileSurface);
     const serverId = normalizeRouteQueryValue(options?.serverId);
     if (serverId) {
         searchParams.set('serverId', serverId);
@@ -254,20 +268,30 @@ export function resolveSessionRoutePathForSurface(
             searchParams.set(key, normalized);
         }
     }
+    const basePath = `/session/${encodeURIComponent(sessionId)}${leaf ? `/${leaf}` : ''}` as const;
+    return appendRouteSearchParams(basePath, searchParams);
+}
 
-    if (surface === 'browse') {
-        return appendRouteSearchParams(`/session/${encodedSessionId}/files`, searchParams);
-    }
-    if (surface === 'git') {
-        return appendRouteSearchParams(`/session/${encodedSessionId}/git`, searchParams);
-    }
-    if (surface === 'tabs') {
-        return appendRouteSearchParams(`/session/${encodedSessionId}/details`, searchParams);
-    }
-    if (surface === 'terminal') {
-        return appendRouteSearchParams(`/session/${encodedSessionId}/terminal`, searchParams);
-    }
-    return appendRouteSearchParams(`/session/${encodedSessionId}`, searchParams);
+/**
+ * Where an old cockpit tab link (`/session/<id>/files|git|terminal`, or a `/details` link that names no page) lands on
+ * a phone cockpit: its surface on the Session route, keeping the link's other query. Null for every other leaf,
+ * including a Details page link. The route leaves call this once through `useSessionCockpitLegacyLeafRedirect`.
+ */
+export function resolveSessionCockpitLegacyLeafRedirect(input: Readonly<{
+    leaf: string;
+    sessionId: string;
+    params: Readonly<Record<string, unknown>>;
+    terminalTabAvailable: boolean;
+}>): `/session/${string}` | null {
+    const { leaf } = input;
+    if (leaf !== 'files' && leaf !== 'git' && leaf !== 'terminal' && leaf !== 'details') return null;
+    if (leaf === 'details' && normalizeRouteQueryValue(input.params.details) !== null) return null;
+    const surface = resolveSessionMobileSurfaceIntent({ routeKind: leaf, terminalTabAvailable: input.terminalTabAvailable });
+    const { id: _id, serverId, ...query } = input.params;
+    return resolveSessionRoutePathForSurface(input.sessionId, surface, {
+        serverId: typeof serverId === 'string' ? serverId : null,
+        query: Object.fromEntries(Object.entries(query).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+    });
 }
 
 export function resolveSessionCockpitRouteFromPathname(

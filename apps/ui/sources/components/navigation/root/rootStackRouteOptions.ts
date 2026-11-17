@@ -5,9 +5,24 @@ import type { NewSessionPresentationModeV1 } from '@/sync/domains/settings/regis
 import { createFriendsStackScreenOptions, createInboxStackScreenOptions } from '@/utils/navigation/createSocialStackScreenOptions';
 import { resolveNewSessionPickerRoutePresentation, resolveNewSessionPickerWebModalStyle, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
 import { createSessionPageScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
+import { PROJECT_PAGES } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
+
+/**
+ * The root routes a tab bar switches between: the phone bar's destinations (the Sessions root, Inbox, Friends,
+ * Settings and everything More can pin), Home, and the Project page tabs. A tab is a peer view, so it shows its
+ * screen directly, with no push or pop slide (owner 2026-11-17). Pages pushed from a destination keep the stack's
+ * motion. `rootStackRouteOptions.test.ts` derives the bar's routes from the destination catalog, so a new destination
+ * without an entry here fails there.
+ */
+const TAB_DESTINATION_ROUTES: ReadonlySet<string> = new Set([
+    'index', 'inbox/index', 'friends/index', 'settings', 'home',
+    'workflows/index', 'projects/index', 'projects/deployments', 'discussions/index', 'boards/index', 'artifacts/index',
+    'plugins/index', 'machines/index', 'monitoring/index',
+    ...PROJECT_PAGES.map(page => `projects/[workspaceRefId]/${page}`),
+]);
 
 /** Canonical root declarations, consumed by Expo and retained workspace destinations. */
 export function createRootStackRouteOptions(newSessionPresentationMode: NewSessionPresentationModeV1): Readonly<Record<string, StackScreenOptions>> {
@@ -34,15 +49,12 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
             index: {
                 headerShown: false,
                 headerTitle: '',
-                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
             },
             inboxIndex: {
                 ...createInboxStackScreenOptions(t),
-                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
             },
             friendsIndex: {
                 ...createFriendsStackScreenOptions(t),
-                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
             },
             hiddenHeader,
             // Presentation belongs to the declaration: clearing a mounted
@@ -63,7 +75,6 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
                 // Settings is a destination on every form factor: the phone's tab, and the app rail's
                 // Settings on tablets and desktops, whose column holds its navigation (`AppShellColumn`).
                 headerShown: false,
-                ...MAIN_TAB_STACK_SCREEN_OPTIONS,
             },
             desktopActivityOverlay: {
                 headerShown: false,
@@ -227,7 +238,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
             },
         } satisfies Record<string, StackScreenOptions>;
     })();
-    return {
+    const routes: Record<string, StackScreenOptions> = {
         'index': options.index,
         'inbox/index': options.inboxIndex,
         'friends/index': options.friendsIndex,
@@ -321,7 +332,13 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         'workflows/[id]/index': options.workflowsDetail,
         'workflows/edit': options.workflowsDetail,
         'workflows/new': options.workflowsDetail,
-    } satisfies Record<string, StackScreenOptions>;
+        // Bar destinations with no options of their own: the stack defaults, plus the tab rule below.
+        'machines/index': {},
+        'monitoring/index': {},
+        'projects/deployments': {},
+    };
+    for (const name of TAB_DESTINATION_ROUTES) routes[name] = { ...routes[name], ...MAIN_TAB_STACK_SCREEN_OPTIONS };
+    return routes;
 }
 
 /** Resolve an exact leaf module, without lending a nested navigator's options to its index. */

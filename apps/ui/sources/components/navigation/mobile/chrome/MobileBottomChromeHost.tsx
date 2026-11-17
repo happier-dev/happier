@@ -252,6 +252,13 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         })) {
             return;
         }
+        // A cockpit tab is a peer view of the Session route (owner 2026-11-17). On a native stack, already on that
+        // route, only its query moves: a navigation, even a replace, gives the route's Slot a new child route and
+        // rebuilds the whole retained cockpit. Web routes are workspace-hosted, so their URL moves through replace.
+        if (Platform.OS !== 'web' && isSessionRootRoutePath(pathname, next.sessionId)) {
+            router.setParams({ mobileSurface: next.surface });
+            return;
+        }
         router.replace(resolveSessionRoutePathForSurface(next.sessionId, next.surface, {
             serverId: routeServerId,
             query: next.surface === 'tabs' ? paneRouteQuery : undefined,
