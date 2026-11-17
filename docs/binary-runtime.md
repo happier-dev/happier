@@ -1192,7 +1192,9 @@ use equivalent Unicode escapes to keep those source graphs Latin-1-safe.
 
 In 0.3 development, retained source server and daemon builds always emit linked
 external source maps for their main executable graphs, split chunks and daemon
-sidecars. Maps embed the captured TypeScript source text, which remains available
+sidecars. Main graphs and native preparation helpers resolve workspace exports
+with `happier-source`, so captured workspaces need no installed `dist` products.
+Maps embed the captured TypeScript source text, which remains available
 after the temporary input view is retired. They share the runtime's retention,
 read-only publication and emitted-byte identity. The existing build-input
 fingerprint includes the emitter, so preparing current source replaces an older
