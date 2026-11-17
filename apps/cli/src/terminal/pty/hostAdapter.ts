@@ -30,33 +30,28 @@ import { buildTerminalControlCapture } from '@/integrations/terminalHost/control
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/controlTypes';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import type { Disposable, PtyProcess, PtyProvider } from './provider';
-import { createNodePtyProvider } from './provider';
+import type { PtyProvider } from './provider';
 import { delay } from '@/utils/time';
 import { createTerminalScreen, loadTerminalScreenModel, type TerminalScreen } from './terminalScreen';
 import { resolveSessionProcessPtyTarget, type SessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
 import { startHeldAgentPtyProcess } from './holderProcess';
-import { createTerminalNativeLaunch } from './nativeLaunch';
+import { readDaemonTerminalPtyConfig } from './config';
+import { createTerminalPtySessionManager, type TerminalPtySessionManager } from './sessions';
+import { getAgentTerminalSessionManager } from './agentTerminals';
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 const INPUT_STABILITY_DELAY_MS = 50;
 const POST_WRITE_LIVENESS_DELAY_MS = 25;
 
+/** The host's view of one Agent terminal: its screen and exit. The PTY itself is the manager's. */
 type PtyTerminalHostSession = {
-  pty: PtyProcess;
-  disposables: Disposable[];
+  terminalId: string;
   screen: TerminalScreen;
   ended: boolean;
-  disposed: boolean;
   exitCode?: number;
   signal?: number;
 };
-
-type PtyTerminalHostEndedSession = Readonly<{
-  exitCode?: number;
-  signal?: number;
-}>;
 
 function handleFields(handle: TerminalHostHandle): Pick<
   Extract<TerminalInputInjectionResult, { status: 'failed' | 'injected' }>,
@@ -126,6 +121,7 @@ function resolveSpecialKeyBytes(key: TerminalSpecialKey): string {
 }
 
 export function createPtyTerminalHostAdapter(params?: Readonly<{
+  /** Tests: spawn Agents with this provider (in a private manager) instead of the Session holder. */
   ptyProvider?: PtyProvider;
   cols?: number;
   rows?: number;
@@ -135,16 +131,20 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   now?: () => number;
   /** The terminal service retains the canonical lazy placement selected for this Session. */
   sessionTarget?: SessionProcessPtyTarget | null;
-  platform?: NodeJS.Platform;
+  /** This process's Agent terminal owner; tests that simulate two runners in one process give each its own. */
+  terminals?: TerminalPtySessionManager;
 }>): TerminalHostAdapter {
   const environment = sessionProcessEnvironment();
   const sessionTarget = params?.sessionTarget === undefined ? resolveSessionProcessPtyTarget() : params.sessionTarget;
-  // The Agent is the Session holder's held primary Agent in a terminal, so it survives this
-  // runner. Unplaced Windows keeps the in-runner ConPTY until the holder has ConPTY.
-  const heldAgent = sessionTarget !== null || (!params?.ptyProvider && (params?.platform ?? process.platform) !== 'win32');
+  // The Agent is the Session holder's held primary Agent in a terminal (a POSIX pty, or the
+  // Windows pseudoconsole), so it survives this runner.
+  const heldAgent = sessionTarget !== null || !params?.ptyProvider;
   // Launches may run outside the registering Session's scope (its environment, placement, identity).
   const startHeldAgent = bindToHostedSessionScope(startHeldAgentPtyProcess);
-  const ptyProvider = params?.ptyProvider ?? createNodePtyProvider({ env: environment });
+  // One owner of PTY sessions per process (spawn or adopt, ring, readers, input, resize).
+  const terminals: TerminalPtySessionManager = params?.terminals ?? (params?.ptyProvider
+    ? createTerminalPtySessionManager({ ptyProvider: params.ptyProvider, config: readDaemonTerminalPtyConfig(process.env).sessionManager })
+    : getAgentTerminalSessionManager());
   const cols = Math.max(2, Math.trunc(params?.cols ?? DEFAULT_COLS));
   const rows = Math.max(2, Math.trunc(params?.rows ?? DEFAULT_ROWS));
   const inputStabilityDelayMs = Math.max(0, Math.trunc(params?.inputStabilityDelayMs ?? INPUT_STABILITY_DELAY_MS));
@@ -152,63 +152,27 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   const promptSubmitVerification = params?.promptSubmitVerification;
   const now = params?.now ?? (() => Date.now());
   const sessions = new Map<string, PtyTerminalHostSession>();
-  const endedSessions = new Map<string, PtyTerminalHostEndedSession>();
 
   function readSession(handle: TerminalHostHandle): PtyTerminalHostSession | null {
-    return sessions.get(handle.sessionName) ?? null;
+    const session = sessions.get(handle.sessionName);
+    return session && !session.ended ? session : null;
   }
 
-  function readEndedSession(handle: TerminalHostHandle): PtyTerminalHostEndedSession | null {
-    return endedSessions.get(handle.sessionName) ?? null;
+  function readEndedSession(handle: TerminalHostHandle): PtyTerminalHostSession | null {
+    const session = sessions.get(handle.sessionName);
+    return session?.ended ? session : null;
   }
 
-  function cleanupSession(
-    sessionName: string,
-    session: PtyTerminalHostSession,
-    options: Readonly<{
-      kill: boolean;
-      retainExitState: boolean;
-    }>,
-  ): void {
-    if (session.disposed) return;
-    session.disposed = true;
-    if (sessions.get(sessionName) === session) {
-      sessions.delete(sessionName);
-    }
-    if (options.retainExitState) {
-      endedSessions.set(sessionName, {
-        ...(session.exitCode !== undefined ? { exitCode: session.exitCode } : {}),
-        ...(session.signal !== undefined ? { signal: session.signal } : {}),
-      });
-    } else {
-      endedSessions.delete(sessionName);
-    }
-    if (options.kill && !session.ended) {
-      try {
-        session.pty.kill();
-      } catch {
-        // best-effort
-      }
-    }
-    for (const disposable of session.disposables) {
-      try {
-        disposable.dispose();
-      } catch {
-        // best-effort
-      }
-    }
-    session.disposables = [];
+  /** Ends the host's view and the manager's terminal (its retained output and exit go with it). */
+  function closeSession(sessionName: string, session: PtyTerminalHostSession): void {
+    if (sessions.get(sessionName) === session) sessions.delete(sessionName);
+    terminals.close({ terminalId: session.terminalId });
     session.screen.dispose();
   }
 
-  function writeToSession(session: PtyTerminalHostSession, data: string): boolean {
-    if (session.ended || session.disposed) return false;
-    try {
-      session.pty.write(data);
-      return true;
-    } catch {
-      return false;
-    }
+  async function writeToSession(session: PtyTerminalHostSession, data: string): Promise<boolean> {
+    if (session.ended) return false;
+    return (await terminals.input({ terminalId: session.terminalId, data })).ok;
   }
 
   async function waitForPostWriteLiveness(session: PtyTerminalHostSession): Promise<boolean> {
@@ -244,28 +208,27 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       async sendLiteralText(text) {
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
-        return writeToSession(session, text)
+        return await writeToSession(session, text)
           ? { status: 'sent', at: now() }
           : { status: 'host_dead', recoverable: false };
       },
       async sendRawSequence(sequence) {
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
-        return writeToSession(session, sequence)
+        return await writeToSession(session, sequence)
           ? { status: 'sent', at: now() }
           : { status: 'host_dead', recoverable: false };
       },
       async sendSpecialKey(key) {
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
-        return writeToSession(session, resolveSpecialKeyBytes(key))
+        return await writeToSession(session, resolveSpecialKeyBytes(key))
           ? { status: 'sent', at: now() }
           : { status: 'host_dead', recoverable: false };
       },
       async captureScreen() {
         const session = readSession(handle);
         if (!session) return { status: 'host_dead', recoverable: !readEndedSession(handle) };
-        if (session.ended) return { status: 'host_dead', recoverable: false };
         const screen = await session.screen.capture();
         return {
           status: 'captured',
@@ -307,10 +270,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         opts = { ...opts, ...launch };
         stdinPreamble = launch.stdinPreamble;
       }
-      if (existing) {
-        cleanupSession(opts.sessionName, existing, { kill: false, retainExitState: true });
-      }
-      endedSessions.delete(opts.sessionName);
+      if (existing) closeSession(opts.sessionName, existing);
 
       const command = opts.spawnArgv[0];
       if (!command) {
@@ -324,62 +284,38 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       });
       const term = spawnEnv.TERM ?? 'xterm-256color';
       const screen = createTerminalScreen(await loadTerminalScreenModel(), { cols, rows });
-      let pty: PtyProcess;
-      let startHeldDelivery: (() => void) | undefined;
-      if (heldAgent) {
-        const held = await startHeldAgent({ command, args: opts.spawnArgv.slice(1), cwd: opts.workingDirectory,
-          env: { ...spawnEnv, TERM: term }, cols, rows,
-          ...(opts.requiredFiles ? { requiredFiles: opts.requiredFiles } : {}),
-          ...(opts.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
-        pty = held.pty;
-        startHeldDelivery = held.start;
-        // An adopted Agent consumed its launch preamble when the previous runner started it.
-        if (held.adopted) stdinPreamble = undefined;
-      } else {
-        await ptyProvider.prepare?.();
-        pty = ptyProvider.spawn({
+      const session: PtyTerminalHostSession = { terminalId: '', screen, ended: false };
+      const opened = await terminals.ensure({
+        terminalKey: opts.sessionName,
+        cwd: opts.workingDirectory,
+        cols,
+        rows,
+        launchProcess: {
           file: command,
-          args: process.platform === 'win32' && opts.windowsVerbatimArguments
-            ? opts.spawnArgv.slice(1).join(' ')
-            : [...opts.spawnArgv.slice(1)],
-          options: {
-            name: 'xterm-256color',
-            cols,
-            rows,
-            cwd: opts.workingDirectory,
-            env: {
-              ...spawnEnv,
-              TERM: term,
-            },
-            encoding: 'utf8',
+          args: opts.spawnArgv.slice(1),
+          env: { ...spawnEnv, TERM: term },
+          ...(opts.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+        },
+        agent: {
+          ...(heldAgent ? { startHeld: startHeldAgent } : {}),
+          ...(opts.requiredFiles ? { requiredFiles: opts.requiredFiles } : {}),
+          ...(stdinPreamble ? { stdinPreamble } : {}),
+          // Bytes: the screen model decodes UTF-8 itself, across chunk boundaries.
+          onOutput: bytes => screen.write(bytes),
+          onResize: (newCols, newRows) => screen.resize(newCols, newRows),
+          onExit: (exit) => {
+            session.ended = true;
+            if (exit.exitCode !== null) session.exitCode = exit.exitCode;
+            if (exit.signal !== null) session.signal = exit.signal;
           },
-        });
+        },
+      });
+      if (!opened.ok) {
+        screen.dispose();
+        throw new Error(`PTY terminal host could not start the Agent: ${opened.error}`);
       }
-      const nativeLaunch = stdinPreamble?.byteLength
-        ? createTerminalNativeLaunch(stdinPreamble, data => pty.write(data)) : undefined;
-      const session: PtyTerminalHostSession = {
-        pty,
-        disposables: [],
-        screen,
-        ended: false,
-        disposed: false,
-      };
-      // Bytes when the PTY offers them: the screen model decodes UTF-8 itself, across chunk boundaries.
-      const onOutput = (data: Buffer | string) => {
-        const bytes = typeof data === 'string' ? Buffer.from(data) : data;
-        if (nativeLaunch) nativeLaunch.consume(bytes, output => screen.write(output));
-        else screen.write(bytes);
-      };
-      session.disposables.push(pty.onDataBytes ? pty.onDataBytes(onOutput) : pty.onData(onOutput));
-      session.disposables.push(pty.onExit((event) => {
-        nativeLaunch?.finish();
-        session.ended = true;
-        session.exitCode = event.exitCode ?? undefined;
-        if (typeof event.signal === 'number') session.signal = event.signal;
-        cleanupSession(opts.sessionName, session, { kill: false, retainExitState: true });
-      }));
+      session.terminalId = opened.terminalId;
       sessions.set(opts.sessionName, session);
-      startHeldDelivery?.();
 
       return {
         kind: 'windows_console',
@@ -445,7 +381,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       }
       const shouldVerifyPrompt = promptSubmitVerification?.shouldVerifyAfterSubmit(input.text) === true;
       if (!shouldVerifyPrompt) {
-        if (!writeToSession(session, `${input.text}\r`)) {
+        if (!await writeToSession(session, `${input.text}\r`)) {
           return failedInjectionResult({
             handle,
             reason: 'host_unreachable',
@@ -479,7 +415,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       const textToWrite = input.multiline && shouldStagePrompt
         ? encodeTerminalPasteInput(input.text, true)
         : input.text;
-      if (!writeToSession(session, textToWrite)) {
+      if (!await writeToSession(session, textToWrite)) {
         return failedInjectionResult({
           handle,
           reason: 'host_unreachable',
@@ -513,7 +449,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           : {}),
         submitEnter: async ({ remainingTimeoutMs }) => {
           if (remainingTimeoutMs === 0) return 'timeout';
-          if (!writeToSession(session, '\r')) return 'failed';
+          if (!await writeToSession(session, '\r')) return 'failed';
           return await waitForPostWriteLiveness(session) ? 'success' : 'failed';
         },
         remainingTimeoutMs: () => remainingTerminalHostDeadlineMs(submissionDeadline),
@@ -537,40 +473,28 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
     },
     async interruptTurn(handle) {
       const session = readSession(handle);
-      if (!session || !writeToSession(session, '\u001b')) {
+      if (!session || !await writeToSession(session, '\u001b')) {
         throw new Error('Failed to interrupt PTY terminal host');
       }
     },
     async evaluateLiveness(handle): Promise<TerminalHostLivenessV1> {
-      const session = readSession(handle);
-      if (session) {
-        return {
-          paneAlive: !session.ended,
-          paneDead: session.ended,
-          ...(session.exitCode !== undefined ? { paneExitStatus: session.exitCode } : {}),
-          observedAt: now(),
-        };
-      }
-      const endedSession = readEndedSession(handle);
-      if (!endedSession) {
-        return { paneAlive: false, paneDead: true, observedAt: now() };
-      }
+      const session = sessions.get(handle.sessionName);
+      if (!session) return { paneAlive: false, paneDead: true, observedAt: now() };
       return {
-        paneAlive: false,
-        paneDead: true,
-        ...(endedSession.exitCode !== undefined ? { paneExitStatus: endedSession.exitCode } : {}),
+        paneAlive: !session.ended,
+        paneDead: session.ended,
+        ...(session.exitCode !== undefined ? { paneExitStatus: session.exitCode } : {}),
         observedAt: now(),
       };
     },
     captureInputState,
     createControlPort,
     async dispose(handle) {
-      const session = readSession(handle);
-      if (session) {
-        if (!session.ended && session.pty.terminateTree) await session.pty.terminateTree();
-        cleanupSession(handle.sessionName, session, { kill: true, retainExitState: false });
-      }
-      endedSessions.delete(handle.sessionName);
+      const session = sessions.get(handle.sessionName);
+      if (!session) return;
+      // The Agent's tree (through its holder), then the terminal.
+      if (!session.ended) await terminals.requestStop({ terminalId: session.terminalId });
+      closeSession(handle.sessionName, session);
     },
   };
 }

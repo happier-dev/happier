@@ -117,7 +117,7 @@ export type HeldAgentPtyProcess = Readonly<{
  * it survives this runner, the daemon spares it on a runner crash, and the respawned runner
  * adopts it here through the one launch decision (`resolveAgentSessionHolderLaunch`).
  */
-export async function startHeldAgentPtyProcess(request: Readonly<{
+export type HeldAgentPtyRequest = Readonly<{
   command: string;
   args: readonly string[];
   cwd?: string;
@@ -126,7 +126,9 @@ export async function startHeldAgentPtyProcess(request: Readonly<{
   windowsVerbatimArguments?: boolean;
   cols: number;
   rows: number;
-}>): Promise<HeldAgentPtyProcess> {
+}>;
+
+export async function startHeldAgentPtyProcess(request: HeldAgentPtyRequest): Promise<HeldAgentPtyProcess> {
   const launch = resolveAgentSessionHolderLaunch({ role: 'primary' });
   const holder = launch.kind === 'adopt'
     ? adoptSessionHolderChild(launch)

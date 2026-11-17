@@ -20,6 +20,9 @@ import {
 } from '@/subprocess/supervision/sessionHolder';
 import type { TerminalHostAdapter } from '@/integrations/terminal/host/_types';
 import { createPtyTerminalHostAdapter } from './hostAdapter';
+import { getAgentTerminalSessionManager } from './agentTerminals';
+import { readDaemonTerminalPtyConfig } from './config';
+import { createTerminalPtySessionManager, type TerminalPtySessionManager } from './sessions';
 
 /** The held primary Agent of a runner's Session scope, as the daemon records it (its address read from the holder process). */
 function heldPrimary(scope: object): SessionHeldAgentV1 {
@@ -74,10 +77,11 @@ describe.skipIf(process.platform === 'win32' || !holderAvailable)('PTY terminal 
     const tui = join(directory, 'tui.cjs');
     await writeFile(tui, TUI_SOURCE);
     const launch = { sessionName: 'held-pty', workingDirectory: directory, spawnArgv: [process.execPath, tui], spawnEnv: {}, isolatedEnv: false };
-    const runner = (environment: NodeJS.ProcessEnv) => runAddedHostedSession({ environment, workingDirectory: directory, end: () => {} },
+    // Each runner process has its own Agent terminal owner; runner 1 uses this process's.
+    const runner = (environment: NodeJS.ProcessEnv, terminals?: TerminalPtySessionManager) => runAddedHostedSession({ environment, workingDirectory: directory, end: () => {} },
       async () => {
         bindHostedSessionId('held-pty-session');
-        const adapter = createPtyTerminalHostAdapter({ inputStabilityDelayMs: 0, sessionTarget: null });
+        const adapter = createPtyTerminalHostAdapter({ inputStabilityDelayMs: 0, sessionTarget: null, ...(terminals ? { terminals } : {}) });
         return { adapter, handle: await adapter.createOrAttachHost(launch), scope: currentSessionHolderScope() };
       });
 
@@ -86,6 +90,18 @@ describe.skipIf(process.platform === 'win32' || !holderAvailable)('PTY terminal 
     await expect.poll(() => screenText(first.adapter, first.handle)).toMatch(/count=(1\d|[2-9]\d)/);
     const held = heldPrimary(first.scope);
     agentPid = held.agentPid;
+
+    // The process's one PTY owner holds the Agent terminal: viewers read its bytes and resize it,
+    // and the host's screen follows the new size.
+    const terminals = getAgentTerminalSessionManager();
+    const terminal = terminals.list().find(entry => entry.terminalKey === 'held-pty' && !entry.ended);
+    expect(terminal).toBeDefined();
+    const bytes = terminals.readBytes({ terminalId: terminal!.terminalId, byteOffset: 0, maxBytes: 1 << 20, maxChunks: 10_000 });
+    expect(bytes.ok && bytes.mode === 'bytes' && Buffer.concat(bytes.chunks.map(chunk => chunk.bytes)).toString()).toContain('TUI 120x40');
+    expect(terminals.resize({ terminalId: terminal!.terminalId, cols: 100, rows: 30 })).toEqual({ ok: true });
+    await expect.poll(async () => rows(await screenText(first.adapter, first.handle))[0]).toBe('TUI 100x30');
+    expect(terminals.resize({ terminalId: terminal!.terminalId, cols: 120, rows: 40 })).toEqual({ ok: true });
+    await expect.poll(async () => rows(await screenText(first.adapter, first.handle))[0]).toBe('TUI 120x40');
 
     // Runner 1 stops mid-output without acknowledging what is in flight (its connection just ends).
     pauseSessionHolderDelivery();
@@ -96,7 +112,8 @@ describe.skipIf(process.platform === 'win32' || !holderAvailable)('PTY terminal 
 
     // Runner 2 receives the daemon's hand-off and launches the same terminal: it adopts the Agent.
     const second = await runner({ ...process.env, [SESSION_HOLDER_ADOPT_ENV_KEY]: JSON.stringify(
-      { socketPath: held.socketPath, holderPid: held.holderPid, agentPid: held.agentPid }) });
+      { socketPath: held.socketPath, holderPid: held.holderPid, agentPid: held.agentPid }) },
+    createTerminalPtySessionManager({ config: readDaemonTerminalPtyConfig(process.env).sessionManager }));
     expect(heldPrimary(second.scope)).toEqual(held);
     // The nudge made the TUI repaint, and its size is back: the screen is whole again.
     await expect.poll(async () => rows(await screenText(second.adapter, second.handle)), { timeout: 10_000 })

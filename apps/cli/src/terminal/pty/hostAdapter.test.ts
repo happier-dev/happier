@@ -619,9 +619,6 @@ describe('createPtyTerminalHostAdapter', () => {
 
     fake.processes[0]?.emitExit({ exitCode: 0 });
 
-    expect(fake.processes[0]?.dataListenerCount).toBe(0);
-    expect(fake.processes[0]?.exitListenerCount).toBe(0);
-
     const respawnedHandle = await adapter.createOrAttachHost({
       sessionName: 'shared-session',
       workingDirectory: 'C:\\repo',
@@ -633,6 +630,9 @@ describe('createPtyTerminalHostAdapter', () => {
     fake.processes[1]?.emitData('\u001b[2J\u001b[Hnew session');
 
     expect(fake.spawnCalls).toHaveLength(2);
+    // The exited terminal kept its output for readers until the respawn released it.
+    expect(fake.processes[0]?.dataListenerCount).toBe(0);
+    expect(fake.processes[0]?.exitListenerCount).toBe(0);
     await expect(adapter.captureInputState?.(respawnedHandle)).resolves.toMatchObject({
       currentInput: 'new session',
     });

@@ -46,7 +46,7 @@ import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type Spaw
 import { resolveSessionTargetPtyTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { resolveSessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
-import { spawnHolderPtyProcess } from './holderProcess';
+import { spawnHolderPtyProcess, type HeldAgentPtyProcess, type HeldAgentPtyRequest } from './holderProcess';
 import { createTerminalServiceProcess } from './serviceProcess';
 import type { PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -120,7 +120,27 @@ export type TerminalPtyEnsureInput = Readonly<{
   holdUntilExit?: true;
   /** Raw Machine starts supply the canonical drain; accepted finite work has its own admission owner. */
   admissionDrain?: DaemonAdmissionDrain;
+  /**
+   * A Session's terminal-mode Agent (the PTY terminal host). Its launch environment is used
+   * as given, and the host's screen observes its output and exit from the moment it starts.
+   */
+  agent?: TerminalPtyAgentLaunch;
   signal?: AbortSignal;
+}>;
+
+export type TerminalPtyAgentLaunch = Readonly<{
+  /**
+   * Starts the Agent as the Session holder's held primary, or adopts the one a previous
+   * runner started. Without it the manager's provider spawns the Agent (tests).
+   */
+  startHeld?: (request: HeldAgentPtyRequest) => Promise<HeldAgentPtyProcess>;
+  requiredFiles?: readonly string[];
+  /** Native launch material for a fresh Agent; an adopted Agent already consumed it. */
+  stdinPreamble?: Uint8Array;
+  onOutput(bytes: Buffer): void;
+  onExit(exit: Readonly<{ exitCode: number | null; signal: number | null }>): void;
+  /** The terminal took a new size (the host's screen model follows it). */
+  onResize(cols: number, rows: number): void;
 }>;
 
 function terminalStorageKey(input: TerminalPtyEnsureInput): string {
@@ -360,6 +380,7 @@ type PtySession = {
   ownerRetirement?: Promise<void>;
   nativeLaunch?: ReturnType<typeof createTerminalNativeLaunch>;
   nativeExecutionIdentity?: AgentIsolationMemberNativeIdentity;
+  agent?: TerminalPtyAgentLaunch;
 };
 
 function splitByApproxBytesUtf8(input: string, maxBytes: number): string[] {
@@ -470,7 +491,8 @@ function latestRetainedOutputLine(buffer: EventBuffer, maxLength: number): strin
 }
 
 export function createTerminalPtySessionManager(params: Readonly<{
-  ptyProvider: PtyProvider;
+  /** Spawns terminals in this process; absent for a manager that holds only held Agents. */
+  ptyProvider?: PtyProvider;
   config: TerminalPtySessionManagerConfig;
   now?: () => number;
   env?: ProcessEnvInput;
@@ -652,6 +674,8 @@ export function createTerminalPtySessionManager(params: Readonly<{
           || prior.agentUid !== next.agentUid || prior.agentGid !== next.agentGid || prior.home !== next.home)) return okDisabled('terminal_forbidden');
       }
       if (existing && existing.serviceOwned !== (input.serviceProcess === true)) return okDisabled('terminal_busy');
+      // A live Agent terminal has one host; a second start would leave its screen without output.
+      if (existing && !existing.ended && input.agent) return okDisabled('terminal_busy');
       if (existing?.ended && (existing.finiteHold || existing.stopPending || existing.stopUnconfirmed)) return okDisabled('terminal_busy');
       if (existing && !existing.ended) {
         const cols = typeof input.cols === 'number' && Number.isFinite(input.cols) ? Math.max(2, Math.trunc(input.cols)) : existing.cols;
@@ -661,6 +685,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
             existing.pty.resize(cols, rows);
             existing.cols = cols;
             existing.rows = rows;
+            existing.agent?.onResize(cols, rows);
           } catch (error) {
             return okDisabled(isTerminalResizeUnavailableError(error) ? 'terminal_resize_unavailable' : 'terminal_not_found');
           }
@@ -685,14 +710,20 @@ export function createTerminalPtySessionManager(params: Readonly<{
     const cwd = authorizedProjectLaunch?.cwd ?? input.cwd;
 
     let pty: PtyProcess;
+    let held: HeldAgentPtyProcess | undefined;
     try {
       // Removing a prior terminal publishes an owner edge; recheck the same
       // admission decision at the actual native effect boundary.
       if (input.admissionDrain?.isQuiescing()) return okDisabled('terminal_busy');
-      const daemonTarget = input.sessionId ? resolveSessionTargetPtyTarget(input.sessionId) : null;
-      const scopedTarget = daemonTarget ? null : resolveSessionProcessPtyTarget();
+      const daemonTarget = input.sessionId && !input.agent ? resolveSessionTargetPtyTarget(input.sessionId) : null;
+      const scopedTarget = daemonTarget || input.agent ? null : resolveSessionProcessPtyTarget();
       const target = daemonTarget ?? scopedTarget;
-      if (target) {
+      if (input.agent?.startHeld) {
+        held = await input.agent.startHeld({ command: process.file, args: process.args, cwd, env: process.env ?? {}, cols, rows,
+          ...(input.agent.requiredFiles ? { requiredFiles: input.agent.requiredFiles } : {}),
+          ...(process.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
+        pty = held.pty;
+      } else if (target) {
         const launch = resolveHolderWorkspaceCommand(target.rootPath, { command: process.file, args: process.args, cwd,
           env: process.env });
         const holder = target.openHolder();
@@ -700,6 +731,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
           ...launch, cols, rows,
         }, scopedTarget ? () => holder.detach() : undefined);
       } else {
+        if (!params.ptyProvider) throw new Error('This terminal owner spawns no local terminals');
         await params.ptyProvider.prepare?.();
         pty = params.ptyProvider.spawn({
           file: process.file,
@@ -714,6 +746,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
             // Finalized Project launches preserve native unsets without acquiring a
             // finite hold. Ordinary shell/login launch overlays remain unchanged.
             env: input.serviceProcess ? { ...authorizedProjectLaunch!.env }
+              : input.agent ? { ...process.env }
               : withProcessOwnerEnvironment(input.holdUntilExit
               ? stripCliApiTokenEnvironment(process.env ?? env)
               : resolveTerminalSpawnEnv(authorizedProjectLaunch ? authorizedProjectLaunch.env : { ...env, ...process.env }),
@@ -724,6 +757,8 @@ export function createTerminalPtySessionManager(params: Readonly<{
         });
       }
     } catch (error) {
+      // An Agent's host keeps the start's own typed refusal (e.g. the holder unavailable).
+      if (input.agent) throw error;
       const spawnFailure = classifySpawnFailure(error, { platform, limits: params.readSpawnFailureLimits?.() });
       return { ...okDisabled('terminal_spawn_failed'), error: spawnFailureMessage(spawnFailure, 'terminal_spawn_failed'), spawnFailure };
     }
@@ -738,11 +773,14 @@ export function createTerminalPtySessionManager(params: Readonly<{
       bufferLimit: config.urlParseBufferLimit,
       seenLimit: config.urlDedupeLimit,
     });
-    const nativeLaunch = authorizedProjectLaunch?.stdinPreamble
-      ? createTerminalNativeLaunch(authorizedProjectLaunch.stdinPreamble, data => pty.write(data)) : undefined;
+    // An adopted held Agent consumed its launch preamble when the previous runner started it.
+    const stdinPreamble = authorizedProjectLaunch?.stdinPreamble ?? (held?.adopted ? undefined : input.agent?.stdinPreamble);
+    const nativeLaunch = stdinPreamble?.byteLength
+      ? createTerminalNativeLaunch(stdinPreamble, data => pty.write(data)) : undefined;
     const session: PtySession = {
       ...(nativeLaunch ? { nativeLaunch } : {}),
       ...(input.nativeExecutionIdentity ? { nativeExecutionIdentity: input.nativeExecutionIdentity } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
       terminalId,
       terminalKey: input.terminalKey,
       storageKey,
@@ -767,7 +805,8 @@ export function createTerminalPtySessionManager(params: Readonly<{
       disposables: [],
       buffer,
       byteRing,
-      byteMode: byteCapablePlatform
+      // The holder carries the terminal's own bytes on every OS (on Windows: the pseudoconsole's output).
+      byteMode: byteCapablePlatform || held
         ? { kind: 'bytes' }
         : { kind: 'legacyOnly', provider: 'windows-conpty', reason: 'Windows ConPTY raw byte fidelity has not been proven' },
       ended: false,
@@ -823,7 +862,12 @@ export function createTerminalPtySessionManager(params: Readonly<{
       }
     };
 
-    if (byteCapablePlatform && typeof pty.onDataBytes === 'function') {
+    if (input.agent) {
+      const agent = input.agent;
+      session.processOutputObservers.add(chunk => agent.onOutput(chunk.data));
+    }
+
+    if ((byteCapablePlatform || held) && typeof pty.onDataBytes === 'function') {
       session.disposables.push(pty.onDataBytes((data) => {
         if (Buffer.isBuffer(data)) {
           consumeBytes(Buffer.from(data));
@@ -893,6 +937,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
         }
         metrics.recordExit();
         pushEvent(session.buffer, { t: 'exit', ...session.exit }, config);
+        input.agent?.onExit(session.exit);
         // Preserve the first native witness before identity-checked unregister;
         // the canonical owner retains ended roots and observes surviving children.
         retireSessionOwner(session);
@@ -936,7 +981,10 @@ export function createTerminalPtySessionManager(params: Readonly<{
       }
     }
 
-    if (nativeLaunch) {
+    // A held Agent's output flows once every observer above is wired.
+    held?.start();
+    // An Agent's host returns at once; its screen observes the launch handshake.
+    if (nativeLaunch && !input.agent) {
       const abort = () => { nativeLaunch.finish(); try { pty.kill('SIGTERM'); } catch { /* Exit remains unconfirmed. */ } };
       input.signal?.addEventListener('abort', abort, { once: true });
       if (input.signal?.aborted) abort();
@@ -1299,6 +1347,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
       session.pty.resize(input.cols, input.rows);
       session.cols = input.cols;
       session.rows = input.rows;
+      session.agent?.onResize(input.cols, input.rows);
       return { ok: true };
     } catch (error) {
       if (isTerminalResizeUnavailableError(error)) {
