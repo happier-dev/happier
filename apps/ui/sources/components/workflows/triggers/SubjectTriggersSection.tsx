@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
@@ -51,6 +52,7 @@ export const SubjectTriggersSection = React.memo(
       subjectName: string;
       deploymentEnvironment?: DeploymentEnvironmentRefV1;
       deploymentSourceName?: string;
+      sourceAudience?: readonly PrincipalRefV1[];
       controllerMachineId?: string;
       pushSetup?: DeploymentPushSetupConfig;
     }>,
