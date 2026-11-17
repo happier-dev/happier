@@ -9813,10 +9813,26 @@ class Sync {
         return operation({ artifacts, undoState: this.themeProfileUndo.state,
             now: Date.now, createId: randomUUID,
             readSelection: () => readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection),
-            writeSelection: (mode, reference) => {
-                throwIfAborted(params.signal);
-                const current = storage.getState().localSettings.themeProfileSelection;
-                storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference } });
+            writeSelection: async (mode, reference) => {
+                const [{ runThemePreferenceChange }, { getThemeTryOnOwner }, { readReducedMotionPreference },
+                    { readSystemTheme, resolveThemeRuntimeVisualTheme }] = await Promise.all([
+                    import('@/components/settings/appearance/themePreferenceTransition'),
+                    import('@/theme/profiles/themeTryOnRuntime'),
+                    import('@/hooks/ui/useReducedMotionPreference'),
+                    import('@/theme/profiles/themeProfileRuntime'),
+                ]);
+                const preference = storage.getState().localSettings.themePreference;
+                const systemTheme = readSystemTheme();
+                await runThemePreferenceChange({ currentPreference: preference, nextPreference: preference,
+                    platform: Platform.OS, reduceMotion: readReducedMotionPreference(), systemTheme,
+                    forceAnimate: getThemeTryOnOwner().read() === null
+                        && mode === resolveThemeRuntimeVisualTheme(preference, systemTheme),
+                    mutation: () => {
+                        throwIfAborted(params.signal);
+                        const current = storage.getState().localSettings.themeProfileSelection;
+                        storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference } });
+                    },
+                });
             },
             pluginProfiles: {
                 list: () => projectPluginThemeLibraryEntries(readPluginThemeList()),
