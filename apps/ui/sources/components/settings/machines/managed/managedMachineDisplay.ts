@@ -39,6 +39,8 @@ export type ManagedProvisionerCard = Readonly<{
    * configurator may already open: a flow with a Set up step shows that step for it, never ticks it as done.
    */
   needsSetup?: true;
+  /** What it needs is the Home's own address, not a tool: no install here can fix it (its repair sets the address). */
+  homeUnreachable?: true;
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
   repairFailure?: ManagedProvisionerRepairFailure;
   /** The card's existing repair Action is still awaiting confirmation or completion. */

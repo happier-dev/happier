@@ -8,9 +8,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionOperationLedger';
-import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
-import { projectMachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
 import { useMachineToolsSummary } from '@/components/machines/installables/useMachineToolsSummary';
 import type { MachinePageTabBodyProps, MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
@@ -62,7 +59,7 @@ import {
   type MachineSetupState,
 } from './useMachineSetup';
 import { describeMachineSetupReason } from './machineSetupReasonText';
-import { MachineSetupRunRegion } from './MachineSetupRunRegion';
+import { MachineSetupRunProgress } from './MachineSetupRunRegion';
 import { MachineSignInsSection } from './MachineSignInsSection';
 
 type SetupParams = Extract<MachinePageTabParams, { id: 'setup' }>;
@@ -517,43 +514,10 @@ function MachineSetupAttention(
 ) {
   const { setup, localize } = props;
   const router = useRouter();
-  const operations = React.useMemo(
-    () => (setup.operation ? [setup.operation] : []),
-    [setup.operation],
-  );
-  const progressOperation = setup.progressOperation;
-  const domainRef = progressOperation?.snapshot.domainRef;
-  // The operation's own reviewed steps, in place; their labels carry their own fallback words.
-  const steps = React.useMemo(
-    () => (domainRef?.kind === 'machineSetup' ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label)) : null),
-    [domainRef, localize],
-  );
   if (setup.operationId) {
-    const operationId = setup.operationId;
-    const open = () => openActionOperationDetail({ serverId: props.serverId, operationId });
-    if (steps && domainRef?.kind === 'machineSetup' && progressOperation) {
-      return (
-        <MachineSetupRunRegion
-          serverId={props.serverId}
-          operation={setup.operation}
-          progressOperation={progressOperation}
-          steps={steps}
-          machineName={props.machineName}
-          onRetry={props.editable && setup.operation ? () => { void setup.prepare({ kind: 'reapply' }); } : null}
-        />
-      );
-    }
     return (
-      <ItemGroup testID="machine-setup-operation" title={t('machinePresets.setup.tab.applying')}>
-        {operations.length > 0 ? (
-          <ActionOperationRows operations={operations}
-            onOpenOperation={(operation) => openActionOperationDetail({ serverId: operation.serverId, operationId: operation.snapshot.operationId })} />
-        ) : (
-          // Its rows arrive with the operation's first push; until then the started run opens its own output.
-          <Item testID="machine-setup-operation-started" title={t('machinePresets.setup.tab.started', { machine: props.machineName })}
-            subtitle={t('machinePresets.setup.tab.startedHelp')} onPress={open} />
-        )}
-      </ItemGroup>
+      <MachineSetupRunProgress serverId={props.serverId} setup={setup} machineName={props.machineName} localize={localize}
+        onRetry={props.editable && setup.operation ? () => { void setup.prepare({ kind: 'reapply' }); } : null} />
     );
   }
   if (setup.failure) {

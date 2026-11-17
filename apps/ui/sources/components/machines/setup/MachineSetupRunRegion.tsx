@@ -8,7 +8,7 @@ import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionO
 import { ActionOperationSudoQuestion } from '@/components/inbox/actionOperations/ActionOperationSudoQuestion';
 import { MachineSetupStepsChecklist } from '@/components/inbox/actionOperations/MachineSetupStepsChecklist';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
-import type { MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
+import { projectMachineSetupStepChecklist, type MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -22,6 +22,7 @@ import {
 } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { t } from '@/text';
+import type { MachineSetupState } from './useMachineSetup';
 
 type StoppedNoticeProps = Readonly<{
   serverId: string;
@@ -91,6 +92,51 @@ function StoppedNoticeWithInvestigation(props: StoppedNoticeProps) {
 function MachineSetupStoppedNotice(props: StoppedNoticeProps) {
   const owner = useOptionalAccountNoticeInvestigation();
   return owner ? <StoppedNoticeWithInvestigation {...props} /> : <StoppedHead {...props} investigate={null} />;
+}
+
+/**
+ * The Apply a Machine Setup surface started, in place (the Setup tab, a sandbox kind's Set up step): its reviewed steps
+ * with their in-place questions when the run carries them, else its operation row until its first push.
+ */
+export function MachineSetupRunProgress(
+  props: Readonly<{
+    serverId: string;
+    setup: MachineSetupState;
+    machineName: string;
+    localize: (pluginId: string, value: unknown) => string;
+    onRetry: (() => void) | null;
+  }>,
+) {
+  const { setup, localize } = props;
+  const operations = React.useMemo(() => (setup.operation ? [setup.operation] : []), [setup.operation]);
+  const progressOperation = setup.progressOperation;
+  const domainRef = progressOperation?.snapshot.domainRef;
+  // The operation's own reviewed steps, in place; their labels carry their own fallback words.
+  const steps = React.useMemo(
+    () => (domainRef?.kind === 'machineSetup' ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label)) : null),
+    [domainRef, localize],
+  );
+  const operationId = setup.operationId;
+  if (!operationId) return null;
+  if (steps && domainRef?.kind === 'machineSetup' && progressOperation) {
+    return (
+      <MachineSetupRunRegion serverId={props.serverId} operation={setup.operation} progressOperation={progressOperation}
+        steps={steps} machineName={props.machineName} onRetry={props.onRetry} />
+    );
+  }
+  return (
+    <ItemGroup testID="machine-setup-operation" title={t('machinePresets.setup.tab.applying')}>
+      {operations.length > 0 ? (
+        <ActionOperationRows operations={operations}
+          onOpenOperation={(operation) => openActionOperationDetail({ serverId: operation.serverId, operationId: operation.snapshot.operationId })} />
+      ) : (
+        // Its rows arrive with the operation's first push; until then the started run opens its own output.
+        <Item testID="machine-setup-operation-started" title={t('machinePresets.setup.tab.started', { machine: props.machineName })}
+          subtitle={t('machinePresets.setup.tab.startedHelp')}
+          onPress={() => openActionOperationDetail({ serverId: props.serverId, operationId })} />
+      )}
+    </ItemGroup>
+  );
 }
 
 /**

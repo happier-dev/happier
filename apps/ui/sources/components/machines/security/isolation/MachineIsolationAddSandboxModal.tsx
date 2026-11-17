@@ -43,6 +43,7 @@ import {
 import { t } from '@/text';
 
 import type { MachineIsolationWorkKind } from './machineIsolationChoices';
+import { isMachineIsolationKindSetupDone, MachineIsolationKindSetupBody, useMachineIsolationKindSetup } from './MachineIsolationKindSetup';
 
 export type MachineIsolationAddedSandbox = Readonly<{
   provisioner: PluginContributionIdentityV1;
@@ -96,6 +97,14 @@ export function MachineIsolationAddSandboxModal(
     here[0] ??
     null;
   const pickedReady = picked !== null && isKindReady(picked);
+  // A kind whose prerequisite installs through Machine Setup: plan, approval, run and failure are that owner's.
+  const kindSetup = useMachineIsolationKindSetup({ serverId: props.serverId, hostMachineId: props.controller?.machineId ?? null,
+    card: picked, active: step === 'setup' });
+  const installs = step === 'setup' && kindSetup.sourceBacked && !pickedReady;
+  // A finished install changes the kind's readiness: read it again, once per run, so the step can continue.
+  const refreshCatalog = catalog.catalog.refresh;
+  const doneRun = isMachineIsolationKindSetupDone(kindSetup.setup) ? kindSetup.setup.operationId : null;
+  React.useEffect(() => { if (doneRun) refreshCatalog(); }, [doneRun, refreshCatalog]);
 
   const { setChrome, onClose } = props;
   const add = React.useCallback(
@@ -112,23 +121,43 @@ export function MachineIsolationAddSandboxModal(
   }, []);
   const proceed = React.useCallback(() => {
     if (!picked) return;
-    if (pickedReady) picked.action.onPress();
-    else setStep('setup');
-  }, [picked, pickedReady]);
+    if (pickedReady) { picked.action.onPress(); return; }
+    setStep('setup');
+    kindSetup.review();
+  }, [kindSetup, picked, pickedReady]);
 
   const footer =
     step === 'author' ? undefined : (
       // The note leads; the way out (Cancel, or Back one step in) and the step's primary stand together on the right,
       // so the title never moves for a Back in the head.
       <ModalCardFooterActions note={t('machineDetailPage.isolation.add.footerNote')}>
-        <RoundButton
-          testID={step === 'kind' ? 'machine-isolation-add.cancel' : 'machine-isolation-add.back'}
-          size="normal"
-          display="secondary"
-          title={step === 'kind' ? t('common.cancel') : t('common.back')}
-          onPress={step === 'kind' ? onClose : back}
-        />
-        {step === 'kind' ? (
+        {installs && kindSetup.running ? (
+          // The run keeps going without the sheet (lab setup-running): the way out closes it.
+          <RoundButton testID="machine-isolation-add.close" size="normal" display="secondary" title={t('common.close')} onPress={onClose} />
+        ) : (
+          <RoundButton
+            testID={step === 'kind' ? 'machine-isolation-add.cancel' : 'machine-isolation-add.back'}
+            size="normal"
+            display="secondary"
+            title={step === 'kind' ? t('common.cancel') : t('common.back')}
+            onPress={step === 'kind' ? onClose : back}
+          />
+        )}
+        {installs ? (
+          kindSetup.running || kindSetup.setup.approvalId ? null
+          : kindSetup.setup.failure ? (
+            <RoundButton testID="machine-isolation-add.setup-retry" size="normal" title={t('common.retry')} onPress={kindSetup.review} />
+          ) : (
+            <RoundButton
+              testID="machine-isolation-add.install"
+              size="normal"
+              title={t('common.install')}
+              disabled={!kindSetup.setup.review?.prepared || kindSetup.setup.pending !== null}
+              loading={kindSetup.setup.pending !== null}
+              onPress={() => { void kindSetup.setup.apply(); }}
+            />
+          )
+        ) : step === 'kind' ? (
           <RoundButton
             testID="machine-isolation-add.continue"
             size="normal"
@@ -148,6 +177,8 @@ export function MachineIsolationAddSandboxModal(
                   ? t('machinePresets.setup.tab.checkAgain')
                   : picked.action.label
             }
+            loading={!pickedReady && picked.repairPending === true}
+            disabled={!pickedReady && picked.action.disabled === true}
             onPress={!pickedReady && picked.action.kind === 'choose' ? catalog.catalog.refresh : picked.action.onPress}
           />
         ) : (
@@ -221,6 +252,8 @@ export function MachineIsolationAddSandboxModal(
               pickedId={picked?.id ?? null}
               onPick={setPickedId}
             />
+          ) : installs ? (
+            <MachineIsolationKindSetupBody serverId={props.serverId} machineName={props.machineName} kind={kindSetup} />
           ) : step === 'setup' && picked ? (
             <MachineIsolationSetupStep machineName={props.machineName} card={picked} />
           ) : selection ? (
@@ -359,7 +392,9 @@ function MachineIsolationSetupStep(props: Readonly<{ machineName: string; card: 
             ? t('machineDetailPage.isolation.add.setupReady', { kind: card.title })
             : t('machineDetailPage.isolation.add.setupStatement', { kind: card.title })
         }
-        detail={ready ? null : t('machineDetailPage.isolation.add.setupDetail', { machine: props.machineName })}
+        // A Home only this computer can reach is what it needs, not a tool: the step says so, and its action sets the address.
+        detail={ready ? null : card.homeUnreachable ? t('managedMachines.add.homeUnreachable')
+          : t('machineDetailPage.isolation.add.setupDetail', { machine: props.machineName })}
       />
       <ItemGroup testID="machine-isolation-add.setup" title={card.title}>
         <Item

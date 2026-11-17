@@ -188,7 +188,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             readMachineProvisionerCredentialPurposeSelectorPathsV1(provisioner.descriptor, purpose.purpose).length === 0)?.purpose.purpose : undefined;
         // A failed read keeps the offer with a reason and an explicit retry, never an empty disabled card.
         if (readiness.homeUnreachable) homeUnreachable = true;
-        const statusLabel = placement.requiresController ? t('managedMachines.add.chooseController') : needsApp ? t('managedMachines.add.status.needsApp')
+        const statusLabel = placement.requiresController ? '' : needsApp ? t('managedMachines.add.status.needsApp')
             : readiness.homeUnreachable ? t('managedMachines.add.status.needsSetup')
             : readiness.status ? localized(provisioner.contribution.pluginId, readiness.status)
             : readiness.kind === 'needsAccount' ? t('managedMachines.add.status.noAccount')
@@ -204,6 +204,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             canSetUpHere: placement.available && !placement.requiresController
                 && (readiness.canConfigure || readiness.kind === 'unavailable' || repairAction !== undefined),
             ...(readiness.kind !== 'ready' ? { needsSetup: true as const } : {}),
+            ...(readiness.homeUnreachable ? { homeUnreachable: true as const } : {}),
             ...(readiness.repair ? { repairAction: readiness.repair.action,
                 ...(readiness.repair.setupSources ? { setupSources: readiness.repair.setupSources } : {}) } : {}),
             mark: (size: number) => markFor(provisioner, size),
@@ -212,7 +213,8 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             // Amber means "needs you": a service nobody connected or a tool not yet installed is an offer, so it stays quiet.
             status: { tone: readiness.tone === 'ready' && location === 'unknown' ? 'attention' : readiness.tone,
                 label: [statusLabel, location === 'unknown' ? t('managedMachines.add.status.billingUnknown') : null].filter(Boolean).join(' · ') },
-            action: placement.requiresController ? { kind: 'choose', label: t('managedMachines.add.chooseController'),
+            // Its configurator picks the Machine that runs it: the card offers the same Choose as a ready one.
+            action: placement.requiresController ? { kind: 'choose', label: t('managedMachines.add.action.choose'),
                 onPress: () => open(id, undefined), disabled: !catalog.isCurrentFor(id) || hostPending }
             : needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
                 onPress: () => showManagedGetTheAppModal(title) }
