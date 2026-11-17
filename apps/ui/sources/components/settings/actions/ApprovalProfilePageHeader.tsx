@@ -6,12 +6,17 @@ import type { ApprovalProfileV1, ReadableApprovalProfileV1 } from '@happier-dev/
 import { Stack, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { HEADER_ACTIONS_GAP_PX, PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { t } from '@/text';
 
-import { confirmDeleteApprovalProfile, renameApprovalProfile, setApprovalProfileMachineDefault,
+import { confirmDeleteApprovalProfile, createApprovalProfileFromStart, renameApprovalProfile, setApprovalProfileMachineDefault,
     type ApprovalProfileWriter } from './approvalProfileWrites';
+import { buildApprovalProfileSettingsRoute } from './approvalProfileSettingsRoute';
 import { useApprovalProfileMachineNames } from './useApprovalProfileMachineNames';
 
 const stylesheet = StyleSheet.create(() => ({
@@ -19,8 +24,10 @@ const stylesheet = StyleSheet.create(() => ({
 }));
 
 /**
- * A profile's page head: its name and what it changes, Rename and Delete in "…", then the Machines where it is my
- * Sessions' default. A deleted or unknown profile says so instead of showing an Actions list it cannot edit.
+ * A profile's page head: its name and what it changes, then the Machines where it is my Sessions' default. Its owner
+ * shares it (the Artifact share sheet owns grants) and keeps Rename and Delete in "…". Someone it was shared with sees
+ * who shared it and what they may do; a person who can only use it duplicates it to change it.
+ * A deleted or unknown profile says so instead of showing an Actions list it cannot edit.
  */
 export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePageHeader(props: Readonly<{
     profileRow: ReadableApprovalProfileV1 | null;
@@ -33,13 +40,31 @@ export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePage
     const profile = profileRow?.profile ?? null;
     const title = profile?.name ?? t('workflows.triggers.guided.profile.notFoundTitle');
     const screenOptions = React.useMemo(() => ({ headerTitle: title }), [title]);
-    const menu = React.useMemo<PageHeaderMenuAction[]>(() => profileRow ? [
+    const access = profileRow?.access ?? null;
+    const manages = access === 'owner' || access === 'admin';
+    const changes = manages || access === 'edit';
+    const menu = React.useMemo<PageHeaderMenuAction[]>(() => profileRow && changes ? [
         { id: 'rename', testID: 'settings-actions:approval-profile-page:rename', title: t('workflows.triggers.guided.profile.rename'),
             onSelect: () => renameApprovalProfile(write, profileRow) },
-        { id: 'delete', testID: 'settings-actions:approval-profile-page:delete', title: t('common.delete'), destructive: true,
+        ...(manages ? [{ id: 'delete', testID: 'settings-actions:approval-profile-page:delete', title: t('common.delete'), destructive: true,
             // The profile's page has nothing left to show, so it returns to the Actions list it came from.
-            onSelect: async () => { if (await confirmDeleteApprovalProfile(write, profileRow)) router.replace('/settings/actions'); } },
-    ] : [], [profileRow, router, write]);
+            onSelect: async () => { if (await confirmDeleteApprovalProfile(write, profileRow)) router.replace('/settings/actions'); } }] : []),
+    ] : [], [changes, manages, profileRow, router, write]);
+    const share = React.useCallback((event?: unknown) => {
+        if (!profileRow) return;
+        showDocumentShareSheet({ anchor: resolvePressTriggerAnchor(event), kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1,
+            artifactId: profileRow.id, name: profileRow.profile.name, linkPath: buildApprovalProfileSettingsRoute(profileRow.id),
+            kindLabel: t('workflows.triggers.guided.profile.title'), description: t('workflows.triggers.guided.profile.shareDescription') });
+    }, [profileRow]);
+    const duplicate = React.useCallback(async () => {
+        if (!profileRow) return;
+        const created = await createApprovalProfileFromStart(write, profileRow.profile);
+        if (created) router.push(buildApprovalProfileSettingsRoute(created.id));
+    }, [profileRow, router, write]);
+    const meta = React.useMemo<PageHeaderMetaFact[] | undefined>(() => !profileRow || manages ? undefined : [
+        ...(profileRow.ownerDisplayName ? [{ key: 'owner', text: t('workflows.triggers.guided.profile.sharedBy', { name: profileRow.ownerDisplayName }) }] : []),
+        { key: 'access', text: t(changes ? 'workflows.triggers.guided.profile.sharedWithYouToChange' : 'workflows.triggers.guided.profile.sharedWithYouToUse') },
+    ], [changes, manages, profileRow]);
     return (
         <>
             <Stack.Screen options={screenOptions} />
@@ -48,10 +73,18 @@ export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePage
                 title={title}
                 description={profile ? t('workflows.triggers.guided.profile.pageDescription')
                     : t('workflows.triggers.guided.profile.notFoundDescription')}
+                {...(meta ? { meta } : {})}
                 actions={profile ? (
                     <View style={stylesheet.headerActions}>
+                        {manages ? (
+                            <SectionActionButton testID="settings-actions:approval-profile-page:share" icon="users"
+                                title={t('workflows.triggers.guided.profile.share')} onPress={share} />
+                        ) : changes ? null : (
+                            <SectionActionButton testID="settings-actions:approval-profile-page:duplicate" icon="copy"
+                                title={t('workflows.triggers.guided.profile.duplicateToChange')} onPress={() => { void duplicate(); }} />
+                        )}
                         {props.machineChip}
-                        <PageHeaderMenu testID="settings-actions:approval-profile-page:menu" actions={menu} />
+                        {menu.length > 0 ? <PageHeaderMenu testID="settings-actions:approval-profile-page:menu" actions={menu} /> : null}
                     </View>
                 ) : undefined}
             />
