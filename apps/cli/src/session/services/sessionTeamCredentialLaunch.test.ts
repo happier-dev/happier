@@ -58,11 +58,11 @@ const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
       endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
   }],
 });
-const options: SpawnSessionOptions = {
+const options = {
   directory: '/tmp/team-launch',
   modelSelection: { v: 1, ref: { agentTargetKey: target, providerConnectionId: null, modelId: 'gpt-6-luna' }, updatedAt: 1 },
   connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': selection } },
-};
+} satisfies SpawnSessionOptions;
 const applications = resource.providerModels.map(entry => entry.application);
 
 describe('Session Team launch composition', () => {

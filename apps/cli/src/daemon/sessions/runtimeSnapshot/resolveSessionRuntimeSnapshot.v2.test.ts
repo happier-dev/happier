@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import { resolveSessionRuntimeSnapshot } from './resolveSessionRuntimeSnapshot';
@@ -13,7 +14,7 @@ describe('resolveSessionRuntimeSnapshot connected-services V2', () => {
   it.each([
     { v: 2, updatedAt: 20, ref: { source: 'native', agentTargetKey, modelId: 'requested-model' } },
     { v: 2, updatedAt: 20, ref: { source: 'account_provider_connection', agentTargetKey,
-      providerConnectionId: 'provider-new', modelId: 'requested-model' } },
+      providerConnectionId: ProviderConnectionIdSchema.parse('provider-new'), modelId: 'requested-model' } },
     teamSelection,
   ] satisfies SessionModelSelection[])(
     'keeps incoming $ref.source usable at native resume', selection => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
@@ -707,7 +708,7 @@ describe('requestInactiveSessionResume', () => {
       credentials, sessionId: 'session-1', localId: 'local-1', rawSession: rawSession(), metadata,
       incomingOptions: { modelSelection: { v: 2, updatedAt: 300, ref: {
         source: 'account_provider_connection', agentTargetKey: 'agent:happier.agent.claude/claude',
-        modelId: 'model-a', providerConnectionId: 'pc_work',
+        modelId: 'model-a', providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
       } } },
     })).resolves.toMatchObject({ ok: false, code: 'unsupported' });
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE }));
