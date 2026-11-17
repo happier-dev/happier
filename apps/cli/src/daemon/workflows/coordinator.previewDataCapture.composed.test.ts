@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
@@ -38,6 +39,8 @@ import { DeploymentEnvironmentGetResultV1Schema, DeploymentTargetLinkInputV1Sche
 import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { resolveDeploymentPreviewWorkflowSourceForHost } from '@/deployments/previewWorkflowSourceForHost';
@@ -149,6 +152,10 @@ describe('Workflow preview data creation capture composition', () => {
         app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
         app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
         app.get('/v1/account/profile', async () => ({ id: accountId }));
+        app.post(managedMachineActionEndpointPathV1('machines.managed.list'), async request => {
+            expect(request.body).toEqual({ homeId: 'home', enrolledMachineId: machineId });
+            return { machines: [] };
+        });
         app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
         app.get('/v1/projects/sources/repository-source', async () => ({ ok: true, canManage: true, source: {
             id: 'repository-source', revision: 1, name: 'App', owner: { kind: 'account', accountId }, audience: [], createdByAccountId: accountId } }));
@@ -244,7 +251,13 @@ describe('Workflow preview data creation capture composition', () => {
             let approvalAction: string | undefined;
             let approvalRequest: ReturnType<typeof ApprovalRequestV2Schema.parse> | null = null;
             // Raw deploy intent uses the normal policy hold. Native deploy preflight/execution is a separate composed gate.
-            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), deploymentAction: native.deploymentAction,
+            const fixtureHost = { token, credentials, sessionId: '', mode: 'plain', ctx: null,
+                serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: origin, runtimeActionMachineId: machineId,
+            } satisfies Parameters<typeof createCliActionExecutorHarness>[0];
+            const { executor } = createCliActionExecutorHarness(fixtureHost,
+            { ...createUnavailableActionTransportDeps(), deploymentAction: native.deploymentAction,
+                managedMachineAction: createAccountServerActionDeps({ token, credentials, serverId: 'home',
+                    serverIdentityId: 'home', serverHttpBaseUrl: origin }).managedMachineAction,
                 prepareDeploymentEnvironmentCreate: native.prepareDeploymentEnvironmentCreate,
                 resolveEnvironmentApprovalScope: native.resolveEnvironmentApprovalScope,
                 approvalsCreate: async ({ request }) => {
@@ -328,7 +341,8 @@ describe('Workflow preview data creation capture composition', () => {
             const workflowReads = createWorkflowRunActionOwner({ storage: stored, resolveAccountId: async () => accountId,
                 definitions: { get: async () => { throw new Error('No saved Workflow definition is read'); } },
                 resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }) });
-            const closeExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), deploymentAction: native.deploymentAction,
+            const { executor: closeExecutor } = createCliActionExecutorHarness(fixtureHost,
+                { ...createUnavailableActionTransportDeps(), deploymentAction: native.deploymentAction,
                 resolveEnvironmentApprovalScope: native.resolveEnvironmentApprovalScope,
                 workflowAction: async request => {
                     if (request.actionId !== 'workflow.run.invocations.list') throw new Error('Close reads only captured invocations');
