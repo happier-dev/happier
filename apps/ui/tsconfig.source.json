@@ -3937,6 +3937,7 @@
     "sources/theme/css/themeCssResourcePolicy.ts",
     "sources/theme/css/themeStylesheet.ts",
     "sources/theme/css/themeStylesheet.web.ts",
+    "sources/theme/css/themeSurfacePaintMap.ts",
     "sources/theme/profiles/createThemeProfileDraft.ts",
     "sources/theme/profiles/index.ts",
     "sources/theme/profiles/shareThemePlugin.ts",
