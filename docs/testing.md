@@ -12,6 +12,7 @@ Canonical lanes:
 - `pnpm run test:e2e:core:fast` — default local core e2e loop.
 - `pnpm run test:e2e:core:slow` — long orchestration core e2e.
 - `pnpm run test:e2e:ui` — Playwright UI/browser e2e exercising real UI + server + CLI/daemon flows.
+- `pnpm run test:affected -- <files> | --commit <sha>` — the core-e2e, ui-e2e, contract and owner unit tests whose import graph (Vitest related mode) reaches the named files, run through each suite's runner. v0.3 CI runs the same selection per push (`e2e-core`, `journey-ui`); the full suites run nightly on v0.3, dispatched by the default branch's schedule.
 - `pnpm run test:agents` — executable Agent runtime contracts; opt-in/flag-driven. The historical script name is retained for runner compatibility and does not refer to first-class model Providers.
 - `pnpm run test:db-contract:docker` — server DB contract via Docker.
 - `pnpm run test:plugin-platform:source` — current-source Plugin Platform owner contracts and public-only external-author/runtime fixtures. It never packs or installs an SDK, UI, CLI, or plugin archive.

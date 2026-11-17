@@ -6,6 +6,8 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_SPEC_WEIGHT_SECONDS = 120;
+// The CI matrix size of the full UI E2E run (tests.yml ui-e2e).
+export const UI_E2E_FULL_SHARD_TOTAL = 18;
 
 // Measured from the slow-file summaries in successful canonical 0.2 CI run
 // 34480153195. New and ordinary specs use the conservative default above.
@@ -71,13 +73,32 @@ export function partitionUiE2eSpecs({
   return partitions.map((partition) => partition.specs.sort());
 }
 
+/**
+ * Shards for a selected subset: the selection's share of the full suite's
+ * measured weight, applied to the full shard count, so a selected run keeps
+ * the same per-shard duration the full run was sized for.
+ */
+export function planSelectedUiE2eShards({
+  selected,
+  all,
+  fullShardTotal = UI_E2E_FULL_SHARD_TOTAL,
+  weights = UI_E2E_DURATION_WEIGHTS_SECONDS,
+  defaultWeight = DEFAULT_SPEC_WEIGHT_SECONDS,
+}) {
+  const specs = [...new Set(selected)];
+  if (specs.length === 0) return [];
+  const weigh = (list) => list.reduce((sum, spec) => sum + (weights.get(spec) ?? defaultWeight), 0);
+  const shardTotal = Math.min(specs.length, Math.max(1, Math.ceil(fullShardTotal * weigh(specs) / weigh([...new Set([...all, ...specs])]))));
+  return partitionUiE2eSpecs({ specs, shardTotal, weights, defaultWeight });
+}
+
 function parseArgs(argv) {
   const shardIndex = argv.indexOf('--shard');
   const shardValue = shardIndex >= 0 ? argv[shardIndex + 1] : undefined;
   return parseUiE2eShard(shardValue);
 }
 
-function listUiE2eSpecs(repoRoot) {
+export function listUiE2eSpecs(repoRoot) {
   const specDir = path.join(repoRoot, 'packages', 'tests', 'suites', 'ui-e2e');
   return fs.readdirSync(specDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.spec.ts'))

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   partitionUiE2eSpecs,
   parseUiE2eShard,
+  planSelectedUiE2eShards,
 } from './select-ui-e2e-shard.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -86,4 +87,16 @@ test('UI E2E shard parsing rejects malformed and out-of-range selectors', () => 
   assert.throws(() => parseUiE2eShard('0/18'), /between 1 and 18/);
   assert.throws(() => parseUiE2eShard('19/18'), /between 1 and 18/);
   assert.throws(() => parseUiE2eShard('3'), /current\/total/);
+});
+
+test('a selected subset gets the share of the full shard count its measured weight takes', () => {
+  const all = Array.from({ length: 36 }, (_, index) => `packages/tests/suites/ui-e2e/s${String(index).padStart(2, '0')}.spec.ts`);
+  const weights = new Map([[all[0], 120 * 18]]);
+  // The heavy spec alone takes 34% of the measured suite weight, but one spec cannot split.
+  assert.deepEqual(planSelectedUiE2eShards({ selected: [all[0]], all, weights }), [[all[0]]]);
+  const half = all.slice(1, 19);
+  const shards = planSelectedUiE2eShards({ selected: half, all, weights });
+  assert.equal(shards.length, 7); // ceil(18 * 2160 / 6360)
+  assert.deepEqual(shards.flat().sort(), half);
+  assert.deepEqual(planSelectedUiE2eShards({ selected: [], all, weights }), []);
 });

@@ -91,6 +91,8 @@
     "vitest:local": "vitest",
     "test:integration": "apps/stack/bin/hstack-exec --script=test:integration:local",
     "test:integration:local": "node --experimental-strip-types scripts/testing/runRootTests.ts integration",
+    "test:affected": "apps/stack/bin/hstack-exec --script=test:affected:local",
+    "test:affected:local": "node --experimental-strip-types scripts/testing/runAffectedTests.ts",
     "test:e2e": "pnpm --filter @happier-dev/tests run test",
     "test:e2e:core": "pnpm --silent run test:e2e",
     "test:e2e:core:fast": "pnpm --filter @happier-dev/tests run test:core:fast",

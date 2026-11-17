@@ -42,13 +42,18 @@ export function resolveFixedRootTestCommands(lane: string | undefined): readonly
   throw new Error(`Unsupported root test lane: ${lane ?? '<missing>'}`);
 }
 
-async function selectUnitFileCommands(files: readonly string[], rootDir: string): Promise<readonly CommandSuiteEntry[]> {
-  const manifests = await discoverWorkspaceManifests(rootDir);
-  const commands = ROOT_TEST_COMMANDS.unit.map(command => {
+/** Each root unit command with the workspace directory it tests; the one map from files to unit commands. */
+export function resolveRootUnitCommandOwners(manifests: Awaited<ReturnType<typeof discoverWorkspaceManifests>>) {
+  return ROOT_TEST_COMMANDS.unit.map(command => {
     const [selector, workspace] = command.args;
     return { command, owner: manifests.find(manifest => selector === '--dir'
       ? manifest.workspaceDirectory === workspace : manifest.packageName === workspace)?.workspaceDirectory };
   });
+}
+
+async function selectUnitFileCommands(files: readonly string[], rootDir: string): Promise<readonly CommandSuiteEntry[]> {
+  const manifests = await discoverWorkspaceManifests(rootDir);
+  const commands = resolveRootUnitCommandOwners(manifests);
   const selected = new Map<string, Set<string>>();
   // Validate the complete request before dispatching: a typo must never widen a focused run.
   for (const file of files) {

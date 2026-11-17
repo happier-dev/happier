@@ -112,6 +112,8 @@ Canonical top-level lanes:
 - `yarn test:agents`
 - `yarn test:db-contract:docker`
 
+Before hand-off, run the tests that reach your change: `pnpm test:affected -- <your changed files>` (or `-- --commit <sha>`; add `--list` to see the selection only). It routes to a worker, selects with Vitest's related mode (each test file's import graph) the core-e2e (fast and slow), ui-e2e, contracts and composed tests that import your files, plus the owner unit tests in your files' folders, and runs them through each suite's own runner. Name your files: the shared tree's other dirty files are not your change. The import graph stops at a process boundary, so server, daemon or UI code a journey reaches only through a spawned process is not selected; the nightly full v0.3 run covers it. A flow change updates its journey test in the same commit.
+
 CLI lane rule:
 - `apps/cli` unit tests must not force a full CLI `dist` build.
 - Use the lane-specific global setup files:
