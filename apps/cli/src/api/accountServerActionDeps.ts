@@ -861,11 +861,8 @@ export function createAccountServerActionDeps(input: Readonly<{
             credentials, serverId: targetServerId, signal, selection: { kinds: ['workspace-ref', 'relationship-graph'] },
           }));
           const rows = observation.snapshot;
-          const machines = await listCurrentAccountMachines({ token: credentials.token, serverHttpBaseUrl, signal });
           const actual = await observeProjectServicePlacementActualV1({ ...request,
             workspaceRefs: rows.workspaceRefs, relationships: rows.relationships,
-            childMachineProjections: machines.flatMap(machine => machine.devcontainerChild
-              ? [{ serverId: targetServerId, machineId: machine.id, projection: machine.devcontainerChild }] : []),
             readChildMachines: async machineIds => {
               const localProfileId = configuration.activeServerId;
               const { readWorkspaceSyncChildMachineFacts } = await import('@/workspaces/sync/workspaceSyncTargetAuthority');

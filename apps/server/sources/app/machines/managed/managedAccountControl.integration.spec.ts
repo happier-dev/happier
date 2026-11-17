@@ -76,7 +76,7 @@ describe('Account-owned managed control without a controller', () => {
         return { owner, other, guest, controller, row, resource };
     }
 
-    it.each([false, true])('routes a bound workspace only through its retained native controller (controller present=%s)', async withController => {
+    it.each([false, true])('keeps a container workspace on the admitted guest without a host-root alias (controller present=%s)', async withController => {
         const test = await createRetainedGuestFixture(withController);
         const provider = { pluginId: 'happier.devcontainer', localId: 'devcontainer' };
         await db.managedMachine.update({ where: { id: test.row.id }, data: { enrolledMachineId: test.guest.id,
@@ -87,8 +87,8 @@ describe('Account-owned managed control without a controller', () => {
         expect(await inTx(tx => readMachineDevcontainerWorkspaceSyncEndpointInTx(tx, {
             accountServerId: homeId, machineId: test.guest.id, rootPath: '/work',
             operation: { actorAccountId: test.owner.id, callerAuthority: 'present_user', rpcMethod: 'daemon.workspaceSync.handoffSourcePhase.v1' },
-        }))).toEqual(test.controller ? { custodianAccountId: test.owner.id, machineId: test.controller.machineId,
-            installationId: test.controller.installationId } : null);
+        }))).toEqual({ custodianAccountId: test.owner.id, machineId: test.guest.id,
+            installationId: test.guest.installationId });
     });
 
     it.each(['native', 'child', 'bind'] as const)('routes a member folder to the enrolled guest daemon (%s storage)', async storage => {

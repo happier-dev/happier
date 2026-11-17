@@ -4347,8 +4347,9 @@ for a viewer without Manage.
 
 Guest setup and Agent-start continuation seal fresh child-invocation codec
 material to the exact enrolled installation under current Home authority; the
-guest keeps its own Account custody. Native devcontainer bind prepare/release
-uses existing prepared workspace records and exact controller mapping. This is
+guest keeps its own Account custody. Workspace operations stay on the admitted
+guest; there is no host bind-root alias. Previously prepared operations may
+release their existing custody, without admitting fresh host-root effects. This is
 not permission to run commands or read arbitrary files in another person's
 Machine namespace; ordinary isolation requirements still apply.
 
@@ -4524,8 +4525,15 @@ relative configuration paths resolve from `.devcontainer`. Distinct sources
 keep separate files so presets sharing a workspace do not overwrite each other.
 The launch and retained resource keep the embedded source for later realization
 and rebuild. Existing file launches continue to read the authored file. The same
-options Action fields drive agents and the preset editor, and native effect
-review discloses workspace and additional bind mounts. Existing Machine labels
+options Action fields drive agents and the preset editor. Project files places
+content inside the sandbox. Image launches use an owned workspace volume;
+advanced file/inline launches retain their relative configuration origin and
+use a generated native workspace-volume override. Native effect review rejects
+resolved host binds in any Compose service and leaves opaque mount declarations,
+mount-bearing run arguments and unresolved volume drivers unavailable. Authored
+host configuration/build sources are not mounted into the placed workspace.
+Lima launch/options likewise accept only an empty mounts list; retained native
+resource observations still support inspection and deletion of old instances. Existing Machine labels
 and Compose namespaces select a separate primary container per managed Machine.
 This is an unpublished plugin schema change: reload matching Protocol, SDK,
 controller declarations and clients together. Existing retained resources keep

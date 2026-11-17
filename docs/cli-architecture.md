@@ -4136,7 +4136,13 @@ Shared Docker state has no automatic Remove.
 `packages/plugins/devcontainer` contributes through the existing
 `machineProvisioners` family. Its acquire role runs Devcontainer `up`; native
 Docker inspection and child execution then establish the actual container id,
-OS user, workspace root, bind source and named volumes. Discovery never runs
+OS user, workspace root and named volumes. Placed containers use their own
+filesystem; Project files delivers Copy once, Git clone or explicit sync. The
+image path creates a per-Machine workspace volume. Advanced configurations use
+a generated native override beside the authored configuration, retaining its
+relative build paths while replacing the default workspace bind with a volume.
+Native effect review refuses resolved host binds and returns typed unavailable
+for opaque additional mount declarations or mount-bearing run arguments. Discovery never runs
 initialization or lifecycle hooks. Retained-resource inspection uses Docker
 facts and remains passive for running, stopped and paused children. Private
 bootstrap exec/file roles address the retained container id and recheck its
@@ -4146,7 +4152,8 @@ effects are checked before the native command. Binary
 installation, credentials and registration remain with the ordinary managed
 enrollment owner in `machines/managed/enrollment.ts`.
 
-Native Stop retains the container, bind source and named volumes. Exact container
+Native Stop retains the container and named volumes. Legacy bind resources
+remain inspectable and deletable, but cannot restart or execute Agent commands. Exact container
 deletion uses no volume-removal option. The reviewed rebuild role rechecks the
 retained id and selected config's container inventory, removes only that exact
 container without deleting volumes, then realizes and observes its replacement.

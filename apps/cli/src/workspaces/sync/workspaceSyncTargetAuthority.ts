@@ -9,14 +9,11 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError, type ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
-import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
-import { resolveCliHomeTarget } from '@/server/homeTarget';
-import { configuration } from '@/configuration';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { openManagedMachineRead, readManagedMachineFull, readManagedMachineReads } from '@/machines/managed/readManagedMachine';
-import { ManagedInspectOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isManagedDevcontainerChildProjectionCurrentV1, deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -24,7 +21,6 @@ import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/s
 import { isDeepStrictEqual } from 'node:util';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { randomUUID } from 'node:crypto';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
@@ -348,7 +344,6 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
   controllerOwnedChild?: Readonly<{ controllerMachineId: string; admission: SocketRpcMachineAdmissionContextV1;
     verifyCurrent(): Promise<boolean> }>;
 }>): Promise<readonly WorkspaceSyncChildMachineFacts[]> {
-  const localProfileId = input.localProfileId ?? configuration.activeServerId;
   return await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
     const { ApiClient } = await import('@/api/api');
     if (!input.authorization && !input.credentials) throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
@@ -431,27 +426,6 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
         controllerMachineId: managedMachine.controller?.machineId, enrolledMachineId: managedMachine.enrolledMachineId,
         resource: managedMachine.resource }) : machine?.metadata?.devcontainerChild;
       if (!projection) continue;
-      if (projection.observation.storage.kind === 'bind' && input.purpose !== 'child_namespace') {
-        try {
-          let target = input.homeTarget;
-          if (!target) {
-            try {
-              target = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: localProfileId });
-            } catch (error) {
-              if (!(error instanceof HomeTargetResolutionError) || error.code !== 'profile_missing') throw error;
-              target = await resolveCliHomeTarget({ kind: 'https_url', url: input.serverHttpBaseUrl });
-            }
-          }
-          const observed = await observeServerFeaturesSnapshot({ serverUrl: input.serverHttpBaseUrl, signal: input.signal });
-          const observedHomeId = observed.status === 'ready' ? observed.features.capabilities.serverIdentity.serverIdentityId : null;
-          if (!observedHomeId || assertResolvedHomeTargetIdentity(target, observedHomeId) !== input.serverId) {
-            throw authorityError('workspace_sync_child_unavailable', 'The physical bind Home identity is unavailable');
-          }
-        } catch {
-          input.signal?.throwIfAborted();
-          throw authorityError('workspace_sync_child_unavailable', 'The physical bind Home identity is unavailable');
-        }
-      }
       const installationId = retainedManaged ? owned!.admission.installationId : machine?.installationId;
       if (!installationId || !retainedManaged && machine?.metadata?.username !== projection.observation.user) {
         throw authorityError('workspace_sync_child_unavailable', 'Child installation or native user is unavailable');
@@ -474,51 +448,7 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       }
       const nativeController = managedMachine.controller;
       if (!nativeController) throw authorityError('workspace_sync_child_unavailable', 'The physical child controller is unavailable');
-      let controller: WorkspaceSyncChildMachineFacts['controller'] = { ...nativeController, available: false };
-      if (projection.observation.storage.kind === 'bind' && (input.purpose ?? 'physical_sync') === 'physical_sync') {
-        if (managedMachine.controllerAccess) controller = { ...nativeController, available: true };
-        else {
-        try {
-          const current = await readMachine(nativeController.machineId);
-          controller = { machineId: current?.id ?? '', installationId: current?.installationId ?? '',
-            available: current?.active === true && current.revokedAt == null && !current.replacedByMachineId };
-        } catch {
-          input.signal?.throwIfAborted();
-          // Native controller failure is a factual unavailable result; child-local execution does not consume it.
-        }
-        }
-        if (controller.available && controller.installationId === nativeController.installationId) {
-          try {
-            if (input.authorization && !input.externalAction) throw authorityError('workspace_sync_child_unavailable', 'Requester transport authority is unavailable');
-            if (!input.credentials) throw authorityError('workspace_sync_child_unavailable', 'Requester transport custody is unavailable');
-            const request = { homeId: input.serverId, managedId: managedMachine.id };
-            const native = managedMachine.controllerAccess && !input.authorization
-              ? await dispatchOriginalAccountAction({ actionId: 'machines.managed.inspect', input: request,
-                target: { kind: 'machine', machineId: nativeController.machineId },
-                credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
-                serverIdentityId: input.serverId, requestId: randomUUID(), ...(input.signal ? { signal: input.signal } : {}) })
-              : null;
-            if (native && !native.ok) throw authorityError('workspace_sync_child_unavailable', 'Native controller inspection was refused');
-            const inspected = ManagedInspectOutputV1Schema.parse(native?.ok ? native.result : await callExactMachineRpc({ credentials: input.credentials,
-              serverUrl: input.serverHttpBaseUrl, machineId: nativeController.machineId,
-              method: 'machines.managed.inspect', request,
-              ...(input.externalAction ? { externalAction: input.externalAction } : {}),
-              requireCurrentMachine: true, timeoutMs: null, signal: input.signal }));
-            if (inspected.machine.observation?.availability !== 'present'
-              || inspected.machine.controller?.machineId !== nativeController.machineId
-              || inspected.machine.custodianAccountId !== managedMachine.custodianAccountId
-              || inspected.machine.controller?.installationId !== controller.installationId
-              || !isManagedDevcontainerChildProjectionCurrentV1({ homeId: input.serverId, machineId,
-                projection, managedMachine: inspected.machine })) {
-              throw authorityError('workspace_sync_child_unavailable', 'Native child storage is no longer current');
-            }
-            managedMachine = { ...inspected.machine, ...(managedMachine.controllerAccess ? { controllerAccess: managedMachine.controllerAccess } : {}) };
-          } catch {
-            input.signal?.throwIfAborted();
-            throw authorityError('workspace_sync_child_unavailable', 'Native child storage is unavailable');
-          }
-        }
-      }
+      const controller: WorkspaceSyncChildMachineFacts['controller'] = { ...nativeController, available: false };
       if (retainedManaged && !await owned!.verifyCurrent()) throw authorityError('workspace_sync_child_unavailable', 'Current child admission is unavailable');
       facts.push({ serverId: input.serverId, machineId, installationId,
         projection, managedMachine, controller });

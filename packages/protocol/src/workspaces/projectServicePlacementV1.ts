@@ -6,8 +6,8 @@ import { DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLa
   LocalServiceLaunchTargetV1Schema, type DaemonLocalServiceLauncherSnapshotRequestV1 } from '../local/services/launcher/v1.js';
 import { getWorkspaceSyncWorkerCopyV1, type WorkspaceSyncRelationshipV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import type { WorkspaceRefV1 } from './workspaceRefV1.js';
-import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, selectWorkspaceSyncEndpointAliases,
-  type WorkspaceSyncChildMachineFacts, type WorkspaceSyncChildMachineProjection } from './workspaceSyncTopology.js';
+import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint,
+  type WorkspaceSyncChildMachineFacts } from './workspaceSyncTopology.js';
 import { resolveWorkspaceRefV1, type WorkspaceRefResolutionContextV1 } from './workspaceRefResolutionV1.js';
 import { createProjectServiceDeclarationTargetIdV1 } from '../local/services/actions/v1.js';
 import { ProjectExecutionChoiceV1Schema, WorkspaceExecutionConfigAddressV1Schema,
@@ -102,7 +102,6 @@ export async function observeProjectServicePlacementActualV1(input: Readonly<{
   workspace: ProjectServicePlacementGetV1['workspace']; serviceName: string;
   workspaceRefs: readonly WorkspaceRefV1[]; relationships: readonly WorkspaceSyncRelationshipV1[];
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
-  childMachineProjections?: readonly WorkspaceSyncChildMachineProjection[];
   readChildMachines?(machineIds: readonly string[]): Promise<readonly WorkspaceSyncChildMachineFacts[]>;
   context?: WorkspaceRefResolutionContextV1;
   readSnapshot(request: DaemonLocalServiceLauncherSnapshotRequestV1): Promise<unknown>;
@@ -133,8 +132,8 @@ export async function observeProjectServicePlacementActualV1(input: Readonly<{
     const physicalIds = new Set([sourceEndpoint.endpoint.id,
       ...(component?.relationships.flatMap(edge => [edge.alphaWorkspaceRefId, edge.betaWorkspaceRefId]) ?? [])]);
     const server = (id: string) => input.context?.normalizeServerId?.(id.trim()) ?? id.trim();
-    const scopedRefs = selectWorkspaceSyncEndpointAliases({ workspaceRefs: input.workspaceRefs.filter(ref => server(ref.serverId) === server(source.ref.serverId)),
-      physicalWorkspaceRefIds: physicalIds, childMachines: input.childMachineProjections ?? input.childMachines ?? [], context: input.context });
+    const scopedRefs = input.workspaceRefs.filter(ref => physicalIds.has(ref.id)
+      && server(ref.serverId) === server(source.ref.serverId));
     const childMachines = input.readChildMachines ? [...(sourceFacts ?? []), ...await input.readChildMachines(
       [...new Set(scopedRefs.map(ref => ref.machineId))].filter(machineId => machineId !== source.ref.machineId))] : input.childMachines;
     if (!await input.isCurrent()) return unavailable('observation_changed');

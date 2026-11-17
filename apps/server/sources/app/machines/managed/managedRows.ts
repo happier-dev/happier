@@ -17,7 +17,6 @@ import { ExternalActionRetainedWorkflowRootV1Schema } from '@happier-dev/protoco
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedResourceV1, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
-import { isWorkspaceSyncDevcontainerBindRootV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
 import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
 import { PluginJsonValueV2Schema, type PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contributions/jsonSchema";
@@ -546,7 +545,7 @@ async function readCurrentMachineManagedEnrollmentsInTx(tx: Tx, machineIds: read
     return result;
 }
 
-/** A current workspace executes on its bind controller, or on the admitted Machine's own storage. */
+/** A current workspace executes on the admitted Machine's own storage. */
 export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, input: Readonly<{
     accountServerId: string; machineId: string; rootPath: string;
     operation: Readonly<{ actorAccountId: string; rpcMethod: string }> & MachineOperationRequesterContext;
@@ -562,17 +561,7 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
     if (!row || row.homeId !== input.accountServerId) return null;
     const resource = readCurrentStoredManagedResource(row);
     if (!resource) return null;
-    if (!isWorkspaceSyncDevcontainerBindRootV1({ observation: resource.devcontainerObservation, rootPath: input.rootPath })) {
-        return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
-    }
-    const controller = readManagedController(row);
-    if (!controller) return null;
-    const parent = await tx.machine.findUnique({ where: { id: controller.machineId } }).then(decodeMachineStoredContent);
-    if (!parent || parent.accountId !== row.custodianAccountId
-        || classifyMachineAvailabilityState(parent) !== 'available'
-        || !isMachineOperationSupportedForRequester({ ...input.operation, machine: parent })
-        || parent.installationId !== controller.installationId) return null;
-    return { custodianAccountId: row.custodianAccountId, machineId: parent.id, installationId: controller.installationId };
+    return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
 }
 
 /** Physical workspace routing consumes the retained enrollment/controller fact, never Machine metadata. */
@@ -613,12 +602,9 @@ export async function readMachineDevcontainerWorkspaceSyncRouteInTx(tx: Tx, inpu
         return { custodianAccountId: parent.accountId, parentMachineId: input.parentMachineId,
             parentInstallationId: parent.installationId };
     }
-    const endpoint = await readMachineDevcontainerWorkspaceSyncEndpointInTx(tx, {
-        accountServerId: input.accountServerId, machineId: input.childMachineId, rootPath: input.childRootPath,
-        operation: input.operation });
-    if (!endpoint || endpoint.machineId === input.childMachineId || endpoint.machineId !== input.parentMachineId) return null;
-    return { custodianAccountId: endpoint.custodianAccountId, parentMachineId: endpoint.machineId,
-        parentInstallationId: endpoint.installationId };
+    // Former host-root forwarding cannot admit new filesystem work. Retained
+    // prepared operations above may still release their original custody.
+    return null;
 }
 
 function readCurrentStoredManagedResource(row: StoredManagedMachine): ManagedResourceV1 | null {

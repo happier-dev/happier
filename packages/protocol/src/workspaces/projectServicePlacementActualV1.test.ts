@@ -88,7 +88,7 @@ describe('actual service placement through admitted Sync endpoints', () => {
         provenance: 'default', revision: 'absent', actual })).toMatchObject({ actual });
     }
   });
-  it.each(['source', 'worker'] as const)('observes a bind child %s namespace on a paused physical component without requiring its controller', async childRole => {
+  it.each(['source', 'worker'] as const)('observes the child %s as its own physical endpoint on a paused component', async childRole => {
     const source = { id: 'source', serverId: 'home', machineId: 'source-machine', rootPath: '/source', createdAtMs: 1 };
     const worker = { ...source, id: 'worker', machineId: 'worker-machine', rootPath: '/worker' };
     const child = { ...source, id: 'child', machineId: 'child-machine', rootPath: '/work/custom' };
@@ -108,8 +108,10 @@ describe('actual service placement through admitted Sync endpoints', () => {
       controller: { ...controller, available: false },
     }] satisfies readonly WorkspaceSyncChildMachineFacts[];
     const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-    const relationship = { v: 1, relationshipId: 'physical-link', controllerMachineId: source.machineId,
-      alphaWorkspaceRefId: source.id, betaWorkspaceRefId: worker.id, mode: 'keep_synced', enabled: false,
+    const syncSource = childRole === 'source' ? child : source;
+    const syncWorker = childRole === 'worker' ? child : worker;
+    const relationship = { v: 1, relationshipId: 'physical-link', controllerMachineId: syncSource.machineId,
+      alphaWorkspaceRefId: syncSource.id, betaWorkspaceRefId: syncWorker.id, mode: 'keep_synced', enabled: false,
       contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1,
     } satisfies WorkspaceSyncRelationshipV1;
     const target = { id: 'actual', source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'instance' },
@@ -138,7 +140,6 @@ describe('actual service placement through admitted Sync endpoints', () => {
     })).toEqual({ status: 'present', target });
     const { childMachines: _facts, ...passiveInput } = input;
     const scopedInput = { ...passiveInput, workspaceRefs: [...input.workspaceRefs, unrelated],
-      childMachineProjections: [...childMachines, unrelatedFact],
       readChildMachines: async (machineIds: readonly string[]) => {
         if (machineIds.includes(unrelated.machineId)) throw new Error('Unrelated retired Machine must not be acquired');
         return childMachines.filter(fact => machineIds.includes(fact.machineId));

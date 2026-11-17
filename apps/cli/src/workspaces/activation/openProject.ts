@@ -7,7 +7,7 @@ import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
-import { isWorkspaceSyncDevcontainerBindRootV1, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { WorkspaceAddressV1, WorkspaceProjectFactsV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -306,10 +306,6 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
             ...(credentials ? { credentials } : {}), machineIds: [sourceMachineId, runtime.machineId], signal: context.signal,
             ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}) });
           const source = sourceWorkspaceRefId ? resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId, id: sourceWorkspaceRefId }) : null;
-          if (!requester.rows.authorization && childMachines.some(child => child.projection.observation.storage.kind === 'bind'
-            && ((child.machineId === sourceMachineId && source?.kind !== 'resolved') || (child.machineId === runtime.machineId && !target)))) {
-            return refused('workspace_sync_child_unavailable');
-          }
           if (requester.rows.authorization) {
             if (source?.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
             admittedSyncSource = source.ref;
@@ -430,16 +426,6 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         selector, ref, subdir, registry: runtime.registry, signal: context.signal, sync,
         onEffectsIssued: () => { effectsIssued = true; },
       });
-      if (child?.projection.observation.storage.kind === 'bind'
-        && isWorkspaceSyncDevcontainerBindRootV1({ observation: child.projection.observation, rootPath: checkout.rootPath })) {
-        const parent = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId,
-          machineId: child.controller.machineId, rootPath: child.projection.observation.storage.hostPath });
-        if (parent.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
-        parentWorkspace = workspaceAddressFromRefV1(parent.ref);
-        facts = { ...facts,
-          ...(parent.ref.repositoryIdentity ? { repositoryIdentity: parent.ref.repositoryIdentity } : {}),
-          ...(parent.ref.source ? { source: parent.ref.source } : {}) };
-      }
       if (checkout.repositoryIdentity) facts = { ...facts, repositoryIdentity: checkout.repositoryIdentity };
       let parentRootPath: string | undefined;
       if (!privateCheckout && !parentWorkspace

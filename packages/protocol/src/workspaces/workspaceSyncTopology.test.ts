@@ -5,7 +5,6 @@ import { DevcontainerChildProjectionV1Schema } from '../machines/managed/devcont
 import { ManagedMachineV1Schema } from '../machines/managed/managedMachineV1.js';
 import {
   deriveWorkspaceSyncTopology,
-  selectWorkspaceSyncEndpointAliases,
   resolveWorkspaceSyncReadControllerV1,
   resolveWorkspaceSyncEndpoint,
   resolveWorkspaceSyncTransportAddress,
@@ -54,7 +53,7 @@ describe('workspaceSyncTopology', () => {
       .toThrowError(expect.objectContaining({ code: 'workspace_sync_topology_invalid' }));
   });
 
-  it('maps an admitted native bind namespace to its owned physical ref without a logical child row', () => {
+  it('keeps container workspace execution separate from its former host bind root', () => {
     const physical = { id: 'physical-source', serverId: 'home', machineId: 'parent', rootPath: '/host/source', createdAtMs: 1 };
     const admittedNamespace = { serverId: 'home', machineId: 'child', rootPath: '/workspace/source' };
     const projection = DevcontainerChildProjectionV1Schema.parse({
@@ -73,47 +72,19 @@ describe('workspaceSyncTopology', () => {
     });
     const child = { serverId: 'home', machineId: 'child', installationId: 'child-current', projection, managedMachine,
       controller: { machineId: 'parent', installationId: 'parent-current', available: true } };
-    const input = { namespace: admittedNamespace, workspaceRefs: [physical], childMachines: [child] };
-    const unavailable = { ok: false, code: 'workspace_sync_child_unavailable' };
-    const { controller: _boundController, ...withoutController } = managedMachine;
-    const unbound = { ...input, childMachines: [{ ...child, managedMachine: withoutController }] };
-    expect(resolveWorkspaceSyncEndpoint(unbound)).toEqual(unavailable);
-    expect(resolveWorkspaceSyncTransportAddress(unbound)).toEqual(unavailable);
-
-    expect(resolveWorkspaceSyncEndpoint(input)).toEqual({ ok: true, endpoint: physical });
-    expect(resolveWorkspaceSyncEndpoint({ ...input,
-      namespace: { ...admittedNamespace, rootPath: '/workspace/source-other' } })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncEndpoint({ ...input, workspaceRefs: [{ ...physical, serverId: 'other-home' }] })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncEndpoint({ ...input, workspaceRefs: [physical, { ...physical, id: 'ambiguous-source' }] })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [{ ...child, controller: { ...child.controller,
-      installationId: 'parent-replaced' } }] })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [{ ...child, projection: { ...projection,
-      observation: { ...projection.observation, nativeResourceId: 'container-replaced' } } }] })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncEndpoint({ ...input, childMachines: [] })).toEqual(unavailable);
-    // An admitted caller can address P1 without owning or materializing P1's
-    // WorkspaceRef. The full-ref resolver still requires that physical row.
-    const transport = { namespace: admittedNamespace, childMachines: [{ ...child,
-      controller: { ...child.controller, available: false } }] };
-    expect(resolveWorkspaceSyncTransportAddress(transport)).toEqual({ ok: true,
-      address: { machineId: 'parent', installationId: 'parent-current' } });
-    expect(resolveWorkspaceSyncEndpoint({ ...transport, workspaceRefs: [], purpose: 'admitted_mapping' })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncTransportAddress({ ...transport,
-      namespace: { ...admittedNamespace, rootPath: '/workspace/source-other' } })).toEqual({ ok: true,
+    const boundWorkspace = { id: 'child-workspace', ...admittedNamespace, createdAtMs: 1 };
+    const input = { workspaceRefs: [physical, boundWorkspace], childMachines: [child] };
+    expect(resolveWorkspaceSyncTransportAddress({ namespace: admittedNamespace, childMachines: [child] })).toEqual({ ok: true,
       address: { machineId: 'child', installationId: 'child-current' } });
-    const privateWorkspace = { id: 'private', ...admittedNamespace, rootPath: '/home/member/source', createdAtMs: 1 };
-    expect(resolveWorkspaceSyncEndpoint({ workspace: privateWorkspace, workspaceRefs: [privateWorkspace], childMachines: [child] }))
-      .toEqual({ ok: true, workspace: privateWorkspace, endpoint: privateWorkspace });
-    const boundAlias = { id: 'bound-alias', ...admittedNamespace, createdAtMs: 1 };
-    expect(selectWorkspaceSyncEndpointAliases({ workspaceRefs: [physical, boundAlias, privateWorkspace],
-      physicalWorkspaceRefIds: new Set([physical.id]), childMachines: [child] })).toEqual([physical, boundAlias]);
-    expect(resolveWorkspaceSyncTransportAddress({ ...transport, childMachines: [{ ...child,
-      controller: { ...child.controller, installationId: 'parent-replaced' } }] })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncTransportAddress({ ...transport, childMachines: [{ ...child, projection: { ...projection,
-      observation: { ...projection.observation, nativeResourceId: 'container-replaced' } } }] })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncTransportAddress({ ...transport,
-      childMachines: [{ ...child, managedMachine: { ...managedMachine, homeId: 'other-home' } }] })).toEqual(unavailable);
-    expect(resolveWorkspaceSyncTransportAddress({ namespace: admittedNamespace, childMachines: [] })).toEqual({ ok: true,
-      address: { machineId: 'child' } });
+    expect(resolveWorkspaceSyncEndpoint({ ...input, workspace: boundWorkspace })).toEqual({
+      ok: true, workspace: boundWorkspace, endpoint: boundWorkspace,
+    });
+    expect(resolveWorkspaceSyncEndpoint({ ...input, namespace: admittedNamespace })).toEqual({ ok: true, endpoint: boundWorkspace });
+    expect(resolveWorkspaceSyncEndpoint({ ...input, namespace: admittedNamespace, workspaceRefs: [physical] }))
+      .toEqual({ ok: false, code: 'workspace_sync_child_unavailable' });
+    expect(resolveWorkspaceSyncTransportAddress({ namespace: admittedNamespace, childMachines: [{ ...child,
+      projection: { ...projection, observation: { ...projection.observation, nativeResourceId: 'container-replaced' } },
+    }] })).toEqual({ ok: false, code: 'workspace_sync_child_unavailable' });
   });
 
   it('derives mixed-policy saved links around their concrete controller-owned hub', () => {

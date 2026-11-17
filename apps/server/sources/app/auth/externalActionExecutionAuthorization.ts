@@ -128,7 +128,6 @@ import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/mach
 import { ManagedMachineError, hasBoundManagedLifecycle, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine,
     readMachineDevcontainerWorkspaceSyncRouteInTx, readMachineDevcontainerWorkspaceSyncEndpointInTx } from '@/app/machines/managed/managedRows';
 import { resolveManagedGuestActivityAdmissionInTx } from '@/app/machines/managed/managedGuestActivity';
-import { isWorkspaceSyncDevcontainerBindRootV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { initializeServerIdentityCache } from "@/app/serverIdentity/serverIdentity";
 import { db } from "@/storage/db";
 import { readManagedCredentialDeliveryAuthorityInTx, readManagedCredentialDeliverySubmittedAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
@@ -4239,9 +4238,7 @@ export async function readCurrentWorkspaceSyncProjectSourceAuthorization(
     if (envelope.v === 1 && !matchesWorkspaceSyncProjectSourceInput(envelope.input, binding, routing)) return null;
     const source = binding.workspaceSyncAdmission;
     if (!source) return null;
-    const child = source.child;
-    const endpoint = child && isWorkspaceSyncDevcontainerBindRootV1({ observation: child.projection.observation,
-        rootPath: routing.sourceRootPath }) ? child.controller : source.source;
+    const endpoint = source.source;
     if (endpoint.machineId === writerMachineId) return { verified,
         ...(endpoint.machineId === source.source.machineId ? { receivingMachineAdmission: source.source } : {}),
         route: { parentMachineId: endpoint.machineId, parentInstallationId: endpoint.installationId,

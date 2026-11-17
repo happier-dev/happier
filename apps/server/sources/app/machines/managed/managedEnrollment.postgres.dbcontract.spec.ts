@@ -17,7 +17,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
     });
     afterAll(async () => { await db.$disconnect(); });
 
-    it('routes only the exact requester-owned workspace to its controller through current and pending replacement enrollment', async () => {
+    it('releases existing workspace custody without admitting new host-root forwarding through replacement enrollment', async () => {
         const homeId = await getOrCreateServerIdentityId();
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -46,7 +46,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         const expected = { custodianAccountId: custodian.id, parentMachineId: controller.id,
             parentInstallationId: controller.installationId };
         const route = (overrides: Partial<typeof input> = {}) => inTx(tx => readMachineDevcontainerWorkspaceSyncRouteInTx(tx, { ...input, ...overrides }));
-        expect(await route()).toEqual(expected);
+        expect(await route()).toBeNull();
         expect(await route({ releaseOnly: true })).toEqual(expected);
         for (const overrides of [{ childMachineId: otherGuest.id }, { parentMachineId: otherController.id },
             { childRootPath: '/other' }, { accountServerId: `srv_${'b'.repeat(32)}` }]) expect(await route(overrides)).toBeNull();
