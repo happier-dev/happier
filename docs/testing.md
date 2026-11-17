@@ -642,9 +642,11 @@ stack's QA browsers consume (`source-web-export` running
 `apps/stack/scripts/build/build_source_web_ui.mjs`, same rank), then the blocking commit
 compiler (`compilation` running `scripts/workspaces/checkCommitTypeCoherence.mjs`;
 every commit gate, because whether a candidate repairs HEAD is known only after its
-gate), which shares its rank with the rolling HEAD typecheck
+gate). The rolling HEAD typecheck
 (`scripts/workspaces/commitPackageTypecheck.mjs`, the compiler check for every
-`packages/*` commit since 2026-11-16). The broker derives the rank from the admitted command identity that the
+`packages/*` commit since 2026-11-16) shares the focused-test rank below, so it and
+focused runs are served in arrival order and later focused runs cannot starve it
+(P03 ORCH, 2026-11-17). The broker derives the rank from the admitted command identity that the
 canonical client builds from the payload argv; a request field claiming priority is
 ignored. Priority waiters keep arrival order within their rank, a priority head
 pledges releases at once instead of after the 22m24s bound, and ordinary source
@@ -657,7 +659,7 @@ borrowed-UI lane waits on it (Systemic 2026-11-16 21:15Z). Floors and capacity c
 unchanged. Waiting clients survive a broker succession: each reconnects with its
 original arrival and the successor admits it in that order. Focused test runs (the `focusedTest` classes in `command_resources.mjs`:
 an explicit selection of up to ten existing test files, owner ruling 2026-11-16) rank
-between the producers and the commit compilers, so a routed focused run starts at the
+between the producers and the commit gate compiler, so a routed focused run starts at the
 next free slot. The sample's `head.headPriority` is the head's rank (0 = ordinary).
 Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation

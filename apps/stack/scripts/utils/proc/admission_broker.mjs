@@ -27,7 +27,14 @@ const HEAD_RESERVATION_DELAY_MS = 1_344_000;
 // command identity, which the canonical client builds from the payload argv; a
 // caller-supplied flag grants nothing.
 // The rolling HEAD typecheck (P03, 2026-11-16) is the commit compiler for every
-// commit packet since per-commit TS compiles moved to it; it shares that rank.
+// commit packet since per-commit TS compiles moved to it. P03 ORCH 2026-11-17: it
+// shares the focused-test rank, so arrival orders them and later focused runs
+// cannot starve it (at rank 1 it slid behind them with 49 waiting).
+// Owner ruling 2026-11-16 ("small suites local"): focused test runs (up to ten
+// explicit files; the command-policy classifier names their class from argv)
+// start at the next free slot, after the shared producers and ahead of the
+// commit gate compiler (between ranks 2 and 1): they are small (1-3 GiB) and short.
+const FOCUSED_TEST_PRIORITY_RANK = 1.5;
 const HEAD_PRIORITY_RANKS = new Map([
   ['source-bundle apps/stack/scripts/build/build_source_runtime.mjs', 2],
   // The shared web export every stack's QA browsers consume (one per revision).
@@ -36,13 +43,8 @@ const HEAD_PRIORITY_RANKS = new Map([
   // every borrowed-UI lane waits on it (Systemic 2026-11-16 21:15Z, owner-approved).
   ['validation apps/stack/scripts/build/build_source_web_ui.mjs', 2],
   ['compilation scripts/workspaces/checkCommitTypeCoherence.mjs', 1],
-  ['compilation scripts/workspaces/commitPackageTypecheck.mjs', 1],
+  ['compilation scripts/workspaces/commitPackageTypecheck.mjs', FOCUSED_TEST_PRIORITY_RANK],
 ]);
-// Owner ruling 2026-11-16 ("small suites local"): focused test runs (up to ten
-// explicit files; the command-policy classifier names their class from argv)
-// start at the next free slot, after the shared producers and ahead of
-// commit compilers (between ranks 2 and 1): they are small (1-3 GiB) and short.
-const FOCUSED_TEST_PRIORITY_RANK = 1.5;
 const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
 const PRODUCER_RANK = 2;
 function headPriorityRank(request) {

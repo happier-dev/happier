@@ -569,6 +569,21 @@ for (const [scenario, earlier, later, laterFirst] of [
   });
 }
 
+test('head priority: the rolling HEAD typecheck and focused test runs share a rank and are served in arrival order', linux, async t => {
+  // P03 ORCH 2026-11-17: at rank 1 the rolling typecheck slid behind every later
+  // focused run (rank 1.5) while 49 waited; at an equal rank arrival decides, so it cannot starve.
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 100, t)).admit();
+  const rolling = await acquire(root, 60, t, priorityIdentity(root, 'rolling'));
+  const focused = await acquire(root, 60, t, priorityIdentity(root, 'focused'));
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.head.className, 'compilation', 'the earlier rolling typecheck heads the queue');
+  await holder.release();
+  const started = await rolling.admit();
+  await started.release();
+  await focused.admit();
+});
+
 test('a producer-ranked head holds free capacity too: nothing backfills past it once it is next', linux, async t => {
   // Systemic 18:35Z: repo-dev's 18.5 GiB server bundle sat at position 1 while
   // smaller validation jobs were admitted into memory that was already free.
