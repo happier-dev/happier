@@ -359,12 +359,14 @@ function useStoreSearchSections(props: SearchSectionsInput) {
       : [];
   });
   const loading = KIND_ORDER.some((kind) => lists[kind]?.loading === true);
-  const failures = [lists.app, lists.browserExtension, lists.mcpServer, lists.skill, lists.agent].flatMap(
-    (list) => (list && 'sourceFailures' in list ? list.sourceFailures : []),
-  );
-  const failedReads = [lists.app, lists.browserExtension, lists.mcpServer, lists.skill, lists.agent]
-    .flatMap((list) => list?.error && !list.loading && list.sourceFailures.length === 0
-      ? [{ status: list.status, retry: list.refresh }] : []);
+  const catalogs = KIND_ORDER.flatMap(kind => {
+    const list = lists[kind];
+    return list && ('sourceFailures' in list || 'sourceStatuses' in list) ? [list] : [];
+  });
+  const failures = catalogs.flatMap(list => 'sourceFailures' in list ? list.sourceFailures : []);
+  const failedReads = catalogs.flatMap(list => list.error && !list.loading
+    && (!('sourceFailures' in list) || list.sourceFailures.length === 0)
+      ? [{ status: 'status' in list ? list.status : null, retry: list.refresh }] : []);
   // Every kind publishes loading and then its value on each query, about ten commits per keystroke. The directory
   // reads only what the lines say, so the list keeps its identity until one of them changes; the actions read the
   // current kinds through a render-synced handle instead of being rebuilt with every publication.

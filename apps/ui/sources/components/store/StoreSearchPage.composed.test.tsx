@@ -386,3 +386,48 @@ it('leaves a kind page\'s query and rows still when Discover re-renders without 
     expect(query().curation).toBe(settled.curation);
     expect(query()).toBe(settled);
 });
+
+it('keeps a failed Starter catalog distinct from a successful empty search and retries its owner', async () => {
+    const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
+    const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+    const serverUrl = 'https://store-starter-search-failure.test';
+    const sourceId = 'user:starter-search';
+    const sourceUrl = 'https://starter-search.test/catalog.json';
+    let failed = false;
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+        key: 'registry-sources', value: { v: 2,
+            disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(source => source.id),
+            sources: [{ id: sourceId, title: 'Team starters', format: 'happier-catalog', kinds: ['starter'],
+                url: sourceUrl, enabled: true, addedAt: 1 }],
+        },
+    }, 'updated', { handleExternalRequest: async url => url === sourceUrl
+        ? failed ? new Response(null, { status: 503 }) : Response.json({ schemaVersion: 1, starters: [] })
+        : new Response(null, { status: 503 }) });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    const scope = storage.getState().settingsScope!;
+    const executor = createDefaultActionExecutor();
+    const read = () => executor.execute('registries.items.list', {
+        kind: 'starter', sourceIds: [sourceId], query: 'garden', refresh: true,
+    }, { surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId });
+    // The same real Action/HTTP fixture first proves confirmed-empty, then a genuine catalog outage.
+    expect(await read()).toMatchObject({ ok: true, result: { pages: [{ status: { state: 'ok' }, items: [] }] } });
+    failed = true;
+    expect(await read()).toMatchObject({ ok: true, result: { pages: [{ status: { state: 'unreachable' }, items: [] }] } });
+    const filters = JSON.stringify({ kind: { include: ['starter'], exclude: [] }, source: { include: [sourceId], exclude: [] } });
+    function Page() {
+        const params = React.useMemo(() => ({ view: 'search', q: 'garden', filters }), []);
+        const navigation = React.useMemo(() => ({ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }), []);
+        return <DestinationInstanceHost tabId="starter-search" ref={{ kind: 'plugins', params }} pathname="/plugins" focused visible
+            navigation={navigation}><AppPaneProvider><StoreSearchPage presented /></AppPaneProvider></DestinationInstanceHost>;
+    }
+    const screen = await renderScreen(<Page />);
+    await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.kind.search.failure').length).toBeGreaterThan(0));
+    expect(screen.findAllByTestId('store.kind.search.empty')).toHaveLength(0);
+    const sourceFailure = screen.findAllByType(RegistrySourcesUnavailable).flatMap(node => node.props.failures)
+        .find((failure: { key: string }) => failure.key === sourceId);
+    expect(sourceFailure).toBeDefined();
+    failed = false;
+    await act(async () => { await sourceFailure.onRetry(); });
+    await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.kind.search.empty').length).toBeGreaterThan(0));
+    expect(screen.findAllByTestId('store.kind.search.failure')).toHaveLength(0);
+});
