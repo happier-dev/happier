@@ -141,7 +141,8 @@ function useBadgeAppear() {
  * menu row's trailing slot, in the same tone.
  */
 export function AppRailMenuCount(props: Readonly<{ value: number; tone: AppRailBadgeTone }>) {
-    return <TabBadge variant="count" tone={props.tone} value={props.value} />;
+    // In More, the count stands in the menu row's trailing slot, not over a glyph (SHELL-ACCEPT-1117).
+    return <TabBadge variant="count" inline tone={props.tone} value={props.value} />;
 }
 
 const RINGED_COUNT_PX = APP_RAIL_BADGE.countSizePx + 2 * APP_RAIL_BADGE.ringPx;

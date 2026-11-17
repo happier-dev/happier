@@ -822,7 +822,6 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
                                                 testID={`${testID}-section-${entry.section}-label`}
                                                 title={sectionTitle(entry.section, machineName)}
                                                 count={entry.rows.length}
-                                                countPlacement="title"
                                                 first={index === 0}
                                             />
                                             <ItemGroup

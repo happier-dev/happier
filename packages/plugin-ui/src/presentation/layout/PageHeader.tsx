@@ -411,6 +411,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // Every title line is the same line, with controls or without, so a header's actions (however late they arrive)
   // never move the title or what sits under it.
   const splitTitleLine = showTitle && !centered && !inlineActions;
+  // Hanging controls hang from that same line: the title is centred on their control-height line, so it sits on the
+  // shell title row with them instead of at its own line's top (SHELL-ACCEPT-1117 #7).
+  const titleOnControlLine = splitTitleLine || (showTitle && hangsFromTitle);
   // Only actions still drawn wrap beneath: a remembered wrap never reserves room for actions that left
   // (a phone's navigation chrome takes Save and Cancel when the window narrows).
   const actionsBelowIdentity = splitTitleLine && Boolean(props.actions || props.status)
@@ -503,7 +506,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
             <View
               onLayout={handleLeadingLayout}
               // Hanging, the mark hangs from the title's line: centred on it, its overflow inside the header's padding.
-              style={[{ flexShrink: 0, position: 'relative' }, hangIdentity && showTitle ? { height: titleLineHeight, justifyContent: 'center' } : null]}
+              style={[{ flexShrink: 0, position: 'relative' }, hangIdentity && showTitle ? { height: hangsFromTitle ? Math.max(titleLineHeight, HAPPIER_PAGE_METRICS.controlHeightPx) : titleLineHeight, justifyContent: 'center' } : null]}
             >
               {wrapPart ? wrapPart('mark', props.leading) : props.leading}
               {gutterBack}
@@ -524,7 +527,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                     lines (DESIGN-14 D5). A title wider than the row still wraps within it. */}
                 <View
                   onLayout={splitTitleLine && !actionsBelowIdentity ? handleTitleBoxLayout : undefined}
-                  style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: shrinkActions ? 0 : 1, flexBasis: splitTitleLine || centered || shrinkActions ? 'auto' : hangsFromTitle ? 0 : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(splitTitleLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
+                  style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: shrinkActions ? 0 : 1, flexBasis: splitTitleLine || centered || shrinkActions ? 'auto' : hangsFromTitle ? 0 : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(titleOnControlLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
                 >
                   {props.leading ? null : gutterBack}
                   {/* One wrapper at every layout: switching between inline and wrapped controls (a phone

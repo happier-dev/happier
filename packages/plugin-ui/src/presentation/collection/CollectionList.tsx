@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { useHappierSearchDisclosure } from './searchDisclosure.js';
 import { Platform, View, type ViewStyle } from 'react-native';
 
@@ -498,6 +498,38 @@ export const HappierListRowFollowedContext = createContext<boolean | null>(null)
  * row. One-line rows part by spacing alone: a line under each one only adds weight (owner ~20:40Z). A selected row's fill
  * parts it from its neighbours, so neither the line under it nor the one above it is drawn, and a hovered row hides its own.
  */
+/** Whether the list a row stands in is ruled: some row of it draws a line under its title. Null outside a scope. */
+const HappierListRowRuledContext = createContext<boolean | null>(null);
+const HappierListRowRuleReportContext = createContext<((multiline: boolean) => () => void) | null>(null);
+const NO_REPORT = () => {};
+
+/**
+ * One list, one rule (owner 2026-11-17, decision 7): a list whose rows carry a second line rules every row, a list of
+ * one-line rows rules none, never row by row on whether that row has a subtitle. The column provides the scope; each
+ * row reports whether it draws a second line and reads the list's answer.
+ */
+export function HappierListRowRuleScope(props: Readonly<{ children?: ReactNode }>): ReactElement {
+  const [multilineRows, setMultilineRows] = useState(0);
+  const report = useCallback((multiline: boolean) => {
+    if (!multiline) return NO_REPORT;
+    setMultilineRows((count) => count + 1);
+    return () => setMultilineRows((count) => count - 1);
+  }, []);
+  return (
+    <HappierListRowRuleReportContext.Provider value={report}>
+      <HappierListRowRuledContext.Provider value={multilineRows > 0}>{props.children}</HappierListRowRuledContext.Provider>
+    </HappierListRowRuleReportContext.Provider>
+  );
+}
+
+/** The `multiline` a row's rule decision uses: its list's answer inside a rule scope, else the row's own second line. */
+export function useHappierListRowRuled(ownMultiline: boolean): boolean {
+  const report = useContext(HappierListRowRuleReportContext);
+  const ruled = useContext(HappierListRowRuledContext);
+  useEffect(() => (report ? report(ownMultiline) : undefined), [report, ownMultiline]);
+  return ruled ?? ownMultiline;
+}
+
 export function resolveHappierListRowRuleShown(input: Readonly<{
   followed: boolean | null;
   /** The row's anatomy draws a second line under its title (a description, facts, a preview). */
@@ -607,7 +639,8 @@ const stripStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.row
 // Directly under the title row the band (its strip row and the conditions line under it) is one slot on the rail grid.
 const bandSlotStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.rowInset, ...resolveHappierColumnBandSlotStyle() };
 const stripWithAccessoryStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: TITLE_ACCESSORY_GAP };
-const stripLeadStyle: ViewStyle = { flex: 1, minWidth: 0 };
+// The band packs from the title's leading text edge: a yielded control follows the strip, never pushed to the far edge.
+const stripLeadStyle: ViewStyle = { flexShrink: 1, minWidth: 0 };
 const scrollerStyle: HappierPortableStyle = { paddingTop: 0 };
 const footerStyle: ViewStyle = { height: HAPPIER_COLLECTION_LIST_METRICS.endSpacing };
 const groupLabelRowStyle: ViewStyle = {
@@ -718,6 +751,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
   const surfaceStyle = host.useSurfaceStyle ? host.useSurfaceStyle() : host.surfaceStyle;
   return (
     <HappierCollectionListRowContext.Provider value>
+    <HappierListRowRuleScope>
     <View testID={props.testID} style={[railStyle, surfaceStyle]}>
       {showHeader ? (
         <View style={props.subtitle ? [headerStyle, headerWithSubtitleStyle] : bandOnGrid ? [headerStyle, headerWithBandStyle] : headerStyle}>
@@ -781,6 +815,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
       )}
       {props.footer ?? null}
     </View>
+    </HappierListRowRuleScope>
     </HappierCollectionListRowContext.Provider>
   );
 }
@@ -847,11 +882,6 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
    * while a narrow label shortens `detail` first, and follows it after a separator.
    */
   detailEnd?: string;
-  /**
-   * Where the count sits without a trailing state: `end` (the default) is a settings column's end column;
-   * `title` keeps it beside the title ("Drafts 3"), as a navigation column's groups and every disclosure do.
-   */
-  countPlacement?: 'title' | 'end';
   countTestID?: string;
   testID?: string;
 }>): ReactElement {
@@ -947,16 +977,10 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
         {props.mark !== undefined ? <View style={groupLabelMarkStyle}>{props.mark}</View> : null}
         <Text role={pageSection ? 'groupHeading' : titleRole} numberOfLines={1}>{props.title}</Text>
         {detail}
-        {/* With a trailing state the count stays with its title ("Skills 6 … Loaded when used"); alone it is the end column. */}
-        {props.count !== undefined && (props.trailing != null || props.countPlacement === 'title') ? <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text> : null}
+        {/* One group-label anatomy (owner 2026-11-17): the count sits beside its title ("Your machines 4"), as a
+            disclosure's does with its chevron ("Needs you 17 ⌄"). */}
+        {props.count !== undefined ? <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text> : null}
       </View>
-      {props.count !== undefined && props.trailing == null && props.countPlacement !== 'title' ? (
-        // The end column is the rows' trailing text edge, where their counts end; the label's own padding stops
-        // at the gutter for its hover actions.
-        <View style={pageSection || props.presentation === 'menu' ? null : groupLabelEndCountStyle}>
-          <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text>
-        </View>
-      ) : null}
       {/* A trailing state ends on the rows' trailing text edge too, so it shares their one end column. */}
       {props.trailing != null ? <View style={pageSection || props.presentation === 'menu' ? null : groupLabelEndCountStyle}>{props.trailing}</View> : null}
       {props.actions ? <View style={groupLabelActionsStyle}>{props.actions}</View> : null}

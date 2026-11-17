@@ -60,6 +60,7 @@ import {
   HappierListRowRule,
   resolveHappierCollectionRowTextStartPx,
   resolveHappierListRowRuleShown,
+  useHappierListRowRuled,
 } from './CollectionList.js';
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
@@ -1419,6 +1420,7 @@ function NavigationRowRule(props: Readonly<{ startPx: number; color: string; mul
   const followed = useContext(HappierListRowFollowedContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const hovered = useHappierListRowHovered();
-  return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: props.selected, precedesSelected, hovered })
+  const multiline = useHappierListRowRuled(props.multiline);
+  return resolveHappierListRowRuleShown({ followed, multiline, selected: props.selected, precedesSelected, hovered })
     ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
 }

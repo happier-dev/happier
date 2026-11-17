@@ -7,7 +7,7 @@ import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { HomeHub } from '@/components/hub/HomeHub';
 import { useSessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
 import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
-import { SIDEBAR_NEW_SESSION_INSET_PX, TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSessionButton';
+import { SIDEBAR_NEW_SESSION_FOOTPRINT_PX, SIDEBAR_NEW_SESSION_INSET_PX, TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSessionButton';
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
 import { ProjectsListView } from '@/components/projects/ProjectsListView';
@@ -66,10 +66,12 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         backgroundColor: theme.colors.surface.base,
     },
+    // The list stops above the column's "+", so no row passes under it (SHELL-ACCEPT-1117: it covered row facts).
     sidebarContentContainer: {
         flex: 1,
         flexBasis: 0,
         flexGrow: 1,
+        marginBottom: SIDEBAR_NEW_SESSION_FOOTPRINT_PX,
     },
     sidebarNewSession: {
         position: 'absolute',

@@ -105,6 +105,45 @@ it('centres the title on its controls and keeps one rail step from the header to
  * grid and tighter than a section break. A band is one more step: its centre one rail step under the title row's,
  * and the first row one step under the band's, whatever the band's height.
  */
+/**
+ * SHELL-ACCEPT-1117 (owner ruling: one band placement): a control that yields the title row (Services' grouping switch)
+ * stood on the column's trailing edge while Sessions' strip stood on the title's text edge. Every band starts on the
+ * title's leading text edge.
+ */
+it('starts a yielded title control on the title\'s text edge', async () => {
+  const { CollectionList } = await import('./CollectionList');
+  host = document.createElement('div');
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () =>
+    root!.render(
+      <View style={{ width: 280, height: 600 }}>
+        <CollectionList
+          testID="column"
+          title="Services"
+          surface="plane"
+          headerAction={<View testID="header-action" style={{ width: 30, height: 30 }} />}
+          titleAccessory={<View testID="switch" style={{ width: 160, height: 24 }} />}
+          strip={<View testID="strip" style={{ width: 40, height: 24 }} />}
+        />
+      </View>,
+    ),
+  );
+  const layout = await measureWebLayout(host, {
+    viewport: { width: 320, height: 640 },
+    texts: ['Services'],
+    settle: (replay) => act(replay),
+  });
+  const title = layout.textRects('Services')[0]!;
+  const strip = layout.rect('strip');
+  const control = layout.rect('switch');
+  // It yielded (it stands under the title row); the band starts where the title's words do and the control follows the
+  // strip, never pushed to the column's far edge.
+  expect(control.top).toBeGreaterThan(title.bottom);
+  expect(Math.abs(strip.left - title.left)).toBeLessThanOrEqual(0.5);
+  expect(control.left - strip.right).toBeLessThanOrEqual(8.5);
+});
+
 it.each([24, 36])('stands a %ipx header band one rail step under the title and one above the first row', async (bandPx) => {
   const { CollectionList } = await import('./CollectionList');
   const { Item } = await import('@/components/ui/lists/Item');

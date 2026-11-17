@@ -59,7 +59,6 @@ export const SessionListGroup = React.memo(function SessionListGroup(
         <CollectionListGroupLabel
           title={props.title}
           count={props.count > 0 ? props.count : undefined}
-          countPlacement="title"
           countTestID={props.countTestID}
           first={props.first ?? firstGroup}
         />

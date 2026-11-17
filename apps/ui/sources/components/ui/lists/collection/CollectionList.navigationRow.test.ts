@@ -63,6 +63,24 @@ describe('navigation row parity between core and the plugin list anatomy', () =>
             .toBe(glassSurfaceBackgroundColor(pageColor, 'content', true));
     });
 
+    // SHELL-ACCEPT-1117: the Machines column's selected Overview (a core Item) kept the regular weight while every
+    // navigation row's selected title is semibold. One selected-row treatment in a column.
+    it('weights a selected Item in a column like a selected navigation row', async () => {
+        const { StyleSheet } = await import('react-native');
+        const titleWeight = (screen: Awaited<ReturnType<typeof renderScreen>>, title: string) => {
+            const node = screen.root.findAll((candidate) => candidate.type === Text && candidate.props.children === title)[0]!;
+            const flat = StyleSheet.flatten(node.props.style) ?? {};
+            // The weight is carried by the face and its weight together (`Typography.default`).
+            return `${String(flat.fontFamily)}/${String(flat.fontWeight)}`;
+        };
+        const screen = await renderScreen(React.createElement(CollectionList, { testID: 'column', title: 'Machines' },
+            React.createElement(Item, { testID: 'item-selected', title: 'Overview', selected: true, onPress: () => {} }),
+            React.createElement(Item, { testID: 'item-resting', title: 'Defaults', selected: false, onPress: () => {} }),
+            React.createElement(CollectionNavigationRow, { testID: 'nav-selected', title: 'Agents', selected: true, onPress: () => {} })));
+        expect(titleWeight(screen, 'Overview')).toBe(titleWeight(screen, 'Agents'));
+        expect(titleWeight(screen, 'Overview')).not.toBe(titleWeight(screen, 'Defaults'));
+    });
+
     // UI refinements ruling 2026-11-16 (A5): every column's search waits behind the magnifier beside "+", Settings'
     // included. The shell column decides it once; no column names its own default.
     it('keeps the search of a list standing in the shell column behind its magnifier until pressed', async () => {

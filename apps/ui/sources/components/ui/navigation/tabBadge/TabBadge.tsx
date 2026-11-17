@@ -9,6 +9,8 @@ import { Typography } from '@/constants/Typography';
 import { formatBadgeCount } from './tabBadgeModel';
 
 const styles = StyleSheet.create((theme) => ({
+    // In a row's trailing slot (a menu row, a list row) the badge stands in the row's flow instead of over a glyph.
+    inline: { position: 'relative', top: 0, right: 0 },
     countBadge: {
         position: 'absolute',
         top: -3,
@@ -110,11 +112,13 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 type TabBadgeProps =
-    | Readonly<{ variant: 'dot'; tone?: 'neutral' | 'attention' | 'danger'; style?: StyleProp<ViewStyle>; testID?: string }>
+    | Readonly<{ variant: 'dot'; tone?: 'neutral' | 'attention' | 'danger'; inline?: boolean; style?: StyleProp<ViewStyle>; testID?: string }>
     | Readonly<{
         variant: 'count';
         size?: 'default' | 'compact';
         value: number;
+        /** In a row's trailing slot rather than over a tab glyph. */
+        inline?: boolean;
         /** A count already said in words ("1.8K", "~402"): shown as is instead of `value`. */
         text?: string;
         max?: number;
@@ -147,7 +151,7 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
                 accessible={false}
                 accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants"
-                style={[styles.dot, props.tone === 'attention' ? styles.dotAttention : props.tone === 'danger' ? styles.dotDanger : null, props.style]}
+                style={[styles.dot, props.tone === 'attention' ? styles.dotAttention : props.tone === 'danger' ? styles.dotDanger : null, props.inline ? styles.inline : null, props.style]}
             />
         );
     }
@@ -164,6 +168,7 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
                     props.size === 'compact' ? styles.countBadgeCompact : null,
                     props.tone === 'neutral' ? (props.size === 'compact' ? styles.countBadgeNeutralCompact : styles.countBadgeNeutral) : null,
                     props.size === 'compact' && props.tone === 'neutral' ? { backgroundColor: paintColor(theme.colors.surface.elevated) } : null,
+                    props.inline ? styles.inline : null,
                     props.style ?? null,
                 ]}
             >

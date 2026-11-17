@@ -131,7 +131,7 @@ export function SessionListSample(props: Readonly<{
         accessibilityElementsHidden
     >
         {props.groups.map((group, groupIndex) => <React.Fragment key={group.heading}>
-            <CollectionListGroupLabel title={group.heading} countPlacement="title" first={groupIndex === 0} />
+            <CollectionListGroupLabel title={group.heading} first={groupIndex === 0} />
             {group.rows.map((row, index) => <CollectionRowContent
                 key={row.id}
                 density={resolveCollectionRowDensity(density)}

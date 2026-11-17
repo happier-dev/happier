@@ -24,6 +24,7 @@ import {
   HappierListRowPrecedesSelectedContext,
   HappierListRowRule,
   resolveHappierListRowRuleShown,
+  useHappierListRowRuled,
 } from './CollectionList.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
@@ -502,6 +503,7 @@ function drawsLineUnderTitle(node: ReactNode): boolean {
 function CollectionRowContentRule(props: Readonly<{ startPx: number; color: string; multiline: boolean; selected: boolean; hovered: boolean }>): ReactElement | null {
   const followed = useContext(HappierListRowFollowedContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
-  return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: props.selected, precedesSelected, hovered: props.hovered })
+  const multiline = useHappierListRowRuled(props.multiline);
+  return resolveHappierListRowRuleShown({ followed, multiline, selected: props.selected, precedesSelected, hovered: props.hovered })
     ? <HappierListRowRule startPx={props.startPx} color={props.color} /> : null;
 }

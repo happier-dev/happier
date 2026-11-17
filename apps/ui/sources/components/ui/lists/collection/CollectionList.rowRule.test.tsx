@@ -130,6 +130,23 @@ describe("the rule between a column's rows (owner 2026-11-15: inset hairlines in
     }
   });
 
+  // SHELL-ACCEPT-1117 (decision 7): the Workflows column ruled its two-line rows and left its one-line rows bare in the
+  // same list. A list rules every row or none, never by whether one row has a subtitle.
+  it('rules every row of a list that mixes one-line and two-line rows', async () => {
+    const mixed = [0, 1, 2, 3].map((index) => (
+      <CollectionNavigationRow key={index} testID={`row-${index}`} title={`Row ${index}`}
+        {...(index % 2 === 0 ? { subtitle: `Line under row ${index}` } : {})} selected={false} onPress={noop} />
+    ));
+    const screen = await renderScreen(
+      <CollectionList title="Workflows"><CollectionRows>{mixed}</CollectionRows></CollectionList>,
+    );
+    try {
+      expect(ruledRows(screen, 4)).toEqual([0, 1, 2]);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('draws none for a row no list orders', async () => {
     const screen = await renderScreen(<CollectionNavigationRow testID="row-0" title="Row 0" selected={false} onPress={noop} />);
     try {

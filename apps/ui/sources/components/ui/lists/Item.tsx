@@ -85,6 +85,7 @@ import {
     HappierListRowRule,
     resolveHappierListRowRuleShown,
     resolveHappierCatalogDirectoryRowEdges,
+    useHappierListRowRuled,
 } from '@happier-dev/plugin-ui/presentation';
 
 const NO_MARGINS = Object.freeze({ start: 0, end: 0 });
@@ -581,6 +582,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     titleSelected: {
         color: theme.colors.text.primary,
+    },
+    titleSelectedInColumn: {
+        color: theme.colors.text.primary,
+        ...Typography.default('semiBold'),
     },
     titleDestructive: {
         color: theme.colors.state.danger.foreground,
@@ -1152,7 +1157,10 @@ function ItemRow(props: ItemProps) {
         && sharedItemBehavior.navigationAccessoryVisible;
     const showSelectedBackground = sharedItemBehavior.selectionVisible;
 
-    const titleColorBase = destructive ? styles.titleDestructive : (selected ? styles.titleSelected : styles.titleNormal);
+    // A selected column row carries its state in its title's weight too, as the column's navigation rows do.
+    const titleColorBase = destructive ? styles.titleDestructive
+        : selected ? (inCollectionColumn ? styles.titleSelectedInColumn : styles.titleSelected)
+        : styles.titleNormal;
     const isCozy = resolvedDensity === 'cozy';
     const isCompact = resolvedDensity === 'compact';
     const isTight = resolvedDensity === 'tight';
@@ -1614,10 +1622,12 @@ function ItemRow(props: ItemProps) {
     // menu's rows, which their group divides): drawn while another row follows, from the row's text column (a page
     // row's text inset; a column row's own leading padding, then its glyph column), never over its own fill.
     const listRuleRow = rowFollowed !== null && (inCollectionColumn || (pageSheet === null && !isMenuRow));
+    // A list whose rows carry a second line rules every row; a list of one-line rows parts them by spacing alone. The
+    // list decides it (its rule scope), never this row's own subtitle (decision 7).
+    const listRuled = useHappierListRowRuled(listRuleRow && hasSubtitleContent);
     const listRuleShown = listRuleRow && resolveHappierListRowRuleShown({
         followed: rowFollowed,
-        // A row with a line under its title; one-line rows part by spacing alone.
-        multiline: hasSubtitleContent,
+        multiline: listRuled,
         selected: selected === true,
         precedesSelected: rowPrecedesSelected,
         hovered: isHovered,

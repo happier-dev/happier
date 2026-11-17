@@ -71,4 +71,22 @@ describe('the top of the page', () => {
     const { paddingTop } = renderHeader({}, layout, true);
     expect(paddingTop + HAPPIER_PAGE_METRICS.controlHeightPx / 2).toBe(HAPPIER_PAGE_METRICS.paneHeaderHeightPx / 2);
   });
+
+  // A main screen's head hangs its controls from the title's line (`actionsLayout="hang"`): the title is centred on
+  // that same control-height line, not drawn at its own line's top 2 px above the row (SHELL-ACCEPT-1117 #7, live 66 vs 68).
+  it('centres a hanging title on its controls\' line', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <HappierShellTitleRowContext.Provider value>
+          <HappierPageHeader testID="header" title="Services" actionsLayout="hang" actions={<Text>+</Text>}
+            renderText={(input) => <Text>{input.text}</Text>} />
+        </HappierShellTitleRowContext.Provider>,
+      );
+    });
+    const title = renderer.root.findAll((node) => node.type === 'Text' && node.props.children === 'Services')[0]!;
+    let box = title.parent;
+    while (box && !(box.type === 'View' && box.props.style?.minHeight !== undefined)) box = box.parent;
+    expect(box?.props.style).toMatchObject({ minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' });
+  });
 });

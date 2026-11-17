@@ -242,7 +242,7 @@ describe('HappierCollectionList (list presentation)', () => {
       act(() => { target!.click(); });
     };
     const mount = mountThroughReactNativeWeb(
-      <HappierCollectionListGroupLabel host={glyphHost} testID="group" title="happier" count={3} countPlacement="title"
+      <HappierCollectionListGroupLabel host={glyphHost} testID="group" title="happier" count={3}
         disclosure={{ expanded: true, onToggle: () => calls.push('toggle') }} rollup={<Text testID="rollup">3/5</Text>} />,
     );
     // Expanded: the rollup is redundant with the rows below, so it is not drawn.

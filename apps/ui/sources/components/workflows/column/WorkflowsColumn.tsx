@@ -222,7 +222,8 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         {...(spaceControls ? { titleControl: header.titleControl } : {})}
         strip={<>
             <View testID="workflows-column:view-band" style={styles.viewBand}>
-                <View style={styles.viewBandLead}>{spaceControls ? header.strip : null}</View>
+                {/* Mounted only with space controls: an empty lead slot plus the band gap pushed the switch off the title's text edge (SHELL-ACCEPT-1117 live). */}
+                {spaceControls ? <View style={styles.viewBandLead}>{header.strip}</View> : null}
                 {viewSwitch}
             </View>
             {/* The listening line takes its own line under the switch: beside it, its time would be cut (r3 live). */}
@@ -277,7 +278,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     const accountFailed = accountWorkflows.status === 'failed' && !libraryFailed && !homeUnavailable;
     return <>
         {homeUnavailable ? <View style={styles.freshness}><HomeReachabilityGate variant="line">{null}</HomeReachabilityGate></View> : null}
-        <CollectionListGroupLabel testID="workflows-column:group:library" title={t('workflows.destination.sections.library')} countPlacement="title"
+        <CollectionListGroupLabel testID="workflows-column:group:library" title={t('workflows.destination.sections.library')}
             {...(visibleLibraryRows.length > 0 ? { count: visibleLibraryRows.length } : {})} first />
         {firstLoad ? <CollectionSkeletonRows count={3} /> : null}
         {libraryFailed ? <View style={collectionListStyles.stateLine}><SurfaceStateCard testID="workflows-column:library:failed" size="line" kind="error"
@@ -307,7 +308,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         {/* A retained link to another Home's trigger keeps that Home's own list and editor. */}
         {readSessionRouteServerId(params) ? <AccountTriggersSection /> : null}
         {split.sharedWithYou.length > 0 ? <>
-            <CollectionListGroupLabel testID="workflows-column:group:sharedWithYou" title={t('workflows.destination.sections.sharedWithYou')} countPlacement="title"
+            <CollectionListGroupLabel testID="workflows-column:group:sharedWithYou" title={t('workflows.destination.sections.sharedWithYou')}
                 count={split.sharedWithYou.length} />
             {split.sharedWithYou.map((definition, index) => <CollectionRowOrder key={definition.definitionId}
                 followed={index < split.sharedWithYou.length - 1}
@@ -323,7 +324,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         </> : null}
         <ColumnBuiltins selectedDefinitionId={selectedDefinitionId} isVisible={isVisible} />
         {split.fromPlugins.length > 0 ? <>
-            <CollectionListGroupLabel testID="workflows-column:group:fromPlugins" title={t('workflows.plugins.fromPlugins')} countPlacement="title"
+            <CollectionListGroupLabel testID="workflows-column:group:fromPlugins" title={t('workflows.plugins.fromPlugins')}
                 count={split.fromPlugins.length} />
             {split.fromPlugins.map((workflow, index) => <CollectionRowOrder key={workflow.workflow}
                 followed={index < split.fromPlugins.length - 1}
@@ -446,7 +447,7 @@ function ColumnBuiltins(props: Readonly<{ selectedDefinitionId: string | null; i
     const entries = getBuiltinWorkflowCatalogV1().filter((entry) => props.isVisible(entry.id));
     if (entries.length === 0) return null;
     return <>
-        <CollectionListGroupLabel testID="workflows-column:group:builtin" title={t('workflows.page.blocks.builtin')} countPlacement="title" count={entries.length} />
+        <CollectionListGroupLabel testID="workflows-column:group:builtin" title={t('workflows.page.blocks.builtin')} count={entries.length} />
         <CollectionRows>
             {entries.map((entry) => {
                 const href = createWorkflowDefinitionRoute(entry.id);
@@ -478,7 +479,8 @@ const styles = StyleSheet.create((theme) => ({
     // The switch's one place in both views: the band under the title, ending the row the spaces strip
     // leads (Definitions) or alone at the row's end (Runs). The title row's width never decides where it sits.
     viewBand: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-    viewBandLead: { flex: 1, minWidth: 0 },
+    // The band packs from the title's leading text edge, like every column's (SHELL-ACCEPT-1117): the switch follows the strip.
+    viewBandLead: { flexShrink: 1, minWidth: 0 },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
     freshness: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
     // The column's row inset, so the line's edges sit on the rows' edges.

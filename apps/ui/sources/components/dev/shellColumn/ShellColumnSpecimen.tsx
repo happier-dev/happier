@@ -27,8 +27,8 @@ import { Typography } from '@/constants/Typography';
 /**
  * The shell column's header and rhythm (owner shell round 2 items 2–3, SHELL-ACCEPT-1116): the real
  * `CollectionList` in the shell column, beside rail slots drawn from the rail's own metrics, with no band, a view
- * band (Services' grouping switch) and a spaces strip (Sessions). Every row and band centre should fall on a rail
- * step: the guide lines mark them.
+ * band (Services' grouping switch) and a spaces strip (Sessions). The title row, the band, the first row and each group label's step fall on a rail step (the guide
+ * lines); rows within a group keep their 32 px pitch between the guides.
  */
 type Frame = Readonly<{
   id: string;

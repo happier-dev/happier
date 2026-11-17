@@ -246,7 +246,6 @@ export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; ac
                 testID="workflows-column:group:triggers"
                 title={t('workflows.destination.sections.triggers')}
                 count={rows.length > 0 ? rows.length : undefined}
-                countPlacement="title"
                 {...(props.first ? { first: true } : {})}
             />
             {/* Nothing to say while the retained rows refresh: they stay put at full strength. With

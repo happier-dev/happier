@@ -49,6 +49,7 @@ import { useOptionalPluginUiPresentationHost, type PluginUiMenuSelection } from 
 import { PluginUiScrollActivityProvider } from '../presentationHost/scrollActivity.js';
 import { HappierCollectionDetailWidthContext, HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown, useHappierListRowRuled } from '../presentation/collection/CollectionList.js';
 import { useHappierListRowHovered } from '../presentation/collection/ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_INSTANT_MOTION,
@@ -1761,7 +1762,8 @@ function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boo
   const open = useContext(HappierListRowOpenContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const hovered = useHappierListRowHovered();
-  return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: selection?.selected === true || open, precedesSelected, hovered })
+  const multiline = useHappierListRowRuled(props.multiline);
+  return resolveHappierListRowRuleShown({ followed, multiline, selected: selection?.selected === true || open, precedesSelected, hovered })
     ? <HappierListRowRule startPx={props.startPx} color={color} /> : null;
 }
 

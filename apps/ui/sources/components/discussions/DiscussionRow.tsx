@@ -52,7 +52,6 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     trailing: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, flexShrink: 0 },
-    badge: { position: 'relative', top: 0, right: 0 },
     time: {
         ...Typography.default(),
         ...ITEM_SUBTITLE_TEXT_METRICS.tight,
@@ -328,10 +327,10 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
             /> : null;
     const trailing = <View style={styles.trailing} accessible={false} importantForAccessibility={requestRef ? 'auto' : 'no-hide-descendants'}>
                 {mentioned && !column ? (
-                    <TabBadge testID={`session-discussion-row-mention-${discussion.id}`} variant="dot" tone={workStatus.tone === 'neutral' ? 'neutral' : 'attention'} style={styles.badge} />
+                    <TabBadge testID={`session-discussion-row-mention-${discussion.id}`} variant="dot" inline tone={workStatus.tone === 'neutral' ? 'neutral' : 'attention'} />
                 ) : null}
                 {unread ? (
-                    <TabBadge testID={`session-discussion-row-unread-${discussion.id}`} variant="count" value={discussion.unreadCount} tone="neutral" style={styles.badge} />
+                    <TabBadge testID={`session-discussion-row-unread-${discussion.id}`} variant="count" inline value={discussion.unreadCount} tone="neutral" />
                 ) : null}
                 {/* One status slot: the state's glyph, or how long ago it last spoke. */}
                 {statusControl ? statusControl

@@ -488,7 +488,6 @@ export function BrowserLaunchpad(props: Readonly<{
                                     testID={`${testID}-section-${section}-label`}
                                     title={titleForSection(section)}
                                     count={rows.length}
-                                    countPlacement="title"
                                     first={section === firstSection && props.refreshStatus === 'idle'}
                                 />
                                 {/* Flat rows under the label, as Local services draws the same rows (lab Lp): no second sheet. */}
