@@ -14995,6 +14995,8 @@ settingsSession: {
     brandSubTagline: "为每一位编码代理打造的控制中心 — 覆盖你拥有的每一台设备。",
     brandTrustStrip: "端到端加密 · 开源 · 可自托管",
     providerMarkRowAccessibilityLabel: "支持的 AI 编码代理",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `第 ${current} 步，共 ${total} 步`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "欢迎。",

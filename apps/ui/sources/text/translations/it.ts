@@ -15708,6 +15708,8 @@ settingsSession: {
     brandSubTagline: "Un centro di controllo per ogni agente di codifica — su ogni dispositivo che possiedi.",
     brandTrustStrip: "CRITTOGRAFIA END-TO-END · OPEN SOURCE · SELF-HOSTABLE",
     providerMarkRowAccessibilityLabel: "Agenti di codifica IA supportati",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Passaggio ${current} di ${total}`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Benvenuto.",

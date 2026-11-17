@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { t } from '@/text';
 
 export type BrandWordmarkProps = Readonly<{
     /** Height in px; width scales 5x like the existing wizard logotype. Default 32. */
@@ -23,6 +24,8 @@ export const BrandWordmark = React.memo(function BrandWordmark(props: BrandWordm
     return (
         <Image
             testID={props.testID ?? 'brand-wordmark'}
+            // The wordmark is where the brand pane names Happier: it is read as the name, not skipped as art.
+            accessibilityLabel={t('welcome.brandWordmarkAccessibilityLabel')}
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             source={theme.dark
                 // eslint-disable-next-line @typescript-eslint/no-require-imports

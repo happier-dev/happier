@@ -15368,6 +15368,8 @@ settingsSession: {
     brandSubTagline: "Une seule salle de contrôle pour tous tes agents de code — sur tous tes appareils.",
     brandTrustStrip: "CHIFFRÉ DE BOUT EN BOUT · OPEN SOURCE · AUTO-HÉBERGEABLE",
     providerMarkRowAccessibilityLabel: "Agents de code IA pris en charge",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Étape ${current} sur ${total}`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Bienvenue.",

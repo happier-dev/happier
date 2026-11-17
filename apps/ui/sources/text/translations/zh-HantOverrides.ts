@@ -12617,6 +12617,8 @@ settingsSession: {
         brandSubTagline: '為每一位編碼代理打造的控制中心 — 涵蓋你擁有的每一台裝置。',
         brandTrustStrip: '端對端加密 · 開源 · 可自架',
         providerMarkRowAccessibilityLabel: '支援的 AI 編碼代理',
+        brandWordmarkAccessibilityLabel: 'Happier',
+        stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `第 ${current} 步，共 ${total} 步`,
 
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: '歡迎。',

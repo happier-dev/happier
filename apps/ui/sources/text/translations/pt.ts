@@ -15604,6 +15604,8 @@ settingsSession: {
     brandSubTagline: "Um centro de controle para cada agente de programação — em todos os dispositivos que você tem.",
     brandTrustStrip: "CRIPTOGRAFIA DE PONTA A PONTA · CÓDIGO ABERTO · AUTO-HOSPEDÁVEL",
     providerMarkRowAccessibilityLabel: "Agentes de programação com IA compatíveis",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Passo ${current} de ${total}`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Bem-vindo.",

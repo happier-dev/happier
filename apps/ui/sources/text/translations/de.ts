@@ -15582,6 +15582,8 @@ settingsSession: {
         brandSubTagline: 'Eine Kommandozentrale für jeden Coding-Agenten – auf allen deinen Geräten.',
         brandTrustStrip: 'ENDE-ZU-ENDE-VERSCHLÜSSELT · OPEN SOURCE · SELBST HOSTBAR',
         providerMarkRowAccessibilityLabel: 'Unterstützte KI-Coding-Agents',
+        brandWordmarkAccessibilityLabel: 'Happier',
+        stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Schritt ${current} von ${total}`,
 
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: 'Willkommen.',

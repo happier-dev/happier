@@ -18682,6 +18682,8 @@ const enWelcome = {
     'One control room for every coding agent — on every device you own.',
   brandTrustStrip: 'END-TO-END ENCRYPTED · OPEN SOURCE · SELF-HOSTABLE',
   providerMarkRowAccessibilityLabel: 'Supported AI coding agents',
+  brandWordmarkAccessibilityLabel: 'Happier',
+  stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Step ${current} of ${total}`,
 
   // Unified onboarding redesign — welcome decision (right pane)
   welcomeQuestionTitle: 'Welcome.',

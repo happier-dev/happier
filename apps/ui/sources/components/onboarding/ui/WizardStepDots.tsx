@@ -3,6 +3,7 @@ import { Animated, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { t } from '@/text';
 
 export type WizardStepDotsProps = Readonly<{
     currentStepIndex: number;
@@ -60,6 +61,7 @@ export function WizardStepDots(props: WizardStepDotsProps) {
             style={styles.root}
             testID="wizard-step-dots"
             accessibilityRole="progressbar"
+            accessibilityLabel={t('welcome.stepProgressAccessibilityLabel', { current: activeIndex + 1, total: dots })}
             accessibilityValue={{ now: activeIndex + 1, min: 1, max: dots }}
         >
             {Array.from({ length: visibleRange.end - visibleRange.start }).map((_, offset) => {

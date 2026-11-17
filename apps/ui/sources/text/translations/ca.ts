@@ -14529,6 +14529,8 @@ settingsSession: {
         brandSubTagline: 'Un centre de control per a cada agent de codificació — a tots els dispositius que tens.',
         brandTrustStrip: 'XIFRAT D\'EXTREM A EXTREM · CODI OBERT · AUTOALLOTJABLE',
         providerMarkRowAccessibilityLabel: 'Agents de codificació amb IA compatibles',
+        brandWordmarkAccessibilityLabel: 'Happier',
+        stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Pas ${current} de ${total}`,
 
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: 'Et donem la benvinguda.',

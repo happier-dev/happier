@@ -15494,6 +15494,8 @@ settingsSession: {
     brandSubTagline: "Un centro de control para todos tus agentes de codificación con IA, en cada dispositivo que tengas.",
     brandTrustStrip: "CIFRADO DE EXTREMO A EXTREMO · CÓDIGO ABIERTO · AUTOALOJABLE",
     providerMarkRowAccessibilityLabel: "Agentes de codificación con IA compatibles",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Paso ${current} de ${total}`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Te damos la bienvenida.",

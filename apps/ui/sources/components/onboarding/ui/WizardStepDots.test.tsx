@@ -16,4 +16,11 @@ describe('WizardStepDots', () => {
             max: 15,
         });
     });
+
+    it('names its progress for a screen reader, which reads the bar by its label (C77 aria-progressbar-name)', async () => {
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<WizardStepDots currentStepIndex={0} stepCount={5} />);
+        expect(screen.findByTestId('wizard-step-dots')?.props.accessibilityLabel)
+            .toBe(t('welcome.stepProgressAccessibilityLabel', { current: 1, total: 5 }));
+    });
 });

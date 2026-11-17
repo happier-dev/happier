@@ -15316,6 +15316,8 @@ settingsSession: {
     brandSubTagline: "Единый центр управления для каждого агента-программиста — на всех ваших устройствах.",
     brandTrustStrip: "СКВОЗНОЕ ШИФРОВАНИЕ · ОТКРЫТЫЙ ИСХОДНЫЙ КОД · SELF-HOSTING",
     providerMarkRowAccessibilityLabel: "Поддерживаемые ИИ-агенты для программирования",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Шаг ${current} из ${total}`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Добро пожаловать.",

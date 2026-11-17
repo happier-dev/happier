@@ -15323,6 +15323,8 @@ settingsSession: {
     brandSubTagline: "Jedno centrum kontroli dla każdego agenta kodującego — na każdym urządzeniu, które posiadasz.",
     brandTrustStrip: "SZYFROWANIE END-TO-END · OTWARTE ŹRÓDŁA · SELF-HOSTING",
     providerMarkRowAccessibilityLabel: "Obsługiwane agenty kodujące AI",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `Krok ${current} z ${total}`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Witaj.",

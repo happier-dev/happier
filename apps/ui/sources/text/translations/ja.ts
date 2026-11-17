@@ -15772,6 +15772,8 @@ settingsSession: {
     brandSubTagline: "あらゆるコーディングエージェントのためのコントロールルーム — お使いのすべてのデバイスで。",
     brandTrustStrip: "エンドツーエンド暗号化 · オープンソース · セルフホスト可能",
     providerMarkRowAccessibilityLabel: "対応している AI コーディングエージェント",
+    brandWordmarkAccessibilityLabel: 'Happier',
+    stepProgressAccessibilityLabel: ({ current, total }: { current: number; total: number }) => `ステップ ${current} / ${total}`,
 
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "ようこそ。",
