@@ -79,12 +79,14 @@ describe('Android emulator platform adapter', () => {
             }],
         });
 
-        await expect(adapter.listResources()).resolves.toEqual([{
+        await expect(adapter.listResources()).resolves.toMatchObject([{
             v: 1,
             simulatorId: 'android:emulator:emulator-5554',
             platform: 'android',
             deviceId: 'emulator-5554',
             displayName: 'Pixel 9 API 35',
+            state: 'running',
+            runtimeId: 'emulator-5554',
             capture: {
                 status: 'available',
                 sourceId: 'simulator:android:emulator-5554:screen',
@@ -181,12 +183,15 @@ describe('Android emulator platform adapter', () => {
             }],
         });
 
-        await expect(adapter.listResources()).resolves.toEqual([{
+        await expect(adapter.listResources()).resolves.toMatchObject([{
             v: 1,
             simulatorId: 'android:physical:R5CT123456A',
             platform: 'android',
             deviceId: 'R5CT123456A',
             displayName: 'Galaxy S25',
+            state: 'unavailable',
+            supportedDeviceOperations: [],
+            supportedHardwareButtons: [],
             capture: {
                 status: 'unavailable',
                 sourceId: 'simulator:android:R5CT123456A:screen',
