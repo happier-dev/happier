@@ -1,112 +1,113 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { TeamCredentialResourceMutationResultV1Schema, TeamCredentialExternalApiKeyRevokeOutputV1Schema,
+    TeamCredentialExternalApiKeyRevokeAllOutputV1Schema } from '@happier-dev/protocol/teams';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { standardCleanup, teamCredentialResourceFixture } from '@/dev/testkit';
+import { applyTeamCredentialResource, getTeamCredentialResourceSnapshot, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { teamCredentialDisplayNameBinding } from './teamCredentialLabels';
 
-const { runTeamAction, invalidateTeamCredentialResources } = vi.hoisted(() => ({
-    runTeamAction: vi.fn(),
-    invalidateTeamCredentialResources: vi.fn(),
-}));
+const confirmNative = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: confirmNative } }).module;
+});
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+// Resolve the lazy Action graph during collection, outside interaction deadlines.
+await import('@/sync/ops/actions/defaultActionExecutor');
+const operations = await import('./teamCredentialOperations');
 
-vi.mock('./teamActionClient', () => ({ runTeamAction }));
-vi.mock('@/sync/store/teams/teamsSnapshots', () => ({ invalidateTeamCredentialResources }));
+async function target() {
+    const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'account', credentialResourcesEnabled: true });
+    return { scope: createServerAccountScope(serverId, 'account')!, address: { serverId, teamId: 'team-a' } };
+}
+const updated = () => TeamCredentialResourceMutationResultV1Schema.parse({ resourceId: 'resource-a', revision: 4 });
+
+beforeEach(async () => {
+    await harness.reset();
+    resetTeamsSnapshotsForTests();
+    confirmNative.mockClear();
+});
+afterEach(() => { resetTeamsSnapshotsForTests(); standardCleanup(); });
 
 describe('teamCredentialOperations outcome recovery', () => {
-    beforeEach(() => vi.clearAllMocks());
+    it('marks the canonical resource projection stale when the dispatched mutation loses its response', async () => {
+        const context = await target();
+        applyTeamCredentialResource({ ...context, resource: teamCredentialResourceFixture({ id: 'resource-a', teamId: 'team-a' }), observedAt: 1 });
+        const path = '/v1/teams/credential-resources/update';
+        harness.answer(context.scope.serverId, path, { dispatchThenFail: true });
 
-    it('invalidates the canonical resource projection when a mutation outcome is unknown', async () => {
-        runTeamAction.mockResolvedValueOnce({
-            kind: 'failed',
-            failure: { kind: 'outcome_unknown', retryable: true, code: null },
-        });
-        const { updateTeamCredentialResource } = await import('./teamCredentialOperations');
-        const scope = { serverId: 'home-a', accountId: 'account-a' } as const;
-        const address = { serverId: 'home-a', teamId: 'team-a' } as const;
+        const outcome = await operations.updateTeamCredentialResource({ ...context, resourceId: 'resource-a', expectedRevision: 3, enabled: false });
 
-        await expect(updateTeamCredentialResource({
-            scope,
-            address,
-            resourceId: 'resource-a',
-            expectedRevision: 3,
-            enabled: false,
-        })).resolves.toEqual({
-            kind: 'failed',
-            failure: { kind: 'outcome_unknown', retryable: true, code: null },
-        });
-        expect(invalidateTeamCredentialResources).toHaveBeenCalledWith(scope, address, 'resource-a');
+        expect(outcome).toMatchObject({ kind: 'failed', failure: { kind: 'outcome_unknown', retryable: false } });
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(getTeamCredentialResourceSnapshot(context.scope, context.address, 'resource-a')?.stale).toBe(true);
     });
 
-    it('carries an exact surface confirmation through a destructive resource mutation', async () => {
-        runTeamAction.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { resourceId: 'resource-a', revision: 4 },
-        });
-        const { deleteTeamCredentialResource } = await import('./teamCredentialOperations');
+    it('dispatches a surface-confirmed deletion and invalidates the accepted resource', async () => {
+        const context = await target();
+        applyTeamCredentialResource({ ...context, resource: teamCredentialResourceFixture({ id: 'resource-a', teamId: 'team-a' }), observedAt: 1 });
+        const path = '/v1/teams/credential-resources/delete';
+        harness.answer(context.scope.serverId, path, { body: updated() });
 
-        await deleteTeamCredentialResource({
-            scope: { serverId: 'home-a', accountId: 'account-a' },
-            address: { serverId: 'home-a', teamId: 'team-a' },
-            resourceId: 'resource-a',
-            expectedRevision: 3,
-            confirmedByPresentUser: true,
-        });
+        await expect(operations.deleteTeamCredentialResource({ ...context, resourceId: 'resource-a', expectedRevision: 3, confirmedByPresentUser: true }))
+            .resolves.toEqual({ kind: 'succeeded', value: updated() });
 
-        expect(runTeamAction).toHaveBeenCalledWith(expect.objectContaining({
-            actionId: 'teams.credentials.delete',
-            approval: 'surface_confirmed',
-        }));
+        expect(harness.requestsFor(path)[0]?.input).toEqual({ resourceId: 'resource-a', expectedRevision: 3 });
+        expect(confirmNative).not.toHaveBeenCalled();
+        expect(getTeamCredentialResourceSnapshot(context.scope, context.address, 'resource-a')?.stale).toBe(true);
     });
 
-    it('sends the complete editor replacement as one fenced update intent', async () => {
-        runTeamAction.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { resourceId: 'resource-a', revision: 4 },
-        });
-        const { updateTeamCredentialResource } = await import('./teamCredentialOperations');
+    it('sends the complete editor replacement in one revision-checked update', async () => {
+        const context = await target();
+        const path = '/v1/teams/credential-resources/update';
+        harness.answer(context.scope.serverId, path, { body: updated() });
         const replacement = {
             enabled: true,
             displayName: sealPrivateLabelV1({ mode: 'plain', binding: teamCredentialDisplayNameBinding('resource-a'), value: 'Shared provider' }),
             sessionUsePolicy: 'team_context_required' as const,
             requestPolicy: null,
             allMembersAllowedRoutes: ['brokered' as const],
-            groupGrants: [],
-            memberGrants: [],
-            usageLimitDelta: { upserts: [], deleteIds: ['limit-a'] },
+            groupGrants: [], memberGrants: [], usageLimitDelta: { upserts: [], deleteIds: ['limit-a'] },
         };
 
-        await updateTeamCredentialResource({
-            scope: { serverId: 'home-a', accountId: 'account-a' },
-            address: { serverId: 'home-a', teamId: 'team-a' },
-            resourceId: 'resource-a',
-            expectedRevision: 3,
-            replacement,
-        });
+        await expect(operations.updateTeamCredentialResource({ ...context, resourceId: 'resource-a', expectedRevision: 3, replacement }))
+            .resolves.toEqual({ kind: 'succeeded', value: updated() });
 
-        expect(runTeamAction).toHaveBeenCalledWith(expect.objectContaining({
-            actionId: 'teams.credentials.update',
-            input: { resourceId: 'resource-a', expectedRevision: 3, replacement },
-        }));
+        expect(harness.requestsFor(path)[0]?.input).toEqual({ resourceId: 'resource-a', expectedRevision: 3, replacement });
     });
 
-    it.each([
-        ['teams.credentials.limits.delete', async (operations: typeof import('./teamCredentialOperations')) => operations.deleteTeamCredentialUsageLimit({
-            scope: { serverId: 'home-a', accountId: 'account-a' },
-            address: { serverId: 'home-a', teamId: 'team-a' },
-            resourceId: 'resource-a', expectedRevision: 3, limitId: 'limit-a', confirmedByPresentUser: true,
-        })],
-        ['teams.credentials.externalKeys.revoke', async (operations: typeof import('./teamCredentialOperations')) => operations.revokeTeamCredentialExternalApiKey({
-            scope: { serverId: 'home-a', accountId: 'account-a' },
-            resourceId: 'resource-a', keyId: 'key-a', confirmedByPresentUser: true,
-        })],
-        ['teams.credentials.externalKeys.revokeAll', async (operations: typeof import('./teamCredentialOperations')) => operations.revokeAllTeamCredentialExternalApiKeys({
-            scope: { serverId: 'home-a', accountId: 'account-a' },
-            resourceId: 'resource-a', confirmedByPresentUser: true,
-        })],
-    ] as const)('carries an exact surface confirmation through %s', async (actionId, invoke) => {
-        runTeamAction.mockResolvedValueOnce({ kind: 'succeeded', value: {} });
-        await invoke(await import('./teamCredentialOperations'));
-        expect(runTeamAction).toHaveBeenCalledWith(expect.objectContaining({
-            actionId,
-            approval: 'surface_confirmed',
-        }));
+    it('deletes a limit through the real Action front door with one surface confirmation', async () => {
+        const context = await target();
+        const path = '/v1/teams/credential-resources/limits/delete';
+        harness.answer(context.scope.serverId, path, { body: updated() });
+        await expect(operations.deleteTeamCredentialUsageLimit({ ...context, resourceId: 'resource-a', expectedRevision: 3,
+            limitId: 'limit-a', confirmedByPresentUser: true })).resolves.toEqual({ kind: 'succeeded', value: updated() });
+        expect(harness.requestsFor(path)[0]?.input).toEqual({ resourceId: 'resource-a', expectedRevision: 3, limitId: 'limit-a' });
+        expect(confirmNative).not.toHaveBeenCalled();
+    });
+
+    it('revokes the exact external key through the real Action front door', async () => {
+        const context = await target();
+        const path = '/v1/teams/credential-resources/external-keys/revoke';
+        const value = TeamCredentialExternalApiKeyRevokeOutputV1Schema.parse({ keyId: '00000000-0000-4000-8000-000000000001', revoked: true });
+        harness.answer(context.scope.serverId, path, { body: value });
+        await expect(operations.revokeTeamCredentialExternalApiKey({ scope: context.scope, resourceId: 'resource-a', keyId: '00000000-0000-4000-8000-000000000001', confirmedByPresentUser: true }))
+            .resolves.toEqual({ kind: 'succeeded', value });
+        expect(harness.requestsFor(path)[0]?.input).toEqual({ resourceId: 'resource-a', keyId: '00000000-0000-4000-8000-000000000001' });
+        expect(confirmNative).not.toHaveBeenCalled();
+    });
+
+    it('revokes all external keys for the exact resource through the real Action front door', async () => {
+        const context = await target();
+        const path = '/v1/teams/credential-resources/external-keys/revoke-all';
+        const value = TeamCredentialExternalApiKeyRevokeAllOutputV1Schema.parse({ resourceId: 'resource-a', revokedCount: 2 });
+        harness.answer(context.scope.serverId, path, { body: value });
+        await expect(operations.revokeAllTeamCredentialExternalApiKeys({ scope: context.scope, resourceId: 'resource-a', confirmedByPresentUser: true }))
+            .resolves.toEqual({ kind: 'succeeded', value });
+        expect(harness.requestsFor(path)[0]?.input).toEqual({ resourceId: 'resource-a' });
+        expect(confirmNative).not.toHaveBeenCalled();
     });
 });

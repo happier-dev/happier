@@ -55,6 +55,7 @@ vi.mock('@/components/ui/lists/virtualized', () => ({
 }));
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => routerBoundary,
         useNavigation: () => ({ setOptions: vi.fn() }),

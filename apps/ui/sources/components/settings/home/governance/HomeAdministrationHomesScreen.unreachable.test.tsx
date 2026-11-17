@@ -19,6 +19,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 const routerReplace = vi.hoisted(() => vi.fn());
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), replace: routerReplace, back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -30,6 +31,8 @@ installSettingsViewCommonModuleMocks({
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
+// Finish the real screen graph at collection, after its network and native boundaries.
+const { HomeAdministrationHomesScreen } = await import('./HomeAdministrationHomesScreen');
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 
@@ -62,7 +65,6 @@ describe('HomeAdministrationHomesScreen when the Home is unreachable', () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         setEndpointStatus(storage as never, 'offline');
 
-        const { HomeAdministrationHomesScreen } = await import('./HomeAdministrationHomesScreen');
         const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
         resetHomeGovernanceEngineForTests();
         const screen = await renderScreen(<HomeAdministrationHomesScreen />);

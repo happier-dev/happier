@@ -15,6 +15,7 @@ const shareTextSafeMock = vi.hoisted(() => vi.fn(async () => 'shared' as const))
 const sharingAvailableMock = vi.hoisted(() => ({ current: true }));
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),

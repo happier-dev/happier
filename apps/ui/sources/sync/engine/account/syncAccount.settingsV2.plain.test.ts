@@ -12,14 +12,6 @@ vi.mock('expo-notifications', () => ({
     getExpoPushTokenAsync: vi.fn(),
 }));
 
-vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
-    return {
-        ...actual,
-        deriveSettingsSecretsKey: async () => new Uint8Array(32).fill(9),
-    };
-});
-
 describe('handleUpdateAccountSocketUpdate settingsV2 (plain)', () => {
     it('applies settingsV2 plaintext content and preserves local server-selection keys', async () => {
         const { handleUpdateAccountSocketUpdate } = await import('./syncAccount');

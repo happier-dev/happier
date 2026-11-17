@@ -1,3 +1,4 @@
+import { homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     NO_HOME_CAPABILITIES_V1,
@@ -22,25 +23,12 @@ const scopeAOther = createServerAccountScope('home_a', 'acc_2')!;
 const scopeB = createServerAccountScope('home_b', 'acc_1')!;
 
 function projection(overrides: Partial<HomeGovernanceProjectionV1> = {}): HomeGovernanceProjectionV1 {
-    return {
+    return homeGovernanceProjectionFixture({
         viewer: { accountId: 'acc_1', homeRole: 'owner', status: 'active' },
         capabilities: { ...NO_HOME_CAPABILITIES_V1, viewAdministration: true },
-        policy: {
-            revision: 1,
-            teamCreationPolicy: 'managed_only',
-            authentication: { status: 'inherited' },
-        },
-        authenticationOptions: {
-            methods: [],
-            permittedAccountModes: ['e2ee'],
-            recommendedProvisioningMode: 'e2ee',
-            signInService: { deploymentMode: null, canDisable: false },
-        },
-        setupState: 'owned',
         activeOwnerCount: 1,
-        teamsEnabled: true,
         ...overrides,
-    };
+    });
 }
 
 afterEach(() => {

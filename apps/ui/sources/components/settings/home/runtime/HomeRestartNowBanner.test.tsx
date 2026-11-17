@@ -1,3 +1,6 @@
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { parseCapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
+import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -5,6 +8,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 
 import type { HomeAdministrationContext } from '@/components/settings/home/governance/homeAdministrationContext';
@@ -18,8 +23,8 @@ import type { SystemTaskBridgeListenerSet } from '@/components/systemTasks/types
 import { act } from 'react-test-renderer';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const machineRpc = vi.hoisted(() => vi.fn<(input: { method: string; payload: unknown }) => Promise<unknown>>());
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
+let answerRpc: Parameters<typeof installSessionActionRpcBoundary>[0] = () => { throw new Error('Unexpected daemon request'); };
+const requests = installSessionActionRpcBoundary((request, context) => answerRpc(request, context));
 const desktop = vi.hoisted(() => ({ nextId: 0, listeners: new Map<string, SystemTaskBridgeListenerSet>() }));
 // Native transport is the boundary; Action admission and the real task runner remain live.
 vi.mock('@/components/systemTasks/createTauriSystemTaskBridge', () => ({ createTauriSystemTaskBridge: () => ({
@@ -52,18 +57,20 @@ let scope = { serverId: '', accountId: 'account-1' };
 beforeEach(async () => {
     await home.reset();
     vi.stubGlobal('__TAURI_INTERNALS__', { invoke: createDesktopSecureStorageBoundary().invoke });
-    machineRpc.mockReset();
+    requests.length = 0;
+    answerRpc = () => { throw new Error('Unexpected daemon request'); };
     vi.mocked(Modal.alertAsync).mockClear();
     desktop.listeners.clear();
     expect(getDefaultSystemTaskRunner().mode).toBe('tauri');
     const serverId = await home.addHome({ name: 'Home A', serverUrl: 'https://restart-banner.test', accountId: scope.accountId });
     scope = { serverId, accountId: scope.accountId };
+    home.answer(serverId, '/v1/machines/host', { body: { machine: createPlainMachineRowFixture({ id: 'host', accountId: scope.accountId }) } });
     // These cases isolate lifecycle, not confirmation; use the user's real stored Action policy.
-    home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+    home.answer(serverId, '/v2/account/settings', { body: AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {
         actionsSettingsV1: { v: 1, approvalWaivedSurfaces: {
             'relay.runtime.restart': ['ui'], 'home.runtime.restart': ['ui'],
         } },
-    } }, version: 1 } });
+    } }, version: 1 }) });
 });
 
 async function admittedDesktopTask() {
@@ -114,7 +121,7 @@ describe('HomeRestartNowBanner', () => {
         expect(onRestarted).not.toHaveBeenCalled();
         expect(refresh).not.toHaveBeenCalled();
         expect(screen.tree.findByType(RoundButton).props.loading).toBe(true);
-        await act(async () => desktop.listeners.get(taskId)!.onResult({ protocolVersion: 1, taskId, ok: true, data: { healthy: true } }));
+        await act(async () => desktop.listeners.get(taskId)!.onResult(SystemTaskResultSchema.parse({ protocolVersion: 1, taskId, ok: true, data: { healthy: true } })));
         expect(onRestarted).toHaveBeenCalledOnce();
         expect(refresh).toHaveBeenCalledOnce();
         expect(screen.tree.findByType(RoundButton).props.loading).toBe(false);
@@ -127,9 +134,9 @@ describe('HomeRestartNowBanner', () => {
         await screen.tree.pressByTestIdAsync('home-runtime-pending-restart.action');
         expect(Modal.alertAsync).not.toHaveBeenCalled();
         const taskId = await admittedDesktopTask();
-        await act(async () => desktop.listeners.get(taskId)!.onResult(failure === 'failed'
+        await act(async () => desktop.listeners.get(taskId)!.onResult(SystemTaskResultSchema.parse(failure === 'failed'
             ? { protocolVersion: 1, taskId, ok: false, error: { code: 'restart_failed', message: 'Runtime could not start' } }
-            : { protocolVersion: 1, taskId, ok: true, data: { healthy: false } }));
+            : { protocolVersion: 1, taskId, ok: true, data: { healthy: false } })));
         expect(onRestarted).not.toHaveBeenCalled();
         expect(refresh).not.toHaveBeenCalled();
         expect(Modal.alertAsync).toHaveBeenCalledWith('homeGovernance.runtime.restartFailed', failure === 'failed' ? 'Runtime could not start' : 'errors.operationFailed');
@@ -139,19 +146,19 @@ describe('HomeRestartNowBanner', () => {
     it.each([true, false])('standalone Runtime restart refreshes both projections only after a healthy result (%s)', async (healthy) => {
         let complete!: (result: SystemTaskResult) => void;
         const terminal = new Promise<SystemTaskResult>(resolve => { complete = resolve; });
-        machineRpc.mockImplementation(async ({ method, payload }) => {
-            if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
+        answerRpc = async ({ method, params }) => {
+            if (method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)) return parseCapabilitiesDetectResponse({ protocolVersion: 1, results: {
                 'tool.systemTasks': { ok: true, checkedAt: 1, data: { available: true, kinds: ['relay.runtime.restart.v1'], methods: ['start', 'wait'] } },
-            } };
-            const request = payload as { method: string };
-            return { ok: true, result: request.method === 'start' ? { taskId: 'restart' } : await terminal };
-        });
+            } });
+            const request = params as { method: string };
+            return { ok: true, result: request.method === 'start' ? { taskId: 'restart' } : SystemTaskResultSchema.parse(await terminal) };
+        };
         const onRestarted = vi.fn();
         const refresh = vi.fn();
         const screen = await renderScreen(<HomeRuntimeSection context={context({ refresh })}
             executor={{ kind: 'connected_machine', machineId: 'host', hostName: 'Home host' }} release={{ version: '0.3', flavor: 'light' }} onRestarted={onRestarted} />);
         await screen.tree.pressByTestIdAsync('home-runtime-restart');
-        await waitForHomeGovernance(() => expect(machineRpc.mock.calls.some(([call]) => (call.payload as { method?: string }).method === 'wait')).toBe(true));
+        await waitForHomeGovernance(() => expect(requests.some(call => (call.params as { method?: string }).method === 'wait')).toBe(true));
         expect(refresh).not.toHaveBeenCalled();
         expect(onRestarted).not.toHaveBeenCalled();
         await act(async () => complete({ protocolVersion: 1, taskId: 'restart', ok: true, data: { healthy } }));
@@ -187,7 +194,7 @@ describe('HomeRestartNowBanner', () => {
         expect(onReview).not.toHaveBeenCalled();
         const taskId = await admittedDesktopTask();
         expect(here.tree.findByType(RoundButton).props.loading).toBe(true);
-        await act(async () => desktop.listeners.get(taskId)!.onResult({ protocolVersion: 1, taskId, ok: true, data: { healthy: true } }));
+        await act(async () => desktop.listeners.get(taskId)!.onResult(SystemTaskResultSchema.parse({ protocolVersion: 1, taskId, ok: true, data: { healthy: true } })));
         expect(onRestarted).toHaveBeenCalledOnce();
         standardCleanup();
 

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { accountDisplayProfileFixture, createDeferred, renderScreen, standardCleanup, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture } from '@/dev/testkit';
+import { accountDisplayProfileFixture, createDeferred, renderScreen, standardCleanup, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -12,10 +12,7 @@ import type { TeamCredentialResourceDraft } from './teamCredentialEditorDraft';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installSettingsViewCommonModuleMocks({
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({ importOriginal, overrides: {} });
-    },
+    storage: 'real',
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -38,10 +35,19 @@ beforeEach(async () => {
 
 afterEach(() => standardCleanup());
 
-let context = {
+let context: TeamSectionContext = {
     scope: { serverId: 'server-1', accountId: 'account-owner' },
     address: { serverId: 'server-1', teamId: 'team-1' },
-} as TeamSectionContext;
+    homeName: 'Limits Home',
+    team: teamSummaryFixture(),
+    mutationsAvailable: true,
+    archived: false,
+    canMutate: true,
+    approvalPending: false,
+    refresh: vi.fn(),
+    requestApproval: vi.fn(),
+    settleLeave: vi.fn(),
+};
 
 const usageCapabilities = {
     inferenceRequests: 'available',

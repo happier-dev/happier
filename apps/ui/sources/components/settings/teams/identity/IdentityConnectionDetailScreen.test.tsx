@@ -1,260 +1,131 @@
 import * as React from 'react';
-import type { TeamGroupNameProjectionV1, TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
+import { HomeIdentityConnectionV1Schema, HomeIdentityConnectionListResultV1Schema } from '@happier-dev/protocol/home';
+import { TeamIdentityConnectionListResultV1Schema, TeamGroupsPageV1Schema } from '@happier-dev/protocol/teams';
+import { homeDomainActionTransportV1, homeDomainActionOutputSchemaV1, type HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
-
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { teamCapabilitiesFixture, teamSummaryFixture, teamIdentityConnectionFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { t } from '@/text';
-
-const executeMock = vi.hoisted(() => vi.fn());
-const executeBindingMock = vi.hoisted(() => vi.fn());
-const announceMock = vi.hoisted(() => vi.fn());
-const openPrivateLabelMock = vi.hoisted(() => vi.fn());
-const groupBindingRowsMock = vi.hoisted(() => ({
-    current: [] as Array<Readonly<{
-        id: string;
-        externalGroupId: string;
-        target: Readonly<{ teamGroupId: string; name: TeamGroupNameProjectionV1; archivedAt: number | null }>;
-    }>>,
-}));
-const nativeGroupsMock = vi.hoisted(() => ({
-    current: [] as Array<Readonly<{ id: string; name: TeamGroupNameProjectionV1; memberCount: number }>>,
-    enabled: false,
-    status: 'ready' as 'loading' | 'ready' | 'error',
-    error: null as null | { kind: 'unreachable'; retryable: boolean; code: null },
-    reload: vi.fn(),
-}));
-const refreshMock = vi.hoisted(() => vi.fn());
 const routerReplaceMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
-const requestApprovalMock = vi.hoisted(() => vi.fn());
-const canMutateMock = vi.hoisted(() => ({ current: true }));
-const openExternalUrlMock = vi.hoisted(() => vi.fn());
+const announceMock = vi.hoisted(() => vi.fn());
+const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
 const appStateChangeMock = vi.hoisted(() => ({ current: null as null | ((state: string) => void) }));
-const managedProvidersStateMock = vi.hoisted(() => ({
-    current: { kind: 'ready' as const, refreshing: false, stale: false, failure: null, items: [] as Array<{ id: string }>, unreadableCount: 0 },
-}));
-const identityStateMock = vi.hoisted(() => ({
-    version: 0,
-    listeners: new Set<() => void>(),
-    current: {
-        kind: 'ready' as const,
-        refreshing: false,
-        stale: false,
-        failure: null,
-        items: [{
-            v: 1 as const,
-            id: 'connection-1',
-            teamId: 'team-1',
-            provider: { id: 'provider-1', kind: 'oidc' as const, displayName: 'OIDC' },
-            externalReference: { v: 1 as const, kind: 'oidc' as const },
-            settings: { v: 1 as const, kind: 'oidc' as const, allowedUsers: [] as string[], allowedEmailDomains: [] as string[], groupsAny: [] as string[], groupsAll: [] as string[] },
-            enabled: true,
-            firstEnabledAt: 1,
-            revision: 1,
-            state: 'connected' as const,
-            allowedActions: [] as string[],
-            lastObservation: { v: 1 as const, kind: 'oidc' as const },
-            lastSuccessfulTest: null,
-            createdAt: 1,
-            updatedAt: 1,
-            // The canonical union, not the first fixture's literal kind: cases
-            // below legitimately replace this row with a GitHub or WorkOS
-            // connection, which a narrowed `'oidc'` literal type forbids.
-        }] as TeamIdentityConnectionV1[],
-    },
-    publish() {
-        this.version += 1;
-        for (const listener of this.listeners) listener();
-    },
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: { replace: routerReplaceMock, push: routerPushMock } }).module;
-});
-// Navigation focus is the router runtime boundary; route-focus behavior itself is
-// proven against the real projection owner in `.workosReturn.test.tsx`.
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { replace: routerReplaceMock, push: routerPushMock } }).module);
 vi.mock('@react-navigation/native', async () => {
     const ReactModule = await import('react');
-    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
-    return {
-        ...createReactNavigationNativeMock(),
-        useFocusEffect: (effect: () => void | (() => void)) => {
-            ReactModule.useEffect(effect, [effect]);
-        },
+    return { ...(await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock(),
+        NavigationContext: ReactModule.createContext({}),
+        useFocusEffect: (effect: () => void | (() => void)) => ReactModule.useEffect(effect, [effect]),
     };
 });
-vi.mock('react-native', async (importOriginal) => {
-    const original = await importOriginal<typeof import('react-native')>();
-    return {
-        ...original,
-        AppState: {
-            ...original.AppState,
-            addEventListener: vi.fn((_event: string, listener: (state: string) => void) => {
-                appStateChangeMock.current = listener;
-                return { remove: vi.fn() };
-            }),
-        },
-    };
+vi.mock('react-native', async () => {
+    const native = await (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock();
+    return { ...native, AppState: { ...native.AppState, addEventListener: vi.fn((_event: string, listener: (state: string) => void) => {
+        appStateChangeMock.current = listener; return { remove: vi.fn() };
+    }) } };
 });
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-        spies: { confirm: vi.fn(async () => true) },
-    }).module;
-});
-vi.mock('@/components/settings/home/identity/useManagedIdentityProviders', () => ({
-    useManagedIdentityProviders: () => ({
-        state: managedProvidersStateMock.current,
-        refresh: vi.fn(),
-    }),
-}));
-vi.mock('./TeamAuthenticationSettingsScreen', () => ({ connectionStateLabel: (value: string) => value }));
-vi.mock('./identityAdministrationClient', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./identityAdministrationClient')>(),
-    createIdentityAdministrationClient: () => ({
-        execute: executeMock,
-        executeExternalGroupBinding: executeBindingMock,
-    }),
-}));
-vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
-    announceAccessibilityMessage: announceMock,
-}));
-vi.mock('@/sync/ops/privateLabels/privateLabelClient', () => ({
-    createPrivateLabelClient: () => ({ open: openPrivateLabelMock }),
-}));
-vi.mock('@/hooks/teams/useTeamGroups', () => ({
-    useTeamGroups: (params: { enabled: boolean }) => ({
-        enabled: (nativeGroupsMock.enabled = params.enabled),
-        rows: nativeGroupsMock.current,
-        status: nativeGroupsMock.status,
-        isCurrent: nativeGroupsMock.status === 'ready' && nativeGroupsMock.error === null,
-        hasMore: false,
-        error: nativeGroupsMock.error,
-        reload: nativeGroupsMock.reload,
-        loadMore: vi.fn(),
-    }),
-}));
-vi.mock('./useIdentityAdministration', async () => {
-    const ReactModule = await import('react');
-    return {
-        useIdentityAdministration: () => {
-            ReactModule.useSyncExternalStore(
-                (listener) => {
-                    identityStateMock.listeners.add(listener);
-                    return () => identityStateMock.listeners.delete(listener);
-                },
-                () => identityStateMock.version,
-            );
-            return { state: identityStateMock.current, refresh: refreshMock };
-        },
-    };
-});
-vi.mock('../TeamSection', () => ({
-    TeamSection: (props: Readonly<{ children: (context: unknown) => React.ReactNode }>) => props.children({
-        team: { id: 'team-1', capabilities: { manageAuthentication: true } },
-        scope: { serverId: 'home-1', accountId: 'account-1' },
-        canMutate: canMutateMock.current,
-        requestApproval: requestApprovalMock,
-    }),
-}));
-
-import { IdentityConnectionDetailContent, IdentityConnectionDetailScreen } from './IdentityConnectionDetailScreen';
-
-beforeEach(() => {
+vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({ announceAccessibilityMessage: announceMock }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({ BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [], BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [] }));
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { IdentityConnectionDetailContent, IdentityConnectionDetailScreen } = await import('./IdentityConnectionDetailScreen');
+const { Modal } = await import('@/modal');
+const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
+const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+let serverId: string;
+let connection: TeamIdentityConnectionV1;
+let readOnly = false;
+// Resource routes bind this suite's exact Team at the HTTP boundary.
+const path = (actionId: HomeDomainActionIdV1) => homeDomainActionTransportV1(actionId).path.replace(':teamId', 'team-1');
+const listPath = path('teams.identity.connections.list');
+const updatePath = path('teams.identity.connections.settings.update');
+const consumePath = path('teams.identity.connections.test.consume');
+const groupsPath = path('teams.groups.list');
+const bindingPath = path('teams.externalGroupBindings.list');
+function answer(actionId: HomeDomainActionIdV1, value: unknown) {
+    harness.answer(serverId, path(actionId), { body: homeDomainActionOutputSchemaV1(actionId).parse(value) });
+}
+function serveConnection() {
+    harness.answer(serverId, listPath, { select: () => ({ body: TeamIdentityConnectionListResultV1Schema.parse({
+        items: [connection], eligibleProviders: [], memberSignInUrl: null,
+        admissionModeApplicability: { v: 1, modes: { invite_only: { status: 'available' }, provisioned: { status: 'available' }, jit: { status: 'available' } } },
+    }) }) });
+}
+async function publishConnection() {
+    const reads = harness.requestsFor(listPath).length;
+    await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+    await waitForHomeGovernance(() => expect(harness.requestsFor(listPath).length).toBeGreaterThan(reads));
+}
+async function renderDetail(testReturn?: Readonly<{ purpose: 'identity_connection_test'; resultHandle: string | null; error: string | null }>) {
+    harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ archivedAt: readOnly ? 1 : null,
+        capabilities: teamCapabilitiesFixture({ manageAuthentication: true }) }) });
+    const screen = await renderScreen(<IdentityConnectionDetailScreen serverId={serverId} teamId="team-1" connectionId="connection-1" testReturn={testReturn} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('identity-connection-status')
+        ?? screen.findByTestId('identity-workos-setup-steps') ?? screen.findByTestId('identity-workos-current-connection')).not.toBeNull());
+    return screen;
+}
+function workos(overrides: Partial<TeamIdentityConnectionV1> = {}) {
+    connection = teamIdentityConnectionFixture({ provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
+        externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: null },
+        settings: { v: 1, kind: 'workos_sso' }, lastObservation: null, enabled: false, firstEnabledAt: null,
+        state: 'setting_up', ...overrides });
+}
+beforeEach(async () => {
     standardCleanup();
-    executeMock.mockReset();
-    groupBindingRowsMock.current = [];
-    nativeGroupsMock.current = [];
-    nativeGroupsMock.enabled = false;
-    nativeGroupsMock.status = 'ready';
-    nativeGroupsMock.error = null;
-    nativeGroupsMock.reload.mockReset();
-    announceMock.mockReset();
-    openPrivateLabelMock.mockReset();
-    openPrivateLabelMock.mockImplementation(async (input: Readonly<{
-        label: Readonly<{ content: Readonly<{ t: 'plain'; v: string }> }>;
-    }>) => input.label.content.v);
-    executeBindingMock.mockReset();
-    executeBindingMock.mockImplementation(async (actionId: string) => actionId === 'teams.externalGroupBindings.list'
-        ? { ok: true, value: { items: groupBindingRowsMock.current, nextCursor: null } }
-        : { ok: true, value: { v: 1, outcome: 'removed' } });
-    refreshMock.mockReset();
-    routerReplaceMock.mockReset();
-    routerPushMock.mockReset();
-    requestApprovalMock.mockReset();
-    managedProvidersStateMock.current.items = [];
-    canMutateMock.current = true;
-    openExternalUrlMock.mockReset();
-    openExternalUrlMock.mockResolvedValue(true);
-    appStateChangeMock.current = null;
-    identityStateMock.current = {
-        kind: 'ready',
-        refreshing: false,
-        stale: false,
-        failure: null,
-        items: [{
-            v: 1 as const,
-            id: 'connection-1',
-            teamId: 'team-1',
-            provider: { id: 'provider-1', kind: 'oidc' as const, displayName: 'OIDC' },
-            externalReference: { v: 1 as const, kind: 'oidc' as const },
-            settings: { v: 1 as const, kind: 'oidc' as const, allowedUsers: [] as string[], allowedEmailDomains: [] as string[], groupsAny: [] as string[], groupsAll: [] as string[] },
-            enabled: true,
-            firstEnabledAt: 1,
-            revision: 1,
-            state: 'connected' as const,
-            allowedActions: [] as string[],
-            lastObservation: { v: 1 as const, kind: 'oidc' as const },
-            lastSuccessfulTest: null,
-            createdAt: 1,
-            updatedAt: 1,
-            // The canonical union, not the first fixture's literal kind: cases
-            // below legitimately replace this row with a GitHub or WorkOS
-            // connection, which a narrowed `'oidc'` literal type forbids.
-        }] as TeamIdentityConnectionV1[],
-    };
+    resetTeamsSnapshotsForTests();
+    resetTeamsDirectoryEngineForTests();
+    resetTeamActionClientForTests();
+    await harness.reset();
+    serverId = await harness.addHome({ name: 'Identity Home', serverUrl: 'https://identity-home.example', accountId: 'account-1', teamsEnabled: true });
+    await harness.selectHomes([serverId]);
+    connection = teamIdentityConnectionFixture(); readOnly = false; serveConnection();
+    answer('identity.providers.list', { items: [], unreadableCount: 0 });
+    answer('teams.externalGroupBindings.list', { items: [], nextCursor: null });
+    answer('teams.groups.list', { items: [], nextCursor: null });
+    routerReplaceMock.mockReset(); routerPushMock.mockReset(); announceMock.mockReset();
+    openExternalUrlMock.mockReset().mockResolvedValue(true); appStateChangeMock.current = null;
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true); vi.mocked(Modal.alertAsync).mockClear();
 });
 
 describe('IdentityConnectionDetailScreen test return', () => {
     it('keeps a failed mapping read distinct from an empty mapping list', async () => {
-        executeBindingMock.mockImplementation(async (actionId: string) => actionId === 'teams.externalGroupBindings.list'
-            ? { ok: false, failure: { code: 'home_unreachable', retryable: true } }
-            : { ok: true, value: { v: 1, outcome: 'removed' } });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen serverId="home-1" teamId="team-1" connectionId="connection-1" />);
-
-        await vi.waitFor(() => expect(screen.findByTestId('identity-group-bindings-retry')).not.toBeNull());
+        harness.answer(serverId, bindingPath, { status: 503, body: { error: 'home_unreachable' } });
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-bindings-retry')).not.toBeNull());
         expect(screen.getTextContent()).not.toContain(t('identityAdministration.unmapped'));
     });
+
     it('loads native Groups only for the open mapping chooser and distinguishes loading, empty, and retryable failure', async () => {
-        const screen = await renderScreen(<IdentityConnectionDetailScreen serverId="home-1" teamId="team-1" connectionId="connection-1" />);
-        expect(nativeGroupsMock.enabled).toBe(false);
-
-        nativeGroupsMock.status = 'loading';
+        const held = createDeferred<void>();
+        harness.answer(serverId, groupsPath, { body: TeamGroupsPageV1Schema.parse({ items: [], nextCursor: null }), respondAfter: held.promise });
+        const screen = await renderDetail();
+        expect(harness.requestsFor(groupsPath)).toHaveLength(0);
         await screen.pressByTestIdAsync('identity-group-map-existing');
-        expect(nativeGroupsMock.enabled).toBe(true);
-        expect(screen.findByTestId('identity-group-native-loading')).not.toBeNull();
-
-        nativeGroupsMock.status = 'ready';
-        await act(async () => { identityStateMock.publish(); });
-        expect(screen.findByTestId('identity-group-native-empty')).not.toBeNull();
-
-        nativeGroupsMock.status = 'error';
-        nativeGroupsMock.error = { kind: 'unreachable', retryable: true, code: null };
-        await act(async () => { identityStateMock.publish(); });
-        expect(screen.findByTestId('identity-group-native-error')).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-native-loading')).not.toBeNull());
+        await act(async () => held.resolve());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-native-empty')).not.toBeNull());
+        harness.answer(serverId, groupsPath, { status: 503, body: { error: 'home_unreachable' } });
+        await publishConnection();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-native-error')).not.toBeNull());
+        harness.answer(serverId, groupsPath, { body: TeamGroupsPageV1Schema.parse({ items: [], nextCursor: null }) });
+        const reads = harness.requestsFor(groupsPath).length;
         await screen.pressByTestIdAsync('identity-group-native-retry');
-        expect(nativeGroupsMock.reload).toHaveBeenCalledOnce();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-native-empty')).not.toBeNull());
+        expect(harness.requestsFor(groupsPath)).toHaveLength(reads + 1);
     });
+
     it('gives every Team identity restriction field its translated accessible name', async () => {
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        const screen = await renderDetail();
 
         expect(screen.findByTestId('identity-settings-allowed-users')?.props.accessibilityLabel)
             .toBe(t('teams.authentication.detail.allowedUsers'));
@@ -265,22 +136,23 @@ describe('IdentityConnectionDetailScreen test return', () => {
         expect(screen.findByTestId('identity-settings-groups-all')?.props.accessibilityLabel)
             .toBe(t('identityAdministration.groupsAll'));
 
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        connection = {
+            ...connection,
             provider: { id: 'provider-github', kind: 'github_app_identity', displayName: 'GitHub' },
             externalReference: { v: 1, kind: 'github_app_identity', installationId: 'installation-1' },
             settings: { v: 1, kind: 'github_app_identity', organizationLogin: 'example' },
             lastObservation: { v: 1, kind: 'github_app_identity' },
         };
-        await act(async () => identityStateMock.publish());
+        await publishConnection();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-settings-organization')).not.toBeNull());
 
         expect(screen.findByTestId('identity-settings-organization')?.props.accessibilityLabel)
             .toBe(t('teams.authentication.detail.organization'));
     });
 
     it('presents WorkOS provider, strategy, and status values without exposing raw wire enums', async () => {
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        connection = {
+            ...connection,
             provider: { id: 'provider-workos', kind: 'workos_sso', displayName: 'Acme SSO' },
             externalReference: {
                 v: 1,
@@ -301,21 +173,14 @@ describe('IdentityConnectionDetailScreen test return', () => {
                 },
             },
         };
-        executeMock.mockResolvedValueOnce({
-            ok: true,
-            value: {
-                outcome: 'selection_required',
+        answer('teams.identity.workos.reconcile', {
+                connection, outcome: 'selection_required',
                 candidates: [
                     { connectionId: 'candidate-1', displayName: 'Primary', strategy: 'SAML', status: 'active' },
                     { connectionId: 'candidate-2', displayName: 'Backup', strategy: 'SAML', status: 'active' },
                 ],
-            },
         });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        const screen = await renderDetail();
 
         expect(screen.findByTestId('identity-connection-provider')).toBeNull();
         expect(screen.getTextContent()).toContain(t('identityAdministration.providerWorkosSso'));
@@ -330,31 +195,23 @@ describe('IdentityConnectionDetailScreen test return', () => {
     });
 
     it('explains a blocked removal through each typed blocker and labels the sole-login count truthfully', async () => {
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        connection = {
+            ...connection,
             allowedActions: ['teams.identity.connections.remove'],
         };
-        executeMock.mockResolvedValueOnce({
-            ok: true,
-            value: {
-                v: 1,
-                canRemove: false,
-                connection: identityStateMock.current.items[0],
+        answer('teams.identity.connections.remove.preview', {
+                v: 1, canRemove: false,
+                connection: connection,
                 impact: { linkedAccounts: 3, accountsRequiringAlternateLogin: 2, directorySources: 1, externalGroupBindings: 0, managedMemberships: 0 },
                 blockers: ['account_would_lose_login', 'directory_source_in_use'],
-            },
         });
         const { Modal } = await import('@/modal');
         const { identityAdministrationFailureMessage, identityAdministrationFailureRecoveryLabel } = await import('@/components/settings/identity/identityAdministrationFailure');
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        const screen = await renderDetail();
 
         await screen.pressByTestIdAsync('team-identity-remove');
 
-        expect(executeMock).toHaveBeenCalledTimes(1);
+        expect(harness.requestsFor(path('teams.identity.connections.remove.preview'))).toHaveLength(1);
         expect(Modal.confirm).not.toHaveBeenCalled();
         expect(Modal.alertAsync).toHaveBeenCalledTimes(1);
         const body = String(vi.mocked(Modal.alertAsync).mock.calls[0]?.[1]);
@@ -370,280 +227,118 @@ describe('IdentityConnectionDetailScreen test return', () => {
     });
 
     it('does not consume or refresh when the callback has no result handle', async () => {
-        renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-            testReturn={{ purpose: 'identity_connection_test', resultHandle: null, error: null }}
-        />);
-
-        await vi.waitFor(() => expect(routerReplaceMock).toHaveBeenCalledOnce());
-        expect(executeMock).not.toHaveBeenCalled();
-        expect(refreshMock).not.toHaveBeenCalled();
+        await renderDetail({ purpose: 'identity_connection_test', resultHandle: null, error: null });
+        await waitForHomeGovernance(() => expect(routerReplaceMock).toHaveBeenCalledOnce());
+        expect(harness.requestsFor(consumePath)).toHaveLength(0);
+        expect(harness.requestsFor(listPath)).toHaveLength(1);
     });
 
     it('shows the sanitized diagnostics the consumed result carried', async () => {
-        executeMock.mockResolvedValue({
-            ok: true,
-            value: {
-                connection: { id: 'connection-1' },
-                diagnostics: {
-                    subjectPresent: true,
-                    loginAvailable: true,
-                    emailAvailable: true,
-                    emailVerified: false,
-                    groups: { state: 'complete', count: 2 },
-                    eligibility: { status: 'ineligible', rules: [{ kind: 'email_domains', matched: false }] },
-                    mappedGroups: [{
-                        id: 'group-1',
-                        name: { kind: 'available', label: { content: { t: 'plain', v: 'Engineering' }, recipientEnvelope: null } },
-                    }],
-                },
-            },
-        });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-            testReturn={{ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null }}
-        />);
-
-        await vi.waitFor(() => expect(refreshMock).toHaveBeenCalledOnce());
-        await vi.waitFor(() => expect(
-            screen.findByTestId('identity-test-diagnostics:mappedGroups'),
-        ).not.toBeNull());
-        await vi.waitFor(() => expect(
-            findTestInstanceByTypeContainingText(screen.findByTestId('identity-test-diagnostics:mappedGroups')!, 'Text', 'Engineering'),
-        ).toBeDefined());
-        expect(openPrivateLabelMock).toHaveBeenCalledWith(expect.objectContaining({
-            binding: { entity: 'team_group', field: 'name', id: 'group-1' },
-        }));
+        answer('teams.identity.connections.test.consume', { connection, diagnostics: {
+            subjectPresent: true, loginAvailable: true, emailAvailable: true, emailVerified: false,
+            groups: { state: 'complete', count: 2 }, eligibility: { status: 'ineligible', rules: [{ kind: 'email_domains', matched: false }] },
+            mappedGroups: [{ id: 'group-1', name: { kind: 'available', label: { content: { t: 'plain', v: 'Engineering' }, recipientEnvelope: null } } }],
+        } });
+        const screen = await renderDetail({ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null });
+        await waitForHomeGovernance(() => expect(findTestInstanceByTypeContainingText(screen.findByTestId('identity-test-diagnostics:mappedGroups')!, 'Text', 'Engineering')).toBeDefined());
         expect(screen.findByTestId('identity-test-diagnostics:rule:email_domains')).not.toBeNull();
+        expect(harness.requestsFor(consumePath)).toHaveLength(1);
+        expect(harness.requestsFor(listPath).length).toBeGreaterThan(1);
     });
 
-    it('applies returned diagnostics after approval settles without replaying the consume mutation', async () => {
-        let complete: ((value: Readonly<{
-            connection: Readonly<{ id: string }>;
-            diagnostics: Readonly<{
-                subjectPresent: boolean;
-                loginAvailable: boolean;
-                emailAvailable: boolean;
-                emailVerified: boolean | null;
-                groups: Readonly<{ state: 'complete'; count: number }>;
-                eligibility: Readonly<{ status: 'eligible'; rules: readonly [] }>;
-                mappedGroups: readonly [];
-            }>;
-        }>) => void | Promise<void>) | undefined;
-        executeMock.mockImplementationOnce(async (
-            _actionId: string,
-            _input: unknown,
-            options?: Readonly<{ onApprovalSucceeded?: typeof complete; onApprovalFailed?: (code: string) => void }>,
-        ) => {
-            complete = options?.onApprovalSucceeded;
-            expect(options?.onApprovalFailed).toBeTypeOf('function');
-            return {
-                ok: false,
-                approvalPending: true,
-                artifactId: 'approval-consume-1',
-                failure: { code: 'approval_pending', retryable: false },
-            };
-        });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-            testReturn={{ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null }}
-        />);
-
-        await vi.waitFor(() => expect(complete).toBeTypeOf('function'));
-        expect(refreshMock).not.toHaveBeenCalled();
-
-        await act(async () => {
-            await complete?.({
-                connection: { id: 'connection-1' },
-                diagnostics: {
-                    subjectPresent: true,
-                    loginAvailable: true,
-                    emailAvailable: true,
-                    emailVerified: true,
-                    groups: { state: 'complete', count: 0 },
-                    eligibility: { status: 'eligible', rules: [] },
-                    mappedGroups: [],
-                },
-            });
-        });
-
-        expect(refreshMock).toHaveBeenCalledOnce();
-        expect(screen.findByTestId('identity-test-diagnostics:subject')).not.toBeNull();
-        expect(executeMock).toHaveBeenCalledOnce();
+    it('applies returned diagnostics after native Ask confirmation without replaying the consume mutation', async () => {
+        await harness.requireUiApproval(serverId, 'teams.identity.connections.test.consume');
+        answer('teams.identity.connections.test.consume', { connection, diagnostics: {
+            subjectPresent: true, loginAvailable: true, emailAvailable: true, emailVerified: true,
+            groups: { state: 'complete', count: 0 }, eligibility: { status: 'eligible', rules: [] }, mappedGroups: [],
+        } });
+        const screen = await renderDetail({ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-test-diagnostics:subject')).not.toBeNull());
+        expect(Modal.confirm).toHaveBeenCalledOnce();
+        expect(harness.requestsFor(consumePath)).toHaveLength(1);
+        expect(harness.requestsFor(listPath).length).toBeGreaterThan(1);
     });
 
     it('does not publish a refresh when the Home refuses the result', async () => {
-        executeMock.mockResolvedValue({
-            ok: false,
-            failure: { code: 'team_forbidden', retryable: false },
-        });
-        renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-            testReturn={{ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null }}
-        />);
-
-        await vi.waitFor(() => expect(executeMock).toHaveBeenCalledOnce());
-        expect(refreshMock).not.toHaveBeenCalled();
-        expect(routerReplaceMock).toHaveBeenCalledOnce();
+        harness.answer(serverId, consumePath, { status: 403, body: { error: 'team_forbidden' } });
+        await renderDetail({ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null });
+        await waitForHomeGovernance(() => expect(routerReplaceMock).toHaveBeenCalledOnce());
+        expect(harness.requestsFor(consumePath)).toHaveLength(1);
+        expect(harness.requestsFor(listPath)).toHaveLength(1);
     });
 
     it('shows a busy return state and blocks mutations while a test result is being consumed', async () => {
-        identityStateMock.current.items[0]!.allowedActions = [
-            'teams.identity.connections.test.start',
-            'teams.identity.connections.disable',
-        ];
-        const deferred = createDeferred<Readonly<{
-            ok: true;
-            value: Readonly<{ connection: Readonly<{ id: string }>; diagnostics: null }>;
-        }>>();
-        executeMock.mockReturnValueOnce(deferred.promise);
-
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-            testReturn={{ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null }}
-        />);
-
-        await vi.waitFor(() => expect(executeMock).toHaveBeenCalledOnce());
+        connection.allowedActions = ['teams.identity.connections.test.start', 'teams.identity.connections.disable'];
+        const held = createDeferred<void>();
+        harness.answer(serverId, consumePath, { body: { connection }, respondAfter: held.promise });
+        const screen = await renderDetail({ purpose: 'identity_connection_test', resultHandle: 'result-1', error: null });
+        await waitForHomeGovernance(() => expect(harness.requestsFor(consumePath)).toHaveLength(1));
         expect(screen.findByTestId('identity-connection-test-status')?.props.accessibilityState?.busy).toBe(true);
         expect(screen.findByTestId('team-identity-test')?.props.disabled).toBe(true);
         expect(screen.findByTestId('team-identity-disable')?.props.disabled).toBe(true);
-
-        await act(async () => {
-            deferred.resolve({ ok: true, value: { connection: { id: 'connection-1' }, diagnostics: null } });
-        });
-        await vi.waitFor(() => expect(routerReplaceMock).toHaveBeenCalledOnce());
+        await act(async () => held.resolve());
+        await waitForHomeGovernance(() => expect(routerReplaceMock).toHaveBeenCalledOnce());
     });
 
-    it('opens the exact Team test URL when an approved Action settles, using the same completion as immediate success', async () => {
-        identityStateMock.current.items[0]!.allowedActions = ['teams.identity.connections.test.start'];
-        let complete: ((value: Readonly<{ authorizeUrl: string; attemptId: string }>) => void | Promise<void>) | undefined;
-        executeMock.mockImplementationOnce(async (
-            _actionId: string,
-            _input: unknown,
-            options?: Readonly<{ onApprovalSucceeded?: typeof complete }>,
-        ) => {
-            complete = options?.onApprovalSucceeded;
-            return {
-                ok: false,
-                approvalPending: true,
-                artifactId: 'approval-test-1',
-                failure: { code: 'approval_pending', retryable: false },
-            };
-        });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
-
+    it('opens the exact Team test URL after native Ask confirmation through the immediate completion', async () => {
+        connection.allowedActions = ['teams.identity.connections.test.start'];
+        await harness.requireUiApproval(serverId, 'teams.identity.connections.test.start');
+        answer('teams.identity.connections.test.start', { authorizeUrl: 'https://id.example/approved', attemptId: 'attempt-1' });
+        const screen = await renderDetail();
         await screen.pressByTestIdAsync('team-identity-test');
-        expect(openExternalUrlMock).not.toHaveBeenCalled();
-        expect(complete).toBeTypeOf('function');
-
-        await act(async () => {
-            await complete?.({ authorizeUrl: 'https://id.example/approved', attemptId: 'attempt-1' });
-        });
+        expect(Modal.confirm).toHaveBeenCalledOnce();
         expect(openExternalUrlMock).toHaveBeenCalledWith('https://id.example/approved');
     });
 
-    it('opens and marks the WorkOS portal when approval settles instead of losing the result URL', async () => {
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
-            provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
-            externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null },
-            settings: { v: 1, kind: 'workos_sso' },
-            lastObservation: null,
-            enabled: false,
-            firstEnabledAt: null,
-            state: 'setting_up',
-            allowedActions: ['teams.identity.workos.adminPortalLink.create'],
-        };
-        let complete: ((value: Readonly<{ url: string }>) => void | Promise<void>) | undefined;
-        executeMock.mockImplementationOnce(async (
-            _actionId: string,
-            _input: unknown,
-            options?: Readonly<{ onApprovalSucceeded?: typeof complete }>,
-        ) => {
-            complete = options?.onApprovalSucceeded;
-            return {
-                ok: false,
-                approvalPending: true,
-                artifactId: 'approval-portal-1',
-                failure: { code: 'approval_pending', retryable: false },
-            };
-        });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
-
+    it('opens and marks the WorkOS portal after native Ask confirmation and refreshes on return', async () => {
+        workos({ externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null }, allowedActions: ['teams.identity.workos.adminPortalLink.create'] });
+        await harness.requireUiApproval(serverId, 'teams.identity.workos.adminPortalLink.create');
+        answer('teams.identity.workos.adminPortalLink.create', { url: 'https://workos.example/approved' });
+        const screen = await renderDetail();
         await screen.pressByTestIdAsync('team-identity-workos-sso');
-        expect(openExternalUrlMock).not.toHaveBeenCalled();
-        expect(complete).toBeTypeOf('function');
-
-        await act(async () => {
-            await complete?.({ url: 'https://workos.example/approved' });
-        });
+        expect(Modal.confirm).toHaveBeenCalledOnce();
         expect(openExternalUrlMock).toHaveBeenCalledWith('https://workos.example/approved');
-
+        const reads = harness.requestsFor(listPath).length;
         await act(async () => appStateChangeMock.current?.('active'));
-        expect(refreshMock).toHaveBeenCalled();
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath).length).toBeGreaterThan(reads));
     });
 
     it('hands Directory Sync setup to the directory journey instead of opening a second portal return flow', async () => {
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        connection = {
+            ...connection,
             provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
             externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: 'workos-connection-a' },
             settings: { v: 1, kind: 'workos_sso' },
             lastObservation: null,
             allowedActions: ['teams.identity.workos.adminPortalLink.create'],
         };
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        const screen = await renderDetail();
 
         await screen.pressByTestIdAsync('team-identity-workos-directory');
 
         expect(routerPushMock).toHaveBeenCalledWith(
-            '/settings/teams/home-1/team-1/authentication/directory',
+            `/settings/teams/${serverId}/team-1/authentication/directory`,
         );
-        expect(executeMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor(updatePath)).toHaveLength(0);
         expect(openExternalUrlMock).not.toHaveBeenCalled();
     });
 
     it('requires reloading and reapplying a preserved draft before saving against a refreshed revision', async () => {
-        identityStateMock.current.items[0]!.allowedActions = ['teams.identity.connections.settings.update'];
-        executeMock.mockResolvedValue({ ok: false, failure: { code: 'identity_connection_conflict' } });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        connection.allowedActions = ['teams.identity.connections.settings.update'];
+        harness.answer(serverId, updatePath, { status: 409, body: { error: 'identity_connection_conflict' } });
+        const screen = await renderDetail();
         await act(async () => {
             screen.changeTextByTestId('identity-settings-allowed-users', 'alice@example.com');
         });
 
         await act(async () => {
-            identityStateMock.current.items[0] = { ...identityStateMock.current.items[0]!, revision: 2 };
-            identityStateMock.publish();
+            connection = { ...connection, revision: 2 };
+            publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
         });
         expect(screen.findByTestId('identity-settings-save')?.props.disabled).toBe(true);
-        expect(executeMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor(updatePath)).toHaveLength(0);
 
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-settings-reload-conflict')).not.toBeNull());
         await screen.pressByTestIdAsync('identity-settings-reload-conflict');
         expect(screen.findByTestId('identity-settings-allowed-users')?.props.value).toBe('');
         expect(screen.findByTestId('identity-settings-save')?.props.disabled).toBe(true);
@@ -652,76 +347,52 @@ describe('IdentityConnectionDetailScreen test return', () => {
         });
         await screen.pressByTestIdAsync('identity-settings-save');
 
-        expect(executeMock).toHaveBeenCalledWith('teams.identity.connections.settings.update', expect.objectContaining({
+        expect(harness.requestsFor(updatePath)[0]?.input).toMatchObject({
             expectedRevision: 2,
             settings: expect.objectContaining({
                 kind: 'oidc',
                 allowedUsers: ['alice@example.com'],
             }),
-        }), expect.any(Object));
+        });
     });
 
     it('refreshes a server CAS conflict and waits for the newer connection revision before retry', async () => {
-        identityStateMock.current.items[0]!.allowedActions = ['teams.identity.connections.settings.update'];
-        executeMock.mockResolvedValueOnce({ ok: false, failure: { code: 'identity_connection_conflict' } });
-        const renderElement = () => <IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />;
-        const screen = await renderScreen(renderElement());
-        await act(async () => {
-            screen.changeTextByTestId('identity-settings-allowed-users', 'alice@example.com');
-        });
-
+        connection.allowedActions = ['teams.identity.connections.settings.update'];
+        harness.answer(serverId, updatePath, { status: 409, body: { error: 'identity_connection_conflict' } });
+        const screen = await renderDetail();
+        await act(async () => screen.changeTextByTestId('identity-settings-allowed-users', 'alice@example.com'));
+        const reads = harness.requestsFor(listPath).length;
         await screen.pressByTestIdAsync('identity-settings-save');
-
-        expect(refreshMock).toHaveBeenCalledOnce();
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath).length).toBeGreaterThan(reads));
         expect(screen.findByTestId('identity-settings-save')?.props.disabled).toBe(true);
         expect(screen.findByTestId('identity-settings-reload-conflict')).toBeNull();
         await screen.pressByTestIdAsync('identity-settings-refresh-conflict');
-        expect(refreshMock).toHaveBeenCalledTimes(2);
-
-        await act(async () => {
-            identityStateMock.current.items[0] = { ...identityStateMock.current.items[0]!, revision: 2 };
-            identityStateMock.publish();
-        });
-        expect(screen.findByTestId('identity-settings-reload-conflict')).not.toBeNull();
+        connection = teamIdentityConnectionFixture({ ...connection, revision: 2 });
+        await publishConnection();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-settings-reload-conflict')).not.toBeNull());
         expect(screen.findByTestId('identity-settings-refresh-conflict')).toBeNull();
-
-        executeMock.mockResolvedValueOnce({ ok: true, value: {} });
+        answer('teams.identity.connections.settings.update', { connection: { ...connection, revision: 3 } });
         await screen.pressByTestIdAsync('identity-settings-reload-conflict');
         expect(screen.findByTestId('identity-settings-allowed-users')?.props.value).toBe('');
-        await act(async () => {
-            screen.changeTextByTestId('identity-settings-allowed-users', 'alice@example.com');
-        });
+        await act(async () => screen.changeTextByTestId('identity-settings-allowed-users', 'alice@example.com'));
         await screen.pressByTestIdAsync('identity-settings-save');
-
-        expect(executeMock).toHaveBeenLastCalledWith('teams.identity.connections.settings.update', expect.objectContaining({
-            expectedRevision: 2,
-            settings: expect.objectContaining({ allowedUsers: ['alice@example.com'] }),
-        }), expect.any(Object));
+        expect(harness.requestsFor(updatePath).at(-1)?.input).toMatchObject({ expectedRevision: 2, settings: { allowedUsers: ['alice@example.com'] } });
     });
 
     it('refreshes the authoritative projection when a lifecycle CAS loses', async () => {
-        identityStateMock.current.items[0]!.allowedActions = ['teams.identity.connections.disable'];
-        executeMock.mockResolvedValueOnce({ ok: false, failure: { code: 'identity_connection_conflict' } });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
-
+        connection.allowedActions = ['teams.identity.connections.disable'];
+        harness.answer(serverId, path('teams.identity.connections.disable'), { status: 409, body: { error: 'identity_connection_conflict' } });
+        const screen = await renderDetail();
+        const reads = harness.requestsFor(listPath).length;
         await screen.pressByTestIdAsync('team-identity-disable');
-
-        expect(refreshMock).toHaveBeenCalledOnce();
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath).length).toBeGreaterThan(reads));
         expect(screen.findByTestId('identity-connection-failure')).not.toBeNull();
     });
 
     it('disables every connection mutation when the Team is read-only', async () => {
-        canMutateMock.current = false;
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        readOnly = true;
+        connection = {
+            ...connection,
             allowedActions: [
                 'teams.identity.connections.settings.update',
                 'teams.identity.connections.test.start',
@@ -731,11 +402,7 @@ describe('IdentityConnectionDetailScreen test return', () => {
                 'teams.identity.connections.remove',
             ],
         };
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        const screen = await renderDetail();
 
         expect(screen.findByTestId('identity-settings-allowed-users')?.props.editable).toBe(false);
         expect(screen.findByTestId('identity-external-group-id')?.props.editable).toBe(false);
@@ -752,9 +419,9 @@ describe('IdentityConnectionDetailScreen test return', () => {
     });
 
     it('disables the WorkOS setup step and connection controls when the Team is read-only', async () => {
-        canMutateMock.current = false;
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        readOnly = true;
+        connection = {
+            ...connection,
             provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
             externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null },
             settings: { v: 1, kind: 'workos_sso' },
@@ -764,11 +431,7 @@ describe('IdentityConnectionDetailScreen test return', () => {
             state: 'setting_up',
             allowedActions: ['teams.identity.workos.adminPortalLink.create', 'teams.identity.connections.remove'],
         };
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        const screen = await renderDetail();
 
         for (const testID of ['team-identity-workos-sso', 'team-identity-workos-directory', 'team-identity-remove']) {
             expect(screen.findByTestId(testID)?.props.disabled).toBe(true);
@@ -776,41 +439,30 @@ describe('IdentityConnectionDetailScreen test return', () => {
     });
 
     it('blocks stale allowed actions while the authoritative connection projection refreshes', async () => {
-        identityStateMock.current.refreshing = true;
-        identityStateMock.current.items[0]!.allowedActions = [
-            'teams.identity.connections.settings.update',
-            'teams.identity.connections.test.start',
-            'teams.identity.connections.disable',
-        ];
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
-
+        connection.allowedActions = ['teams.identity.connections.settings.update', 'teams.identity.connections.test.start', 'teams.identity.connections.disable'];
+        const screen = await renderDetail();
+        const held = createDeferred<void>();
+        harness.answer(serverId, listPath, { body: TeamIdentityConnectionListResultV1Schema.parse({ items: [connection], eligibleProviders: [], memberSignInUrl: null,
+            admissionModeApplicability: { v: 1, modes: { invite_only: { status: 'available' }, provisioned: { status: 'available' }, jit: { status: 'available' } } } }), respondAfter: held.promise });
+        await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-identity-test')?.props.disabled).toBe(true));
         expect(screen.findByTestId('identity-settings-save')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('team-identity-test')?.props.disabled).toBe(true);
         expect(screen.findByTestId('team-identity-disable')?.props.disabled).toBe(true);
+        await act(async () => held.resolve());
     });
 
     it('opens the shared editor for the Team-owned provider attached to this connection', async () => {
-        managedProvidersStateMock.current.items = [{ id: 'provider-1' }];
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
-
+        const provider = (await import('@/dev/testkit/fixtures/homeGovernanceFixtures')).managedIdentityProviderFixture({ owner: { kind: 'team', teamId: 'team-1' }, id: 'provider-1' });
+        answer('identity.providers.list', { items: [provider], unreadableCount: 0 });
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-identity-provider-edit')).not.toBeNull());
         await screen.pressByTestIdAsync('team-identity-provider-edit');
-
-        expect(routerPushMock).toHaveBeenCalledWith(
-            '/settings/teams/home-1/team-1/authentication/connection-1/edit?providerId=provider-1',
-        );
+        expect(routerPushMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/connection-1/edit?providerId=provider-1`);
     });
 
     it('puts the only setup action on the current WorkOS step and keeps later steps inert', async () => {
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        connection = {
+            ...connection,
             provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
             externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: null },
             settings: { v: 1, kind: 'workos_sso' },
@@ -825,12 +477,8 @@ describe('IdentityConnectionDetailScreen test return', () => {
                 'teams.identity.connections.enable',
             ],
         };
-        executeMock.mockResolvedValue({ ok: true, value: { v: 1, outcome: 'selection_required', candidates: [] } });
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        answer('teams.identity.workos.reconcile', { outcome: 'setting_up', connection });
+        const screen = await renderDetail();
 
         // Step 1 is done: the portal stays reachable as a quiet reopen, not as the next step.
         expect(screen.findByTestId('team-identity-workos-sso')).not.toBeNull();
@@ -838,17 +486,16 @@ describe('IdentityConnectionDetailScreen test return', () => {
         expect(screen.findByTestId('team-identity-test')).toBeNull();
         expect(screen.findByTestId('team-identity-enable')).toBeNull();
 
-        executeMock.mockClear();
         await screen.pressByTestIdAsync('team-identity-workos-reconcile');
-        expect(executeMock).toHaveBeenCalledWith('teams.identity.workos.reconcile', expect.objectContaining({ connectionId: 'connection-1' }), expect.any(Object));
+        expect(harness.requestsFor(path('teams.identity.workos.reconcile'))[0]?.input).toMatchObject({ connectionId: 'connection-1' });
     });
 
     it('chooses a WorkOS connection through one named primary action, never through a draft candidate', async () => {
         // Choosing a candidate permanently fixes the provider namespace for
         // every future identity under this binding, so the commit is the
         // explicit "Use <name>" action, not a tap on a row.
-        identityStateMock.current.items[0] = {
-            ...identityStateMock.current.items[0]!,
+        connection = {
+            ...connection,
             provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' },
             externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: null },
             settings: { v: 1, kind: 'workos_sso' },
@@ -857,82 +504,59 @@ describe('IdentityConnectionDetailScreen test return', () => {
             firstEnabledAt: null,
             allowedActions: ['teams.identity.workos.reconcile', 'teams.identity.workos.connection.set'],
         };
-        executeMock.mockResolvedValue({
-            ok: true,
-            value: {
-                v: 1,
-                outcome: 'selection_required',
+        answer('teams.identity.workos.reconcile', {
+                connection, outcome: 'selection_required',
                 candidates: [
                     { connectionId: 'workos-connection-a', displayName: 'Acme SAML', strategy: 'saml', status: 'active' },
                     { connectionId: 'workos-connection-b', displayName: 'Acme OIDC', strategy: 'oidc', status: 'draft' },
                 ],
-            },
         });
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
-        const screen = await renderScreen(<IdentityConnectionDetailScreen
-            serverId="home-1"
-            teamId="team-1"
-            connectionId="connection-1"
-        />);
+        const screen = await renderDetail();
 
         await screen.pressByTestIdAsync('team-identity-workos-reconcile');
 
         expect(announceMock).toHaveBeenCalledWith(t('identityAdministration.workosChooseConnection'));
         const candidate = screen.findByTestId('identity-workos-candidate:workos-connection-a');
-        expect(candidate?.props.accessibilityRole).toBe('radio');
-        expect(candidate?.props.accessibilityState?.checked).toBe(false);
+        expect(candidate?.props.role).toBe('radio');
+        expect(candidate?.props['aria-checked']).toBe(false);
         expect(screen.findByTestId('identity-workos-candidate:workos-connection-b')?.props.disabled).toBe(true);
         // Nothing is committed until a candidate is chosen.
         expect(screen.findByTestId('team-identity-workos-use')?.props.disabled).toBe(true);
 
-        executeMock.mockClear();
-        executeMock.mockResolvedValue({ ok: true, value: { v: 1 } });
+        answer('teams.identity.workos.connection.set', { connection });
         await screen.pressByTestIdAsync('identity-workos-candidate:workos-connection-a');
-        expect(executeMock).not.toHaveBeenCalled();
-        expect(screen.findByTestId('identity-workos-candidate:workos-connection-a')?.props.accessibilityState?.checked).toBe(true);
+        expect(harness.requestsFor(path('teams.identity.workos.connection.set'))).toHaveLength(0);
+        expect(screen.findByTestId('identity-workos-candidate:workos-connection-a')?.props['aria-checked']).toBe(true);
 
         await screen.pressByTestIdAsync('team-identity-workos-use');
         expect(Modal.confirm).not.toHaveBeenCalled();
-        expect(executeMock).toHaveBeenCalledWith(
-            'teams.identity.workos.connection.set',
-            expect.objectContaining({ connectionId: 'connection-1', workosConnectionId: 'workos-connection-a' }),
-            expect.any(Object),
-        );
+        expect(harness.requestsFor(path('teams.identity.workos.connection.set'))[0]?.input).toMatchObject({ connectionId: 'connection-1', workosConnectionId: 'workos-connection-a' });
     });
 
     it('names the Teams that accept a Home sign-in connection, and says so when none do', async () => {
-        const homeWorkos = {
-            ...identityStateMock.current.items[0]!,
-            teamId: null,
-            provider: { id: 'provider-workos', kind: 'workos_sso' as const, displayName: 'Northwind' },
-            externalReference: { v: 1 as const, kind: 'workos_sso' as const, organizationId: 'organization-1', connectionId: 'workos-connection-1' },
-            settings: { v: 1 as const, kind: 'workos_sso' as const },
-            lastObservation: null,
-        };
         const render = async (teamsUsingIt?: { teamId: string; name: string }[]) => {
-            identityStateMock.current.items[0] = { ...homeWorkos, ...(teamsUsingIt ? { teamsUsingIt } : {}) } as unknown as TeamIdentityConnectionV1;
-            return renderScreen(<IdentityConnectionDetailContent
-                scope={{ serverId: 'home-1', accountId: 'account-1' } as never}
-                teamId={null}
-                connectionId="connection-1"
-                mutationsAvailable
-            />);
+            const homeConnection = HomeIdentityConnectionV1Schema.parse({ ...connection, teamId: null,
+                provider: { id: 'provider-workos', kind: 'workos_sso', displayName: 'Northwind' },
+                externalReference: { v: 1, kind: 'workos_sso', organizationId: 'organization-1', connectionId: 'workos-connection-1' },
+                settings: { v: 1, kind: 'workos_sso' }, lastObservation: null, ...(teamsUsingIt ? { teamsUsingIt } : {}) });
+            harness.answer(serverId, path('home.identity.connections.list'), { body: HomeIdentityConnectionListResultV1Schema.parse({
+                items: [homeConnection], eligibleProviders: [],
+            }) });
+            const screen = await renderScreen(<IdentityConnectionDetailContent scope={{ serverId, accountId: 'account-1' }} teamId={null} connectionId="connection-1" mutationsAvailable />);
+            await waitForHomeGovernance(() => expect(screen.findByTestId('identity-workos-current-connection')).not.toBeNull());
+            return screen;
         };
         const used = await render([{ teamId: 'platform', name: 'Platform' }, { teamId: 'design', name: 'Design' }]);
-        const row = used.findByTestId('identity-connection-teams-using-it');
-        expect(row).not.toBeNull();
-        expect(findTestInstanceByTypeContainingText(row!, 'Text', 'Platform, Design')).toBeDefined();
+        expect(findTestInstanceByTypeContainingText(used.findByTestId('identity-connection-teams-using-it')!, 'Text', 'Platform, Design')).toBeDefined();
         await used.unmount();
-
         const unused = await render([]);
-        expect(findTestInstanceByTypeContainingText(unused.findByTestId('identity-connection-teams-using-it')!, 'Text',
-            t('identityAdministration.homeTeamsUsingItNone'))).toBeDefined();
+        expect(findTestInstanceByTypeContainingText(unused.findByTestId('identity-connection-teams-using-it')!, 'Text', t('identityAdministration.homeTeamsUsingItNone'))).toBeDefined();
         await unused.unmount();
-
-        // An older Home that does not project usage is unknown, not "none".
         const unknown = await render(undefined);
         expect(unknown.findByTestId('identity-connection-teams-using-it')).toBeNull();
     });
+
 
 });

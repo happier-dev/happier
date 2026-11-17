@@ -8,7 +8,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
-installSettingsViewCommonModuleMocks();
+installSettingsViewCommonModuleMocks({ storage: 'real' });
 
 afterEach(() => standardCleanup());
 

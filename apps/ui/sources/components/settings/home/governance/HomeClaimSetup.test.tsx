@@ -1,4 +1,6 @@
+import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 import * as React from 'react';
+import { HomeGovernanceClaimResultV1Schema } from '@happier-dev/protocol/home/governance';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -65,7 +67,7 @@ function createDesktopBridge(purpose: Readonly<Record<string, unknown>> | null) 
             async subscribe(taskId, listenerSet) {
                 listeners.set(taskId, listenerSet.onResult);
                 if (taskId.endsWith('relay.runtime.status.v1')) {
-                    listenerSet.onResult({
+                    listenerSet.onResult(SystemTaskResultSchema.parse({
                         protocolVersion: 1,
                         taskId,
                         ok: true,
@@ -79,7 +81,7 @@ function createDesktopBridge(purpose: Readonly<Record<string, unknown>> | null) 
                             anonymousSignupEnabled: false,
                             service: { active: true, enabled: true },
                         },
-                    });
+                    }));
                 }
                 return () => { listeners.delete(taskId); };
             },
@@ -132,7 +134,7 @@ afterEach(() => {
 describe('HomeClaimSetup with a one-time code', () => {
     it('keeps Claim disabled until the text can be a code, then claims with the canonical code and re-reads the Home', async () => {
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
-        harness.answer(serverId, CLAIM_PATH, { body: { status: 'claimed' } });
+        harness.answer(serverId, CLAIM_PATH, { body: HomeGovernanceClaimResultV1Schema.parse({ status: 'claimed' }) });
         harness.answer(serverId, GOVERNANCE_PATH, { body: homeGovernanceProjectionFixture() });
         const screen = await renderClaim(serverId);
 

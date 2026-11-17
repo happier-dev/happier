@@ -3,12 +3,14 @@ import { PermissionStatus } from 'expo-modules-core';
 import { DEFAULT_ATTENTION_DELIVERY_POLICY_V1 } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createServerAccountConnectionProbeHttpResponse } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const SECURE_STORE_DEV_FALLBACK_ENV = 'EXPO_PUBLIC_HAPPIER_NATIVE_SECURE_STORE_DEV_FALLBACK';
 let originalSecureStoreDevFallback: string | undefined;
-const runtimeFetchWithServerReachabilityMock = vi.hoisted(() => vi.fn());
+const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const secureStore = vi.hoisted(() => new Map<string, string>());
 const activityNotificationCapabilities = vi.hoisted(() => vi.fn(() => null as unknown));
 const removeActivityNotificationContext = vi.hoisted(() => vi.fn(() => true));
@@ -18,10 +20,6 @@ vi.mock('../../../../modules/happier-activity-notifications', () => ({
     prepareActivityNotificationContext: () => true,
     removeActivityNotificationContext,
     clearActivityNotificationContext: () => undefined,
-}));
-
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: runtimeFetchWithServerReachabilityMock,
 }));
 
 vi.mock('expo-notifications', () => ({
@@ -88,11 +86,11 @@ beforeEach(async () => {
     await resetPersistedHomes();
     originalSecureStoreDevFallback = process.env[SECURE_STORE_DEV_FALLBACK_ENV];
     process.env[SECURE_STORE_DEV_FALLBACK_ENV] = '0';
-    runtimeFetchWithServerReachabilityMock.mockReset();
+    runtimeFetchMock.mockReset();
     activityNotificationCapabilities.mockReturnValue(null);
     removeActivityNotificationContext.mockClear();
-    runtimeFetchWithServerReachabilityMock.mockImplementation(async () => Response.json({ success: true }));
-    setRuntimeFetch(async (input, init) => runtimeFetchWithServerReachabilityMock({
+    runtimeFetchMock.mockImplementation(async () => Response.json({ success: true }));
+    setRuntimeFetch(async (input, init) => createServerAccountConnectionProbeHttpResponse(new URL(String(input)).pathname) ?? runtimeFetchMock({
         url: String(input),
         init,
     }));
@@ -115,12 +113,8 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         const { getIrohHomeTunnelRuntime, disposeIrohHomeTunnelRuntime } = await import('@/sync/runtime/nativeIrohTunnels/runtime');
         const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-        const actualReachability = await vi.importActual<typeof import('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch')>(
-            '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch',
-        );
         // This case keeps the entire request/readiness path real. Only native
         // hardware, network I/O, SecureStore and Expo are substituted.
-        runtimeFetchWithServerReachabilityMock.mockImplementation(actualReachability.runtimeFetchWithServerReachability);
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ status: PermissionStatus.GRANTED, expires: 'never', granted: true, canAskAgain: false });
         vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ type: 'expo', data: 'ExponentPushToken[native]' });
         const homes = await Promise.all(['a', 'b'].map((suffix) => serverProfiles.adoptHomeProfile({
@@ -184,8 +178,8 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         const home = await serverProfiles.upsertServerProfile({ serverUrl: 'https://enrolled.example.test', name: 'Enrolled' });
         await serverProfiles.setActiveServerId(home.id, { scope: 'device' });
         const accountToken = tokenForAccount('account-enrolled');
-        await TokenStorage.setCredentials({ token: accountToken, secret: 's' });
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request) => {
+        await TokenStorage.setCredentials({ token: accountToken });
+        runtimeFetchMock.mockImplementation(async (request) => {
             if (/\/v1\/features(?:\/authenticated)?$/.test(String(request.url))) return Response.json({
                 features: { sessions: { enabled: true, following: { enabled: true } } }, capabilities: {},
             });
@@ -199,12 +193,12 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             });
             return Response.json({ success: true });
         });
-        await registerPushTokenIfAvailable({ credentials: { token: accountToken, secret: 's' }, log: { log: () => undefined },
+        await registerPushTokenIfAvailable({ credentials: { token: accountToken }, log: { log: () => undefined },
             getAccountSettings: () => ({ sessionRemoteAlertsEnabled: true }),
             getLocalSettings: () => ({ deviceRemoteAlertsEnabled: true, attentionDeviceOverridesV1: { enabled: false,
                 localNotifications: { enabled: false }, sounds: { enabled: false, volume: 0 } } }),
         });
-        const remote = runtimeFetchWithServerReachabilityMock.mock.calls.map(([request]) => request.init?.body)
+        const remote = runtimeFetchMock.mock.calls.map(([request]) => request.init?.body)
             .filter((body): body is string => typeof body === 'string').map((body) => JSON.parse(body))
             .find((body) => body.remoteAlerts);
         expect(remote?.remoteAlerts).toMatchObject({ registrationId: 'exact-row', policy: {
@@ -231,7 +225,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
                 privacy: { previewBehavior: 'include_preview' },
             },
         };
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request) => {
+        runtimeFetchMock.mockImplementation(async (request) => {
             const url = String(request.url);
             if (/\/v1\/features(?:\/authenticated)?$/.test(url)) return Response.json({
                 features: { sessions: { enabled: true, following: { enabled: true } } }, capabilities: {},
@@ -269,7 +263,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         encryptionRead.resolve();
         await run;
 
-        const publishedPolicies = runtimeFetchWithServerReachabilityMock.mock.calls
+        const publishedPolicies = runtimeFetchMock.mock.calls
             .map(([request]) => request.init?.body)
             .filter((body): body is string => typeof body === 'string')
             .map((body) => JSON.parse(body) as Record<string, unknown>)
@@ -284,7 +278,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         await serverProfiles.setActiveServerId(home.id, { scope: 'device' });
         const accountToken = tokenForAccount('account-feature-off');
         await TokenStorage.setCredentials({ token: accountToken, secret: 's' });
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request) => {
+        runtimeFetchMock.mockImplementation(async (request) => {
             if (/\/v1\/features(?:\/authenticated)?$/.test(String(request.url))) return Response.json({
                 features: { sessions: { enabled: true, following: { enabled: false } } }, capabilities: {},
             });
@@ -296,7 +290,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             getLocalSettings: () => ({ deviceRemoteAlertsEnabled: true }),
         });
 
-        const requestedPaths = runtimeFetchWithServerReachabilityMock.mock.calls.map(([request]) => new URL(String(request.url)).pathname + new URL(String(request.url)).search);
+        const requestedPaths = runtimeFetchMock.mock.calls.map(([request]) => new URL(String(request.url)).pathname + new URL(String(request.url)).search);
         expect(requestedPaths).toContain('/v1/push-tokens');
         expect(requestedPaths).not.toContain('/v1/push-tokens?projectionVersion=2');
         expect(removeActivityNotificationContext).toHaveBeenCalled();
@@ -308,7 +302,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         const home = await serverProfiles.upsertServerProfile({ serverUrl: 'https://predecessor.example.test', name: 'Predecessor' });
         await serverProfiles.setActiveServerId(home.id, { scope: 'device' });
         await TokenStorage.setCredentials({ token: 'predecessor', secret: 's' });
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request) => {
+        runtimeFetchMock.mockImplementation(async (request) => {
             if (/\/v1\/features(?:\/authenticated)?$/.test(String(request.url))) return Response.json({
                 features: { sessions: { enabled: true, following: { enabled: true } } }, capabilities: {},
             });
@@ -322,7 +316,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             getAccountSettings: () => ({ sessionRemoteAlertsEnabled: true }),
             getLocalSettings: () => ({ deviceRemoteAlertsEnabled: true }),
         });
-        const bodies = runtimeFetchWithServerReachabilityMock.mock.calls.map(([request]) => request.init?.body)
+        const bodies = runtimeFetchMock.mock.calls.map(([request]) => request.init?.body)
             .filter((body): body is string => typeof body === 'string').map((body) => JSON.parse(body));
         expect(bodies.some((body) => body.remoteAlerts)).toBe(false);
         expect(bodies.some((body) => body.token === 'ExponentPushToken[predecessor]')).toBe(true);
@@ -335,12 +329,12 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         const home = await serverProfiles.upsertServerProfile({ serverUrl: 'https://optout.example.test', name: 'Opt out' });
         await serverProfiles.setActiveServerId(home.id, { scope: 'device' });
         const accountToken = tokenForAccount('account-optout');
-        await TokenStorage.setCredentials({ token: accountToken, secret: 's' });
+        await TokenStorage.setCredentials({ token: accountToken });
         const enrolled = {
             v: 1, enabled: true, nativeConsumer: 'ios_service_extension_v1',
             quietHoursOverride: { mode: 'account' }, foregroundBehavior: 'account', previewCeiling: 'account', soundVolume: 1,
         };
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request) => {
+        runtimeFetchMock.mockImplementation(async (request) => {
             if (/\/v1\/features(?:\/authenticated)?$/.test(String(request.url))) return Response.json({
                 features: { sessions: { enabled: true, following: { enabled: true } } }, capabilities: {},
             });
@@ -355,20 +349,20 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             return Response.json({ success: true });
         });
 
-        const readRemoteAlertBodies = () => runtimeFetchWithServerReachabilityMock.mock.calls
+        const readRemoteAlertBodies = () => runtimeFetchMock.mock.calls
             .map(([request]) => request.init?.body)
             .filter((body): body is string => typeof body === 'string').map((body) => JSON.parse(body))
             .filter((body) => body.remoteAlerts);
 
         // Same overlay as the persisted row: the cycle must not rewrite it.
-        await registerPushTokenIfAvailable({ credentials: { token: accountToken, secret: 's' }, log: { log: () => undefined },
+        await registerPushTokenIfAvailable({ credentials: { token: accountToken }, log: { log: () => undefined },
             getAccountSettings: () => ({ sessionRemoteAlertsEnabled: true }),
             getLocalSettings: () => ({ deviceRemoteAlertsEnabled: true }),
         });
         expect(readRemoteAlertBodies()).toEqual([]);
 
-        runtimeFetchWithServerReachabilityMock.mockClear();
-        await registerPushTokenIfAvailable({ credentials: { token: accountToken, secret: 's' }, log: { log: () => undefined },
+        runtimeFetchMock.mockClear();
+        await registerPushTokenIfAvailable({ credentials: { token: accountToken }, log: { log: () => undefined },
             getAccountSettings: () => ({}),
             getLocalSettings: () => ({ deviceRemoteAlertsEnabled: true }),
         });
@@ -392,7 +386,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             getHomeAccountSettings: async () => null,
             getLocalSettings: () => ({ deviceRemoteAlertsEnabled: true }),
         });
-        const urls = runtimeFetchWithServerReachabilityMock.mock.calls.map(([request]) => String(request.url));
+        const urls = runtimeFetchMock.mock.calls.map(([request]) => String(request.url));
         expect(urls.some((url) => url.includes('projectionVersion=2'))).toBe(false);
         expect(urls.some((url) => url.includes('/v1/push-tokens'))).toBe(false);
     });
@@ -443,7 +437,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             ),
         });
 
-        const pushMutations = runtimeFetchWithServerReachabilityMock.mock.calls
+        const pushMutations = runtimeFetchMock.mock.calls
             .map(([request]) => ({
                 url: String(request.url),
                 method: request.init?.method ?? 'GET',
@@ -516,7 +510,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             getHomeAccountSettings: async () => ({}),
         });
 
-        const urls = runtimeFetchWithServerReachabilityMock.mock.calls
+        const urls = runtimeFetchMock.mock.calls
             .filter(([request]) => request.init?.method === 'POST')
             .map(([request]) => String(request.url))
             .sort();
@@ -527,7 +521,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         expect(messages.join('\n')).not.toContain('ExponentPushToken[secret-token]');
 
         const bodiesByUrl = new Map<string, any>();
-        for (const [request] of runtimeFetchWithServerReachabilityMock.mock.calls) {
+        for (const [request] of runtimeFetchMock.mock.calls) {
             const url = String(request.url);
             const init = (request.init ?? {}) as any;
             const body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
@@ -579,7 +573,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             'https://home-b.example.test',
             'https://home-b.example.test',
         ]);
-        const mutationCalls = runtimeFetchWithServerReachabilityMock.mock.calls
+        const mutationCalls = runtimeFetchMock.mock.calls
             .filter(([request]) => request.init?.method === 'POST' || request.init?.method === 'DELETE')
             .map(([request]) => ({ method: request.init?.method, url: String(request.url) }))
             .sort((left, right) => left.url.localeCompare(right.url));
@@ -611,7 +605,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             payload: { attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: false } } } },
             randomBytes: () => new Uint8Array(24).fill(23),
         });
-        const homeACredentials = { token: tokenForAccount('account-a'), secret: encodeBase64(secretBytes, 'base64url') } satisfies AuthCredentials;
+        const homeACredentials = { token: tokenForAccount('account-a') } satisfies AuthCredentials;
         const homeBCredentials = { token: tokenForAccount('account-b'), secret: encodeBase64(secretBytes, 'base64url') } satisfies AuthCredentials;
         const { upsertServerProfile, setActiveServerId } = serverProfiles;
         const homeA = await upsertServerProfile({
@@ -637,8 +631,11 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         // B is never synced, so it has no persisted scoped Account Settings
         // projection. Its live endpoints authoritatively disable Expo push and
         // the disabled v2 E2EE envelope must not be misread as enabled defaults.
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string }) => {
             const url = String(request.url);
+            if (url.endsWith('/v1/account/encryption/currentness')) {
+                return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(url.includes('live-b') ? homeBCredentials : homeACredentials));
+            }
             if (url.endsWith('/v1/account/encryption')) {
                 return Response.json({ mode: url.includes('live-b') ? 'e2ee' : 'plain', updatedAt: 1 });
             }
@@ -658,7 +655,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             log: { log: vi.fn() },
         });
 
-        const calls = runtimeFetchWithServerReachabilityMock.mock.calls.map(([request]) => request as { url: string; init?: RequestInit });
+        const calls = runtimeFetchMock.mock.calls.map(([request]) => request as { url: string; init?: RequestInit });
         const homeBCalls = calls.filter(({ url }) => url.includes('live-b'));
         // The never-focused Home is read live through its own explicit endpoints.
         expect(homeBCalls.some(({ url }) => url.endsWith('/v1/account/encryption'))).toBe(true);
@@ -689,9 +686,9 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         const homeA = await upsertServerProfile({ serverUrl: 'https://offline-a.example.test', name: 'A' });
         const homeB = await upsertServerProfile({ serverUrl: 'https://offline-b.example.test', name: 'B' });
         await setActiveServerId(homeA.id, { scope: 'device' });
-        await TokenStorage.setCredentials({ token: tokenForAccount('account-a'), secret: 's' });
+        await TokenStorage.setCredentials({ token: tokenForAccount('account-a') });
         await setActiveServerId(homeB.id, { scope: 'device' });
-        await TokenStorage.setCredentials({ token: tokenForAccount('account-b'), secret: 's' });
+        await TokenStorage.setCredentials({ token: tokenForAccount('account-b') });
         await setActiveServerId(homeA.id, { scope: 'device' });
 
         // B holds a last-known disabled scoped projection from an earlier sync.
@@ -715,7 +712,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             },
         }, 3);
 
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string }) => {
             const url = String(request.url);
             if (url.includes('offline-b')) throw new Error('home offline');
             if (url.endsWith('/v1/account/encryption')) {
@@ -728,11 +725,11 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         });
 
         await registerPushTokenIfAvailable({
-            credentials: { token: tokenForAccount('account-a'), secret: 's' } satisfies AuthCredentials,
+            credentials: { token: tokenForAccount('account-a') } satisfies AuthCredentials,
             log: { log: vi.fn() },
         });
 
-        const calls = runtimeFetchWithServerReachabilityMock.mock.calls.map(([request]) => request as { url: string; init?: RequestInit });
+        const calls = runtimeFetchMock.mock.calls.map(([request]) => request as { url: string; init?: RequestInit });
         // Live-first: B is asked directly even though a scoped cache exists.
         expect(calls.some(({ url }) => url.includes('offline-b') && url.endsWith('/v1/account/encryption'))).toBe(true);
         const registeredUrls = calls
@@ -757,7 +754,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         await TokenStorage.setCredentials({ token: 'single-b' });
         await setActiveServerId(homeA.id, { scope: 'device' });
 
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string }) => {
             if (String(request.url).includes('single-a')) throw new Error('registration endpoint failed');
             return Response.json({ success: true });
         });
@@ -771,7 +768,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             getHomeAccountSettings: async () => ({}),
         });
 
-        const postCalls = runtimeFetchWithServerReachabilityMock.mock.calls.filter(([request]) => {
+        const postCalls = runtimeFetchMock.mock.calls.filter(([request]) => {
             const params = request as { url: string; init?: RequestInit };
             return params.url.endsWith('/v1/push-tokens') && params.init?.method === 'POST';
         });
@@ -816,7 +813,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         });
 
         await vi.waitFor(() => expect(homeBConsentReads).toBe(2));
-        expect(runtimeFetchWithServerReachabilityMock.mock.calls.some(([request]) => {
+        expect(runtimeFetchMock.mock.calls.some(([request]) => {
             const scopedRequest = request as { url: string; init?: RequestInit };
             return scopedRequest.url === `${homeB.serverUrl}/v1/push-tokens`
                 && scopedRequest.init?.method === 'POST';
@@ -842,7 +839,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         await serverProfiles.setActiveServerId(home.id, { scope: 'device' });
         await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: 'stale-home-token' });
         let finishRegistration!: () => void;
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
             if (request.url.endsWith('/v1/push-tokens') && request.init?.method === 'POST') {
                 await new Promise<void>((resolve) => { finishRegistration = resolve; });
             }
@@ -855,7 +852,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         finishRegistration();
         await run;
 
-        const mutations = runtimeFetchWithServerReachabilityMock.mock.calls
+        const mutations = runtimeFetchMock.mock.calls
             .map(([request]) => request as { url: string; init?: RequestInit })
             .filter(({ url }) => url.includes('/v1/push-tokens'))
             .map(({ init }) => init?.method);
@@ -869,7 +866,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         await serverProfiles.setActiveServerId(home.id, { scope: 'device' });
         await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: 'removed-home-token' });
         let finishRegistration!: () => void;
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
             if (request.url.endsWith('/v1/push-tokens') && request.init?.method === 'POST') {
                 await new Promise<void>((resolve) => { finishRegistration = resolve; });
             }
@@ -882,7 +879,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         finishRegistration();
         await run;
 
-        const mutations = runtimeFetchWithServerReachabilityMock.mock.calls
+        const mutations = runtimeFetchMock.mock.calls
             .map(([request]) => request as { url: string; init?: RequestInit })
             .filter(({ url }) => url.includes('/v1/push-tokens'))
             .map(({ init }) => init?.method);
@@ -897,7 +894,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: 'disabled-race-token' });
         let pushEnabled = true;
         let finishRegistration!: () => void;
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
             if (request.url.endsWith('/v1/push-tokens') && request.init?.method === 'POST') {
                 await new Promise<void>((resolve) => { finishRegistration = resolve; });
             }
@@ -917,7 +914,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         finishRegistration();
         await run;
 
-        const mutations = runtimeFetchWithServerReachabilityMock.mock.calls
+        const mutations = runtimeFetchMock.mock.calls
             .map(([request]) => request as { url: string; init?: RequestInit })
             .filter(({ url }) => url.includes('/v1/push-tokens'))
             .map(({ init }) => init?.method);
@@ -951,7 +948,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
             },
         });
 
-        const mutations = runtimeFetchWithServerReachabilityMock.mock.calls
+        const mutations = runtimeFetchMock.mock.calls
             .map(([request]) => request as { url: string; init?: RequestInit })
             .filter(({ url }) => url.includes('/v1/push-tokens'))
             .map(({ url, init }) => ({ url, method: init?.method ?? 'GET' }));
@@ -994,7 +991,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         await storage.getState().activateSettingsScope(scopeA);
 
         let finishHomeARegistration!: () => void;
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
             if (request.url === `${homeA.serverUrl}/v1/push-tokens` && request.init?.method === 'POST') {
                 await new Promise<void>((resolve) => { finishHomeARegistration = resolve; });
             }
@@ -1020,7 +1017,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         finishHomeARegistration();
         await run;
 
-        const homeAMutations = runtimeFetchWithServerReachabilityMock.mock.calls
+        const homeAMutations = runtimeFetchMock.mock.calls
             .map(([request]) => request as { url: string; init?: RequestInit })
             .filter(({ url }) => url.includes('focus-race-a') && url.includes('/v1/push-tokens'))
             .map(({ init }) => init?.method);
@@ -1049,7 +1046,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         await storage.getState().activateSettingsScope(scopeA);
 
         let finishHomeARegistration!: () => void;
-        runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
+        runtimeFetchMock.mockImplementation(async (request: { url: string; init?: RequestInit }) => {
             if (request.url === `${homeA.serverUrl}/v1/push-tokens` && request.init?.method === 'POST') {
                 await new Promise<void>((resolve) => { finishHomeARegistration = resolve; });
             }
@@ -1076,7 +1073,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         finishHomeARegistration();
         await run;
 
-        const homeAMutations = runtimeFetchWithServerReachabilityMock.mock.calls
+        const homeAMutations = runtimeFetchMock.mock.calls
             .map(([request]) => request as { url: string; init?: RequestInit })
             .filter(({ url }) => url.includes('scope-race-a') && url.includes('/v1/push-tokens'))
             .map(({ init }) => init?.method);

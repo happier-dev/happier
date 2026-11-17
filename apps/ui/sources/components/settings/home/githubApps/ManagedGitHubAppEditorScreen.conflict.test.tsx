@@ -6,10 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
-const executeMock = vi.hoisted(() => vi.fn());
-const refreshMock = vi.hoisted(() => vi.fn());
+import { ManagedGitHubAppsListOutputV1Schema } from '@happier-dev/protocol/identity/githubApps';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 const replaceMock = vi.hoisted(() => vi.fn());
-const appsState = vi.hoisted(() => ({ current: { kind: 'loading' } as unknown }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -20,17 +19,16 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: vi.fn(async () => true) }));
-vi.mock('./useManagedGitHubApps', () => ({
-    useManagedGitHubAppsClient: () => ({ execute: executeMock }),
-    useManagedGitHubApps: () => ({ state: appsState.current, refresh: refreshMock }),
-}));
-
-import { ManagedGitHubAppEditorContent } from './ManagedGitHubAppEditorScreen';
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { ManagedGitHubAppEditorContent } = await import('./ManagedGitHubAppEditorScreen');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+const listPath = '/v1/identity/github-apps/list';
+const updatePath = '/v1/identity/github-apps/update';
 
 function readyState(revision: number, githubClientId: string) {
-    return {
-        kind: 'ready' as const,
-        stale: false,
+    return ManagedGitHubAppsListOutputV1Schema.parse({
         registrations: [{
             id: 'registration-1', owner: { kind: 'home' as const }, githubHost: 'https://github.com',
             githubAppId: '12', githubClientId, githubAppSlug: 'happier',
@@ -41,7 +39,7 @@ function readyState(revision: number, githubClientId: string) {
             updatedAt: '2026-09-01T10:00:00.000Z',
         }],
         installations: [],
-    };
+    });
 }
 
 const surface = {
@@ -49,35 +47,39 @@ const surface = {
     owner: { kind: 'home' as const },
     mutationsAvailable: true,
     routes: {
-        detail: (id: string) => homeAdministrationGitHubAppPath('home-1', id),
-        edit: (id: string) => homeAdministrationGitHubAppEditPath('home-1', id),
+        detail: (id: string) => homeAdministrationGitHubAppPath(surface.scope.serverId, id),
+        edit: (id: string) => homeAdministrationGitHubAppEditPath(surface.scope.serverId, id),
         signIn: homeAdministrationPoliciesPath('home-1'),
     },
-} as const;
+};
 
-function renderEditor() {
-    return <ManagedGitHubAppEditorContent
+async function renderEditor() {
+    const screen = await renderScreen(<ManagedGitHubAppEditorContent
         surface={surface}
-        manifestReturn={{ kind: 'home', serverId: 'home-1' }}
+        manifestReturn={{ kind: 'home', serverId: surface.scope.serverId }}
         registrationId="registration-1"
-    />;
+    />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('github-app-client-id')).not.toBeNull());
+    return screen;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     standardCleanup();
-    executeMock.mockReset();
-    refreshMock.mockReset();
+    await harness.reset();
+    surface.scope.serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://github-conflict.test', accountId: 'account-1' });
+    surface.routes.signIn = homeAdministrationPoliciesPath(surface.scope.serverId);
     replaceMock.mockReset();
-    appsState.current = readyState(2, 'Iv1.original');
+    harness.answer(surface.scope.serverId, listPath, { body: readyState(2, 'Iv1.original') });
 });
 
 describe('ManagedGitHubAppEditorContent revision and secret continuity', () => {
     it('preserves a dirty draft when a refresh advances the registration and saves only after explicit reload', async () => {
-        const screen = await renderScreen(renderEditor());
+        const screen = await renderEditor();
         await act(async () => screen.changeTextByTestId('github-app-client-id', 'Iv1.local-edit'));
 
-        appsState.current = readyState(3, 'Iv1.remote-edit');
-        await screen.update(renderEditor());
+        harness.answer(surface.scope.serverId, listPath, { body: readyState(3, 'Iv1.remote-edit') });
+        await act(async () => publishHomeAccountChange(surface.scope.serverId));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('github-app-reload-conflict')).not.toBeNull());
 
         expect(screen.findByTestId('github-app-client-id')?.props.value).toBe('Iv1.local-edit');
         expect(screen.findByTestId('github-app-save')?.props.disabled).toBe(true);
@@ -87,37 +89,29 @@ describe('ManagedGitHubAppEditorContent revision and secret continuity', () => {
         expect(screen.findByTestId('github-app-client-id')?.props.value).toBe('Iv1.remote-edit');
 
         await act(async () => screen.changeTextByTestId('github-app-client-id', 'Iv1.reviewed-edit'));
-        executeMock.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { registration: readyState(4, 'Iv1.reviewed-edit').registrations[0] },
-        });
+        harness.answer(surface.scope.serverId, updatePath, { body: { registration: readyState(4, 'Iv1.reviewed-edit').registrations[0] } });
         await screen.pressByTestIdAsync('github-app-save');
 
-        expect(executeMock).toHaveBeenCalledWith(
-            'identity.githubApps.update',
-            expect.objectContaining({ expectedRevision: 3 }),
-            expect.anything(),
-        );
+        expect(harness.requestsFor(updatePath)[0]?.input).toMatchObject({ expectedRevision: 3 });
+        expect(replaceMock).toHaveBeenCalledWith(homeAdministrationGitHubAppPath(surface.scope.serverId, 'registration-1'));
     });
 
     it('refreshes an Action CAS conflict and waits for a newer projection before offering reload', async () => {
-        executeMock.mockResolvedValueOnce({
-            kind: 'failed',
-            failure: { code: 'github_app_revision_conflict', retryable: false },
-        });
-        const screen = await renderScreen(renderEditor());
+        harness.answer(surface.scope.serverId, updatePath, { status: 409, body: { error: 'github_app_revision_conflict' } });
+        const screen = await renderEditor();
         await act(async () => screen.changeTextByTestId('github-app-client-id', 'Iv1.local-edit'));
 
         await screen.pressByTestIdAsync('github-app-save');
 
-        expect(refreshMock).toHaveBeenCalledOnce();
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath)).toHaveLength(2));
         expect(screen.findByTestId('github-app-save')?.props.disabled).toBe(true);
         expect(screen.findByTestId('github-app-reload-conflict')).toBeNull();
         await screen.pressByTestIdAsync('github-app-refresh-conflict');
-        expect(refreshMock).toHaveBeenCalledTimes(2);
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath)).toHaveLength(3));
 
-        appsState.current = readyState(3, 'Iv1.remote-edit');
-        await screen.update(renderEditor());
+        harness.answer(surface.scope.serverId, listPath, { body: readyState(3, 'Iv1.remote-edit') });
+        await act(async () => publishHomeAccountChange(surface.scope.serverId));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('github-app-reload-conflict')).not.toBeNull());
         expect(screen.findByTestId('github-app-refresh-conflict')).toBeNull();
         expect(screen.findByTestId('github-app-reload-conflict')).not.toBeNull();
     });
@@ -128,7 +122,7 @@ describe('ManagedGitHubAppEditorContent revision and secret continuity', () => {
             onAppStateChange = listener as (state: string) => void;
             return { remove: vi.fn() };
         });
-        const screen = await renderScreen(renderEditor());
+        const screen = await renderEditor();
         await act(async () => {
             screen.changeTextByTestId('github-app-client-secret', 'client-secret');
             screen.changeTextByTestId('github-app-private-key', 'private-key');
@@ -146,11 +140,12 @@ describe('ManagedGitHubAppEditorContent revision and secret continuity', () => {
         const screen = await renderScreen(
             <ManagedGitHubAppEditorContent
                 surface={{ ...surface, mutationsAvailable: false }}
-                manifestReturn={{ kind: 'home', serverId: 'home-1' }}
+                manifestReturn={{ kind: 'home', serverId: surface.scope.serverId }}
                 registrationId="registration-1"
             />,
         );
 
+        await waitForHomeGovernance(() => expect(screen.findByTestId('github-app-client-id')).not.toBeNull());
         expect(screen.findByTestId('github-app-client-id')?.props.editable).toBe(false);
         expect(screen.findByTestId('github-app-client-secret')?.props.editable).toBe(false);
         expect(screen.findByTestId('github-app-private-key')?.props.editable).toBe(false);

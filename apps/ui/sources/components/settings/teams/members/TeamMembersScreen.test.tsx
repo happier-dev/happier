@@ -22,21 +22,21 @@ const navigationState = vi.hoisted(() => ({
     listeners: new Set<() => void>(),
 }));
 
-vi.mock('@/components/ui/lists/virtualized', () => ({
-    VirtualizedList: (props: Record<string, unknown>) => {
+// Native recycling is the boundary; keep the app's list normalization and adapters real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    const boundary = await createLegendListModuleMock({
+        get renderItemLimit() { return virtualizedBoundary.mountLimit; },
+        onCommit: props => { virtualizedBoundary.props = props; },
+    });
+    // A native viewport can unmount the initiating row while its confirmation is open.
+    const LegendList = React.forwardRef<unknown, React.ComponentProps<typeof boundary.LegendList>>((props, ref) => {
         const [, setViewport] = React.useState(0);
-        virtualizedBoundary.updateViewport = () => setViewport((value) => value + 1);
-        virtualizedBoundary.props = props;
-        const data = ((props.data as readonly unknown[] | undefined) ?? []).slice(0, virtualizedBoundary.mountLimit);
-        const renderItem = props.renderItem as (info: { item: unknown; index: number }) => React.ReactNode;
-        return React.createElement(
-            'VirtualizedList',
-            props,
-            props.ListHeaderComponent as React.ReactNode,
-            ...data.map((item, index) => renderItem({ item, index })),
-        );
-    },
-}));
+        virtualizedBoundary.updateViewport = () => setViewport(value => value + 1);
+        return React.createElement(boundary.LegendList, { ...props, ref });
+    });
+    return { ...boundary, LegendList };
+});
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
@@ -232,7 +232,7 @@ describe('TeamMembersScreen', () => {
         const screen = await renderMembers(serverId);
         await waitForTestId(screen, 'team-members-row:membership-0');
 
-        expect(virtualizedBoundary.props?.testID).toBe('team-members-virtualized-list');
+        expect(virtualizedBoundary.props?.['data-testid']).toBe('team-members-virtualized-list');
         expect(virtualizedBoundary.props?.maintainVisibleContentPosition).toBe(true);
         const data = virtualizedBoundary.props?.data as readonly unknown[];
         expect(data.length).toBeLessThan(25);

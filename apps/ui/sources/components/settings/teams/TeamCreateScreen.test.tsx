@@ -19,6 +19,7 @@ vi.mock('@react-navigation/native', async () => {
 });
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), replace: routerReplace, back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),

@@ -1,25 +1,33 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { parseCapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
+import { parseToken } from '@/utils/auth/parseToken';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
-const rpc = vi.hoisted(() => vi.fn());
-// Remote Machine RPC is the process/network boundary. Action admission and task codecs remain real.
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc }));
-// This Machine task never uses recipient-envelope preparation; avoid that unrelated native import graph.
-vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
-  const unused = () => { throw new Error('Home restart reached the recipient-envelope API'); };
-  return { createSessionDataKeyEnvelopeClient: unused, readSessionDataKeyEnvelopeCollectionPage: unused,
-    prepareSessionDataKeyEnvelopesForScope: unused, prepareSessionDataKeyEnvelopesDetached: unused };
+let answerRpc: Parameters<typeof installSessionActionRpcBoundary>[0] = () => { throw new Error('Unexpected daemon request'); };
+const transportContexts: Parameters<Parameters<typeof installSessionActionRpcBoundary>[0]>[1][] = [];
+const requests = installSessionActionRpcBoundary((request, context) => {
+  transportContexts.push(context);
+  return answerRpc(request, context);
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 
 describe('UI connected Machine Home restart Action', () => {
-  beforeEach(async () => { await harness.reset(); rpc.mockReset(); });
+  beforeEach(async () => {
+    await harness.reset();
+    requests.length = 0;
+    transportContexts.length = 0;
+    answerRpc = () => { throw new Error('Unexpected daemon request'); };
+  });
   afterEach(() => standardCleanup());
 
   it.each([
@@ -37,30 +45,33 @@ describe('UI connected Machine Home restart Action', () => {
     })).toMatchObject({ ok: true, result: { status: 'ready', searchReadiness } });
   });
 
-  it('keeps an Agent restart request in canonical approval before dispatching a system task', async () => {
+  it('defers an automation restart to durable approval and never dispatches a rejected task', async () => {
     const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://approval-restart.test', accountId: 'alice' });
-    let settled = false;
-    const result = createDefaultActionExecutor().execute('home.runtime.restart', { machineId: 'machine' }, {
+    harness.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
+    const result = await createDefaultActionExecutor().execute('home.runtime.restart', { machineId: 'machine' }, {
       surface: 'agent', authority: 'account_automation', serverId, expectedAccountId: 'alice', actionRequestId: 'restart-approval',
-    }).then(outcome => { settled = true; return outcome; });
+    });
+    expect(result).toMatchObject({ ok: true });
+    const created = ActionApprovalRequestCreatedResultSchema.parse(result.ok ? result.result : null);
     const artifacts = harness.artifacts(serverId);
     await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(1));
-    const artifactId = artifacts.list()[0]!.id;
+    const artifactId = created.artifactId;
+    expect(artifacts.list()[0]!.id).toBe(artifactId);
     const request = StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!));
     expect(request).toMatchObject({ status: 'open', actionId: 'home.runtime.restart',
-      actionArgs: { machineId: 'machine' }, approval: { flow: 'blocking', result: 'required' } });
-    await waitForHomeGovernance(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(1));
-    expect(settled).toBe(false);
-    expect(rpc).not.toHaveBeenCalled();
+      actionArgs: { machineId: 'machine' }, approval: { flow: 'deferred', result: 'required' } });
+    expect(requests).toHaveLength(0);
     expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'reject' }, {
       surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'alice',
     })).toMatchObject({ ok: true });
-    expect(await result).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-    expect(rpc).not.toHaveBeenCalled();
+    expect(StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!)))
+      .toMatchObject({ status: 'rejected', decision: { kind: 'reject' } });
+    expect(requests).toHaveLength(0);
   });
 
   it('rebuilds the captured Personal Home index and refuses an unexpected success body', async () => {
     const serverId = await harness.addHome({ name: 'Index Home', serverUrl: 'https://index.test', accountId: 'alice' });
+    harness.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
     harness.answer(serverId, '/v1/home/search/rebuild', { body: { ok: true } });
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId, expectedAccountId: 'alice',
       presentUserConfirmation: { actionId: 'home.search.rebuild' as const } };
@@ -72,19 +83,21 @@ describe('UI connected Machine Home restart Action', () => {
 
   it('keeps an admitted restart pending until its exact task terminates in the captured Home', async () => {
     const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://restart.test', accountId: 'alice' });
-    const terminal = { protocolVersion: 1, taskId: 'restart-task', ok: false, error: { code: 'restart_failed', message: 'Restart failed' } };
+    harness.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
+    harness.answer(serverId, '/v1/machines/machine', { body: { machine: createPlainMachineRowFixture({ id: 'machine', accountId: 'alice' }) } });
+    const terminal = SystemTaskResultSchema.parse({ protocolVersion: 1, taskId: 'restart-task', ok: false, error: { code: 'restart_failed', message: 'Restart failed' } });
     let finish!: (value: unknown) => void;
     let admitted!: () => void;
     const admission = new Promise<void>(resolve => { admitted = resolve; });
     const task = new Promise<unknown>(resolve => { finish = resolve; });
-    rpc.mockImplementation(async ({ method, payload }) => {
-      if (method === 'capabilities.detect') return { protocolVersion: 1, results: {
+    answerRpc = async ({ method, params }) => {
+      if (method.endsWith(':capabilities.detect')) return parseCapabilitiesDetectResponse({ protocolVersion: 1, results: {
         'tool.systemTasks': { ok: true, checkedAt: 1, data: { available: true,
           kinds: ['relay.runtime.restart.v1'], methods: ['start', 'wait'] } },
-      } };
-      if (payload.method === 'start') return { ok: true, result: { taskId: terminal.taskId } };
+      } });
+      if ((params as { method?: string }).method === 'start') return { ok: true, result: { taskId: terminal.taskId } };
       return { ok: true, result: await task };
-    });
+    };
     let settled = false;
     const signal = new AbortController().signal;
     const action = createDefaultActionExecutor().execute('home.runtime.restart', { machineId: 'machine', channel: 'preview' }, {
@@ -98,14 +111,19 @@ describe('UI connected Machine Home restart Action', () => {
     await harness.addHome({ name: 'Other', serverUrl: 'https://other.test', accountId: 'bob' });
     finish(terminal);
     expect(await action).toEqual({ ok: true, result: { status: 'completed', taskId: terminal.taskId, result: terminal } });
-    expect(rpc.mock.calls.map(([request]) => ({ serverId: request.serverId, accountId: request.accountId,
-      machineId: request.machineId, method: request.method }))).toEqual([
-      { serverId, accountId: 'alice', machineId: 'machine', method: 'capabilities.detect' },
-      { serverId, accountId: 'alice', machineId: 'machine', method: 'capabilities.invoke' },
-      { serverId, accountId: 'alice', machineId: 'machine', method: 'capabilities.invoke' },
+    expect(requests.map(request => request.method)).toEqual([
+      'machine:capabilities.detect', 'machine:capabilities.invoke', 'machine:capabilities.invoke',
     ]);
-    // Every Machine request runs under a cancellation signal derived from the caller's (merged with the
-    // captured Account lifetime), never an unbounded one.
-    for (const [request] of rpc.mock.calls) expect(request.signal).toBeInstanceOf(AbortSignal);
+    expect(transportContexts.map(context => context.serverUrl)).toEqual([
+      'https://restart.test', 'https://restart.test', 'https://restart.test',
+    ]);
+    const machineReads = harness.requestsFor('/v1/machines/read-batch');
+    expect(machineReads.length).toBeGreaterThan(0);
+    for (const request of machineReads) {
+      expect(request.serverId).toBe(serverId);
+      expect(parseToken(request.token ?? '')).toBe('alice');
+    }
+    // Each serialized RPC retains the captured caller's cancellation custody at the SDK boundary.
+    for (const context of transportContexts) expect(context.signal).toBeInstanceOf(AbortSignal);
   });
 });

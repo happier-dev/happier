@@ -10,20 +10,20 @@ installApprovalCommonModuleMocks();
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary();
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
 
-const runnerCustody = vi.hoisted(() => ({
-  removeAccount: vi.fn(async () => undefined),
-}));
-vi.mock('@/sync/domains/ephemeralRunner/runnerCreatorDraftRemoval', () => ({
-  removeRunnerCreatorCustodyForAccount: runnerCustody.removeAccount,
-}));
+import * as deviceLocalStorage from '@/auth/storage/deviceLocalStorage';
+import { createRunnerActivationKeyCustody, type RunnerActivationKeyCustody } from '@/sync/domains/ephemeralRunner/runnerActivationKeyCustody';
+import { listRunnerCreatorCustodyActivationIds } from '@/sync/domains/ephemeralRunner/runnerCreatorLaunchCustody';
 
 import { AccountDeletedLocalCleanupError, completeAccountDeletion } from './accountDeletionLifecycle';
 describe('completeAccountDeletion', () => {
   let target: ServerAccountScopeLifetime;
+  let custody: RunnerActivationKeyCustody;
   let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
   beforeEach(async () => {
-    runnerCustody.removeAccount.mockReset().mockResolvedValue(undefined);
+    vi.restoreAllMocks();
     connection = await restoreServerAccountForTest({ serverUrl: 'https://account-cleanup.test', accountId: 'account-a',
       credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
     });
@@ -32,17 +32,23 @@ describe('completeAccountDeletion', () => {
     const captured = captureActiveServerAccountScopeLifetime();
     if (!captured) throw new Error('Expected real Account cleanup lifetime');
     target = captured;
+    custody = await createRunnerActivationKeyCustody(target.scope);
   });
-  afterEach(async () => { await connection?.dispose(); connection = null; });
+  afterEach(async () => { vi.restoreAllMocks(); await connection?.dispose(); connection = null; });
   it('deletes remotely, erases exact Runner custody, then removes local credentials', async () => {
-    const remote = vi.fn(async () => ({ status: 'deleted' as const }));
-    const local = vi.fn();
-    await completeAccountDeletion({ target, deleteCurrentAccount: remote, replace: vi.fn(), logout: async (o) => { await o?.beforeMutation?.(); local(); return { kind: 'completed' }; } });
-    expect(remote.mock.invocationCallOrder[0]).toBeLessThan(runnerCustody.removeAccount.mock.invocationCallOrder[0]!);
-    expect(runnerCustody.removeAccount.mock.invocationCallOrder[0]).toBeLessThan(local.mock.invocationCallOrder[0]!);
-    expect(runnerCustody.removeAccount).toHaveBeenCalledWith(target.scope);
+    const remote = vi.fn(async () => {
+      expect(await deviceLocalStorage.readDeviceLocalStorageString(custody.keyHandle)).not.toBeNull();
+      return { status: 'deleted' as const };
+    });
+    const local = vi.fn(async () => {
+      expect(await deviceLocalStorage.readDeviceLocalStorageString(custody.keyHandle)).toBeNull();
+      expect(await listRunnerCreatorCustodyActivationIds(target.scope)).toEqual([]);
+    });
+    await completeAccountDeletion({ target, deleteCurrentAccount: remote, replace: vi.fn(), logout: async (o) => { await o?.beforeMutation?.(); await local(); return { kind: 'completed' }; } });
+    expect(remote).toHaveBeenCalledOnce();
+    expect(local).toHaveBeenCalledOnce();
   });
-  it('retains local state when remote deletion fails', async () => { const replace = vi.fn(); await expect(completeAccountDeletion({ target, deleteCurrentAccount: async () => { throw new Error('failed'); }, replace, logout: async (o) => { await o?.beforeMutation?.(); return { kind: 'completed' }; } })).rejects.toThrow('failed'); expect(replace).not.toHaveBeenCalled(); expect(runnerCustody.removeAccount).not.toHaveBeenCalled(); });
+  it('retains local state when remote deletion fails', async () => { const replace = vi.fn(); await expect(completeAccountDeletion({ target, deleteCurrentAccount: async () => { throw new Error('failed'); }, replace, logout: async (o) => { await o?.beforeMutation?.(); return { kind: 'completed' }; } })).rejects.toThrow('failed'); expect(replace).not.toHaveBeenCalled(); expect(await deviceLocalStorage.readDeviceLocalStorageString(custody.keyHandle)).not.toBeNull(); });
   it('distinguishes Runner cleanup failure after confirmed deletion and never removes credentials', async () => {
     let credentialsRemoved = false;
     const logout = vi.fn(async (o?: Readonly<{ beforeMutation?: () => void | Promise<void> }>) => {
@@ -50,7 +56,10 @@ describe('completeAccountDeletion', () => {
       credentialsRemoved = true;
       return { kind: 'completed' as const };
     });
-    runnerCustody.removeAccount.mockRejectedValueOnce(new Error('staged file busy'));
+    // Device-local storage is the persistence boundary; the custody owners remain real.
+    const actualRemove = deviceLocalStorage.removeDeviceLocalStorageString;
+    const remove = vi.spyOn(deviceLocalStorage, 'removeDeviceLocalStorageString');
+    remove.mockImplementationOnce(async () => { throw new Error('staged file busy'); });
     const remote = vi.fn(async () => ({ status: 'deleted' as const }));
     const failure = await completeAccountDeletion({ target, deleteCurrentAccount: remote, replace: vi.fn(), logout })
       .then(() => null, (error: unknown) => error);
@@ -58,7 +67,7 @@ describe('completeAccountDeletion', () => {
     expect(logout).toHaveBeenCalledOnce();
     expect(credentialsRemoved).toBe(false);
 
-    runnerCustody.removeAccount.mockResolvedValueOnce(undefined);
+    remove.mockImplementation(actualRemove);
     await expect((failure as AccountDeletedLocalCleanupError).retryLocalCleanup()).resolves.toEqual({ kind: 'completed', erasure: { status: 'deleted' } });
     expect(remote).toHaveBeenCalledOnce();
     expect(logout).toHaveBeenCalledTimes(2);

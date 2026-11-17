@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
@@ -8,27 +9,16 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const indexView = vi.hoisted(() => ({ current: 'list' as 'list' | 'land' }));
+let directoryWidth = 390;
 
-// The split geometry is measured from the window; tests choose which side of it they are on.
-vi.mock('@happier-dev/plugin-ui/presentation', async (importOriginal) => ({
-    ...(await importOriginal<Record<string, unknown>>()),
-    useHappierCollectionIndexView: () => indexView.current,
-}));
-vi.mock('@/components/ui/lists/virtualized', () => ({
-    VirtualizedList: (props: Record<string, unknown>) => {
-        const data = (props.data as readonly unknown[] | undefined) ?? [];
-        const renderItem = props.renderItem as (info: { item: unknown; index: number }) => React.ReactNode;
-        return React.createElement(
-            'VirtualizedList',
-            props,
-            props.ListHeaderComponent as React.ReactNode,
-            ...data.map((item, index) => renderItem({ item, index })),
-        );
-    },
-}));
+// Native recycling is the boundary; keep the app's list normalization and adapters real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock();
+});
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -41,12 +31,19 @@ installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 // Import the real screen at collection, after the boundaries: a cold import inside a test body can outlast it.
 const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
+const { HappierListDetailLayout } = await import('@happier-dev/plugin-ui/presentation');
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
 const TEAMS_LIST_PATH = '/v1/teams/list';
 
 async function renderDirectory() {
-    return renderScreen(<TeamsDirectoryScreen />);
+    const screen = await renderScreen(<HappierListDetailLayout list={null} detail={<TeamsDirectoryScreen />}
+        minListWidth={320} minDetailWidth={360} preferredListRatio={0.3} testID="teams-directory-layout" />);
+    // Supply the platform measurement to the real collection geometry owner.
+    await act(async () => screen.findByTestId('teams-directory-layout')!.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: directoryWidth, height: 900 } },
+    }));
+    return screen;
 }
 
 async function memberHome(teamCount: number) {
@@ -82,7 +79,7 @@ beforeEach(async () => {
     resetServerFeaturesClientForTests();
     await harness.reset();
     await harness.selectHomes([]);
-    indexView.current = 'list';
+    directoryWidth = 390;
 });
 
 afterEach(() => standardCleanup());
@@ -112,7 +109,7 @@ describe('TeamsDirectoryScreen craft', () => {
             body: { items: [], nextCursor: null },
             respondAfter: new Promise<void>((resolve) => { pending.answer = resolve; }),
         });
-        indexView.current = 'land';
+        directoryWidth = 1440;
 
         const screen = await renderDirectory();
         await vi.waitFor(() => expect(harness.requestsFor(TEAMS_LIST_PATH).length).toBeGreaterThan(0));
@@ -128,7 +125,7 @@ describe('TeamsDirectoryScreen craft', () => {
         });
         await harness.selectHomes([home]);
         harness.answer(home, TEAMS_LIST_PATH, { status: 503 });
-        indexView.current = 'land';
+        directoryWidth = 1440;
 
         const screen = await renderDirectory();
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-home-unavailable:${home}`));

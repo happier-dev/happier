@@ -60,6 +60,7 @@ async function withControlledVisibility(run: (observers: ControlledObserver[]) =
 const renderedText = (screen: Readonly<{ tree: { toJSON: () => unknown } }>) => JSON.stringify(screen.tree.toJSON());
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
   router: async () => ({
     useRouter: () => ({ push: routerPush, replace: vi.fn(), back: vi.fn() }),
     useNavigation: () => ({ setOptions: vi.fn() }),

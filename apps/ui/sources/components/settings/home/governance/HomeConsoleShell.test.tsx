@@ -38,6 +38,7 @@ vi.mock('@/components/ui/lists/virtualized', () => ({
 }));
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         const dimensions = () => ({ width: windowState.width, height: windowState.height, scale: 1, fontScale: 1 });

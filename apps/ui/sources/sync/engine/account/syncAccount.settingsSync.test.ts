@@ -5,10 +5,9 @@ import { createAccountSettingsScope } from '@/sync/domains/settings/scope/accoun
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
-const pushAccessMocks = vi.hoisted(() => ({
-    readPushPermission: vi.fn(async () => ({
-        ok: true as const,
-        permission: { granted: false, status: 'denied' as const, canAskAgain: true },
+const notificationBoundary = vi.hoisted(() => ({
+    getPermissionsAsync: vi.fn(async () => ({
+        granted: false, status: 'denied' as const, canAskAgain: true, expires: 'never' as const,
     })),
 }));
 
@@ -17,7 +16,7 @@ vi.mock('expo-constants', () => ({
 }));
 
 vi.mock('expo-notifications', () => ({
-    getPermissionsAsync: vi.fn(),
+    getPermissionsAsync: notificationBoundary.getPermissionsAsync,
     requestPermissionsAsync: vi.fn(),
     getExpoPushTokenAsync: vi.fn(),
 }));
@@ -26,19 +25,9 @@ vi.mock('@/config', () => ({
     config: { enableDevPushTokenRegistration: true },
 }));
 
-vi.mock('@/activity/notifications/permission/pushNotificationAccess', () => ({
-    readPushPermission: pushAccessMocks.readPushPermission,
-    readExpoPushToken: vi.fn(),
-    subscribeExpoPushTokenChanges: vi.fn(async () => null),
-}));
-
-vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
-    return {
-        ...actual,
-        deriveSettingsSecretsKey: async () => new Uint8Array(32).fill(9),
-        sealSecretsDeep: (value: unknown) => value,
-    };
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
 });
 
 const settingsState: { current: Record<string, unknown> } = {
@@ -54,7 +43,7 @@ const settingsState: { current: Record<string, unknown> } = {
 
 describe('handleUpdateAccountSocketUpdate settings merge', () => {
     beforeEach(() => {
-        pushAccessMocks.readPushPermission.mockClear();
+        notificationBoundary.getPermissionsAsync.mockClear();
         settingsState.current = {
             lastUsedAgent: 'codex',
             serverSelectionGroups: [
@@ -96,7 +85,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
                 log: { log: vi.fn() },
             });
 
-            await vi.waitFor(() => expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(1));
         } finally {
             stopPushTokenReconciliation();
         }
@@ -116,7 +105,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
                 ...before,
                 deviceRemoteAlertsEnabled: !before.deviceRemoteAlertsEnabled,
             });
-            await vi.waitFor(() => expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(1));
         } finally {
             stopPushTokenReconciliation();
             saveLocalSettings(before);
@@ -124,12 +113,11 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
     });
 
     it('coalesces local policy mutations during a failed in-flight pass into one fresh reconciliation', async () => {
-        const firstPermissionRead = createDeferred<Awaited<ReturnType<typeof pushAccessMocks.readPushPermission>>>();
-        pushAccessMocks.readPushPermission
+        const firstPermissionRead = createDeferred<Awaited<ReturnType<typeof notificationBoundary.getPermissionsAsync>>>();
+        notificationBoundary.getPermissionsAsync
             .mockImplementationOnce(() => firstPermissionRead.promise)
             .mockResolvedValue({
-                ok: true,
-                permission: { granted: false, status: 'denied', canAskAgain: true },
+                granted: false, status: 'denied', canAskAgain: true, expires: 'never',
             });
         const {
             startPushTokenReconciliation,
@@ -144,7 +132,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
                 ...before,
                 deviceRemoteAlertsEnabled: !before.deviceRemoteAlertsEnabled,
             });
-            await vi.waitFor(() => expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(1));
 
             saveLocalSettings({
                 ...before,
@@ -162,9 +150,9 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
             });
             firstPermissionRead.reject(new Error('transient permission boundary failure'));
 
-            await vi.waitFor(() => expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(2));
+            await vi.waitFor(() => expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(2));
             await new Promise((resolve) => setTimeout(resolve, 0));
-            expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(2);
+            expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(2);
         } finally {
             stopPushTokenReconciliation();
             saveLocalSettings(before);
@@ -199,19 +187,18 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
                 },
             }, 4);
 
-            await vi.waitFor(() => expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(1));
         } finally {
             stopPushTokenReconciliation();
         }
     });
 
     it('coalesces persisted Account quiet-hours mutations during an in-flight pass into one fresh reconciliation', async () => {
-        const firstPermissionRead = createDeferred<Awaited<ReturnType<typeof pushAccessMocks.readPushPermission>>>();
-        pushAccessMocks.readPushPermission
+        const firstPermissionRead = createDeferred<Awaited<ReturnType<typeof notificationBoundary.getPermissionsAsync>>>();
+        notificationBoundary.getPermissionsAsync
             .mockImplementationOnce(() => firstPermissionRead.promise)
             .mockResolvedValue({
-                ok: true,
-                permission: { granted: false, status: 'denied', canAskAgain: true },
+                granted: false, status: 'denied', canAskAgain: true, expires: 'never',
             });
         const {
             startPushTokenReconciliation,
@@ -226,7 +213,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
         startPushTokenReconciliation();
         try {
             saveAccountSettings(scope, settingsDefaults, 4);
-            await vi.waitFor(() => expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(1));
 
             saveAccountSettings(scope, {
                 ...settingsDefaults,
@@ -240,13 +227,12 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
                 },
             }, 4);
             firstPermissionRead.resolve({
-                ok: true,
-                permission: { granted: false, status: 'denied', canAskAgain: true },
+                granted: false, status: 'denied', canAskAgain: true, expires: 'never',
             });
 
-            await vi.waitFor(() => expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(2));
+            await vi.waitFor(() => expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(2));
             await new Promise((resolve) => setTimeout(resolve, 0));
-            expect(pushAccessMocks.readPushPermission).toHaveBeenCalledTimes(2);
+            expect(notificationBoundary.getPermissionsAsync).toHaveBeenCalledTimes(2);
         } finally {
             stopPushTokenReconciliation();
         }

@@ -1,10 +1,11 @@
+import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import { getCurrentAuth, setCurrentAuth } from '@/auth/context/currentAuth';
-import type { AuthContextType } from '@/auth/context/AuthContext';
-import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
+import { getCurrentAuth } from '@/auth/context/currentAuth';
+import { AuthProvider } from '@/auth/context/AuthContext';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
@@ -13,11 +14,12 @@ import { DiscussionAccountEncryptionInventoryV1Schema } from '@happier-dev/proto
 import { SESSION_FOLLOW_RULES_ROUTE_V1, ListSessionFollowRulesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createEmptyAccountMigrationCensusHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createEmptyAccountBootstrapHttpResponse, createEmptyAccountMigrationCensusHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { storage } from '@/sync/domains/state/storage';
+import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
 import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
@@ -25,12 +27,13 @@ import { openAutomationTemplateStoredV1} from '@happier-dev/protocol/automations
 import { serializeAutomationStoredDefinitionExecutionRecipeV1} from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import {
     serializeAutomationStoredWorkflowDefinitionRecipeV2} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
-import { type AccountEncryptionMigrateRequest,
+import { AccountEncryptionMigrateRequestSchema, AccountEncryptionMigrateSuccessResponseSchema, AccountEncryptionMigrateAutomationsInventoryResponseSchema,
+    type AccountEncryptionMigrateRequest,
     type AccountEncryptionMigrateAutomationsInventoryResponse, AccountEncryptionMigrateTodosInventoryResponseSchema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import type { ManagedMachinePresetAccountEncryptionMigrationInventoryV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema, type ManagedMachinePresetAccountEncryptionMigrationInventoryV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { transitionManagedMachinePresetContentEncryptionModeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import { type ArtifactAccountEncryptionMigrationInventoryV1} from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
+import { ArtifactAccountEncryptionMigrationInventoryV1Schema, type ArtifactAccountEncryptionMigrationInventoryV1} from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import {
     decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createPackageAssetArchiveV1, encodePackageAssetArchiveBodyV1 } from '@happier-dev/protocol/plugins/availability';
@@ -60,44 +63,40 @@ import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, DEFAULT_PROVIDER_CONNECTIONS_CATALO
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
-import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostCatalogRecordV1Schema } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { NOTIFICATION_CHANNELS_ROUTE_V1, NotificationChannelCatalogRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
+    ConnectedPresentationRecordV1Schema, ConnectedAcknowledgementsRecordV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+
+import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { AccountEncryptionCurrentnessResponseSchema, AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 const D10_CATALOGS = [
     { field: 'remoteHosts', route: REMOTE_HOST_ROWS_ROUTE_V1, kind: 'account_remote_host_catalog', collection: 'hosts',
-        record: { v: 1, hosts: [{ id: 'host-a', name: 'Work', ssh: { target: 'dev@example.com', authMode: 'agent' },
-            createdAt: 1, updatedAt: 2, lastUsedAt: null }] } },
+        record: RemoteHostCatalogRecordV1Schema.parse({ v: 1, hosts: [{ id: 'host-a', name: 'Work', ssh: { target: 'dev@example.com', authMode: 'agent' },
+            createdAt: 1, updatedAt: 2, lastUsedAt: null }] }) },
     { field: 'notificationChannels', route: NOTIFICATION_CHANNELS_ROUTE_V1, kind: 'account_notification_channels', collection: 'channels',
-        record: { v: 1, channels: [{ v: 1, id: 'channel-a', kind: 'webhook', enabled: true,
+        record: NotificationChannelCatalogRecordV1Schema.parse({ v: 1, channels: [{ v: 1, id: 'channel-a', kind: 'webhook', enabled: true,
             topics: { ready: true, permissionRequest: false, userActionRequest: true, connectedServiceAccountSwitch: false,
                 connectedServiceQuotaBlocked: false, connectedServiceQuotaRecovered: true, connectedServiceUsage: false, machines: false },
-            readyIncludeMessageText: false, requestIncludeMessageText: false, url: 'https://hooks.example.test', signingSecretRef: null }] } },
+            readyIncludeMessageText: false, requestIncludeMessageText: false, url: 'https://hooks.example.test', signingSecretRef: null }] }) },
     { field: 'connectedPresentation', route: CONNECTED_PRESENTATION_ROWS_ROUTE_V1, kind: 'account_connected_presentation_catalog', collection: 'entries',
-        record: { v: 1, entries: [{ v: 1, subject: { kind: 'account', account: {
-            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'default' } }, label: 'Work' }] } },
+        record: ConnectedPresentationRecordV1Schema.parse({ v: 1, entries: [{ v: 1, subject: { kind: 'account', account: {
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'default' } }, label: 'Work' }] }) },
     { field: 'connectedAcknowledgements', route: CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1, kind: 'account_connected_acknowledgement_catalog', collection: 'entries',
-        record: { v: 1, entries: [{ v: 1, subject: { kind: 'warning', warningId: 'installation',
-            scope: { kind: 'machine', machineId: 'exact-machine' } }, acknowledged: false }] } },
+        record: ConnectedAcknowledgementsRecordV1Schema.parse({ v: 1, entries: [{ v: 1, subject: { kind: 'warning', warningId: 'installation',
+            scope: { kind: 'machine', machineId: 'exact-machine' } }, acknowledged: false }] }) },
 ] as const;
 
-const auth = vi.hoisted(() => ({ credentials: null as AuthCredentials | null,
-    loginWithCredentials: vi.fn<(credentials: AuthCredentials) => Promise<{ kind: 'completed' }>>(async () => ({ kind: 'completed' })),
-}));
-// Auth credentials and credential persistence are the device-storage boundary.
-vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({
-    credentials: auth.credentials, isAuthenticated: true, loginWithCredentials: auth.loginWithCredentials,
-}) }));
-installDisconnectedServerSocketBoundary((socket) => {
-    socket.connect = vi.fn<typeof socket.connect>(() => {
-        socket.connected = true;
-        for (const listener of socket.listeners('connect')) listener();
-        return socket;
-    });
-});
+installTokenStorageWebPlatformMocks();
+installTokenStorageTestIsolation('account-encryption-retained-material', { preserveGenerations: true });
+const auth = { get credentials() { return getCurrentAuth()?.credentials ?? null; } };
+installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
@@ -106,7 +105,8 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 // The native Markdown package is a rendering boundary, not part of Account custody.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
 let restoreExecutorModuleLoader: (() => void) | null = null;
-let previousAuth: AuthContextType | null;
+let restoreStorage: (() => void) | undefined;
+let restoreLocks: (() => void) | undefined;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 type TemplateRow = AccountEncryptionMigrateAutomationsInventoryResponse['templates'][number];
@@ -115,9 +115,22 @@ const row = (automationId: string, templateCiphertext = AUTOMATION_TEMPLATE_V02_
     automationId, expectedTemplateVersion: 2, templateCiphertext, triggerDefinitionEnvelopes: [],
 });
 function retainedSession(sessionId: string, encryptionMode: 'plain' | 'e2ee') {
-    return { id: sessionId, encryptionMode, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+    return V2SessionRecordSchema.parse({ id: sessionId, encryptionMode, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
         metadata: 'metadata', metadataVersion: 1, agentState: null, agentStateVersion: 1,
-        dataEncryptionKey: null, share: null };
+        dataEncryptionKey: null, share: null });
+}
+
+/** Replacement Homes have real token-only Accounts and complete empty bootstrap replies. */
+function restoreOtherHome(serverUrl: string) {
+    return restoreServerAccountForTest({ serverUrl, request: async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/features' || path === '/v1/features/authenticated') return json(createRootLayoutFeaturesResponse());
+        if (path === '/v1/account/encryption') return json(AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }));
+        if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a' }));
+        if (path === '/v2/account/settings') return json(AccountSettingsV2GetResponseSchema.parse({ content: null, version: 0 }));
+        return createEmptyAccountBootstrapHttpResponse(path, init) ?? createEmptyAccountMigrationCensusHttpResponse(path, init);
+    } });
 }
 
 async function mount(params: Readonly<{
@@ -125,6 +138,7 @@ async function mount(params: Readonly<{
     runs?: RunRow[];
     failInventory?: boolean; conflict?: boolean; beforeInventory?: () => Promise<void>; waitForControls?: boolean;
     initialMode?: 'plain' | 'e2ee';
+    modeAfterRestore?: 'plain' | 'e2ee';
     modeReadResponse?: (mode: 'plain' | 'e2ee') => Response | undefined;
     managedMachinePresetsInventory?: ManagedMachinePresetAccountEncryptionMigrationInventoryV1;
     /** This device's custody of its keys; a plain fixture defaults to retained history. */
@@ -133,8 +147,6 @@ async function mount(params: Readonly<{
     readAccountVersion?: () => number;
     afterCommitArchivedSessions?: ReturnType<typeof retainedSession>[];
     afterCommitInventoryFails?: boolean;
-    beforeRetirementCurrentness?: () => Promise<void>;
-    beforeCredentialAdoption?: () => Promise<void>;
     beforeMigrationAcknowledgement?: () => void;
     artifactRows?: ArtifactAccountEncryptionMigrationInventoryV1['items'];
     beforeArtifactInventory?: () => Promise<void>;
@@ -161,7 +173,9 @@ async function mount(params: Readonly<{
     let providerConnectionsRow = params.providerConnectionsRow;
     const d10CatalogRows = new Map(Object.entries(params.d10CatalogRows ?? {}));
     let mode = params.initialMode ?? 'plain';
-    let inventoryReads = 0;
+    let committedAccountVersion: number | null = null;
+    let settingsVersion = params.settingsVersion ?? 0;
+    const accountVersion = () => committedAccountVersion ?? params.readAccountVersion?.() ?? 1;
     const createdSessions: Array<Omit<ReturnType<typeof retainedSession>, 'dataEncryptionKey'> & { dataEncryptionKey: string | null }> = [];
     const initialCredentials: AuthCredentials = { token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature', secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
         ...((params.initialCustody ?? (mode === 'plain' ? 'historical' : 'active')) === 'historical' ? { custody: 'historical' as const } : {}) };
@@ -175,21 +189,20 @@ async function mount(params: Readonly<{
             material: resolveAccountScopedCryptoMaterialFromCredentials(initialCredentials), payload: params.rawSettings,
             randomBytes: length => new Uint8Array(length).fill(8) }) };
     const restored = await restoreServerAccountForTest({ serverUrl: `https://retained-${crypto.randomUUID()}.test`,
-        ...(mode === 'e2ee' ? { credentials: initialCredentials } : {}),
+        credentials: initialCredentials,
         request: async (url, init) => {
             const target = new URL(String(url));
             if (target.pathname === '/health') return json({});
             if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return json(createRootLayoutFeaturesResponse({
                 features: { encryption: { accountOptOut: { enabled: true }, plaintextStorage: { enabled: true } } },
             }));
-            if (target.pathname === '/v1/account/encryption') return params.modeReadResponse?.(mode) ?? json({ mode, updatedAt: 1 });
+            if (target.pathname === '/v1/account/encryption') return params.modeReadResponse?.(mode) ?? json(AccountEncryptionModeResponseSchema.parse({ mode, updatedAt: 1 }));
             if (target.pathname === '/v1/account/encryption/currentness') {
                 const overridden = params.currentnessOverride?.();
                 if (overridden) return json(overridden);
-                if (inventoryReads >= 2) await params.beforeRetirementCurrentness?.();
-                return json({ mode, version: params.readAccountVersion?.() ?? 1,
+                return json(AccountEncryptionCurrentnessResponseSchema.parse({ mode, version: accountVersion(),
                 updatedAt: 1, signingKeyFingerprint, contentKeyFingerprint,
-                recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } });
+                recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } }));
             }
             if (target.pathname === '/v1/account/security') return json({ v: 1, encryptionMode: mode,
                 nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
@@ -200,7 +213,7 @@ async function mount(params: Readonly<{
             }
             if (target.pathname === '/v1/account/encryption/migrate/review-comments/inventory') return json({ v: 1, items: [] });
             if (target.pathname === '/v1/account/encryption/migrate/managed-machine-presets/inventory') {
-                return json(params.managedMachinePresetsInventory ?? { presets: [], snapshots: [] });
+                return json(ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema.parse(params.managedMachinePresetsInventory ?? { presets: [], snapshots: [] }));
             }
             if (target.pathname === '/v1/account/encryption/migrate/discussions/inventory')
                 return json(DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [] }));
@@ -208,12 +221,14 @@ async function mount(params: Readonly<{
                 return json(ListSessionFollowRulesResponseV1Schema.parse({ rules: [] }));
             if (target.pathname === '/v1/account/encryption/migrate/session-organization/inventory') return json({ version: 0, folders: [], tags: [], labels: [] });
             if (target.pathname === '/v1/account/encryption/migrate' && init?.method === 'POST') {
-                const migration = JSON.parse(String(init.body)) as AccountEncryptionMigrateRequest;
+                const migration = AccountEncryptionMigrateRequestSchema.parse(JSON.parse(String(init.body)));
                 migrations.push(migration);
                 if (params.readAccountVersion && migration.expectedAccountVersion !== params.readAccountVersion()) {
                     return json({ error: 'invalid-params', reason: 'migration_inventory_changed' }, 400);
                 }
                 mode = migration.toMode;
+                committedAccountVersion = migration.expectedAccountVersion + 1;
+                settingsVersion += 1;
                 settingsContent = migration.settingsContent ?? null;
                 if (migration.promptLibrary) promptLibraryRows = promptLibraryRows.map(row => {
                     const replacement = migration.promptLibrary!.items.find(item => item.key === row.key);
@@ -233,7 +248,7 @@ async function mount(params: Readonly<{
                 params.beforeMigrationAcknowledgement?.();
                 // The browser transport rejects an aborted pending response even after the server commits.
                 if (init.signal?.aborted) throw init.signal.reason;
-                return json({ success: true, mode, accountVersion: 2, settingsVersion: 1,
+                return json(AccountEncryptionMigrateSuccessResponseSchema.parse({ success: true, mode, accountVersion: committedAccountVersion, settingsVersion,
                     ...d10Results,
                     ...(migration.providerConnections ? { providerConnections: { row: providerConnectionsRow ?? null } } : {}),
                     ...(migration.promptLibrary ? { promptLibrary: { rows: migration.promptLibrary.items.map(item => ({
@@ -241,7 +256,7 @@ async function mount(params: Readonly<{
                     })) } } : {}),
                     ...(migration.profileRows ? { profileRows: { rows: [], referenceGuardRevision: 'absent',
                         transferControl: { status: 'absent' } } } : {}),
-                });
+                }));
             }
             if (target.pathname === PROMPT_LIBRARY_ROWS_ROUTE_V1) return json({ status: 'listed', rows: promptLibraryRows });
             if (target.pathname === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) {
@@ -251,8 +266,8 @@ async function mount(params: Readonly<{
                     if (mutation.expectedRevision !== currentRevision) return json(ProviderConnectionsRowMutationResponseV1Schema.parse({
                         status: 'conflict', revision: providerConnectionsRow?.revision ?? -1,
                     }));
-                    if (mutation.sourceSettingsVersion !== undefined && mutation.sourceSettingsVersion !== (params.settingsVersion ?? 0)) {
-                        return json(ProviderConnectionsRowMutationResponseV1Schema.parse({ status: 'settings-conflict', revision: params.settingsVersion ?? 0 }));
+                    if (mutation.sourceSettingsVersion !== undefined && mutation.sourceSettingsVersion !== settingsVersion) {
+                        return json(ProviderConnectionsRowMutationResponseV1Schema.parse({ status: 'settings-conflict', revision: settingsVersion }));
                     }
                     const revision = (providerConnectionsRow?.revision ?? -1) + 1;
                     providerConnectionsRow = { revision, content: mutation.content };
@@ -280,10 +295,9 @@ async function mount(params: Readonly<{
             if (target.pathname === `${PROJECT_TRUST_ROUTE_V1}/list` || target.pathname === WORKSPACE_EXECUTION_CONFIG_ROUTE_V1)
                 return json({ rows: [] });
             if (target.pathname === '/v1/account/encryption/migrate/automations/inventory') {
-                inventoryReads += 1;
                 await params.beforeInventory?.();
                 if (params.failInventory || (params.afterCommitInventoryFails && migrations.length > 0)) return json({ error: 'unavailable' }, 503);
-                return json({ templates, runs: params.runs ?? [] });
+                return json(AccountEncryptionMigrateAutomationsInventoryResponseSchema.parse({ templates, runs: params.runs ?? [] }));
             }
             // Session creation/listing is an HTTP boundary; stored ciphertext uses the real codec.
             if (target.pathname === '/v1/sessions' && init?.method === 'POST') {
@@ -319,39 +333,32 @@ async function mount(params: Readonly<{
                 const afterId = target.searchParams.get('afterId');
                 const offset = afterId === null ? 0 : rows.findIndex(row => row.id === afterId) + 1;
                 const items = rows.slice(offset, offset + Number(target.searchParams.get('limit')));
-                return json({ ownerAccountId: 'account-a', encryptionMode: mode, items,
-                    nextCursor: offset + items.length < rows.length ? items.at(-1)!.id : null });
+                return json(ArtifactAccountEncryptionMigrationInventoryV1Schema.parse({ ownerAccountId: 'account-a', encryptionMode: mode, items,
+                    nextCursor: offset + items.length < rows.length ? items.at(-1)!.id : null }));
             }
             if (target.pathname === '/v1/account/authoring-memory') return json({ rows: [] });
-            if (target.pathname === '/v2/changes') return json({ changes: [], nextCursor: 0 });
-            if (target.pathname === '/v2/account/settings') return json({ content: settingsContent, version: params.settingsVersion ?? 0 });
-            const emptyCensus = createEmptyAccountMigrationCensusHttpResponse(target.pathname, init);
+            if (target.pathname === '/v2/account/settings') return json({ content: settingsContent, version: settingsVersion });
+            const emptyCensus = createEmptyAccountBootstrapHttpResponse(target.pathname, init)
+                ?? createEmptyAccountMigrationCensusHttpResponse(target.pathname, init);
             if (emptyCensus) return emptyCensus;
             unmatchedHttpRequests.push({ path: target.pathname, method: init?.method ?? 'GET' });
             return json({ error: 'not_found' }, 404);
         } });
-    auth.credentials = initialCredentials;
-    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url) => url === restored.home.serverUrl ? auth.credentials : null);
-    auth.loginWithCredentials.mockReset();
-    auth.loginWithCredentials.mockImplementation(async credentials => {
-        await params.beforeCredentialAdoption?.();
-        auth.credentials = credentials;
-        return { kind: 'completed' as const };
-    });
-    setCurrentAuth({
-        isAuthenticated: true,
-        get credentials() { return auth.credentials; },
-        credentialAuthorityKind: readCredentialAuthorityKind(initialCredentials.token),
-        loginWithCredentials: auth.loginWithCredentials,
-        login: async () => { throw new Error('Unexpected password login in historical custody fixture'); },
-        logout: async () => { throw new Error('Unexpected logout in historical custody fixture'); },
-        refreshFromActiveServer: async () => {},
-    } satisfies AuthContextType);
+    if (params.modeAfterRestore) {
+        mode = params.modeAfterRestore;
+        invalidateAccountEncryptionModeCache();
+    }
     storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }), experiments: true, featureToggles: { 'encryption.accountOptOut': true },
         clientEncryptionRequirementV1: 'follow_account', clientEncryptionRequirementLocalV1: 'follow_account' });
     await updateEffectiveHomeViewState(current => ({ ...current, activeTargetKind: 'server', activeTargetId: restored.home.id }), { scope: 'tab' });
     const { AccountEncryptionSettingsSection } = await import('./AccountEncryptionSettingsSection');
-    const screen = await renderSettingsView(<ModalProvider><AccountEncryptionSettingsSection /></ModalProvider>);
+    const rendered = await renderSettingsView(<AuthProvider initialCredentials={initialCredentials}><ModalProvider><AccountEncryptionSettingsSection /></ModalProvider></AuthProvider>);
+    const screen = { ...rendered, unmount: async () => {
+        await rendered.unmount();
+        // Auth's credential adoption can still be switching the live Account.
+        // Settle that owner before restored.dispose removes its HTTP boundary.
+        await disconnectActiveServerConnection();
+    } };
     try {
         if (params.waitForControls !== false) await vi.waitFor(() => expect(screen.findAll((node) => node.props.testID === 'settings-account-encryption-mode-switch'
             && typeof node.props.onValueChange === 'function' && node.props.disabled === false && node.props.value === (mode === 'e2ee')).length).toBeGreaterThan(0), { timeout: 5000 });
@@ -361,7 +368,10 @@ async function mount(params: Readonly<{
     vi.mocked(Modal.alertAsync).mockClear();
     const request = createServerFetchAtEndpoint({ endpointUrl: restored.home.serverUrl,
         serverId: restored.home.id, credentials: initialCredentials });
-    return { screen, restored, writes, migrations, request, createdSessions, unmatchedHttpRequests, d10CatalogReads, settingsHistoryReads };
+    const readCredentials = () => TokenStorage.getCredentialsForServerUrl(restored.home.serverUrl, { serverId: restored.home.id });
+    const expectCredentialsUnchanged = async () => { expect(await readCredentials()).toEqual(initialCredentials); };
+    return { screen, restored, writes, migrations, request, createdSessions, unmatchedHttpRequests, d10CatalogReads, settingsHistoryReads,
+        readCredentials, expectCredentialsUnchanged };
 }
 
 /** Answer the carried review through its real public approval control. */
@@ -390,16 +400,21 @@ async function forgetWithReview(screen: Awaited<ReturnType<typeof mount>>['scree
 }
 
 /** The converting device keeps its key bytes and only reclassifies them as history. */
-function expectKeysKeptAsHistory(): void {
-    expect(auth.loginWithCredentials).toHaveBeenCalledTimes(1);
-    expect(auth.loginWithCredentials.mock.calls[0]![0]).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
+async function expectKeysKeptAsHistory(h: Awaited<ReturnType<typeof mount>>): Promise<void> {
+    expect(await h.readCredentials()).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
         secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'), custody: 'historical' });
+    expect(auth.credentials).toEqual(await h.readCredentials());
 }
 
-beforeEach(() => { previousAuth = getCurrentAuth(); });
+beforeEach(() => {
+    restoreStorage = installLocalStorageMock().restore;
+    restoreLocks = installWebLockManagerMock().restore;
+});
 afterEach(async () => {
     restoreExecutorModuleLoader?.(); restoreExecutorModuleLoader = null;
-    setCurrentAuth(previousAuth); await standardCleanup(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
+    await standardCleanup(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks();
+    restoreLocks?.(); restoreStorage?.();
+});
 
 describe('Account encryption historical material custody', () => {
     it('seals personal presets and retained acquisitions through the actual Account mode switch', async () => {
@@ -489,7 +504,7 @@ describe('Account encryption historical material custody', () => {
             await convertWithReview(h.screen, false);
             expect(h.migrations).toEqual([]);
             await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-downgrade')).not.toHaveLength(0));
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -549,7 +564,7 @@ describe('Account encryption historical material custody', () => {
             await convertWithReview(h.screen, false);
             expect(h.d10CatalogReads, JSON.stringify(h.unmatchedHttpRequests)).toContain(field);
             expect(h.migrations).toHaveLength(0);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -560,14 +575,14 @@ describe('Account encryption historical material custody', () => {
         const h = await mount({ initialMode: 'e2ee', beforeD10Read: async () => {
             if (!startSwitch || switched) return;
             switched = true;
-            other = await restoreServerAccountForTest({ serverUrl: `https://other-d10-${crypto.randomUUID()}.test` });
+            other = await restoreOtherHome(`https://other-d10-${crypto.randomUUID()}.test`);
         } });
         try {
             startSwitch = true;
             await convertWithReview(h.screen, false);
             expect(switched).toBe(true);
             expect(h.migrations).toHaveLength(0);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
         } finally { await h.screen.unmount(); await other?.dispose(); await h.restored.dispose(); }
     });
 
@@ -647,7 +662,7 @@ describe('Account encryption historical material custody', () => {
         try {
             await convertWithReview(h.screen, false);
             expect(h.migrations).toHaveLength(0);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -687,7 +702,7 @@ describe('Account encryption historical material custody', () => {
     it('does not submit a transition after Home changes during Artifact inventory', async () => {
         let other: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
         const h = await mount({ initialMode: 'e2ee', beforeArtifactInventory: async () => {
-            other = await restoreServerAccountForTest({ serverUrl: `https://other-artifacts-${crypto.randomUUID()}.test` });
+            other = await restoreOtherHome(`https://other-artifacts-${crypto.randomUUID()}.test`);
         } });
         try {
             await convertWithReview(h.screen, false);
@@ -703,7 +718,7 @@ describe('Account encryption historical material custody', () => {
             } }) });
             await h.screen.pressByTestIdAsync('settings-account-encryption-recover-templates');
             expect(h.writes).toEqual([]);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             expect(Modal.alertAsync).toHaveBeenCalled();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
@@ -715,7 +730,7 @@ describe('Account encryption historical material custody', () => {
                 'account.encryption.historicalKey.forget': { enabled: false },
             } }) });
             await forgetWithReview(h.screen);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             expect(Modal.confirm).not.toHaveBeenCalled();
             expect(Modal.alertAsync).toHaveBeenCalled();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
@@ -723,7 +738,7 @@ describe('Account encryption historical material custody', () => {
 
     it('keeps historical credentials when opening a plain Account with archived encrypted Sessions', async () => {
         const h = await mount({ archivedSessions: [retainedSession('session-old', 'e2ee')], waitForControls: false });
-        try { expect(auth.loginWithCredentials).not.toHaveBeenCalled(); }
+        try { await h.expectCredentialsUnchanged(); }
         finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -743,14 +758,14 @@ describe('Account encryption historical material custody', () => {
         const h = await mount({ templates: [row('plain-target'), ...current] });
         try {
             expect(h.writes).toEqual([]);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             expect(getActiveServerAccountScope()).toMatchObject({ accountId: 'account-a' });
             await h.screen.pressByTestIdAsync('settings-account-encryption-recover-templates');
             await vi.waitFor(() => expect(h.writes).toHaveLength(1));
             expect(h.writes[0]).toMatchObject({ id: 'plain-target', expectedTemplateVersion: 2 });
             expect(openAutomationTemplateStoredV1({ accountMode: 'plain', templateCiphertext: h.writes[0]!.templateCiphertext })).toMatchObject({ ok: true });
             await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalled());
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             expect(current.map(template => template.templateCiphertext)).toEqual(originalCurrentBytes);
             expect(h.writes).toHaveLength(1);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
@@ -765,7 +780,7 @@ describe('Account encryption historical material custody', () => {
         try {
             await h.screen.pressByTestIdAsync('settings-account-encryption-recover-templates');
             await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalled());
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             expect(h.writes).toEqual([]);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
@@ -785,7 +800,7 @@ describe('Account encryption historical material custody', () => {
         try {
             await h.screen.pressByTestIdAsync('settings-account-encryption-recover-templates');
             await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalled());
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             expect(h.writes).toHaveLength(content === 'retained-summary' ? 0 : 1);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
@@ -796,7 +811,7 @@ describe('Account encryption historical material custody', () => {
             await convertWithReview(h.screen, false);
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
             expect(h.migrations[0]?.toMode).toBe('plain');
-            expectKeysKeptAsHistory();
+            await expectKeysKeptAsHistory(h);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
     it('does not retire material when a retained E2EE Session appears after the migration census', async () => {
@@ -804,7 +819,7 @@ describe('Account encryption historical material custody', () => {
         try {
             await convertWithReview(h.screen, false);
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
-            expectKeysKeptAsHistory();
+            await expectKeysKeptAsHistory(h);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -813,33 +828,30 @@ describe('Account encryption historical material custody', () => {
         try {
             await convertWithReview(h.screen, false);
             expect(h.migrations).toHaveLength(1);
-            expectKeysKeptAsHistory();
+            await expectKeysKeptAsHistory(h);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
     it('does not recover or retire material after the captured Home changes during inventory', async () => {
         const switched: { current: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null } = { current: null };
         const h = await mount({ templates: [row('old')], beforeInventory: async () => {
-            switched.current = await restoreServerAccountForTest({ serverUrl: `https://other-${crypto.randomUUID()}.test` });
+            switched.current = await restoreOtherHome(`https://other-${crypto.randomUUID()}.test`);
         } });
         try {
             await h.screen.pressByTestIdAsync('settings-account-encryption-recover-templates');
             expect(h.writes).toEqual([]);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
         } finally { await h.screen.unmount(); await switched.current?.dispose(); await h.restored.dispose(); }
     });
 
     it('keeps a concurrently created encrypted Session usable after recovery, until confirmed forgetting', async () => {
-        const currentness = createDeferred<void>();
-        const resumeCurrentness = createDeferred<void>();
-        const adoption = createDeferred<void>();
-        const resumeAdoption = createDeferred<void>();
-        const h = await mount({ templates: [row('old')], beforeRetirementCurrentness: async () => {
-            currentness.resolve();
-            await resumeCurrentness.promise;
-        }, beforeCredentialAdoption: async () => {
-            adoption.resolve();
-            await resumeAdoption.promise;
+        const inventory = createDeferred<void>();
+        const resumeInventory = createDeferred<void>();
+        let holdInventory = false;
+        const h = await mount({ templates: [row('old')], beforeInventory: async () => {
+            if (!holdInventory) return;
+            inventory.resolve();
+            await resumeInventory.promise;
         } });
         try {
             const encryption = await createEncryptionFromAuthCredentials(auth.credentials!);
@@ -848,26 +860,26 @@ describe('Account encryption historical material custody', () => {
             const [encryptedHistory] = await cipher.encrypt([{ text: 'Retained session history' }]);
             const history = encodeBase64(encryptedHistory!, 'base64');
             const envelope = encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64');
+            holdInventory = true;
             const recovery = h.screen.pressByTestIdAsync('settings-account-encryption-recover-templates');
-            // Old code waits after its final census. The corrected path finishes without that read.
-            await Promise.race([currentness.promise, recovery]);
+            await inventory.promise;
             const response = await h.request('/v1/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ tag: 'session-concurrent', encryptionMode: 'e2ee', metadata: history, dataEncryptionKey: envelope }) });
             expect(response.ok).toBe(true);
-            resumeCurrentness.resolve();
-            await Promise.race([adoption.promise, recovery]);
-            resumeAdoption.resolve();
+            holdInventory = false;
+            resumeInventory.resolve();
             await recovery;
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             const reopened = await createEncryptionFromAuthCredentials(auth.credentials!);
             const reopenedKey = await reopened.decryptEncryptionKey(envelope);
             expect(reopenedKey).toEqual(dataKey);
             expect(await (await reopened.openEncryption(reopenedKey)).decrypt([encryptedHistory!])).toEqual([{ text: 'Retained session history' }]);
             vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
             await forgetWithReview(h.screen);
-            expect(auth.credentials).toEqual({ token: h.restored.credentials.token });
+            expect(await h.readCredentials()).toEqual({ token: h.restored.credentials.token });
+            expect(auth.credentials).toEqual(await h.readCredentials());
             await expect(createEncryptionFromAuthCredentials(auth.credentials!)).rejects.toThrow('token-only');
-        } finally { resumeCurrentness.resolve(); resumeAdoption.resolve(); await h.screen.unmount(); await h.restored.dispose(); }
+        } finally { resumeInventory.resolve(); await h.screen.unmount(); await h.restored.dispose(); }
     });
 
     it('lists affected encrypted Sessions, templates and run history; cancelling keeps their key', async () => {
@@ -884,7 +896,7 @@ describe('Account encryption historical material custody', () => {
             expect(message).toContain('trigger-old');
             expect(message).toContain('run-old');
             expect(message).not.toContain('session-plain');
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -894,7 +906,7 @@ describe('Account encryption historical material custody', () => {
             vi.mocked(Modal.confirm).mockClear();
             await forgetWithReview(h.screen);
             expect(vi.mocked(Modal.confirm).mock.calls.filter(([title]) => title === 'settingsAccount.forgetEncryptionKeyConfirm')).toEqual([]);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             expect(Modal.alertAsync).toHaveBeenCalled();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
@@ -904,29 +916,28 @@ describe('Account encryption historical material custody', () => {
         const other: { current: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null } = { current: null };
         try {
             vi.mocked(Modal.confirm).mockImplementationOnce(async () => {
-                other.current = await restoreServerAccountForTest({ serverUrl: `https://forget-other-${crypto.randomUUID()}.test` });
+                other.current = await restoreOtherHome(`https://forget-other-${crypto.randomUUID()}.test`);
                 return true;
             });
             await forgetWithReview(h.screen);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
         } finally { await h.screen.unmount(); await other.current?.dispose(); await h.restored.dispose(); }
     });
 
     it('locks a device holding active keys when the Home reports plain, and keeps its keys as history only on the person\'s tap', async () => {
-        const h = await mount({ initialCustody: 'active', waitForControls: false });
+        const h = await mount({ initialMode: 'e2ee', modeAfterRestore: 'plain', initialCustody: 'active', waitForControls: false });
         try {
             await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-downgrade')).not.toHaveLength(0));
             expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-forget-key')).toHaveLength(0);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
             await h.screen.pressByTestIdAsync('settings-account-encryption-keep-key');
-            await vi.waitFor(() => expect(auth.loginWithCredentials).toHaveBeenCalledTimes(1));
-            expect(auth.loginWithCredentials.mock.calls[0]![0]).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
-                secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'), custody: 'historical' });
+            await vi.waitFor(async () => expect(await h.readCredentials()).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
+                secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'), custody: 'historical' }));
             expect(h.migrations).toEqual([]);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
-    it.each(['retired', 'denied'] as const)('settles a %s post-conversion mode read through its typed presentation', async refusal => {
+    it.each(['retired', 'denied'] as const)('keeps the committed conversion and retained keys after a %s post-conversion mode read', async refusal => {
         let readAfterConversion = false;
         const h = await mount({ initialMode: 'e2ee', modeReadResponse: mode => {
             if (mode !== 'plain') return undefined;
@@ -942,13 +953,10 @@ describe('Account encryption historical material custody', () => {
             await vi.waitFor(() => expect(readAfterConversion).toBe(true));
             expect(h.migrations).toHaveLength(1);
             expect(h.migrations[0]?.toMode).toBe('plain');
-            if (refusal === 'retired') {
-                expect(Modal.alertAsync).not.toHaveBeenCalled();
-                expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                    && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0);
-            } else {
-                await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalled());
-            }
+            await expectKeysKeptAsHistory(h);
+            expect(Modal.alertAsync).not.toHaveBeenCalled();
+            expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -973,9 +981,8 @@ describe('Account encryption historical material custody', () => {
             await convertWithReview(h.screen, true);
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
             expect(h.migrations[0]?.toMode).toBe('e2ee');
-            await vi.waitFor(() => expect(auth.loginWithCredentials).toHaveBeenCalledTimes(1));
-            expect(auth.loginWithCredentials.mock.calls[0]![0]).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
-                secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+            await vi.waitFor(async () => expect(await h.readCredentials()).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
+                secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') }));
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 });

@@ -12,22 +12,14 @@ const routerPush = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const virtualizedBoundary = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 
-vi.mock('@/components/ui/lists/virtualized', () => ({
-    VirtualizedList: (props: Record<string, unknown>) => {
-        virtualizedBoundary.props = props;
-        const data = (props.data as readonly unknown[] | undefined) ?? [];
-        const renderItem = props.renderItem as (info: { item: unknown; index: number }) => React.ReactNode;
-        return React.createElement(
-            'VirtualizedList',
-            props,
-            props.ListHeaderComponent as React.ReactNode,
-            ...data.map((item, index) => renderItem({ item, index })),
-            props.ListFooterComponent as React.ReactNode,
-        );
-    },
-}));
+// Native recycling is the boundary; keep the app's list normalization and adapters real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ onCommit: props => { virtualizedBoundary.props = props; } });
+});
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: routerPush, replace: vi.fn(), back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -136,7 +128,7 @@ describe('TeamsDirectoryScreen Team-creation eligibility', () => {
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON()))
             .toContain(`teams-row:${homeB}:beta`));
 
-        expect(virtualizedBoundary.props?.testID).toBe('teams-directory-virtualized-list');
+        expect(virtualizedBoundary.props?.['data-testid']).toBe('teams-directory-virtualized-list');
         expect(virtualizedBoundary.props?.maintainVisibleContentPosition).toBe(true);
         expect(screen.findByTestId('teams-directory-search')?.props.placeholder)
             .toBe('teams.directory.searchLoadedPlaceholder');

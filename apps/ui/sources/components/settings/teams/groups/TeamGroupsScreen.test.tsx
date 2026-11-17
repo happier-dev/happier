@@ -14,19 +14,14 @@ const virtualizedBoundary = vi.hoisted(() => ({
     mountLimit: Number.POSITIVE_INFINITY,
 }));
 
-vi.mock('@/components/ui/lists/virtualized', () => ({
-    VirtualizedList: (props: Record<string, unknown>) => {
-        virtualizedBoundary.props = props;
-        const data = ((props.data as readonly unknown[] | undefined) ?? []).slice(0, virtualizedBoundary.mountLimit);
-        const renderItem = props.renderItem as (info: { item: unknown; index: number }) => React.ReactNode;
-        return React.createElement(
-            'VirtualizedList',
-            props,
-            props.ListHeaderComponent as React.ReactNode,
-            ...data.map((item, index) => renderItem({ item, index })),
-        );
-    },
-}));
+// Native recycling is the boundary; keep the app's list normalization and adapters real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({
+        get renderItemLimit() { return virtualizedBoundary.mountLimit; },
+        onCommit: props => { virtualizedBoundary.props = props; },
+    });
+});
 
 installSettingsViewCommonModuleMocks({
     router: async () => ({
@@ -131,7 +126,7 @@ describe('TeamGroupsScreen', () => {
         const screen = await renderGroups(serverId);
         await waitForTestId(screen, 'team-groups-row:group-0');
 
-        expect(virtualizedBoundary.props?.testID).toBe('team-groups-virtualized-list');
+        expect(virtualizedBoundary.props?.['data-testid']).toBe('team-groups-virtualized-list');
         expect(virtualizedBoundary.props?.maintainVisibleContentPosition).toBe(true);
         const data = virtualizedBoundary.props?.data as readonly unknown[];
         expect(data.length).toBeLessThan(25);

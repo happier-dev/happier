@@ -16,22 +16,11 @@ import {
   createProviderSettingsAccountHarness,
   createProviderSettingsHarness,
   installBundledProviderDeclarationsRpcBoundary,
-  type ProviderRpcRequest,
+  installProviderSettingsRpcBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
-const transport = vi.hoisted(() => ({
-  call: vi.fn<(request: ProviderRpcRequest) => Promise<unknown>>(),
-}));
-// test-policy-boundary: Machine RPC is the real process boundary; Source catalog, Action dispatch and sections stay real.
-vi.mock(
-  '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
-  () => ({
-    machineRpcWithServerScope: (request: ProviderRpcRequest) =>
-      transport.call(request),
-  }),
-);
 // Generated packaged artwork is an external build artifact, unrelated to these sections.
 vi.mock(
   '@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts',
@@ -57,6 +46,7 @@ installSettingsViewCommonModuleMocks({
 });
 const account = createProviderSettingsAccountHarness();
 const declarations = createProviderSettingsHarness();
+installProviderSettingsRpcBoundary(declarations);
 const { TeamNewMembersScreen } = await import('./TeamNewMembersScreen');
 const { ModalProvider, Modal } = await import('@/modal');
 const { resetTeamsSnapshotsForTests } =
@@ -109,10 +99,7 @@ beforeEach(() => {
   resetTeamActionClientForTests();
   declarations.reset();
   installBundledProviderDeclarationsRpcBoundary(declarations);
-  transport.call.mockReset();
-  transport.call.mockImplementation(async (request) =>
-    declarations.machineRpc(request),
-  );
+
 });
 afterEach(async () => {
   await act(async () => {

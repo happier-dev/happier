@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createServerAccountConnectionProbeHttpResponse } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 
 import {
     pairingConsume,
@@ -10,15 +14,11 @@ import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollment
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 const endpointFetchMock = vi.hoisted(() => vi.fn());
-const createServerFetchAtEndpointMock = vi.hoisted(() => vi.fn<(input: unknown) => typeof endpointFetchMock>(() => endpointFetchMock));
-const serverFetchMock = vi.hoisted(() => vi.fn());
 const requestedPublicKey = encodeBase64(new Uint8Array(32).fill(8));
 const bindingProof = encodeBase64(new Uint8Array(32).fill(9), 'base64url');
 
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (input: unknown) => createServerFetchAtEndpointMock(input),
-    serverFetch: (...args: unknown[]) => serverFetchMock(...args),
-}));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 
 function json(status: number, payload: unknown): Response {
     return new Response(JSON.stringify(payload), {
@@ -38,16 +38,21 @@ async function target(endpointUrl: string, serverId?: string) {
     };
     const resolved = await resolveHomeEnrollmentTransport(descriptor);
     if (!resolved.ok) throw new Error('Expected test Home transport');
-    return { ...resolved.transport, endpointUrl, ...(serverId ? { serverId } : {}) };
+    const actualServerId = endpointUrl.startsWith('http')
+        ? await homes.addHome({ name: serverId ?? 'Pairing Home', serverUrl: endpointUrl, accountId: 'paired-account', active: false })
+        : undefined;
+    return { ...resolved.transport, endpointUrl, ...(actualServerId ? { serverId: actualServerId } : {}) };
 }
 
 describe('pairing auth client explicit target', () => {
-    afterEach(() => {
+    beforeEach(async () => {
+        await homes.reset();
         endpointFetchMock.mockReset();
-        createServerFetchAtEndpointMock.mockClear();
-        createServerFetchAtEndpointMock.mockImplementation(() => endpointFetchMock);
-        serverFetchMock.mockReset();
+        await homes.addHome({ name: 'Focused Home', serverUrl: 'https://focused-home.test', accountId: 'focused-account', active: true });
+        setRuntimeFetch((url, init) => createServerAccountConnectionProbeHttpResponse(new URL(String(url)).pathname)
+            ?? endpointFetchMock(String(url), init));
     });
+    afterEach(async () => { resetRuntimeFetch(); await homes.reset(); });
 
     it('sends the joining-device pairing request to the explicit target endpoint', async () => {
         endpointFetchMock.mockResolvedValueOnce(json(200, { state: 'requested' }));
@@ -66,14 +71,10 @@ describe('pairing auth client explicit target', () => {
             data: { state: 'requested' },
         });
 
-        expect(createServerFetchAtEndpointMock).toHaveBeenCalledWith(expect.objectContaining({
-            endpointUrl: 'https://home-b.test',
-            serverId: 'profile-b',
-            credentials: null,
-        }));
-        expect(endpointFetchMock.mock.calls[0]?.[0]).toBe('/v1/auth/pairing/request');
+        expect(new Headers(endpointFetchMock.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false);
+        expect(endpointFetchMock.mock.calls[0]?.[0]).toBe('https://home-b.test/v1/auth/pairing/request');
         const init = endpointFetchMock.mock.calls[0]?.[1] as RequestInit;
-        expect(init.signal).toBe(controller.signal);
+        expect(init.signal?.aborted).toBe(false);
         expect(JSON.parse(String(init.body))).toEqual({
             pairId: 'pair-1',
             secret: 'rendezvous-secret',
@@ -83,7 +84,6 @@ describe('pairing auth client explicit target', () => {
             expiresAtMs: 1234,
             bindingProof: 'proof',
         });
-        expect(serverFetchMock).not.toHaveBeenCalled();
     });
 
     it('targets the trusted-device pairing start request and its Home-authenticated reads at the explicit endpoint', async () => {
@@ -122,19 +122,18 @@ describe('pairing auth client explicit target', () => {
 
         // Trusted-device routes authenticate with the target Home's own stored
         // credentials (never the focused active server's token).
-        expect(createServerFetchAtEndpointMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            endpointUrl: 'https://home-a.test',
-            serverId: 'profile-a',
-        }));
+        expect(endpointFetchMock.mock.calls.map(([url]) => new URL(String(url)).origin)).toEqual([
+            'https://home-a.test', 'https://home-a.test', 'https://home-a.test',
+        ]);
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://home-a.test');
+        for (const [, init] of endpointFetchMock.mock.calls) {
+            expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${credentials?.token}`);
+        }
         expect(JSON.parse(String((endpointFetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
             direction: 'trusted_home_displays',
             secretHash: 'hash',
         });
-        expect((endpointFetchMock.mock.calls[0]?.[1] as RequestInit).signal).toBe(controller.signal);
-        expect(createServerFetchAtEndpointMock).not.toHaveBeenCalledWith(expect.objectContaining({
-            credentials: null,
-        }));
-        expect(serverFetchMock).not.toHaveBeenCalled();
+        expect((endpointFetchMock.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(false);
     });
 
     it.each([
@@ -271,7 +270,6 @@ describe('pairing auth client explicit target', () => {
             status: 0,
         });
 
-        expect(serverFetchMock).not.toHaveBeenCalled();
-        expect(createServerFetchAtEndpointMock).not.toHaveBeenCalled();
+        expect(endpointFetchMock).not.toHaveBeenCalled();
     });
 });

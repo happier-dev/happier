@@ -1,9 +1,14 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { act } from 'react-test-renderer';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { PublicProfileOwnerReadV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PublicProfileSnapshotV1Schema } from '@happier-dev/protocol/account/publicProfile';
@@ -15,8 +20,25 @@ import { projectPublicProfilePreview } from '@happier-dev/protocol/account/proje
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import {
   PublicProfileWidgetPreviewProvider,
+  PublicProfileWidgetPreviewRead,
   PublicProfileWidgetSurface,
 } from './PublicProfileWidgetSurface';
+
+// Adapt Metro deferred imports only; standalone setup uses the real mounted Action owner.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
+const account = createProviderSettingsAccountHarness();
+const disposeLoader = await installRealActionExecutorModuleLoader();
+afterAll(() => disposeLoader());
+afterEach(async () => { standardCleanup(); await account.reset(); });
+function MountedPreview(props: Readonly<{ children: React.ReactNode }>) {
+  const scope = { serverId: account.serverId, accountId: 'account-a' };
+  const execution = useMountedActionExecution(scope);
+  return <PublicProfileWidgetPreviewRead execution={execution} scope={scope}>{props.children}</PublicProfileWidgetPreviewRead>;
+}
 
 const instance = {
   v: 1 as const,
@@ -110,47 +132,53 @@ describe('PublicProfileWidgetSurface', () => {
 
 describe('PublicProfileWidgetPreviewRead', () => {
   it('wakes standalone setup on publication changes and failed-read reconnect, retiring demand on close', async () => {
-    const { PublicProfileWidgetPreviewRead } = await import('./PublicProfileWidgetSurface');
-    const scope = { serverId: 'standalone-profile-home', accountId: 'owner' };
     const context = { handle: 'leeroy', identity: {}, service: null, urls: null };
-    // Only the Action transport is replaced; the standalone preview, read owner and Home bus stay real.
-    const executeValue = vi.fn(async (actionId: string) => actionId === 'account.public_profile.get'
-      ? { kind: 'absent', context } : { kind: 'unavailable', reason: 'usage_unavailable' });
-    const readCount = () => executeValue.mock.calls.filter(([id]) => id === 'account.public_profile.get').length;
-    const screen = await renderScreen(<PublicProfileWidgetPreviewRead execution={{ ready: true, executeValue }} scope={scope}>
-      <Text>Size</Text>
-    </PublicProfileWidgetPreviewRead>);
-    const reconnect = () => publishHomeAccountChange(scope.serverId, undefined, { source: 'connected', changesCatchUp: true });
-    const wake = (serverId: string, entityId: string) => publishHomeAccountChangeWake(serverId,
+    const owner = PublicProfileOwnerReadV1Schema.parse({ kind: 'absent', context });
+    let reads = 0;
+    let failNextRead = false;
+    await account.restore({ currentAccount: true,
+      features: createRootLayoutFeaturesResponse({ features: { account: { publicProfiles: { enabled: true } } } }),
+      httpAnswers: { 'GET /v1/account/public-profile': { select: () => {
+        reads++;
+        if (failNextRead) { failNextRead = false; throw new TypeError('offline'); }
+        return { body: owner };
+      } } },
+    });
+    const screen = await renderScreen(<MountedPreview><Text>Size</Text></MountedPreview>);
+    const serverId = account.serverId;
+    const reconnect = () => publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true });
+    const wake = (homeId: string, entityId: string) => publishHomeAccountChangeWake(homeId,
       { t: 'account-change', changeKinds: ['account'], entityIds: [entityId], sessionSystemRecords: [] }, 'socket');
     try {
-      await vi.waitFor(() => expect(readCount()).toBe(1));
-      await act(async () => { wake('other-home', 'public-profile'); wake(scope.serverId, 'workflow-run:other'); reconnect(); });
-      expect(readCount()).toBe(1);
-      await act(async () => { wake(scope.serverId, 'public-profile'); });
-      await vi.waitFor(() => expect(readCount()).toBe(2));
-      executeValue.mockRejectedValueOnce(new TypeError('offline'));
-      await act(async () => { wake(scope.serverId, 'public-profile'); });
-      expect(readCount()).toBe(3);
+      // One read hydrates the owner; real preview preparation captures the same Account again.
+      await vi.waitFor(() => expect(reads).toBe(2));
+      await act(async () => { wake('other-home', 'public-profile'); wake(serverId, 'workflow-run:other'); reconnect(); });
+      expect(reads).toBe(2);
+      await act(async () => { wake(serverId, 'public-profile'); });
+      await vi.waitFor(() => expect(reads).toBe(4));
+      failNextRead = true;
+      await act(async () => { wake(serverId, 'public-profile'); });
+      expect(reads).toBe(5);
       await act(async () => { reconnect(); });
-      await vi.waitFor(() => expect(readCount()).toBe(4));
+      await vi.waitFor(() => expect(reads).toBe(7));
       await act(async () => { reconnect(); });
-      expect(readCount()).toBe(4);
-      expect(getHomeAccountChangeDemandedServerIds()).toContain(scope.serverId);
+      expect(reads).toBe(7);
+      expect(getHomeAccountChangeDemandedServerIds()).toContain(serverId);
     } finally { await screen.unmount(); }
-    expect(getHomeAccountChangeDemandedServerIds()).not.toContain(scope.serverId);
+    expect(getHomeAccountChangeDemandedServerIds()).not.toContain(serverId);
   });
   it('keeps a standalone setup’s controls while the page preview is preparing or cannot be prepared', async () => {
-    const { PublicProfileWidgetPreviewRead } = await import('./PublicProfileWidgetSurface');
-    const context = { handle: 'leeroy', identity: {}, service: null, urls: null };
-    const execution = { ready: true, isCurrent: () => true, executeValue: async (actionId: string) => actionId === 'account.public_profile.get'
-      ? { kind: 'absent', context } : { kind: 'unavailable', reason: 'usage_unavailable' } } as never;
-    const screen = await renderScreen(
-      <PublicProfileWidgetPreviewRead execution={execution} scope={{ serverId: 'server', accountId: 'owner' }}>
-        <Text testID="size-selector">Size</Text>
-      </PublicProfileWidgetPreviewRead>,
-    );
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+    await account.restore({ currentAccount: true,
+      features: createRootLayoutFeaturesResponse({ features: { account: { publicProfiles: { enabled: true } } } }),
+      httpAnswers: { 'GET /v1/account/public-profile': { status: 503, body: { error: 'unavailable' } } },
+    });
+    const screen = await renderScreen(<MountedPreview>
+      <Text testID="size-selector">Size</Text>
+      <PublicProfileWidgetSurface instance={instance} descriptor={null} testID="standalone-preview" />
+    </MountedPreview>);
+    expect(screen.findByTestId('size-selector')).not.toBeNull();
+    await vi.waitFor(() => expect(screen.findByTestId('standalone-preview.awaiting')?.props.accessibilityLabel)
+      .toBe(t('publicIdentity.profile.reasons.preparation_unavailable')));
     expect(screen.findByTestId('size-selector')).not.toBeNull();
   });
 });

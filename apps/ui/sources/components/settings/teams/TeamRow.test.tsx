@@ -6,7 +6,7 @@ import { renderScreen, standardCleanup, teamSummaryFixture } from '@/dev/testkit
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 // Translation and locale subscription stay real; native UI and device storage use the shared boundaries.
-installSettingsViewCommonModuleMocks({ text: () => vi.importActual('@/text') });
+installSettingsViewCommonModuleMocks({ storage: 'real', text: () => vi.importActual('@/text') });
 const { TeamRow } = await import('./TeamRow');
 const { Item } = await import('@/components/ui/lists/Item');
 const { preloadTranslations, getPreferredLanguage } = await import('@/text');

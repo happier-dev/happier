@@ -2,12 +2,13 @@ import * as React from 'react';
 import { homeAdministrationGitHubAppPath, homeAdministrationGitHubAppEditPath, homeAdministrationPoliciesPath } from '../governance/homeAdministrationRoutes';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ManagedGitHubAppsListOutputV1 } from '@happier-dev/protocol/identity/githubApps';
+import { ManagedGitHubAppsListOutputV1Schema, ManagedGitHubAppRemoveOutputV1Schema, ManagedGitHubAppErrorV1Schema, ManagedGitHubAppVerifyInstallationOutputV1Schema, type ManagedGitHubAppsListOutputV1 } from '@happier-dev/protocol/identity/githubApps';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
-const runtimeFetchMock = vi.hoisted(() => vi.fn());
+import { createDeferred } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 const confirmMock = vi.hoisted(() => vi.fn(async () => false));
 const alertMock = vi.hoisted(() => vi.fn(async () => {}));
 const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
@@ -27,33 +28,11 @@ vi.mock('@/modal', async () => {
 });
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => true) }));
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: runtimeFetchMock,
-}));
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: vi.fn(),
-    createServerFetchAtEndpoint: () => async (path: string) => {
-        if (path.startsWith('/v1/account/encryption')) {
-            return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }), { status: 200 });
-        }
-        if (path.startsWith('/v2/account/settings')) {
-            return new Response(JSON.stringify({ content: null, version: 0 }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
-    },
-}));
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: { getCredentialsForServerUrl: async () => ({ token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature' }) },
-    });
-});
-
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { resetScopedHomeActionExecutorsForTests } from '@/sync/ops/actions/scopedHomeActionExecutor';
-import { ManagedGitHubAppDetailContent } from './ManagedGitHubAppDetailScreen';
+const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+const { ManagedGitHubAppDetailContent } = await import('./ManagedGitHubAppDetailScreen');
 import type { ManagedGitHubAppSurface } from './managedGitHubAppSurface';
 import { consumePendingGitHubAppVerification } from './githubAppOAuthReturn';
 import { HOME_GITHUB_APP_SETTINGS, TEAM_GITHUB_APP_SETTINGS } from '@/components/settings/identity/identitySettings';
@@ -65,19 +44,19 @@ let removeResponse: { body: unknown; status: number };
 beforeEach(async () => {
     standardCleanup();
     resetScopedHomeActionExecutorsForTests();
-    runtimeFetchMock.mockReset();
+    await harness.reset();
     confirmMock.mockReset().mockResolvedValue(false);
     alertMock.mockReset();
     openExternalUrlMock.mockReset().mockResolvedValue(true);
     routerParams.value = {};
     consumePendingGitHubAppVerification('registration-1');
-    const profile = await upsertServerProfile({ serverUrl: 'https://github-controls.example', name: 'GitHub Home' });
+    const serverId = await harness.addHome({ serverUrl: 'https://github-controls.example', name: 'GitHub Home', accountId: 'account-1' });
     surface = {
-        scope: createServerAccountScope(profile.id, 'account-1')!, owner: { kind: 'home' }, mutationsAvailable: true,
+        scope: createServerAccountScope(serverId, 'account-1')!, owner: { kind: 'home' }, mutationsAvailable: true,
         routes: {
-            detail: (id) => homeAdministrationGitHubAppPath(profile.id, id),
-            edit: (id) => homeAdministrationGitHubAppEditPath(profile.id, id),
-            signIn: homeAdministrationPoliciesPath(profile.id),
+            detail: (id) => homeAdministrationGitHubAppPath(serverId, id),
+            edit: (id) => homeAdministrationGitHubAppEditPath(serverId, id),
+            signIn: homeAdministrationPoliciesPath(serverId),
         },
     };
     projection = {
@@ -102,36 +81,38 @@ beforeEach(async () => {
         }],
     };
     removeResponse = { body: { removed: true }, status: 200 };
-    runtimeFetchMock.mockImplementation(async (request: { url: string }) => {
-        if (request.url.endsWith('/list')) return new Response(JSON.stringify(projection), { status: 200 });
-        if (request.url.endsWith('/remove')) return new Response(JSON.stringify(removeResponse.body), { status: removeResponse.status });
-        if (request.url.endsWith('/verify-installation')) {
-            return new Response(JSON.stringify({ authorizeUrl: 'https://github.com/login/oauth/authorize', attemptId: 'attempt-1' }), { status: 200 });
-        }
-        throw new Error(`Unexpected GitHub App request: ${request.url}`);
-    });
+    harness.answer(serverId, '/v1/identity/github-apps/list', { select: () => ({ body: ManagedGitHubAppsListOutputV1Schema.parse(projection) }) });
+    harness.answer(serverId, '/v1/identity/github-apps/remove', { select: () => ({ status: removeResponse.status, body: removeResponse.status === 200
+        ? ManagedGitHubAppRemoveOutputV1Schema.parse(removeResponse.body) : ManagedGitHubAppErrorV1Schema.parse(removeResponse.body) }) });
+    harness.answer(serverId, '/v1/identity/github-apps/verify-installation', { body: ManagedGitHubAppVerifyInstallationOutputV1Schema.parse({ authorizeUrl: 'https://github.com/login/oauth/authorize', attemptId: 'attempt-1' }) });
 });
 
 function requestsFor(operation: string) {
-    return runtimeFetchMock.mock.calls.filter(([request]) => request.url.endsWith(`/${operation}`));
+    return harness.requestsFor(`/v1/identity/github-apps/${operation}`);
+}
+
+async function renderDetail(content: React.ReactElement) {
+    const screen = await renderScreen(content);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('github-installation-id')).not.toBeNull());
+    return screen;
 }
 
 describe('managed GitHub App installation operations', () => {
     it('says a failed read as a read, and a missing App as missing, never as a change that did not go through', async () => {
-        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 }));
+        harness.answer(surface.scope.serverId, '/v1/identity/github-apps/list', { status: 503, body: { error: 'unavailable' } });
         const failed = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
         await vi.waitFor(() => expect(failed.getTextContent()).toContain('identityAdministration.githubAppsReadFailed'));
         expect(failed.getTextContent()).not.toContain('identityAdministration.error');
         await failed.unmount();
 
         projection = { ...projection, registrations: [], installations: [] };
-        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify(projection), { status: 200 }));
+        harness.answer(surface.scope.serverId, '/v1/identity/github-apps/list', { body: ManagedGitHubAppsListOutputV1Schema.parse(projection) });
         const missing = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
         await vi.waitFor(() => expect(missing.getTextContent()).toContain('identityAdministration.errorMissing'));
     });
 
     it('keeps organization information non-interactive and requires the named removal control and confirmation', async () => {
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
         const organization = screen.findHostByTestId('github-app-installation:installation-1');
         expect(organization).not.toBeNull();
         expect(organization?.props.onPress).toBeUndefined();
@@ -150,9 +131,9 @@ describe('managed GitHub App installation operations', () => {
         projection.registrations[0].owner = surface.owner;
         confirmMock.mockResolvedValue(true);
         removeResponse = { body: { error: 'github_installation_in_use', blockers: { identityProviderInstances: 1, directorySources: 0 } }, status: 409 };
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
         await screen.pressByTestIdAsync('github-app-installation-remove:installation-1');
-        expect(JSON.parse(requestsFor('remove')[0]?.[0].init.body ?? 'null')).toEqual({
+        expect(requestsFor('remove')[0]?.input).toEqual({
             owner: { kind: 'team', teamId: 'team-1' }, installationId: 'installation-1', expectedRevision: 1,
         });
         expect(alertMock).toHaveBeenCalledWith('identityAdministration.githubRemoveInstallation', 'identityAdministration.githubInstallationInUse');
@@ -160,7 +141,7 @@ describe('managed GitHub App installation operations', () => {
     });
 
     it('starts installation verification from a named button and opens the returned GitHub URL', async () => {
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
         await act(async () => {
             screen.changeTextByTestId('github-installation-id', '99');
             screen.changeTextByTestId('github-organization-id', '77');
@@ -175,9 +156,9 @@ describe('managed GitHub App installation operations', () => {
 
     it('keeps installation information visible while removal is pending and refreshes after success', async () => {
         confirmMock.mockResolvedValue(true);
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
-        let completeRemoval!: (response: Response) => void;
-        runtimeFetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { completeRemoval = resolve; }));
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const held = createDeferred<void>();
+        harness.answer(surface.scope.serverId, '/v1/identity/github-apps/remove', { body: ManagedGitHubAppRemoveOutputV1Schema.parse({ removed: true }), respondAfter: held.promise });
 
         await act(async () => { screen.pressByTestId('github-app-installation-remove:installation-1'); });
 
@@ -185,14 +166,14 @@ describe('managed GitHub App installation operations', () => {
         expect(screen.findByTestId('github-installation-verify')?.props.disabled).toBe(true);
         expect(screen.findHostByTestId('github-app-installation:installation-1')?.props.onPress).toBeUndefined();
         expect(screen.getTextContent()).toContain('happier-dev');
-        expect(JSON.parse(requestsFor('remove')[0]?.[0].init.body ?? 'null')).toEqual({
+        expect(requestsFor('remove')[0]?.input).toEqual({
             owner: { kind: 'home' }, installationId: 'installation-1', expectedRevision: 1,
         });
 
         projection.installations = [];
-        await act(async () => { completeRemoval(new Response(JSON.stringify({ removed: true }), { status: 200 })); });
+        await act(async () => { held.resolve(); });
 
-        expect(screen.findHostByTestId('github-app-installation:installation-1')).toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('github-app-installation:installation-1')).toBeNull());
         expect(screen.getTextContent()).toContain('identityAdministration.githubInstallationsEmpty');
         expect(screen.findByTestId('github-installation-verify')?.props.disabled).toBe(false);
     });
@@ -206,7 +187,7 @@ describe('managed GitHub App current and setup access', () => {
             requirements: { permissions: {}, events: [], missingPermissions: [], missingEvents: [] },
             prospectiveRequirements: setupRequirements,
         };
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
 
         expect(screen.getTextContent()).toContain('identityAdministration.githubCurrentAccessEmpty');
         expect(screen.getTextContent()).toContain('identityAdministration.githubSetupAccess');
@@ -216,7 +197,7 @@ describe('managed GitHub App current and setup access', () => {
     });
 
     it('preserves current requirement display when the Home omits the optional setup projection', async () => {
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
 
         expect(screen.findByTestId('github-app-requirement:installation-1:permission:members')).not.toBeNull();
         expect(screen.findByTestId('github-app-requirement:installation-1:event:membership')).not.toBeNull();
@@ -228,7 +209,7 @@ describe('managed GitHub App current and setup access', () => {
 
     it('does not invent access requirements when the Home publishes no projection', async () => {
         delete projection.installations[0].requirements;
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
 
         expect(screen.findByTestId('github-app-requirement:installation-1:permission:members')).toBeNull();
         expect(screen.getTextContent()).not.toContain('identityAdministration.githubRequiredAccess');
@@ -244,7 +225,7 @@ describe('managed GitHub App settings search', () => {
         projection.registrations[0].owner = surface.owner;
         routerParams.value = { setting: settings.settings.githubInstallationId.anchor };
 
-        const screen = await renderScreen(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
+        const screen = await renderDetail(<ManagedGitHubAppDetailContent surface={surface} registrationId="registration-1" />);
 
         expect(screen.findHostByTestId(`setting-reveal.${settings.settings.githubInstallationId.anchor}`)).not.toBeNull();
         expect(screen.findByTestId('github-installation-id')).not.toBeNull();

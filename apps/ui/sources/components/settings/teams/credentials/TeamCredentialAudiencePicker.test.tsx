@@ -25,6 +25,7 @@ vi.mock('@legendapp/list/react-native', async () => {
 });
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({

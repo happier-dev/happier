@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createServerAccountConnectionProbeHttpResponse } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -22,18 +23,6 @@ vi.mock('../../../../modules/happier-activity-notifications', () => ({
     removeActivityNotificationContext: native.removeContext,
     clearActivityNotificationContext: native.clearContext,
 }));
-
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: (params: { url: string; init?: RequestInit }) => runtimeFetch(params),
-}));
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: { getCredentialsForServerUrl: async () => null },
-    });
-});
 
 const { reconcileHomeRemoteAlertEnrollment } = await import('./homeRemoteAlertEnrollment');
 const { saveLocalSettings } = await import('@/sync/domains/state/settingsPersistence');
@@ -98,7 +87,7 @@ async function runEnrollment(params: Readonly<{
     log?: { log: (message: string) => void };
 }> & EnrollmentOverrides): Promise<void> {
     await reconcileHomeRemoteAlertEnrollment({
-        credentials: { token: 'home-a-token', secret: 's' },
+        credentials: { token: 'home-a-token' },
         token: HOME.token,
         apiEndpoint: HOME.apiEndpoint,
         serverId: HOME.serverId,
@@ -159,7 +148,8 @@ function installHomeResponses(options: Readonly<{
     });
     // `retry: 'none'` requests (currentness read, token registration) travel through the canonical HTTP
     // owner, whose only boundary is the runtime fetch; route it to the same recorder.
-    setRuntimeFetch((input, init) => runtimeFetch({ url: String(input), init }));
+    setRuntimeFetch((input, init) => createServerAccountConnectionProbeHttpResponse(new URL(String(input)).pathname)
+        ?? runtimeFetch({ url: String(input), init }));
     return { releaseEncryptionRead: () => encryptionRead.resolve(), encryptionReadStarted };
 }
 

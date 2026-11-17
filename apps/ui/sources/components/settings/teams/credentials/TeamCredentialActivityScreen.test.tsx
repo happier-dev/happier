@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { TeamCredentialResourceActivityPageV1Schema } from '@happier-dev/protocol/teams';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamSummaryFixture } from '@/dev/testkit';
@@ -9,6 +10,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -78,7 +80,7 @@ describe('TeamCredentialActivityScreen', () => {
     ])('renders only the Home-projected administrative metadata for %s', async (kind, label, subjectDisplayName, externalApiKeyId) => {
         const serverId = await addHome();
         harness.answer(serverId, ACTIVITY_LIST_PATH, {
-            body: {
+            body: TeamCredentialResourceActivityPageV1Schema.parse({
                 items: [{
                     kind,
                     actorDisplayName: 'Ada Lovelace',
@@ -87,7 +89,7 @@ describe('TeamCredentialActivityScreen', () => {
                     createdAt: '2026-09-11T12:00:00.000Z',
                 }],
                 nextCursor: null,
-            },
+            }),
         });
 
         const screen = await renderActivity(serverId);
@@ -105,7 +107,7 @@ describe('TeamCredentialActivityScreen', () => {
     it('keeps the first activity page visible and retries its exact cursor', async () => {
         const serverId = await addHome();
         harness.answer(serverId, ACTIVITY_LIST_PATH, {
-            body: {
+            body: TeamCredentialResourceActivityPageV1Schema.parse({
                 items: [{
                     kind: 'resource_created',
                     actorDisplayName: 'Ada Lovelace',
@@ -113,7 +115,7 @@ describe('TeamCredentialActivityScreen', () => {
                     createdAt: '2026-09-11T12:00:00.000Z',
                 }],
                 nextCursor: 'activity-page-2',
-            },
+            }),
         });
 
         const screen = await renderActivity(serverId);
@@ -126,7 +128,7 @@ describe('TeamCredentialActivityScreen', () => {
         });
 
         harness.answer(serverId, ACTIVITY_LIST_PATH, {
-            body: {
+            body: TeamCredentialResourceActivityPageV1Schema.parse({
                 items: [{
                     kind: 'limits_changed',
                     actorDisplayName: null,
@@ -134,7 +136,7 @@ describe('TeamCredentialActivityScreen', () => {
                     createdAt: '2026-09-11T13:00:00.000Z',
                 }],
                 nextCursor: null,
-            },
+            }),
         });
         await screen.pressByTestIdAsync('team-credential-activity-retry');
         await waitForTestId(screen, 'team-credential-activity-row:1');

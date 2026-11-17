@@ -10,20 +10,14 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 
 const routerPush = vi.hoisted(() => vi.fn());
 
-vi.mock('@/components/ui/lists/virtualized', () => ({
-    VirtualizedList: (props: Record<string, unknown>) => {
-        const data = (props.data as readonly unknown[] | undefined) ?? [];
-        const renderItem = props.renderItem as (info: { item: unknown; index: number }) => React.ReactNode;
-        return React.createElement(
-            'VirtualizedList',
-            props,
-            props.ListHeaderComponent as React.ReactNode,
-            ...data.map((item, index) => renderItem({ item, index })),
-        );
-    },
-}));
+// Native recycling is the boundary; keep the app's list normalization and adapters real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock();
+});
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: routerPush, replace: vi.fn(), back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),

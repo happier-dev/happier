@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { homeGovernancePolicyProjectionFixture, homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
+import '@/sync/domains/state/storage';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { NO_HOME_CAPABILITIES_V1 } from '@happier-dev/protocol/home/governance';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectApprovalRequestForPublicRead } from '@happier-dev/protocol/actions/actionApprovalPresentation';
@@ -10,23 +14,23 @@ import { ActionsSettingsV1Schema, normalizeActionsSettingsV1 } from '@happier-de
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readFriendMutationProfile } from '@/sync/ops/friends';
 
+installDisconnectedServerSocketBoundary();
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
+beforeAll(async () => { await loadSyncSingletonForTests(); });
+
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: runtimeFetchMock,
-}));
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: { getCredentialsForServerUrl: getCredentialsForServerUrlMock },
-    });
-});
 
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createServerAccountConnectionProbeHttpResponse } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 
 import {
     createHomeDomainActionExecutorForScope,
@@ -43,20 +47,12 @@ function tokenForSub(sub: string): string {
 }
 
 function projection() {
-    return {
+    return homeGovernanceProjectionFixture({
         viewer: { accountId: 'account', homeRole: 'owner', status: 'active' },
         capabilities: { ...NO_HOME_CAPABILITIES_V1, viewAdministration: true },
-        policy: { revision: 3, teamCreationPolicy: 'managed_only', authentication: { status: 'inherited' } },
-        setupState: 'owned',
+        policy: homeGovernancePolicyProjectionFixture({ revision: 3 }),
         activeOwnerCount: 1,
-        teamsEnabled: true,
-        authenticationOptions: {
-            methods: [],
-            permittedAccountModes: ['e2ee'],
-            recommendedProvisioningMode: 'e2ee',
-            signInService: { deploymentMode: null, canDisable: false },
-        },
-    };
+    });
 }
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -64,15 +60,16 @@ function jsonResponse(body: unknown, status: number): Response {
 }
 
 async function scopeForNewHome(serverUrl: string) {
-    const serverId = (await upsertServerProfile({ serverUrl, name: serverUrl })).id;
+    const serverId = await homes.addHome({ serverUrl, name: serverUrl, accountId: 'account', active: false });
     await setActiveServerId(serverId, { scope: 'device' });
     return { serverId, scope: createServerAccountScope(serverId, 'account')! };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    await homes.reset();
     runtimeFetchMock.mockReset();
-    getCredentialsForServerUrlMock.mockReset();
-    getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account') });
+    setRuntimeFetch((url, init) => createServerAccountConnectionProbeHttpResponse(new URL(String(url)).pathname)
+        ?? runtimeFetchMock({ url: String(url), init }));
 });
 
 it.each(['team_not_found', 'invitation_not_found', 'group_not_found', 'home_account_not_found', 'team_forbidden'])(
@@ -118,7 +115,9 @@ it('retains retryable Team qualification failure inside a successful discovery t
         'teams.members.list').retryable).toBe(false);
 });
 
-afterEach(() => {
+afterEach(async () => {
+    resetRuntimeFetch();
+    await homes.reset();
     vi.clearAllMocks();
 });
 
@@ -236,9 +235,9 @@ describe('createHomeDomainActionExecutorForScope', () => {
     });
     it.each([
         { payload: { error: 'credential_scope_denied' }, errorCode: 'credential_scope_denied' },
-        { payload: { error: 'credential_scope_denied', details: {} }, errorCode: 'home_forbidden' },
+        { payload: { error: 'credential_scope_denied', details: {} }, errorCode: 'credential_scope_denied' },
         { payload: { error: 'unknown_denial' }, errorCode: 'home_forbidden' },
-    ])('classifies the strict credential scope refusal: $errorCode', async ({ payload, errorCode }) => {
+    ])("preserves the HTTP owner's credential refusal classification: $errorCode", async ({ payload, errorCode }) => {
         const { scope } = await scopeForNewHome('https://scope-denial.example');
         runtimeFetchMock.mockResolvedValue(jsonResponse(payload, 403));
         await expect(createHomeDomainActionExecutorForScope(scope)({ actionId: 'session.delete', input: { sessionId: 'same' }, context: {} }))
@@ -321,7 +320,6 @@ describe('createHomeDomainActionExecutorForScope', () => {
     it('uses the Action row side-effect class to preserve an ambiguous mutation outcome', async () => {
         const { scope } = await scopeForNewHome('https://home-loss.example');
         runtimeFetchMock.mockImplementation(async (params) => {
-            params.onIssued?.();
             throw Object.assign(new Error('response lost'), { code: 'ECONNRESET' });
         });
 
@@ -437,7 +435,7 @@ describe('createHomeDomainActionExecutorForScope', () => {
 
     it('fails closed without issuing a request when the credential authenticates another Account', async () => {
         const { scope } = await scopeForNewHome('https://home-d.example');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('someone-else') });
+        await TokenStorage.setCredentialsForServerUrl('https://home-d.example', { serverId: scope.serverId }, { token: tokenForSub('someone-else') });
 
         const execute = createHomeDomainActionExecutorForScope(scope);
         const result = await execute({

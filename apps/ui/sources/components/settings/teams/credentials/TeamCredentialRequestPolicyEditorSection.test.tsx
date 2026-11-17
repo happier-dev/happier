@@ -9,7 +9,7 @@ import { EMPTY_TEAM_CREDENTIAL_POLICY_DRAFT, type TeamCredentialPolicyDraft } fr
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-installSettingsViewCommonModuleMocks();
+installSettingsViewCommonModuleMocks({ storage: 'real' });
 
 afterEach(() => standardCleanup());
 

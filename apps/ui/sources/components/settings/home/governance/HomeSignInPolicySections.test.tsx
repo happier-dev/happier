@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
+import { HomeGovernancePolicyProjectionV1Schema, type HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -87,12 +87,12 @@ async function renderEditor(input: Readonly<{
     const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
     const projection = homeGovernanceProjectionFixture({
         authenticationOptions: { ...BASE_OPTIONS, ...input.options },
+        policy: {
+            ...homeGovernanceProjectionFixture().policy,
+            revision: input.revision ?? 6,
+            authentication: input.authentication ?? NARROWED,
+        },
     });
-    projection.policy = {
-        ...projection.policy,
-        revision: input.revision ?? 6,
-        authentication: input.authentication ?? NARROWED,
-    };
     harness.answer(serverId, '/v1/home/governance/get', { body: projection });
     const context: HomeAdministrationContext = {
         scope: { serverId, accountId: 'owner' },
@@ -138,7 +138,7 @@ describe('SignInPolicyEditor', () => {
 
     it('saves a narrowing in one revision-guarded write without asking', async () => {
         const { screen, serverId, projection } = await renderEditor();
-        harness.answer(serverId, POLICY_PATH, { body: { ...projection.policy, revision: 7 } });
+        harness.answer(serverId, POLICY_PATH, { body: HomeGovernancePolicyProjectionV1Schema.parse({ ...projection.policy, revision: 7 }) });
 
         // No idle Save row: it appears with the first edit.
         expect(screen.findByTestId('home-policy-auth-save')).toBeNull();
@@ -165,7 +165,7 @@ describe('SignInPolicyEditor', () => {
         const { screen, serverId, projection } = await renderEditor();
         harness.answer(serverId, POLICY_PATH, {
             select: (input) => ((input as { confirmWidening?: unknown }).confirmWidening === true
-                ? { body: { ...projection.policy, revision: 7 } }
+                ? { body: HomeGovernancePolicyProjectionV1Schema.parse({ ...projection.policy, revision: 7 }) }
                 : { status: 409, body: { error: 'home_policy_widening_unconfirmed' } }),
         });
 
@@ -299,7 +299,7 @@ describe('SignInPolicyEditor', () => {
             },
             authentication: { ...NARROWED, anonymousSignup: true, storagePolicy: 'optional' },
         });
-        harness.answer(serverId, POLICY_PATH, { body: { ...projection.policy, revision: 7 } });
+        harness.answer(serverId, POLICY_PATH, { body: HomeGovernancePolicyProjectionV1Schema.parse({ ...projection.policy, revision: 7 }) });
 
         await screen.pressByTestIdAsync('home-policy-auth-admission:closed');
         await screen.pressByTestIdAsync('home-policy-auth-save');
@@ -353,7 +353,7 @@ describe('SignInPolicyEditor', () => {
                 recommendedProvisioningMode: 'plain',
             },
         });
-        harness.answer(serverId, POLICY_PATH, { body: { ...projection.policy, revision: 7 } });
+        harness.answer(serverId, POLICY_PATH, { body: HomeGovernancePolicyProjectionV1Schema.parse({ ...projection.policy, revision: 7 }) });
 
         expect(screen.findByTestId('home-policy-auth-method:retired_method-switch')?.props.value).toBe(true);
         await screen.pressByTestIdAsync('home-policy-auth-method:key_challenge');
@@ -392,7 +392,7 @@ describe('SignInPolicyEditor', () => {
             authentication: { status: 'inherited' },
             options: { signInService: { deploymentMode: 'disabled', canDisable: false } },
         });
-        harness.answer(serverId, POLICY_PATH, { body: { ...projection.policy, revision: 7 } });
+        harness.answer(serverId, POLICY_PATH, { body: HomeGovernancePolicyProjectionV1Schema.parse({ ...projection.policy, revision: 7 }) });
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const admission = screen.root.findAllByType(DropdownMenu).find((node) => node.props.testID === 'home-policy-auth-admission');
         expect(admission?.props.selectedId).toBe('inherited');

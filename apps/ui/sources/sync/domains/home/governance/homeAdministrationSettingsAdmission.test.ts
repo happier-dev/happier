@@ -1,3 +1,4 @@
+import { homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
 import { describe, expect, it } from 'vitest';
 
@@ -7,37 +8,11 @@ import {
 } from './homeAdministrationSettingsAdmission';
 
 function projection(overrides?: Partial<HomeGovernanceProjectionV1>): HomeGovernanceProjectionV1 {
-    return {
+    return homeGovernanceProjectionFixture({
         viewer: { accountId: 'viewer', homeRole: 'owner', status: 'active' },
-        capabilities: {
-            viewAdministration: true,
-            manageAccounts: true,
-            manageHomeRoles: true,
-            manageTeamCreationPolicy: true,
-            manageAuthentication: true,
-            manageHomeSettings: true,
-            eraseAccounts: true,
-            createTeam: true,
-            manageAllTeams: true,
-        },
-        policy: {
-            revision: 1,
-            teamCreationPolicy: 'managed_only',
-            authentication: { status: 'inherited' },
-            teamProviders: { status: 'inherited' },
-            identityNetwork: { status: 'inherited' },
-        },
-        authenticationOptions: {
-            methods: [],
-            permittedAccountModes: ['e2ee'],
-            recommendedProvisioningMode: 'e2ee',
-            signInService: { deploymentMode: null, canDisable: false },
-        },
-        setupState: 'owned',
         activeOwnerCount: 1,
-        teamsEnabled: true,
         ...overrides,
-    } as HomeGovernanceProjectionV1;
+    });
 }
 
 function observation(

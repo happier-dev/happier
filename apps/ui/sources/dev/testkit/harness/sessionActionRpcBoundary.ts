@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema, SocketRpcRequestIdSchema, parseSocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import { ScmWorkEvidenceAuthorizationSelectorSchema } from '@happier-dev/protocol/scm';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { storage as sessionStorage } from '@/sync/domains/state/storage';
 import type { HomeGovernanceHarness } from './homeGovernanceHarness';
@@ -11,7 +12,10 @@ import { installDisconnectedServerSocketBoundary } from './serverAccountConnecti
 export function installSessionActionRpcBoundary(respond: (
     request: SocketRpcRequestPayload,
     context: Readonly<{ signal: AbortSignal; serverUrl?: string }>,
-) => unknown): SocketRpcRequestPayload[] {
+) => unknown, options?: Readonly<{
+    /** Replace only the daemon/relay's external acknowledgement, after real request serialization. */
+    transformAcknowledgement?: (acknowledgement: Readonly<{ ok: true; result: unknown }>, request: SocketRpcRequestPayload) => unknown;
+}>): SocketRpcRequestPayload[] {
     const requests: SocketRpcRequestPayload[] = [];
     installDisconnectedServerSocketBoundary((socket, serverUrl) => {
         const pending = new Map<string, AbortController>();
@@ -38,7 +42,12 @@ export function installSessionActionRpcBoundary(respond: (
             if (!wire || typeof wire !== 'object' || !('method' in wire) || typeof wire.method !== 'string') {
                 throw new Error('Malformed socket RPC request');
             }
-            const authorization = 'authorization' in wire ? parseSocketRpcAuthorizationContext(wire.authorization) : null;
+            // This leaf receives client-to-relay selectors as well as Session authorization.
+            // The generic Session parser intentionally refuses SCM's separate closed wire shape.
+            const scmAuthorization = 'authorization' in wire
+                ? ScmWorkEvidenceAuthorizationSelectorSchema.safeParse(wire.authorization) : null;
+            const authorization = 'authorization' in wire ? parseSocketRpcAuthorizationContext(wire.authorization)
+                ?? (scmAuthorization?.success ? scmAuthorization.data : null) : null;
             if ('authorization' in wire && !authorization) throw new Error('Malformed socket RPC authorization');
             // Plain zero-argument calls lose an undefined params key on the wire;
             // the real relay and daemon decode that absence as undefined.
@@ -49,7 +58,8 @@ export function installSessionActionRpcBoundary(respond: (
             const controller = new AbortController();
             if (requestId) pending.set(requestId, controller);
             try {
-                return { ok: true, result: await respond(request, { signal: controller.signal, serverUrl }) };
+                const acknowledgement = { ok: true as const, result: await respond(request, { signal: controller.signal, serverUrl }) };
+                return options?.transformAcknowledgement ? options.transformAcknowledgement(acknowledgement, request) : acknowledgement;
             } finally {
                 if (requestId) pending.delete(requestId);
             }

@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { TeamAdmissionModeApplicabilityV1Schema, TeamPolicySetInputV1Schema } from '@happier-dev/protocol/teams';
+import { TeamRestrictedAuthenticationPolicyV1Schema } from '@happier-dev/protocol/auth/teamAuthenticationPolicy';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture, teamIdentityConnectionFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -49,7 +51,7 @@ const TEAM_POLICY_PATH = '/v1/teams/policy/set';
 const CONNECTIONS_LIST_PATH = '/v1/teams/identity/connections/list';
 const HOME_AUTH_ENTRY_PATH = '/v1/auth/entry';
 
-const HOME_AUTH_ENTRY = Object.freeze({
+const HOME_AUTH_ENTRY = AuthEntryProjectionV1Schema.parse({
     v: 1,
     scope: { kind: 'home' },
     state: 'ready',
@@ -61,9 +63,9 @@ const HOME_AUTH_ENTRY = Object.freeze({
         kind: 'authenticate', methodId: 'signup_only', action: 'provision',
         mode: 'keyed', origin: 'home', presentation: { displayName: 'Sign-up only' },
     }],
-} satisfies AuthEntryProjectionV1);
+});
 
-const CONNECTION = Object.freeze({
+const CONNECTION = teamIdentityConnectionFixture({
     v: 1 as const,
     id: 'connection-okta',
     teamId: 'team-1',
@@ -88,7 +90,7 @@ const CONNECTION = Object.freeze({
     updatedAt: 1,
 });
 
-const AVAILABLE_ADMISSION_MODES = Object.freeze({
+const AVAILABLE_ADMISSION_MODES = TeamAdmissionModeApplicabilityV1Schema.parse({
     v: 1 as const,
     modes: {
         invite_only: { status: 'available' as const },
@@ -110,13 +112,13 @@ const UNAVAILABLE_ADMISSION_ROUNDS = Object.freeze([
     { provisioned: 'directory_projection_required', jit: 'team_connection_unavailable' },
 ] as const);
 
-const RESTRICTED_TO_OKTA = Object.freeze({
+const RESTRICTED_TO_OKTA = TeamRestrictedAuthenticationPolicyV1Schema.parse({
     v: 1 as const,
     mode: 'restricted' as const,
     accepted: [{ kind: 'team_connection' as const, connectionId: 'connection-okta' }],
 });
 
-const RESTRICTED_TO_HOME_PASSKEY = Object.freeze({
+const RESTRICTED_TO_HOME_PASSKEY = TeamRestrictedAuthenticationPolicyV1Schema.parse({
     v: 1 as const,
     mode: 'restricted' as const,
     accepted: [{ kind: 'home_method' as const, methodId: 'passkey' }],
@@ -662,15 +664,13 @@ describe('TeamAuthenticationPolicySections', () => {
         await screen.pressByTestIdAsync('team-authentication-policy-save');
 
         await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
-        const written = harness.requestsFor(TEAM_POLICY_PATH)[0]?.input as {
-            authenticationPolicy?: { accepted?: readonly Record<string, unknown>[] };
-        };
-        expect(written.authenticationPolicy?.accepted)
-            .toContainEqual({ kind: 'home_method', methodId });
+        const written = TeamPolicySetInputV1Schema.parse(harness.requestsFor(TEAM_POLICY_PATH)[0]?.input);
+        expect(written.authenticationPolicy)
+            .toMatchObject({ accepted: expect.arrayContaining([{ kind: 'home_method', methodId }]) });
         // The Team's own connection stays in the same OR; adding the Home method
         // must not replace it.
-        expect(written.authenticationPolicy?.accepted)
-            .toContainEqual({ kind: 'team_connection', connectionId: 'connection-okta' });
+        expect(written.authenticationPolicy)
+            .toMatchObject({ accepted: expect.arrayContaining([{ kind: 'team_connection', connectionId: 'connection-okta' }]) });
     });
 
     it('retains a stale Home method disabled until its current entry projection recovers', async () => {
@@ -747,14 +747,12 @@ describe('TeamAuthenticationPolicySections', () => {
         await screen.pressByTestIdAsync('team-authentication-policy-save');
 
         await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
-        const written = harness.requestsFor(TEAM_POLICY_PATH)[0]?.input as {
-            authenticationPolicy?: { mode?: string; accepted?: readonly Record<string, unknown>[] };
-        };
+        const written = TeamPolicySetInputV1Schema.parse(harness.requestsFor(TEAM_POLICY_PATH)[0]?.input);
         // Still a restricted policy over the method that remains: removing an
         // unavailable choice is not a reset to Home inheritance.
         expect(written.authenticationPolicy?.mode).toBe('restricted');
-        expect(written.authenticationPolicy?.accepted)
-            .toEqual([{ kind: 'home_method', methodId: 'email_password' }]);
+        expect(written.authenticationPolicy)
+            .toMatchObject({ accepted: [{ kind: 'home_method', methodId: 'email_password' }] });
         // The Home does not offer it, so it cannot be selected again.
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain(retainedTestId);
     });

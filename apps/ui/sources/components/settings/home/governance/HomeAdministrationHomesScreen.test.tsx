@@ -32,6 +32,7 @@ const routerReplace = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ value: { entry: 'settings' } as Record<string, string> }));
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: routerPush, replace: routerReplace, back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -43,11 +44,12 @@ installSettingsViewCommonModuleMocks({
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
+// Finish the real screen graph at collection, after its network and native boundaries.
+const { HomeAdministrationHomesScreen } = await import('./HomeAdministrationHomesScreen');
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 
 async function renderHomes() {
-    const { HomeAdministrationHomesScreen } = await import('./HomeAdministrationHomesScreen');
     const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
     resetHomeGovernanceEngineForTests();
     return renderScreen(<HomeAdministrationHomesScreen />);

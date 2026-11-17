@@ -36,20 +36,14 @@ const navigationState = vi.hoisted(() => ({
     focused: true,
 }));
 
-vi.mock('@/components/ui/lists/virtualized', () => ({
-    VirtualizedList: (props: Record<string, unknown>) => {
-        virtualizedBoundary.props = props;
-        const data = ((props.data as readonly unknown[] | undefined) ?? []).slice(0, virtualizedBoundary.mountLimit);
-        const renderItem = props.renderItem as (info: { item: unknown; index: number }) => React.ReactNode;
-        return React.createElement(
-            'VirtualizedList',
-            { testID: props.testID },
-            props.ListHeaderComponent as React.ReactNode,
-            ...data.map((item, index) => renderItem({ item, index })),
-            props.ListFooterComponent as React.ReactNode,
-        );
-    },
-}));
+// Native recycling is the boundary; keep the app's list normalization and adapters real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({
+        get renderItemLimit() { return virtualizedBoundary.mountLimit; },
+        onCommit: props => { virtualizedBoundary.props = props; },
+    });
+});
 
 // Sharing is a genuine platform boundary. Make its availability explicit so
 // this screen proves the same link handoff as invitation creation on every host.
@@ -67,6 +61,7 @@ vi.mock('@react-navigation/native', async () => {
 });
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ getPreferredLanguage: () => languageMock.current });
@@ -434,7 +429,7 @@ describe('TeamInvitationsScreen', () => {
         const screen = await renderInvitations(serverId);
         await waitForTestId(screen, 'team-invitations-row:invitation-0');
 
-        expect(virtualizedBoundary.props?.testID).toBe('team-invitations-virtualized-list');
+        expect(virtualizedBoundary.props?.['data-testid']).toBe('team-invitations-virtualized-list');
         expect(virtualizedBoundary.props?.maintainVisibleContentPosition).toBe(true);
         const data = virtualizedBoundary.props?.data as readonly unknown[];
         expect(data.length).toBeLessThan(25);
@@ -599,7 +594,7 @@ describe('TeamInvitationsScreen', () => {
             recipientEmail: null,
         });
         await vi.waitFor(() => {
-            const rendered = JSON.stringify(screen.tree.toJSON());
+            const rendered = screen.getTextContent();
             expect(rendered).toContain('teams.invitations.deliveryUnknown');
             expect(rendered).not.toContain('teams.invitations.bearerUnavailable');
         });

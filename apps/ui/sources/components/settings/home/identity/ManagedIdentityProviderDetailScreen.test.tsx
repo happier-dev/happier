@@ -1,18 +1,16 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installBrowserClipboardBoundary } from '@/dev/testkit';
+import { ManagedIdentityProviderV1Schema, ManagedIdentityProvidersListResultV1Schema, ManagedIdentityProviderRemovePreflightResultV1Schema, ManagedIdentityProviderTestStartResultV1Schema } from '@happier-dev/protocol/identity/providers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { homeGovernanceProjectionFixture, managedIdentityProviderFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
+import { act } from 'react-test-renderer';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
-const executeMock = vi.hoisted(() => vi.fn());
-const refreshMock = vi.hoisted(() => vi.fn());
 const replaceMock = vi.hoisted(() => vi.fn());
 const openExternalUrlMock = vi.hoisted(() => vi.fn());
-const providerStateMock = vi.hoisted(() => ({ refreshing: false, stale: false }));
-const providerSecretHealthMock = vi.hoisted(() => ({ value: 'configured' as 'configured' | 'missing' | 'unreadable' }));
-const providerKindMock = vi.hoisted(() => ({ value: 'oidc' as 'oidc' | 'github_app_identity' }));
-const requestApprovalMock = vi.hoisted(() => vi.fn());
 const setClipboardMock = vi.hoisted(() => vi.fn(async (_text: string) => true));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
@@ -26,142 +24,99 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: vi.fn(async () => true),
-        alertAsync: vi.fn(async () => {}),
-    },
-}));
-vi.mock('./useManagedIdentityProviders', () => ({
-    useManagedIdentityProviderClient: () => ({ execute: executeMock }),
-    useManagedIdentityProviders: () => ({
-        state: {
-            kind: 'ready',
-            refreshing: providerStateMock.refreshing,
-            stale: providerStateMock.stale,
-            items: [providerKindMock.value === 'oidc' ? {
-                v: 1,
-                owner: { kind: 'home' },
-                id: 'provider-1',
-                kind: 'oidc',
-                displayName: 'Acme OIDC',
-                enabled: true,
-                firstEnabledAt: 1,
-                securityRevision: 1,
-                revision: 1,
-                config: { issuer: 'https://issuer.example.test', clientId: 'client' },
-                callbackUrl: 'https://home.example.test/v1/oauth/provider-1/callback',
-                secret: {
-                    configured: providerSecretHealthMock.value === 'configured',
-                    health: providerSecretHealthMock.value,
-                },
-                lastSuccessfulTest: { at: 1, testedSecurityRevision: 1, current: true },
-                createdByAccountId: null,
-                createdAt: 1,
-                updatedAt: 1,
-                teamConsumers: [{
-                    team: { id: 'team-1', name: 'Acme' },
-                    binding: { kind: 'identity_connection', id: 'connection-1', enabled: true },
-                }],
-            } : {
-                v: 1,
-                owner: { kind: 'home' },
-                id: 'provider-1',
-                kind: 'github_app_identity',
-                displayName: 'Acme GitHub',
-                enabled: false,
-                firstEnabledAt: null,
-                securityRevision: 1,
-                revision: 1,
-                config: { v: 1, kind: 'github_app_identity' },
-                callbackUrl: 'https://home.example.test/v1/oauth/github-app/callback',
-                githubAppInstallationId: 'installation-1',
-                lastSuccessfulTest: null,
-                createdByAccountId: null,
-                createdAt: 1,
-                updatedAt: 1,
-                teamConsumers: [{
-                    team: { id: 'team-1', name: 'Acme' },
-                    binding: { kind: 'identity_connection', id: 'connection-1', enabled: false },
-                }],
-            }],
-        },
-        refresh: refreshMock,
-    }),
-}));
-vi.mock('../governance/HomeAdministrationSection', () => ({
-    HomeAdministrationSection: (props: Readonly<{ children: (context: unknown) => React.ReactNode }>) =>
-        props.children({
-            scope: { serverId: 'home-1', accountId: 'account-1' },
-            mutationsAvailable: true,
-            projection: { capabilities: { manageAuthentication: true } },
-            requestApproval: requestApprovalMock,
-        }),
-}));
-
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+let serverId = '';
+let providerKind: 'oidc' | 'github_app_identity' = 'oidc';
+let secretHealth: 'configured' | 'missing' | 'unreadable' = 'configured';
+const listPath = '/v1/identity/providers/list';
+function provider() {
+    const common = {
+        revision: 1,
+        createdByAccountId: null,
+        teamConsumers: [{
+            team: { id: 'team-1', name: 'Acme' },
+            binding: { kind: 'identity_connection' as const, id: 'connection-1', enabled: providerKind === 'oidc' },
+        }],
+    };
+    return providerKind === 'oidc'
+        ? managedIdentityProviderFixture({
+            ...common,
+            displayName: 'Acme OIDC',
+            enabled: true,
+            firstEnabledAt: 1,
+            callbackUrl: 'https://home.example.test/v1/oauth/provider-1/callback',
+            secret: { configured: secretHealth === 'configured', health: secretHealth },
+            lastSuccessfulTest: { at: 1, testedSecurityRevision: 1, current: true },
+        })
+        : managedIdentityProviderFixture({
+            ...common,
+            kind: 'github_app_identity',
+            displayName: 'Acme GitHub',
+            callbackUrl: 'https://home.example.test/v1/oauth/github-app/callback',
+        });
+}
+function answerProviders() {
+    harness.answer(serverId, listPath, { body: ManagedIdentityProvidersListResultV1Schema.parse({ items: [provider()], unreadableCount: 0 }) });
+}
 import {
     recordIdentityProviderTestReturn,
     resetPendingIdentityProviderTestsForTests,
 } from './identityProviderTestReturn';
-import { ManagedIdentityProviderDetailScreen } from './ManagedIdentityProviderDetailScreen';
-import { managedIdentityProviderSignInStatus } from './ManagedIdentityProvidersSection';
+const { ManagedIdentityProviderDetailScreen } = await import('./ManagedIdentityProviderDetailScreen');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+const { Modal } = await import('@/modal');
+const { managedIdentityProviderSignInStatus } = await import('./ManagedIdentityProvidersSection');
 
-beforeEach(() => {
+beforeEach(async () => {
     standardCleanup();
     resetPendingIdentityProviderTestsForTests();
-    executeMock.mockReset();
-    refreshMock.mockReset();
+    await harness.reset();
+    serverId = await harness.addHome({ name: 'Identity Home', serverUrl: 'https://home.example.test', accountId: 'account-1' });
+    harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
     replaceMock.mockReset();
     openExternalUrlMock.mockReset();
-    requestApprovalMock.mockReset();
-    providerStateMock.refreshing = false;
-    providerStateMock.stale = false;
-    providerSecretHealthMock.value = 'configured';
-    providerKindMock.value = 'oidc';
+    secretHealth = 'configured';
+    providerKind = 'oidc';
+    vi.mocked(Modal.confirm).mockClear();
     installBrowserClipboardBoundary(async text => { await setClipboardMock(text); });
 });
 
+async function renderProvider() {
+    answerProviders();
+    const screen = await renderScreen(<ManagedIdentityProviderDetailScreen serverId={serverId} providerId="provider-1" />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('identity-provider-callback-url')).not.toBeNull());
+    return screen;
+}
+
 describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
     it('surfaces the derived callback URL as a copyable read-only row', async () => {
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
+        const screen = await renderProvider();
         const row = screen.findByTestId('identity-provider-callback-url');
         expect(findTestInstanceByTypeContainingText(row!, 'Text', 'https://home.example.test/v1/oauth/provider-1/callback')).toBeDefined();
 
         await screen.pressByTestIdAsync('identity-provider-callback-url');
 
         expect(setClipboardMock).toHaveBeenCalledWith('https://home.example.test/v1/oauth/provider-1/callback');
-        expect(executeMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor('/v1/identity/providers/update')).toHaveLength(0);
     });
 
     it('presents an enabled installation-backed GitHub identity consumer as active without an OIDC test', () => {
-        expect(managedIdentityProviderSignInStatus({
-            v: 1,
-            owner: { kind: 'home' },
-            id: 'provider-1',
+        expect(managedIdentityProviderSignInStatus(managedIdentityProviderFixture({
             kind: 'github_app_identity',
             displayName: 'Acme GitHub',
             enabled: true,
             firstEnabledAt: 1,
-            securityRevision: 1,
             revision: 2,
-            config: { v: 1, kind: 'github_app_identity' },
-            githubAppInstallationId: 'installation-1',
-            teamConsumers: [],
-            lastSuccessfulTest: null,
-            createdByAccountId: null,
-            createdAt: 1,
             updatedAt: 2,
-        })).toBe('active');
+        }))).toBe('active');
     });
 
     it('administers an installation-backed GitHub identity consumer without OIDC-only controls', async () => {
-        providerKindMock.value = 'github_app_identity';
-        executeMock.mockResolvedValueOnce({ kind: 'succeeded', value: {} });
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
+        providerKind = 'github_app_identity';
+        harness.answer(serverId, '/v1/identity/providers/enable', { body: ManagedIdentityProviderV1Schema.parse({ ...provider(), enabled: true, firstEnabledAt: 1 }) });
+        const screen = await renderProvider();
 
         expect(screen.findByTestId('identity-provider-edit')).toBeNull();
         expect(screen.findAllByProps({ title: 'identityAdministration.issuer' })).toHaveLength(0);
@@ -171,20 +126,15 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
         expect(findTestInstanceByTypeContainingText(screen.findByTestId('identity-provider-team-consumer:connection-1')!, 'Text', 'identityAdministration.githubFacetSignIn')).toBeDefined();
 
         await screen.pressByTestIdAsync('identity-provider-enable');
-        expect(executeMock).toHaveBeenCalledWith('identity.providers.enable', {
-            owner: { kind: 'home' },
-            id: 'provider-1',
-            expectedRevision: 1,
-            expectedSecurityRevision: 1,
-        }, expect.anything());
-        expect(refreshMock).toHaveBeenCalledTimes(1);
+        expect(harness.requestsFor('/v1/identity/providers/enable')[0]?.input).toEqual({
+            owner: { kind: 'home' }, id: 'provider-1', expectedRevision: 1, expectedSecurityRevision: 1,
+        });
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath)).toHaveLength(2));
     });
 
     it('shows unreadable secret material as repair-required while keeping the edit recovery available', async () => {
-        providerSecretHealthMock.value = 'unreadable';
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
+        secretHealth = 'unreadable';
+        const screen = await renderProvider();
 
         expect(screen.findByProps({ title: 'identityAdministration.clientSecret' }).props.detail)
             .toBe('identityAdministration.secretNeedsAttention');
@@ -193,10 +143,10 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
     });
 
     it('withdraws mutation controls while the retained provider projection is stale', async () => {
-        providerStateMock.stale = true;
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
+        const screen = await renderProvider();
+        harness.answer(serverId, listPath, { status: 503, body: { error: 'unavailable' } });
+        await act(async () => publishHomeAccountChange(serverId));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-provider-test')?.props.disabled).toBe(true));
 
         for (const testID of [
             'identity-provider-test',
@@ -210,7 +160,7 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
 
     it('shows the diagnostics the OAuth return handed back for this exact provider', async () => {
         recordIdentityProviderTestReturn({
-            kind: 'home', serverId: 'home-1', accountId: 'account-1',
+            kind: 'home', serverId, accountId: 'account-1',
             providerId: 'provider-1', attemptId: 'attempt-1',
             returnTo: '/settings/home/home-1/sign-in-providers/identity/provider-1',
         }, { kind: 'completed', diagnostics: {
@@ -223,9 +173,7 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
             mappedGroups: [],
         } });
 
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
+        const screen = await renderProvider();
 
         await vi.waitFor(() => expect(
             screen.findByTestId('identity-test-diagnostics:groups'),
@@ -236,7 +184,7 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
 
     it('shows nothing when another provider owns the returned result', async () => {
         recordIdentityProviderTestReturn({
-            kind: 'home', serverId: 'home-1', accountId: 'account-1',
+            kind: 'home', serverId, accountId: 'account-1',
             providerId: 'provider-2', attemptId: 'attempt-2',
             returnTo: '/settings/home/home-1/sign-in-providers/identity/provider-2',
         }, { kind: 'completed', diagnostics: {
@@ -249,117 +197,55 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
             mappedGroups: [],
         } });
 
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
+        const screen = await renderProvider();
 
         expect(screen.findByTestId('identity-test-diagnostics:groups')).toBeNull();
     });
 
-    it('registers an OAuth-return approval with the destination Home shell', async () => {
-        recordIdentityProviderTestReturn({
-            kind: 'home', serverId: 'home-1', accountId: 'account-1',
-            providerId: 'provider-1', attemptId: 'attempt-1',
-            returnTo: '/settings/home/home-1/sign-in-providers/identity/provider-1',
-        }, {
-            kind: 'approval_pending',
-            artifactId: 'approval-consume-1',
-            actionId: 'identity.providers.test.consume',
-            scope: { serverId: 'home-1', accountId: 'account-1' },
-        });
-
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
-
-        await vi.waitFor(() => expect(requestApprovalMock).toHaveBeenCalledOnce());
-        expect(requestApprovalMock.mock.calls[0]?.[0]).toMatchObject({
-            artifactId: 'approval-consume-1',
-            onExecuted: expect.any(Function),
-        });
-        expect(screen.findByTestId('identity-provider-notice')).toBeNull();
-    });
-
-    it('continues an approved provider test through the same OAuth-opening path', async () => {
-        const approval = { artifactId: 'approval-1', onExecuted: vi.fn() };
-        let completeApprovedTest: ((value: Readonly<{ attemptId: string; authorizeUrl: string }>) => void | Promise<void>) | undefined;
-        executeMock.mockImplementationOnce(async (_actionId, _input, options) => {
-            completeApprovedTest = options.onApprovalSucceeded;
-            return { kind: 'approval_pending', artifactId: 'approval-1', approval };
-        });
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
-
-        await screen.pressByTestIdAsync('identity-provider-test');
-
-        expect(openExternalUrlMock).not.toHaveBeenCalled();
-        expect(requestApprovalMock).toHaveBeenCalledWith(approval);
-        expect(screen.findByTestId('identity-provider-notice')).toBeNull();
-        expect(Boolean(screen.findByTestId('identity-provider-test')!.props.accessibilityState?.busy)).toBe(false);
-
+    it('opens a provider test only after the native Ask confirmation succeeds', async () => {
+        await harness.requireUiApproval(serverId, 'identity.providers.test.start');
+        let confirm: ((value: boolean) => void) | undefined;
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise(resolve => { confirm = resolve; }));
+        harness.answer(serverId, '/v1/identity/providers/test/start', { body: ManagedIdentityProviderTestStartResultV1Schema.parse({ attemptId: 'attempt-1', authorizeUrl: 'https://id.example/authorize' }) });
+        const screen = await renderProvider();
         openExternalUrlMock.mockResolvedValueOnce(true);
-        await completeApprovedTest?.({ attemptId: 'attempt-1', authorizeUrl: 'https://id.example/authorize' });
-
-        expect(openExternalUrlMock).toHaveBeenCalledOnce();
+        const pressing = screen.pressByTestIdAsync('identity-provider-test');
+        await waitForHomeGovernance(() => expect(confirm).toBeTypeOf('function'));
+        expect(openExternalUrlMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor('/v1/identity/providers/test/start')).toHaveLength(0);
+        await act(async () => confirm!(true));
+        await pressing;
         expect(openExternalUrlMock).toHaveBeenCalledWith('https://id.example/authorize');
-        // The OAuth return lands on this provider's page under Sign-in providers.
+        expect(harness.artifacts(serverId).list()).toEqual([]);
         const { consumePendingIdentityProviderTest } = await import('./identityProviderTestReturn');
         expect(consumePendingIdentityProviderTest('provider-1')?.returnTo)
-            .toBe('/settings/home/home-1/sign-in-providers/identity/provider-1');
+            .toBe(`/settings/home/${serverId}/sign-in-providers/identity/provider-1`);
     });
 
-    it('refreshes only after a pending lifecycle mutation is approved', async () => {
-        const approval = { artifactId: 'approval-1', onExecuted: vi.fn() };
-        let completeApprovedLifecycle: (() => void | Promise<void>) | undefined;
-        executeMock.mockImplementationOnce(async (_actionId, _input, options) => {
-            completeApprovedLifecycle = options.onApprovalSucceeded;
-            return { kind: 'approval_pending', artifactId: 'approval-1', approval };
-        });
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
-
-        await screen.pressByTestIdAsync('identity-provider-disable');
-
-        expect(refreshMock).not.toHaveBeenCalled();
-        expect(replaceMock).not.toHaveBeenCalled();
-        expect(requestApprovalMock).toHaveBeenCalledWith(approval);
-        expect(screen.findByTestId('identity-provider-notice')).toBeNull();
-        expect(Boolean(screen.findByTestId('identity-provider-disable')!.props.disabled)).toBe(false);
-
-        await completeApprovedLifecycle?.();
-        expect(refreshMock).toHaveBeenCalledOnce();
+    it('refreshes a lifecycle change only after its native review is accepted', async () => {
+        await harness.requireUiApproval(serverId, 'identity.providers.disable');
+        let confirm: ((value: boolean) => void) | undefined;
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise(resolve => { confirm = resolve; }));
+        harness.answer(serverId, '/v1/identity/providers/disable', { body: ManagedIdentityProviderV1Schema.parse({ ...provider(), enabled: false }) });
+        const screen = await renderProvider();
+        const pressing = screen.pressByTestIdAsync('identity-provider-disable');
+        await waitForHomeGovernance(() => expect(confirm).toBeTypeOf('function'));
+        expect(harness.requestsFor(listPath)).toHaveLength(1);
+        await act(async () => confirm!(true));
+        await pressing;
+        await waitForHomeGovernance(() => expect(harness.requestsFor(listPath)).toHaveLength(2));
+        expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
-    it('navigates only after a confirmed removal is approved', async () => {
-        const approval = { artifactId: 'approval-1', onExecuted: vi.fn() };
-        let completeApprovedRemoval: (() => void | Promise<void>) | undefined;
-        executeMock
-            .mockResolvedValueOnce({
-                kind: 'succeeded',
-                value: {
-                    provider: { id: 'provider-1', revision: 1 },
-                    canRemove: true,
-                    blockers: { identityCount: 0, connectionCount: 0, affectedAccountIds: [] },
-                },
-            })
-            .mockImplementationOnce(async (_actionId, _input, options) => {
-                completeApprovedRemoval = options.onApprovalSucceeded;
-                return { kind: 'approval_pending', artifactId: 'approval-1', approval };
-            });
-        const screen = await renderScreen(
-            <ManagedIdentityProviderDetailScreen serverId="home-1" providerId="provider-1" />,
-        );
-
+    it('navigates only after a confirmed removal succeeds through the real client', async () => {
+        harness.answer(serverId, '/v1/identity/providers/remove/preflight', { body: ManagedIdentityProviderRemovePreflightResultV1Schema.parse({
+            provider: provider(), canRemove: true,
+            blockers: { identityCount: 0, connectionCount: 0, affectedAccountIds: [] },
+        }) });
+        harness.answer(serverId, '/v1/identity/providers/remove', { body: { outcome: 'removed' } });
+        const screen = await renderProvider();
         await screen.pressByTestIdAsync('identity-provider-remove');
-
-        expect(replaceMock).not.toHaveBeenCalled();
-        expect(requestApprovalMock).toHaveBeenCalledWith(approval);
-        expect(screen.findByTestId('identity-provider-notice')).toBeNull();
-        expect(Boolean(screen.findByTestId('identity-provider-remove')!.props.disabled)).toBe(false);
-
-        await completeApprovedRemoval?.();
-        expect(replaceMock).toHaveBeenCalledWith('/settings/home/home-1/sign-in-providers');
+        expect(harness.requestsFor('/v1/identity/providers/remove')).toHaveLength(1);
+        expect(replaceMock).toHaveBeenCalledWith(`/settings/home/${serverId}/sign-in-providers`);
     });
 });

@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusResponseV1Schema } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
+import { TeamIdentityConnectionV1Schema, TeamIdentityConnectionListResultV1Schema, type TeamIdentityConnectionV1 } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds, createDeferred, homeAccountPickerRowFixture, renderScreen, standardCleanup, teamCapabilitiesFixture, teamGroupFixture, teamInvitationRowFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -22,22 +23,6 @@ const modalConfirm = vi.hoisted(() => vi.fn(async () => true));
 const routerPush = vi.hoisted(() => vi.fn());
 const routerBack = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
-const focusEffects = vi.hoisted(() => new Set<() => void | (() => void)>());
-
-vi.mock('@/components/appShell/workspace/destinationRoute', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/components/appShell/workspace/destinationRoute')>();
-    const ReactModule = await import('react');
-    return {
-        ...original,
-        useFocusEffect: (effect: () => void | (() => void)) => {
-            ReactModule.useEffect(() => {
-                focusEffects.add(effect);
-                const cleanup = effect();
-                return () => { focusEffects.delete(effect); cleanup?.(); };
-            }, [effect]);
-        },
-    };
-});
 
 installSettingsViewCommonModuleMocks({
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
@@ -69,6 +54,23 @@ vi.mock('expo-file-system', () => ({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+
+const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+let setRouteFocused: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+
+/** Drive actual destination focus facts rather than replacing its effect owner. */
+function FocusedConnectionRoute(props: React.PropsWithChildren) {
+    const [focused, setFocused] = React.useState(true);
+    React.useEffect(() => {
+        setRouteFocused = setFocused;
+        return () => { setRouteFocused = null; };
+    }, []);
+    return <DestinationInstanceContext.Provider value={{
+        tabId: 'team-identity', ref: { kind: 'settings', params: routeParams.current },
+        pathname: '/settings/teams/authentication', focused, visible: true, isFocused: () => focused,
+        stackOwned: true,
+    }}>{props.children}</DestinationInstanceContext.Provider>;
+}
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
@@ -185,7 +187,6 @@ beforeEach(async () => {
     routerPush.mockReset();
     routerBack.mockReset();
     routeParams.current = {};
-    focusEffects.clear();
     setClipboardStringSafeMock.mockClear();
     installBrowserClipboardBoundary(async value => { await setClipboardStringSafeMock(value); });
     modalConfirm.mockReset().mockResolvedValue(true);
@@ -237,7 +238,7 @@ describe('WorkOS Portal return', () => {
     const listPath = '/v1/teams/identity/connections/list';
     const reconcilePath = '/v1/teams/identity/workos/reconcile';
     function workosConnection(overrides: Partial<TeamIdentityConnectionV1> = {}): TeamIdentityConnectionV1 {
-        return {
+        return TeamIdentityConnectionV1Schema.parse({
             v: 1, id: 'workos-connection', teamId: 'team-1',
             provider: { id: 'workos-provider', kind: 'workos_sso', displayName: 'Acme SSO' },
             externalReference: { v: 1, kind: 'workos_sso', organizationId: 'org_exact', connectionId: 'conn_exact' },
@@ -247,17 +248,17 @@ describe('WorkOS Portal return', () => {
             lastObservation: { v: 1, kind: 'workos_sso', presentation: null },
             lastSuccessfulTest: null, createdAt: 1, updatedAt: 1,
             ...overrides,
-        };
+        });
     }
     function listAnswer(connection: TeamIdentityConnectionV1) {
-        return { body: {
+        return { body: TeamIdentityConnectionListResultV1Schema.parse({
             items: [connection], eligibleProviders: [], memberSignInUrl: null,
             admissionModeApplicability: { v: 1, modes: {
                 invite_only: { status: 'available' },
                 provisioned: { status: 'unavailable', reason: 'directory_source_required' },
                 jit: { status: 'available' },
             } },
-        } };
+        }) };
     }
     async function renderConnectionRoute(serverId: string, returnedFromPortal = false) {
         routeParams.current = {
@@ -265,12 +266,11 @@ describe('WorkOS Portal return', () => {
             ...(returnedFromPortal ? { purpose: 'workos_admin_portal' } : {}),
         };
         const { default: IdentityConnectionDetailRoute } = await import('@/app/(app)/settings/teams/[serverId]/[teamId]/authentication/[connectionId]');
-        return await renderScreen(<IdentityConnectionDetailRoute />);
+        return await renderScreen(<FocusedConnectionRoute><IdentityConnectionDetailRoute /></FocusedConnectionRoute>);
     }
     async function refocusRoute() {
-        await act(async () => {
-            for (const effect of focusEffects) effect();
-        });
+        await act(async () => { setRouteFocused?.(false); });
+        await act(async () => { setRouteFocused?.(true); });
     }
 
     it.each([true, false])('reconciles connected state only for explicit Portal return (%s)', async (returnedFromPortal) => {
@@ -359,6 +359,9 @@ describe('WorkOS Portal return', () => {
 describe('native-confirmed Group creation', () => {
     it('withholds submission during confirmation, then opens the created Group', async () => {
         const serverId = await addTeamHome({ manageGroups: true });
+        harness.answer(serverId, PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, {
+            body: PrivateLabelRecipientCensusResponseV1Schema.parse({ contentEncryptionMode: 'plain', recipients: [] }),
+        });
         await harness.requireUiApproval(serverId, 'teams.groups.create');
         harness.answer(serverId, GROUP_CREATE_PATH, {
             body: teamGroupFixture({ id: 'group-new', name: 'Design', memberCount: 0 }),
@@ -449,7 +452,7 @@ describe('native-confirmed Team admission', () => {
         });
     });
 
-    it('reports a refused admission instead of navigating as though it happened', async () => {
+    it('preserves the admission draft after native cancellation without an error or navigation', async () => {
         const serverId = await addAdmissionHome();
         const screen = await renderMemberAdd(serverId);
         const confirmation = holdConfirmation();
@@ -458,9 +461,8 @@ describe('native-confirmed Team admission', () => {
 
         await settleConfirmation(confirmation, false);
 
-        await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('teams.errors.forbidden');
-        });
+        await vi.waitFor(() => expect(screen.findByTestId('team-member-add-submit')?.props.disabled).toBe(false));
+        expect(screen.getTextContent()).not.toContain('teams.errors.forbidden');
         expect(routerReplace).not.toHaveBeenCalled();
         expect(routerBack).not.toHaveBeenCalled();
         // A refused admission never reaches the Home.
@@ -695,8 +697,9 @@ describe('native-confirmed Team logo replacement', () => {
         harness.answer(serverId, TEAM_GET_PATH, { body: published });
         await settleConfirmation(confirmation, decision === 'approve');
         if (decision === 'reject') {
-            await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('teams.errors.forbidden')));
-            expect(screen.findByTestId('team-settings-logo-use')?.props.disabled).toBe(false);
+            await vi.waitFor(() => expect(screen.findByTestId('team-settings-logo-use')?.props.disabled).toBe(false));
+            expect(screen.getTextContent()).not.toContain(t('teams.errors.forbidden'));
+            expect(screen.getTextContent()).not.toContain(t('teams.logo.failed'));
             expect(harness.requestsFor(TEAM_LOGO_SET_PATH)).toHaveLength(0);
             await screen.pressByTestIdAsync('team-settings-logo-use');
             await vi.waitFor(() => expect(harness.requestsFor(TEAM_LOGO_SET_PATH)).toHaveLength(1));

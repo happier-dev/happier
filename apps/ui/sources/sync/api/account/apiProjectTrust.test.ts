@@ -10,14 +10,12 @@ import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerpr
 import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import type { ProjectAccountRowsSnapshot } from '@/sync/store/domains/projectAccountRows';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { createPlainMachineRowFixture, createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-// The Machine RPC transport is a network boundary; the observation reader, Trust API and Account
-// admission beneath it remain real.
-const machineTransport = vi.hoisted(() => ({ read: vi.fn() }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: (...args: unknown[]) => machineTransport.read(...args),
-}));
+// The external daemon responder runs below the real scoped RPC, encryption and admission owners.
+const machineTransport = { read: vi.fn() };
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -36,11 +34,20 @@ function encrypted(payload: unknown, kind: 'project_setup_trust' | 'account_prof
 }
 beforeEach(async () => {
     machineTransport.read.mockReset();
+    installSessionActionRpcBoundary(request => {
+        const separator = request.method.indexOf(':');
+        if (separator < 1) throw new Error('Expected a Machine daemon RPC');
+        return machineTransport.read({ machineId: request.method.slice(0, separator),
+            method: request.method.slice(separator + 1), payload: request.params });
+    });
     await homes.reset();
     installHomeGovernanceBoundaries(homes);
     await loadSyncSingletonForTests();
     const serverId = await homes.addHome({ name: 'Trust Home', serverUrl: 'https://trust-api.test', accountId: 'approver', active: false });
     scope = { serverId, accountId: 'approver' };
+    homes.answer(serverId, '/v1/machines/target', { body: { machine: createPlainMachineRowFixture({
+        id: 'target', accountId: 'approver', machine: createMachineFixture({ id: 'target', activeAt: Date.now() }),
+    }) } });
     homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     homes.answer(serverId, readPath, { body: { status: 'present', revision: 4, content: { t: 'plain', v: value } } });
     homes.answer(serverId, mutatePath, { body: { status: 'updated', revision: 5, cursor: 1 } });
@@ -138,7 +145,7 @@ describe('Project Trust captured UI Account API', () => {
     });
     it('remembers only the captured Account’s currently accepted exact checkout, not another Account’s rows or a moved root', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
-        const { decideProjectSetupConsent } = await import('@/components/projects/projectSetup/projectSetupConsentDecision');
+        const { rememberAdmittedProjectSetupConsent } = await import('@/sync/ops/actions/projectSetupTrustConsent');
         const workspace = { id: 'accepted', serverId: scope.serverId, machineId: 'machine', rootPath: '/checkout', projectKey: 'project', createdAtMs: 1 };
         const address = { serverId: workspace.serverId, workspaceId: workspace.id, machineId: workspace.machineId, rootPath: workspace.rootPath };
         const rows = { scope, status: 'ready', coverage: 'complete', workspaceRefs: [workspace], relationships: [], organizations: [], revisionsByPhysicalKey: {} } satisfies ProjectAccountRowsSnapshot;
@@ -149,7 +156,7 @@ describe('Project Trust captured UI Account API', () => {
             { ...rows, workspaceRefs: [{ ...workspace, rootPath: '/moved-checkout' }] },
         ]) {
             storage.setState({ profileScope: scope, projectAccountRows: snapshot });
-            expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope, workspace: address, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
+            expect(await rememberAdmittedProjectSetupConsent({ scope, workspace: address, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
                 .toEqual({ kind: 'unavailable', code: 'project_unavailable' });
             expect(homes.requestsFor(readPath)).toEqual([]);
             expect(homes.requestsFor(mutatePath)).toEqual([]);
@@ -158,7 +165,7 @@ describe('Project Trust captured UI Account API', () => {
         machineTransport.read.mockResolvedValueOnce({ kind: 'found', operation: operation.snapshot })
             .mockResolvedValueOnce({ kind: 'found', operation: { ...operation.snapshot, setupReview: undefined,
                 domainRef: { ...operation.snapshot.domainRef!, cwd: '/worker-checkout/setup-subdirectory' } } });
-        expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope, workspace: address, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
+        expect(await rememberAdmittedProjectSetupConsent({ scope, workspace: address, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
             .toEqual({ kind: 'remembered', operation: expect.objectContaining({ operationId: operation.snapshot.operationId }) });
         expect(homes.requestsFor(mutatePath).map(request => ProjectTrustMutationRequestV1Schema.parse(request.input)))
             .toEqual([{ project: { serverId: workspace.serverId, projectId: 'project' }, expectedRevision: 'absent',
@@ -168,7 +175,7 @@ describe('Project Trust captured UI Account API', () => {
     it('remembers the retained review through a registered Source Home alias without accepting an unknown Home', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-        const { decideProjectSetupConsent } = await import('@/components/projects/projectSetup/projectSetupConsentDecision');
+        const { rememberAdmittedProjectSetupConsent } = await import('@/sync/ops/actions/projectSetupTrustConsent');
         // Home-published identities use the protocol's srv_ shape; the real profile owner retains
         // the device-local URL id as an alias of this portable Home identity.
         const alias = await homes.addHome({ name: 'Alias Trust Home', serverUrl: 'https://alias-trust.test',
@@ -184,15 +191,18 @@ describe('Project Trust captured UI Account API', () => {
             relationships: [], organizations: [], revisionsByPhysicalKey: {},
         } });
         const operation = heldOperation(captured, canonicalWorkspace, value.reviewedEffectDigest);
-        expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope: captured, workspace: { ...workspace, serverId: 'unknown-home' },
-            operation, reviewedEffectDigest: value.reviewedEffectDigest })).toEqual({ kind: 'unavailable', code: 'project_setup_review_unavailable' });
+        expect(await rememberAdmittedProjectSetupConsent({ scope: captured, workspace: { ...workspace, serverId: 'unknown-home' },
+            operation, reviewedEffectDigest: value.reviewedEffectDigest })).toEqual({ kind: 'unavailable', code: 'project_unavailable' });
         expect(machineTransport.read).not.toHaveBeenCalled();
         homes.answer(alias, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        homes.answer(alias, '/v1/machines/target', { body: { machine: createPlainMachineRowFixture({
+            id: 'target', accountId: 'approver', machine: createMachineFixture({ id: 'target', activeAt: Date.now() }),
+        }) } });
         homes.answer(alias, readPath, { body: { status: 'absent' } });
         homes.answer(alias, mutatePath, { body: { status: 'updated', revision: 1, cursor: 1 } });
         machineTransport.read.mockResolvedValueOnce({ kind: 'found', operation: operation.snapshot })
             .mockResolvedValueOnce({ kind: 'found', operation: { ...operation.snapshot, setupReview: undefined } });
-        expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope: captured, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
+        expect(await rememberAdmittedProjectSetupConsent({ scope: captured, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
             .toEqual({ kind: 'remembered', operation: expect.objectContaining({ operationId: operation.snapshot.operationId }) });
         expect(homes.requestsFor(mutatePath).map(request => ProjectTrustMutationRequestV1Schema.parse(request.input)))
             .toEqual([{ project: { serverId, projectId: 'project' }, expectedRevision: 'absent',
@@ -202,7 +212,7 @@ describe('Project Trust captured UI Account API', () => {
     });
     it('remeasures the retained target review before replacing Trust, including an already matching grant', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
-        const { decideProjectSetupConsent } = await import('@/components/projects/projectSetup/projectSetupConsentDecision');
+        const { rememberAdmittedProjectSetupConsent } = await import('@/sync/ops/actions/projectSetupTrustConsent');
         const workspace = { serverId: scope.serverId, workspaceId: 'accepted', machineId: 'source', rootPath: '/checkout' };
         storage.setState({ profileScope: scope, projectAccountRows: {
             scope, status: 'ready', coverage: 'complete', workspaceRefs: [{ id: 'accepted', serverId: scope.serverId,
@@ -216,22 +226,22 @@ describe('Project Trust captured UI Account API', () => {
         machineTransport.read.mockResolvedValue({ kind: 'found', operation: {
             ...operation.snapshot, setupReview: { ...operation.snapshot.setupReview!, reviewedEffectDigest: 'changed-on-worker' },
         } });
-        expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
+        expect(await rememberAdmittedProjectSetupConsent({ scope, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
             .toEqual({ kind: 'changed' });
         expect(homes.requestsFor(mutatePath)).toEqual([]);
         expect(homes.requestsFor(readPath)).toEqual([]);
-        expect(machineTransport.read.mock.calls[0]?.[0]).toMatchObject({ machineId: 'target', serverId: scope.serverId,
-            accountId: scope.accountId, payload: { operationId: 'held-operation' } });
+        expect(machineTransport.read.mock.calls[0]?.[0]).toMatchObject({ machineId: 'target', payload: { operationId: 'held-operation' } });
     });
     it('does not replace consent without a current review producer, and does not report Allowed after continuation reholds', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
-        const { decideProjectSetupConsent } = await import('@/components/projects/projectSetup/projectSetupConsentDecision');
+        const { rememberAdmittedProjectSetupConsent } = await import('@/sync/ops/actions/projectSetupTrustConsent');
         const workspace = { serverId: scope.serverId, workspaceId: 'accepted', machineId: 'source', rootPath: '/checkout' };
         storage.setState({ profileScope: scope, projectAccountRows: {
             scope, status: 'ready', coverage: 'complete', workspaceRefs: [{ id: 'accepted', serverId: scope.serverId,
                 machineId: 'source', rootPath: '/checkout', projectKey: 'project', createdAtMs: 1 }],
             relationships: [], organizations: [], revisionsByPhysicalKey: {},
         } });
+        const { decideProjectSetupConsent } = await import('@/components/projects/projectSetup/projectSetupConsentDecision');
         expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope, workspace, reviewedEffectDigest: value.reviewedEffectDigest }))
             .toEqual({ kind: 'unavailable', code: 'project_setup_requester_review_unavailable' });
         expect(homes.requestsFor(mutatePath)).toEqual([]);
@@ -244,7 +254,7 @@ describe('Project Trust captured UI Account API', () => {
             { ...operation.snapshot, domainRef: { ...operation.snapshot.domainRef!, sourceWorkspace: undefined } },
         ]) {
             machineTransport.read.mockResolvedValue({ kind: 'found', operation: snapshot });
-            expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
+            expect(await rememberAdmittedProjectSetupConsent({ scope, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
                 .toEqual({ kind: 'unavailable', code: 'project_setup_review_unavailable' });
             expect(homes.requestsFor(readPath)).toEqual([]);
             expect(homes.requestsFor(mutatePath)).toEqual([]);
@@ -253,7 +263,7 @@ describe('Project Trust captured UI Account API', () => {
         machineTransport.read.mockResolvedValueOnce({ kind: 'found', operation: operation.snapshot })
             .mockResolvedValueOnce({ kind: 'found', operation: { ...operation.snapshot,
                 setupReview: { ...operation.snapshot.setupReview!, reviewedEffectDigest: 'changed-after-write' } } });
-        expect(await decideProjectSetupConsent({ decision: 'untilChanged', scope, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
+        expect(await rememberAdmittedProjectSetupConsent({ scope, workspace, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
             .toEqual({ kind: 'changed' });
         expect(homes.requestsFor(mutatePath)).toHaveLength(1);
     });

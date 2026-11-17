@@ -16,7 +16,6 @@ import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/ses
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import { createPlainProjectAccountRowListFixture } from './projectAccountRows';
 import { DiscussionAccountEncryptionInventoryV1Schema } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
 import { SESSION_FOLLOW_RULES_ROUTE_V1, ListSessionFollowRulesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigListResponseV1Schema } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
@@ -100,7 +99,9 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
         if (pathname === managedMachineActionEndpointPathV1('machines.managed.list')) {
             return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
         }
-        if (pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
+        if (pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+            return Response.json(ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', rows: [], coverage: 'complete' }));
+        }
         if (pathname === '/v2/sessions/query') {
             return Response.json(SessionListQueryResponseV1Schema.parse({
                 sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,

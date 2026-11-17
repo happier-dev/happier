@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol/teams';
 
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { standardCleanup, teamGroupFixture } from '@/dev/testkit';
+import { standardCleanup, teamGroupFixture, teamGroupMemberFixture } from '@/dev/testkit';
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -26,6 +26,8 @@ vi.mock('@/modal', async () => {
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Resolve the lazy Action graph during collection, outside interaction deadlines.
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 const GROUPS_LIST_PATH = '/v1/teams/groups/list';
 const MEMBER_ADD_PATH = '/v1/teams/groups/members/add';
@@ -42,8 +44,9 @@ import {
 } from '@/sync/store/teams/teamsSnapshots';
 
 /** Imported through the installed boundaries, like every other Team ops suite. */
+const teamGroupOperations = await import('./teamGroupOperations');
 async function operations() {
-    return await import('./teamGroupOperations');
+    return teamGroupOperations;
 }
 
 function group(overrides?: Partial<TeamGroupV1>): TeamGroupV1 {
@@ -55,14 +58,11 @@ function group(overrides?: Partial<TeamGroupV1>): TeamGroupV1 {
 }
 
 function member(overrides?: Partial<TeamGroupMemberV1>): TeamGroupMemberV1 {
-    return {
+    return teamGroupMemberFixture({
         accountId: 'account-2',
         membershipId: 'membership-2',
-        account: { name: 'Ada', firstName: 'Ada', lastName: null, username: null, avatarUrl: null },
-        historyAccess: 'from_membership',
-        contributions: { native: true, external: [] },
         ...overrides,
-    };
+    });
 }
 
 async function addHome(): Promise<string> {

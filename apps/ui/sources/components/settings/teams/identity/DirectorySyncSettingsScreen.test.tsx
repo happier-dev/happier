@@ -1,448 +1,197 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-
-const executeDirectoryMock = vi.hoisted(() => vi.fn());
-const executeIdentityMock = vi.hoisted(() => vi.fn());
-const refreshMock = vi.hoisted(() => vi.fn());
-const loadMoreSourcesMock = vi.hoisted(() => vi.fn());
-const routerPushMock = vi.hoisted(() => vi.fn());
-const openExternalUrlMock = vi.hoisted(() => vi.fn());
-const canMutateMock = vi.hoisted(() => ({ current: true }));
-const requestApprovalMock = vi.hoisted(() => vi.fn());
-const directoryStateMock = vi.hoisted(() => ({
-    current: {
-        kind: 'ready' as const,
-        items: [] as readonly ReturnType<typeof directorySource>[],
-        nextCursor: null as string | null,
-        refreshing: false,
-        loadingMore: false,
-        stale: false,
-        failure: null as Readonly<{ code: string; retryable: boolean }> | null,
-    },
-}));
-
-function directorySource(id: string) {
-    return {
-        v: 1 as const,
-        id,
-        teamId: 'team-1',
-        kind: 'workos_directory' as const,
-        displayName: id,
-        state: 'active' as const,
-        allowedActions: ['teams.directory.sources.sync', 'teams.directory.sources.remove'] as const,
-        sync: {
-            mode: 'events_and_full' as const,
-            attempt: 'succeeded' as const,
-            freshness: 'fresh' as const,
-            lastAttemptAt: null,
-            lastSuccessAt: null,
-            lastFullReconcileAt: null,
-            nextScheduledAt: null,
-        },
-        error: null,
-    };
-}
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: { push: routerPushMock } }).module;
-});
-vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
-vi.mock('@/modal', () => ({ Modal: { confirm: vi.fn(async () => true) } }));
-vi.mock('./identityAdministrationClient', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./identityAdministrationClient')>(),
-    createIdentityAdministrationClient: () => ({
-        execute: executeIdentityMock,
-        executeDirectory: executeDirectoryMock,
-    }),
-}));
-vi.mock('./useDirectoryAdministration', () => ({
-    useDirectoryAdministration: () => ({
-        state: directoryStateMock.current,
-        refresh: refreshMock,
-        loadMore: loadMoreSourcesMock,
-    }),
-}));
-vi.mock('../TeamSection', () => ({
-    TeamSection: (props: Readonly<{ children: (context: unknown) => React.ReactNode }>) => props.children({
-        team: { id: 'team-1', capabilities: { manageAuthentication: true } },
-        scope: { serverId: 'home-1', accountId: 'account-1' },
-        address: { serverId: 'home-1', teamId: 'team-1' },
-        canMutate: canMutateMock.current,
-        requestApproval: requestApprovalMock,
-    }),
-}));
-
-import { DirectorySyncSettingsScreen } from './DirectorySyncSettingsScreen';
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { TeamDirectorySourcePageV1Schema, TeamDirectorySourceSetupOptionsV1Schema } from '@happier-dev/protocol/teams';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture, teamDirectorySourceFixture, teamIdentityConnectionFixture } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
-beforeEach(() => {
-    standardCleanup();
-    executeDirectoryMock.mockReset();
-    executeIdentityMock.mockReset();
-    refreshMock.mockReset();
-    loadMoreSourcesMock.mockReset();
-    routerPushMock.mockReset();
-    openExternalUrlMock.mockReset();
-    openExternalUrlMock.mockResolvedValue(true);
-    openExternalUrlMock.mockReset();
-    openExternalUrlMock.mockResolvedValue(true);
-    canMutateMock.current = true;
-    requestApprovalMock.mockReset();
-    directoryStateMock.current.refreshing = false;
-    directoryStateMock.current.loadingMore = false;
-    directoryStateMock.current.stale = false;
-    directoryStateMock.current.items = [];
-    directoryStateMock.current.nextCursor = null;
-    directoryStateMock.current.failure = null;
+const routerPush = vi.hoisted(() => vi.fn());
+const openExternalUrl = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: routerPush } }).module);
+vi.mock('react-native', async () => {
+    const native = await (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock();
+    return { ...native, Platform: { ...native.Platform, OS: 'ios' } };
 });
-
-describe('DirectorySyncSettingsScreen source setup', () => {
-    it('keeps setup discoverable but disabled for a read-only Team', async () => {
-        canMutateMock.current = false;
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl }));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { DirectorySyncSettingsScreen } = await import('./DirectorySyncSettingsScreen');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+const { Modal } = await import('@/modal');
+const listPath = '/v1/teams/team-1/directory-sources';
+const setupPath = '/v1/teams/team-1/directory-source-setup-options';
+const createPath = listPath;
+const connectionPath = '/v1/teams/identity/workos/connection/create';
+const portalPath = '/v1/teams/identity/workos/admin-portal-link/create';
+const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
+const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+let serverId: string;
+function requestsAt(path: string) {
+    return harness.requests.filter(request => new URL(request.path, request.serverUrl).pathname === path);
+}
+function directorySource(id: string) {
+    return teamDirectorySourceFixture({ id, displayName: id });
+}
+function setup(ids: string[] = ['installation-1'], nextCursor: string | null = null) {
+    return TeamDirectorySourceSetupOptionsV1Schema.parse({ v: 1, items: ids.map(id => ({ kind: 'github_organization', displayName: 'happier-dev', githubAppInstallationId: id })), nextCursor, complete: nextCursor === null });
+}
+function connection(id = 'connection-1') {
+    return teamIdentityConnectionFixture({ id, provider: { id: 'provider-1', kind: 'workos_sso', displayName: 'WorkOS' }, externalReference: { v: 1, kind: 'workos_sso', organizationId: null, connectionId: null }, settings: { v: 1, kind: 'workos_sso' }, enabled: false, firstEnabledAt: null, state: 'setting_up', lastObservation: null });
+}
+async function renderDirectory() {
+    const screen = await renderScreen(<DirectorySyncSettingsScreen serverId={serverId} teamId="team-1" />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-add'), screen.getTextContent()).not.toBeNull());
+    return screen;
+}
+async function openSetup(screen: Awaited<ReturnType<typeof renderDirectory>>) {
+    await screen.pressByTestIdAsync('team-directory-source-add');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-workos')).not.toBeNull());
+}
+async function changeTeams() {
+    await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+}
+beforeEach(async () => {
+    standardCleanup();
+    resetTeamsSnapshotsForTests();
+    resetTeamsDirectoryEngineForTests();
+    resetTeamActionClientForTests();
+    await harness.reset();
+    serverId = await harness.addHome({ name: 'Identity Home', serverUrl: 'https://identity-home.example', accountId: 'account-1', teamsEnabled: true });
+    await harness.selectHomes([serverId]);
+    harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageAuthentication: true }) }) });
+    harness.answer(serverId, listPath, { body: TeamDirectorySourcePageV1Schema.parse({ items: [], nextCursor: null }) });
+    harness.answer(serverId, setupPath, { body: setup() });
+    routerPush.mockReset();
+    openExternalUrl.mockReset().mockResolvedValue(true);
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
+});
+describe('DirectorySyncSettingsScreen through real Home governance', () => {
+    it('keeps setup discoverable but disabled for an archived Team', async () => {
+        harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ archivedAt: 1, capabilities: teamCapabilitiesFixture({ manageAuthentication: true }) }) });
+        const screen = await renderDirectory();
         expect(screen.findByTestId('team-directory-source-add')?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync('team-directory-source-add');
-        expect(executeDirectoryMock).not.toHaveBeenCalled();
+        expect(requestsAt(setupPath)).toHaveLength(0);
     });
-
-    it('creates from the exact server-projected GitHub installation choice', async () => {
-        executeDirectoryMock
-            .mockResolvedValueOnce({
-                ok: true,
-                value: {
-                    v: 1,
-                    items: [{
-                        kind: 'github_organization',
-                        displayName: 'happier-dev',
-                        githubAppInstallationId: 'installation-1',
-                    }],
-                },
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                value: { id: 'source-1' },
-            });
-
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-        await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull());
-
+    it('creates from the exact server-projected installation and refreshes the mounted list', async () => {
+        harness.answer(serverId, `POST ${createPath}`, { body: directorySource('source-1') });
+        const screen = await renderDirectory();
+        await openSetup(screen);
         await screen.pressByTestIdAsync('team-directory-setup-option:github_organization:installation-1');
-
-        expect(executeDirectoryMock).toHaveBeenNthCalledWith(1, 'teams.directory.sourceSetup.list', {
-            v: 1,
-            teamId: 'team-1',
-        }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
-        expect(executeDirectoryMock).toHaveBeenNthCalledWith(2, 'teams.directory.sources.create', {
-            v: 1,
-            teamId: 'team-1',
-            kind: 'github_organization',
-            displayName: 'happier-dev',
-            githubAppInstallationId: 'installation-1',
-        }, {
-            onApprovalSucceeded: expect.any(Function),
-            onApprovalFailed: expect.any(Function),
-        });
-        expect(refreshMock).toHaveBeenCalledOnce();
-        expect(routerPushMock).toHaveBeenCalledWith(
-            '/settings/teams/home-1/team-1/authentication/directory/source-1',
-        );
+        await waitForHomeGovernance(() => expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory/source-1`));
+        expect(requestsAt(createPath).find(request => request.method === 'POST')?.input).toEqual({ v: 1, kind: 'github_organization', displayName: 'happier-dev', githubAppInstallationId: 'installation-1' });
+        expect(requestsAt(listPath).filter(request => request.method === 'GET').length).toBeGreaterThan(1);
         expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).toBeNull();
     });
-
-    it('finishes an approved source creation through the same mounted success path exactly once', async () => {
-        let finishCreation: ((value: Readonly<{ id: string }>) => void | Promise<void>) | undefined;
-        executeDirectoryMock
-            .mockResolvedValueOnce({
-                ok: true,
-                value: {
-                    v: 1,
-                    items: [{
-                        kind: 'github_organization',
-                        displayName: 'happier-dev',
-                        githubAppInstallationId: 'installation-1',
-                    }],
-                    nextCursor: null,
-                    complete: true,
-                },
-            })
-            .mockImplementationOnce(async (
-                _actionId: string,
-                _input: unknown,
-                options?: Readonly<{ onApprovalSucceeded?: typeof finishCreation }>,
-            ) => {
-                finishCreation = options?.onApprovalSucceeded;
-                return {
-                    ok: false,
-                    approvalPending: true,
-                    artifactId: 'approval-source-create',
-                    failure: { code: 'approval_pending', retryable: false },
-                };
-            });
-
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-        await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(screen.findByTestId(
-            'team-directory-setup-option:github_organization:installation-1',
-        )).not.toBeNull());
+    it.each([true, false])('settles source creation through native Ask (accepted=%s)', async accepted => {
+        await harness.requireUiApproval(serverId, 'teams.directory.sources.create');
+        vi.mocked(Modal.confirm).mockResolvedValue(accepted);
+        harness.answer(serverId, `POST ${createPath}`, { body: directorySource('source-approved') });
+        const screen = await renderDirectory();
+        await openSetup(screen);
         await screen.pressByTestIdAsync('team-directory-setup-option:github_organization:installation-1');
-
-        expect(finishCreation).toBeTypeOf('function');
-        expect(routerPushMock).not.toHaveBeenCalled();
-        expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull();
-
-        await act(async () => {
-            await finishCreation?.({ id: 'source-approved' });
-        });
-        expect(refreshMock).toHaveBeenCalledOnce();
-        expect(routerPushMock).toHaveBeenCalledOnce();
-        expect(routerPushMock).toHaveBeenCalledWith(
-            '/settings/teams/home-1/team-1/authentication/directory/source-approved',
-        );
-        expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).toBeNull();
+        await waitForHomeGovernance(() => expect(Modal.confirm).toHaveBeenCalledOnce());
+        if (accepted) {
+            await waitForHomeGovernance(() => expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory/source-approved`));
+            expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).toBeNull();
+        } else {
+            expect(requestsAt(createPath).filter(request => request.method === 'POST')).toHaveLength(0);
+            expect(routerPush).not.toHaveBeenCalled();
+            expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull();
+        }
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
-
-    it('exposes accumulated source pagination through an accessible mounted control', async () => {
-        directoryStateMock.current.items = [directorySource('directory-51')];
-        directoryStateMock.current.nextCursor = 'cursor-1';
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-
-        expect(screen.findByTestId('team-directory-source-directory-51')).not.toBeNull();
-        expect(screen.findByTestId('team-directory-sources-load-more')).not.toBeNull();
+    it('accumulates source pages and opens a source from the later page', async () => {
+        harness.answer(serverId, listPath, { select: (_input, request) => ({ body: new URL(request.url).searchParams.has('cursor')
+            ? TeamDirectorySourcePageV1Schema.parse({ items: [directorySource('directory-51')], nextCursor: null })
+            : TeamDirectorySourcePageV1Schema.parse({ items: [directorySource('directory-1')], nextCursor: 'cursor-1' }) }) });
+        const screen = await renderDirectory();
         await screen.pressByTestIdAsync('team-directory-sources-load-more');
-        expect(loadMoreSourcesMock).toHaveBeenCalledOnce();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-directory-51')).not.toBeNull());
+        expect(screen.findByTestId('team-directory-source-directory-1')).not.toBeNull();
+        expect(requestsAt(listPath)[1]?.path).toContain('cursor=cursor-1');
         await screen.pressByTestIdAsync('team-directory-source-directory-51');
-        expect(routerPushMock).toHaveBeenCalledWith(
-            '/settings/teams/home-1/team-1/authentication/directory/directory-51',
-        );
+        expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory/directory-51`);
     });
-
-    it('does not continue from a stale source-list cursor after refresh failure', async () => {
-        directoryStateMock.current.items = [directorySource('directory-1')];
-        directoryStateMock.current.nextCursor = 'cursor-1';
-        directoryStateMock.current.stale = true;
-        directoryStateMock.current.failure = { code: 'home_unreachable', retryable: true };
-
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-
+    it('retains a source but refuses its stale cursor after a failed refresh', async () => {
+        harness.answer(serverId, listPath, { body: TeamDirectorySourcePageV1Schema.parse({ items: [directorySource('directory-1')], nextCursor: 'cursor-1' }) });
+        const screen = await renderDirectory();
+        harness.answer(serverId, listPath, { status: 503, body: { error: 'home_unreachable' } });
+        await changeTeams();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-stale')).not.toBeNull());
         expect(screen.findByTestId('team-directory-source-directory-1')).not.toBeNull();
         expect(screen.findByTestId('team-directory-sources-load-more')).toBeNull();
     });
-
-    it('paginates setup discovery and preserves the exact continuation contract', async () => {
-        executeDirectoryMock
-            .mockResolvedValueOnce({
-                ok: true,
-                value: {
-                    v: 1,
-                    items: [{
-                        kind: 'github_organization',
-                        displayName: 'happier-dev',
-                        githubAppInstallationId: 'installation-1',
-                    }],
-                    nextCursor: 'cursor-1',
-                    complete: false,
-                },
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                value: {
-                    v: 1,
-                    items: [{
-                        kind: 'github_organization',
-                        displayName: 'happier-dev-labs',
-                        githubAppInstallationId: 'installation-51',
-                    }],
-                    nextCursor: null,
-                    complete: true,
-                },
-            });
-
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-        await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(screen.findByTestId('team-directory-setup-load-more')).not.toBeNull());
+    it('paginates setup discovery with the server cursor', async () => {
+        harness.answer(serverId, setupPath, { select: (_input, request) => ({ body: setup([new URL(request.url).searchParams.has('cursor') ? 'installation-51' : 'installation-1'], new URL(request.url).searchParams.has('cursor') ? null : 'cursor-1') }) });
+        const screen = await renderDirectory();
+        await openSetup(screen);
         await screen.pressByTestIdAsync('team-directory-setup-load-more');
-
-        await vi.waitFor(() => expect(screen.findByTestId(
-            'team-directory-setup-option:github_organization:installation-51',
-        )).not.toBeNull());
-        expect(executeDirectoryMock).toHaveBeenCalledWith('teams.directory.sourceSetup.list', {
-            v: 1,
-            teamId: 'team-1',
-            cursor: 'cursor-1',
-        }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    });
-
-    it('refreshes visible setup candidates on the exact Home Team AccountChange', async () => {
-        executeDirectoryMock
-            .mockResolvedValueOnce({
-                ok: true,
-                value: { v: 1, items: [], nextCursor: null, complete: true },
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                value: {
-                    v: 1,
-                    items: [{
-                        kind: 'github_organization',
-                        displayName: 'happier-dev',
-                        githubAppInstallationId: 'installation-new',
-                    }],
-                    nextCursor: null,
-                    complete: true,
-                },
-            });
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-        await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(executeDirectoryMock).toHaveBeenCalledOnce());
-
-        await act(async () => {
-            publishHomeAccountChange('another-home', [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
-            publishHomeAccountChange('home-1', ['home-governance']);
-        });
-        expect(executeDirectoryMock).toHaveBeenCalledOnce();
-
-        await act(async () => {
-            publishHomeAccountChange('home-1', [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
-        });
-        await vi.waitFor(() => expect(executeDirectoryMock).toHaveBeenCalledTimes(2));
-        await vi.waitFor(() => expect(screen.findByTestId(
-            'team-directory-setup-option:github_organization:installation-new',
-        )).not.toBeNull());
-        expect(executeDirectoryMock).toHaveBeenNthCalledWith(2, 'teams.directory.sourceSetup.list', {
-            v: 1,
-            teamId: 'team-1',
-        }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    });
-
-    it('retains server-projected setup choices when their refresh fails', async () => {
-        executeDirectoryMock
-            .mockResolvedValueOnce({
-                ok: true,
-                value: {
-                    v: 1,
-                    items: [{
-                        kind: 'github_organization',
-                        displayName: 'happier-dev',
-                        githubAppInstallationId: 'installation-1',
-                    }],
-                },
-            })
-            .mockResolvedValueOnce({ ok: false, failure: { code: 'home_unreachable', retryable: true } });
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-
-        await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull());
-        await screen.pressByTestIdAsync('team-directory-source-add');
-
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-51')).not.toBeNull());
         expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull();
-        expect(screen.findByTestId('team-directory-setup-retry')).not.toBeNull();
+        expect(requestsAt(setupPath)[1]?.path).toContain('cursor=cursor-1');
     });
-
-    it('presents a localized recovery message when the WorkOS portal cannot be opened', async () => {
-        executeDirectoryMock.mockResolvedValueOnce({ ok: true, value: { v: 1, items: [] } });
-        executeIdentityMock
-            .mockResolvedValueOnce({ ok: true, value: { connection: { id: 'connection-1' } } })
-            .mockResolvedValueOnce({ ok: true, value: { url: 'https://workos.example/portal' } });
-        openExternalUrlMock.mockResolvedValueOnce(false);
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-
+    it('refreshes visible setup candidates only for the matching Home Team change', async () => {
+        const screen = await renderDirectory();
+        await openSetup(screen);
+        await act(async () => { publishHomeAccountChange('another-home', [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]); publishHomeAccountChange(serverId, ['home-governance']); });
+        expect(requestsAt(setupPath)).toHaveLength(1);
+        harness.answer(serverId, setupPath, { body: setup(['installation-new']) });
+        await changeTeams();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-new')).not.toBeNull());
+    });
+    it('retains setup choices and offers recovery when discovery refresh fails', async () => {
+        const screen = await renderDirectory();
+        await openSetup(screen);
+        harness.answer(serverId, setupPath, { status: 503, body: { error: 'home_unreachable' } });
         await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(screen.findByTestId('team-directory-setup-workos')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-retry')).not.toBeNull());
+        expect(screen.findByTestId('team-directory-setup-option:github_organization:installation-1')).not.toBeNull();
+    });
+    it('presents recovery when the native browser cannot open the WorkOS portal', async () => {
+        harness.answer(serverId, connectionPath, { body: { connection: connection() } });
+        harness.answer(serverId, portalPath, { body: { url: 'https://workos.example/portal' } });
+        openExternalUrl.mockResolvedValue(false);
+        const screen = await renderDirectory();
+        await openSetup(screen);
         await screen.pressByTestIdAsync('team-directory-setup-workos');
-
-        expect(screen.getTextContent()).toContain('identityAdministration.errorInvalid');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('identityAdministration.errorInvalid'));
         expect(screen.getTextContent()).not.toContain('workos_portal_open_failed');
     });
-
-    it('says who can set WorkOS up when the Home has no WorkOS, instead of only refusing', async () => {
-        executeDirectoryMock.mockResolvedValueOnce({ ok: true, value: { v: 1, items: [] } });
-        executeIdentityMock.mockResolvedValueOnce({ ok: false, failure: { code: 'workos_platform_unavailable', retryable: false } });
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-
-        await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(screen.findByTestId('team-directory-setup-workos')).not.toBeNull());
+    it('says who can configure WorkOS when the Home lacks it', async () => {
+        harness.answer(serverId, connectionPath, { status: 503, body: { error: 'workos_platform_unavailable' } });
+        const screen = await renderDirectory();
+        await openSetup(screen);
         await screen.pressByTestIdAsync('team-directory-setup-workos');
-
-        await vi.waitFor(() => expect(screen.findByTestId('team-directory-setup-workos-unavailable')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-workos-unavailable')).not.toBeNull());
         expect(screen.getTextContent()).toContain('identityAdministration.errorWorkosPlatformUnavailable');
         expect(screen.getTextContent()).toMatch(/teams\.authentication\.add\.ask(Named|Unnamed)/);
     });
-
-    it('continues approved WorkOS connection and portal Actions through the same setup flow', async () => {
-        executeDirectoryMock.mockResolvedValueOnce({
-            ok: true,
-            value: { v: 1, items: [], nextCursor: null, complete: true },
-        });
-        let finishConnection: ((value: Readonly<{ connection: Readonly<{ id: string }> }>) => void | Promise<void>) | undefined;
-        let finishPortal: ((value: Readonly<{ url: string }>) => void | Promise<void>) | undefined;
-        executeIdentityMock
-            .mockImplementationOnce(async (
-                _actionId: string,
-                _input: unknown,
-                options?: Readonly<{ onApprovalSucceeded?: typeof finishConnection }>,
-            ) => {
-                finishConnection = options?.onApprovalSucceeded;
-                return {
-                    ok: false,
-                    approvalPending: true,
-                    artifactId: 'approval-workos-create',
-                    failure: { code: 'approval_pending', retryable: false },
-                };
-            })
-            .mockImplementationOnce(async (
-                _actionId: string,
-                _input: unknown,
-                options?: Readonly<{ onApprovalSucceeded?: typeof finishPortal }>,
-            ) => {
-                finishPortal = options?.onApprovalSucceeded;
-                return {
-                    ok: false,
-                    approvalPending: true,
-                    artifactId: 'approval-workos-portal',
-                    failure: { code: 'approval_pending', retryable: false },
-                };
-            });
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-        await screen.pressByTestIdAsync('team-directory-source-add');
-        await vi.waitFor(() => expect(screen.findByTestId('team-directory-setup-workos')).not.toBeNull());
-
+    it('confirms WorkOS creation and portal separately through native Ask', async () => {
+        await harness.requireUiApproval(serverId, ['teams.identity.workos.connection.create', 'teams.identity.workos.adminPortalLink.create']);
+        harness.answer(serverId, connectionPath, { body: { connection: connection('connection-approved') } });
+        harness.answer(serverId, portalPath, { body: { url: 'https://workos.example/approved' } });
+        const screen = await renderDirectory();
+        await openSetup(screen);
         await screen.pressByTestIdAsync('team-directory-setup-workos');
-        expect(finishConnection).toBeTypeOf('function');
-        await act(async () => {
-            await finishConnection?.({ connection: { id: 'connection-approved' } });
-        });
-        expect(executeIdentityMock).toHaveBeenNthCalledWith(
-            2,
-            'teams.identity.workos.adminPortalLink.create',
-            expect.objectContaining({ connectionId: 'connection-approved', intent: 'dsync' }),
-            expect.any(Object),
-        );
-        expect(finishPortal).toBeTypeOf('function');
-        expect(openExternalUrlMock).not.toHaveBeenCalled();
-
-        await act(async () => {
-            await finishPortal?.({ url: 'https://workos.example/approved' });
-        });
-        expect(openExternalUrlMock).toHaveBeenCalledWith('https://workos.example/approved');
+        await waitForHomeGovernance(() => expect(openExternalUrl).toHaveBeenCalledWith('https://workos.example/approved'));
+        expect(requestsAt(portalPath)[0]?.input).toEqual({ v: 1, teamId: 'team-1', connectionId: 'connection-approved', intent: 'dsync' });
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
-
-    it('blocks source setup while the authoritative directory projection refreshes', async () => {
-        directoryStateMock.current.refreshing = true;
-        const screen = await renderScreen(<DirectorySyncSettingsScreen serverId="home-1" teamId="team-1" />);
-
-        expect(screen.findByTestId('team-directory-source-add')?.props.disabled).toBe(true);
+    it('blocks setup while the authoritative directory read is refreshing', async () => {
+        const screen = await renderDirectory();
+        const held = createDeferred<void>();
+        harness.answer(serverId, listPath, { body: TeamDirectorySourcePageV1Schema.parse({ items: [], nextCursor: null }), respondAfter: held.promise });
+        await changeTeams();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-add')?.props.disabled).toBe(true));
         await screen.pressByTestIdAsync('team-directory-source-add');
-        expect(executeDirectoryMock).not.toHaveBeenCalled();
+        expect(requestsAt(setupPath)).toHaveLength(0);
+        await act(async () => held.resolve());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-add')?.props.disabled).toBe(false));
     });
 });

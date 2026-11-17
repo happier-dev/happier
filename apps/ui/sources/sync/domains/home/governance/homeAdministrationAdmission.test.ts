@@ -1,3 +1,4 @@
+import { homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { describe, expect, it } from 'vitest';
 import {
     NO_HOME_CAPABILITIES_V1,
@@ -7,25 +8,13 @@ import {
 import { resolveHomeAdministrationAdmission } from './homeAdministrationAdmission';
 
 function projection(overrides: Partial<HomeGovernanceProjectionV1> = {}): HomeGovernanceProjectionV1 {
-    return {
+    return homeGovernanceProjectionFixture({
         viewer: { accountId: 'acc_1', homeRole: 'member', status: 'active' },
         capabilities: NO_HOME_CAPABILITIES_V1,
-        policy: {
-            revision: 1,
-            teamCreationPolicy: 'managed_only',
-            authentication: { status: 'inherited' },
-        },
-        authenticationOptions: {
-            methods: [],
-            permittedAccountModes: ['e2ee'],
-            recommendedProvisioningMode: 'e2ee',
-            signInService: { deploymentMode: null, canDisable: false },
-        },
-        setupState: 'owned',
         activeOwnerCount: 1,
         teamsEnabled: false,
         ...overrides,
-    };
+    });
 }
 
 describe('resolveHomeAdministrationAdmission', () => {

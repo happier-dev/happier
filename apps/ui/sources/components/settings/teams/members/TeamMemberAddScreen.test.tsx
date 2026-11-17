@@ -10,6 +10,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -22,9 +23,10 @@ installHomeGovernanceBoundaries(harness);
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const ACCOUNT_SEARCH_PATH = '/v1/home/accounts/search';
+// Load the real screen before behavior deadlines; the first import traverses the full UI graph.
+const { TeamMemberAddScreen } = await import('./TeamMemberAddScreen');
 
 async function renderAddMember(serverId: string) {
-    const { TeamMemberAddScreen } = await import('./TeamMemberAddScreen');
     return renderScreen(<TeamMemberAddScreen serverId={serverId} teamId="team-1" />);
 }
 
@@ -71,13 +73,13 @@ describe('TeamMemberAddScreen search', () => {
         });
 
         const screen = await renderAddMember(serverId);
-        act(() => screen.changeTextByTestId('team-member-add-search', 'Grace'));
+        await act(() => screen.changeTextByTestId('team-member-add-search', 'Grace'));
         await waitForTestId(screen, 'team-member-add-search-loading');
         releaseEmpty();
         await waitForTestId(screen, 'team-member-add-search-empty');
 
         harness.answer(serverId, ACCOUNT_SEARCH_PATH, { status: 503, body: { error: 'unavailable' } });
-        act(() => screen.changeTextByTestId('team-member-add-search', 'Ada'));
+        await act(() => screen.changeTextByTestId('team-member-add-search', 'Ada'));
         await waitForTestId(screen, 'team-member-add-search-retry');
 
         harness.answer(serverId, ACCOUNT_SEARCH_PATH, {
@@ -124,7 +126,7 @@ describe('TeamMemberAddScreen search', () => {
         });
 
         const screen = await renderAddMember(serverId);
-        act(() => screen.changeTextByTestId('team-member-add-search', 'Grace'));
+        await act(() => screen.changeTextByTestId('team-member-add-search', 'Grace'));
         await waitForTestId(screen, 'team-member-add-candidate:account-grace');
 
         expect(screen.getTextContent()).toContain('teams.members.ineligible');
@@ -141,7 +143,7 @@ describe('TeamMemberAddScreen search', () => {
         harness.answer(serverId, ACCOUNT_SEARCH_PATH, { status: 403, body: { error: 'forbidden' } });
 
         const screen = await renderAddMember(serverId);
-        act(() => screen.changeTextByTestId('team-member-add-search', 'Ada'));
+        await act(() => screen.changeTextByTestId('team-member-add-search', 'Ada'));
         await waitForTestId(screen, 'team-member-add-search-unavailable');
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-member-add-search-retry');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TeamCredentialUsageQueryResultV1 } from '@happier-dev/protocol/teams';
+import { TeamCredentialUsageQueryResultV1Schema, type TeamCredentialUsageQueryResultV1 } from '@happier-dev/protocol/teams';
 import { createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 
 import { buildTeamCredentialUsageCsv } from './teamCredentialUsageExport';
@@ -8,7 +8,7 @@ const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite:
 const NO_COST = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
 
 function result(overrides?: Partial<TeamCredentialUsageQueryResultV1>): TeamCredentialUsageQueryResultV1 {
-    return {
+    return TeamCredentialUsageQueryResultV1Schema.parse({
         v: 1,
         totals: {
             eventCount: 4,
@@ -30,7 +30,7 @@ function result(overrides?: Partial<TeamCredentialUsageQueryResultV1>): TeamCred
         nextCursor: null,
         limits: [],
         ...overrides,
-    } as TeamCredentialUsageQueryResultV1;
+    });
 }
 
 function rows(csv: string): string[][] {

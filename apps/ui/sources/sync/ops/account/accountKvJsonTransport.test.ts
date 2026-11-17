@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
@@ -7,6 +7,7 @@ import { createAccountKvJsonTransport } from './accountKvJsonTransport';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { legacyAccountKvVectors } from '../../../../../../packages/protocol/src/crypto/fixtures/accountKvLegacyV0';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
@@ -20,10 +21,26 @@ import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
-// The shared sync singleton is the mounted application boundary, not a second cipher implementation.
-const mounted = vi.hoisted(() => ({ encryption: null as Encryption | null,
-    credentials: null as AuthCredentials | null, getCredentials() { return this.credentials; } }));
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({ getSyncSingleton: () => mounted }));
+import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+
+installApprovalCommonModuleMocks();
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary();
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+async function mountAccount(accountCredentials: AuthCredentials) {
+    await connection?.dispose();
+    connection = await restoreServerAccountForTest({
+        serverUrl: 'https://account-kv.test', credentials: accountCredentials,
+        request: async (input) => new URL(String(input)).pathname === '/v1/account/encryption/currentness'
+            ? Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(accountCredentials)) : null,
+    });
+}
+afterEach(async () => { await connection?.dispose(); connection = null; });
 
 const key = 'workspace:tabs:v1';
 const credentials: AuthCredentials = { token: createAccountTokenForTests('Account-A') };
@@ -32,20 +49,21 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 const currentness = { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 };
 
 describe('Account KV JSON transport', () => {
-    beforeEach(() => { vi.clearAllMocks(); mounted.encryption = null; mounted.credentials = null; });
+    beforeEach(async () => { vi.clearAllMocks(); await mountAccount(credentials); });
 
     async function encryptedAccount() {
         const secret = new Uint8Array(32).fill(7);
-        mounted.encryption = await Encryption.create(secret);
+        const encryption = await Encryption.create(secret);
         const material = createAccountScopedCryptoMaterialSnapshotV1({
             accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret },
         });
-        mounted.credentials = { token: credentials.token, secret: encodeBase64(secret, 'base64url') };
+        const accountCredentials = { token: credentials.token, secret: encodeBase64(secret, 'base64url') };
+        await mountAccount(accountCredentials);
         return {
-            credentials: mounted.credentials,
+            credentials: accountCredentials,
             currentness: { ...currentness, mode: 'e2ee', signingKeyFingerprint: 'current-signing',
                 contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint) },
-            encryption: mounted.encryption,
+            encryption,
         };
     }
 
@@ -181,8 +199,7 @@ describe('Account KV JSON transport', () => {
     it('uses the explicitly captured E2EE Account cipher while another Home is mounted', async () => {
         const account = await encryptedAccount();
         const encoded = await account.encryption.encryptRaw({ boards: ['target'] });
-        mounted.credentials = { ...account.credentials, token: 'another-Home' };
-        mounted.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await mountAccount({ token: createAccountTokenForTests('Other-Account'), secret: encodeBase64(new Uint8Array(32).fill(9), 'base64url') });
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(account.currentness))
             .mockResolvedValueOnce(json({ values: [{ key, value: encoded, version: 4 }] }));
         const transport = createAccountKvJsonTransport({ key, credentials: account.credentials, request,
@@ -195,7 +212,7 @@ describe('Account KV JSON transport', () => {
         const request = vi.fn<ServerFetch>().mockImplementation(async () => json({ ...account.currentness, contentKeyFingerprint: 'other-key' }));
         const transport = createAccountKvJsonTransport({ key, credentials: account.credentials, request, shouldContinue: () => true });
         await expect(transport.read()).rejects.toMatchObject({ code: 'account_storage_currentness_unavailable' });
-        mounted.encryption = null;
+        getSyncSingleton().encryption = null;
         await expect(transport.compareAndSet({}, -1)).rejects.toMatchObject({ code: 'account_storage_currentness_unavailable' });
         expect(request.mock.calls.map(call => call[0])).toEqual(['/v1/account/encryption/currentness', '/v1/account/encryption/currentness']);
     });
@@ -210,8 +227,7 @@ describe('Account KV JSON transport', () => {
 
     it('rejects another mounted Account cipher before writing with the newly published credentials', async () => {
         const account = await encryptedAccount();
-        mounted.credentials = { ...account.credentials, token: 'previous-Account' };
-        mounted.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await mountAccount({ token: createAccountTokenForTests('Previous-Account'), secret: encodeBase64(new Uint8Array(32).fill(9), 'base64url') });
         const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(account.currentness))
             .mockResolvedValueOnce(json({ success: true, results: [{ key, version: 0 }] }));
         const transport = createAccountKvJsonTransport({ key, credentials: account.credentials, request, shouldContinue: () => true });

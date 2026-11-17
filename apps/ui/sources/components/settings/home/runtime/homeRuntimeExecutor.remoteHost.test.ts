@@ -10,6 +10,8 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { RemoteHostRecordV1Schema, RemoteHostCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { AccountSettingsV2GetResponseSchema, AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { SystemTaskBridge } from '@/components/systemTasks/types';
 
 const desktop = vi.hoisted(() => ({ bridge: null as SystemTaskBridge | null }));
@@ -71,15 +73,15 @@ async function prepareHome() {
     const { runtime, catalog: { applyRemoteHostCatalogSnapshot }, executor: { restartHomeRuntime } } = modules;
     const serverId = await home.addHome({ name: 'SSH Home', serverUrl: 'https://ssh-home.test', accountId: 'account', currentAccount: true });
     const scope = { serverId, accountId: 'account' };
-    const host = { id: 'home-host', name: 'Home host', createdAt: 1, updatedAt: 2, lastUsedAt: null,
+    const host = RemoteHostRecordV1Schema.parse({ id: 'home-host', name: 'Home host', createdAt: 1, updatedAt: 2, lastUsedAt: null,
         linkedRelayProfileId: serverId, linkedMachineId: null,
-        ssh: { target: 'dev@private.example', authMode: 'agent' as const } };
+        ssh: { target: 'dev@private.example', authMode: 'agent' } });
     const catalog = { status: 'ready' as const, revision: 4, hosts: [host], diagnostics: [] };
-    home.answer(serverId, '/v1/account/entity-rows/remote-hosts', { body: { status: 'present', revision: 4,
-        content: { t: 'plain', v: { v: 1, hosts: [host] } } } });
-    home.answer(serverId, '/v2/account/settings', { body: { version: 4, content: { t: 'plain', v: {} } } });
+    home.answer(serverId, '/v1/account/entity-rows/remote-hosts', { body: RemoteHostCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 4,
+        content: { t: 'plain', v: { v: 1, hosts: [host] } } }) });
+    home.answer(serverId, '/v2/account/settings', { body: AccountSettingsV2GetResponseSchema.parse({ version: 4, content: { t: 'plain', v: {} } }) });
     home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }) });
-    home.answer(serverId, '/v2/account/settings/history', { body: { snapshots: [] } });
+    home.answer(serverId, '/v2/account/settings/history', { body: AccountSettingsV2HistoryListResponseSchema.parse({ snapshots: [] }) });
     home.answer(serverId, '/v1/account/entity-rows/profiles/transfer', { body: { status: 'absent' } });
     const emptySessions = SessionListQueryResponseV1Schema.parse({
         sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,

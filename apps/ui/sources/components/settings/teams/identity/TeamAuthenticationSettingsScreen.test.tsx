@@ -2,22 +2,24 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { TeamDirectorySourcePageV1Schema, TeamIdentityConnectionListResultV1Schema, TeamIdentityConnectionCreateInputV1Schema } from '@happier-dev/protocol/teams';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { teamCapabilitiesFixture, teamSummaryFixture, teamIdentityConnectionFixture, teamDirectorySourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { ManagedGitHubAppsListOutputV1Schema } from '@happier-dev/protocol/identity/githubApps';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
-const executeMock = vi.hoisted(() => vi.fn());
-const executeDirectoryMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
-const teamGitHubAppsSectionMock = vi.hoisted(() => vi.fn((_props: Readonly<{
-    createAvailable: boolean;
-}>) => null));
-const teamContextMock = vi.hoisted(() => ({
+const teamFixture = {
     canMutate: false,
     manageAuthentication: true,
     directoryMembership: undefined as undefined | null | Readonly<{
         providerDisplayName: string; state: 'syncing' | 'healthy' | 'needs_attention';
     }>,
-}));
-const identityStateMock = vi.hoisted(() => ({
+};
+const identityFixture = {
     current: {
         kind: 'ready' as const,
         refreshing: false,
@@ -47,7 +49,7 @@ const identityStateMock = vi.hoisted(() => ({
             },
         }] as Array<Record<string, unknown>>,
     },
-}));
+};
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -57,45 +59,55 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
 });
-vi.mock('./TeamGitHubAppScreens', () => ({ TeamGitHubAppsSection: teamGitHubAppsSectionMock }));
-vi.mock('./TeamMemberSignInLinkSection', () => ({ TeamMemberSignInLinkSection: () => null }));
-vi.mock('./TeamAuthenticationPolicySections', () => ({ TeamAuthenticationPolicySections: () => null }));
-// The identity transport is the boundary: the real directory reader runs on top of it.
-vi.mock('./identityAdministrationClient', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./identityAdministrationClient')>(),
-    createIdentityAdministrationClient: () => ({ execute: executeMock, executeDirectory: executeDirectoryMock }),
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
+    BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [], BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [],
 }));
-vi.mock('./useIdentityAdministration', () => ({
-    useIdentityAdministration: () => ({
-        refresh: vi.fn(),
-        state: identityStateMock.current,
-    }),
-}));
-vi.mock('../TeamSection', async () => {
-    const { teamPolicyFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
-    return {
-        TeamSection: (props: Readonly<{ children: (context: unknown) => React.ReactNode }>) => props.children({
-            // The Team policy is part of every Team projection this screen reads;
-            // the authentication policy editor renders from it.
-            team: { name: 'Platform', capabilities: { manageAuthentication: teamContextMock.manageAuthentication },
-                policy: teamPolicyFixture(), directoryMembership: teamContextMock.directoryMembership },
-            scope: { serverId: 'home-1', accountId: 'account-1' },
-            address: { serverId: 'home-1', teamId: 'team-1' },
-            canMutate: teamContextMock.canMutate,
-            approvalPending: false,
-            requestApproval: vi.fn(),
-            refresh: vi.fn(),
-        }),
-    };
-});
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
+const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+let serverId: string;
+const connectionsPath = '/v1/teams/identity/connections/list';
+const createPath = '/v1/teams/identity/connections/create';
+const sourcesPath = '/v1/teams/team-1/directory-sources';
+let directoryPage: unknown;
+let createResponseId = 'connection-1';
+let githubApps = ManagedGitHubAppsListOutputV1Schema.parse({ registrations: [], installations: [] });
 
-const { ItemList } = await import('@/components/ui/lists/ItemList');
+async function renderAuthentication() {
+    harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({
+        archivedAt: teamFixture.canMutate ? null : 1,
+        capabilities: teamCapabilitiesFixture({ manageAuthentication: teamFixture.manageAuthentication }),
+        ...(teamFixture.directoryMembership !== undefined ? { directoryMembership: teamFixture.directoryMembership } : {}),
+    }) });
+    harness.answer(serverId, connectionsPath, { body: TeamIdentityConnectionListResultV1Schema.parse({
+        items: identityFixture.current.items, eligibleProviders: identityFixture.current.eligibleProviders,
+        admissionModeApplicability: identityFixture.current.admissionModeApplicability, memberSignInUrl: null,
+    }) });
+    harness.answer(serverId, sourcesPath, { body: TeamDirectorySourcePageV1Schema.parse(directoryPage) });
+    harness.answer(serverId, '/v1/identity/github-apps/list', { body: githubApps });
+    harness.answer(serverId, '/v1/auth/entry', { body: AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'ready', actions: [], autoRedirect: null }) });
+    harness.answer(serverId, createPath, { select: input => {
+        const request = TeamIdentityConnectionCreateInputV1Schema.parse(input);
+        return { body: { connection: teamIdentityConnectionFixture({
+            v: 1, id: createResponseId, teamId: 'team-1',
+            provider: { id: request.providerInstanceId, kind: request.externalReference.kind, displayName: 'Corporate sign-in' },
+            externalReference: request.externalReference, settings: request.settings,
+            enabled: false, firstEnabledAt: null, revision: 1, state: 'disabled', allowedActions: [],
+            lastObservation: null, lastSuccessfulTest: null, createdAt: 1, updatedAt: 1,
+        }) } };
+    } });
+    const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId={serverId} teamId="team-1" />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-authentication-fact-directory')
+        ?? screen.findByTestId('team-authentication-add-menu')).not.toBeNull());
+    if (teamFixture.manageAuthentication) await waitForHomeGovernance(() => expect(addMenu(screen).items.length).toBeGreaterThan(0));
+    return screen;
+}
+
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { TeamAuthenticationSettingsScreen } = await import('./TeamAuthenticationSettingsScreen');
-
-function SettingsPage({ children }: React.PropsWithChildren) {
-    return <ItemList>{children}</ItemList>;
-}
 
 type AddMenu = Readonly<{
     open: boolean;
@@ -124,17 +136,22 @@ async function choose(screen: Awaited<ReturnType<typeof renderScreen>>, testID: 
     await React.act(async () => { addMenu(screen).onSelect(choice!.id); });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     standardCleanup();
-    executeMock.mockReset();
-    executeDirectoryMock.mockReset();
-    executeDirectoryMock.mockResolvedValue({ ok: true, value: { items: [], nextCursor: null } });
+    resetTeamsSnapshotsForTests();
+    resetTeamsDirectoryEngineForTests();
+    resetTeamActionClientForTests();
+    await harness.reset();
+    serverId = await harness.addHome({ name: 'Identity Home', serverUrl: 'https://identity-home.example', accountId: 'account-1', teamsEnabled: true });
+    await harness.selectHomes([serverId]);
+    directoryPage = { items: [], nextCursor: null };
+    createResponseId = 'connection-1';
+    githubApps = ManagedGitHubAppsListOutputV1Schema.parse({ registrations: [], installations: [] });
     routerPushMock.mockReset();
-    teamGitHubAppsSectionMock.mockClear();
-    identityStateMock.current.refreshing = false;
-    identityStateMock.current.stale = false;
-    identityStateMock.current.items = [];
-    identityStateMock.current.eligibleProviders = [{
+    identityFixture.current.refreshing = false;
+    identityFixture.current.stale = false;
+    identityFixture.current.items = [];
+    identityFixture.current.eligibleProviders = [{
         v: 1,
         providerId: 'provider-1',
         providerKind: 'oidc',
@@ -159,9 +176,9 @@ beforeEach(() => {
             },
         },
     }];
-    teamContextMock.canMutate = false;
-    teamContextMock.manageAuthentication = true;
-    teamContextMock.directoryMembership = undefined;
+    teamFixture.canMutate = false;
+    teamFixture.manageAuthentication = true;
+    teamFixture.directoryMembership = undefined;
 });
 
 describe('TeamAuthenticationSettingsScreen', () => {
@@ -170,16 +187,16 @@ describe('TeamAuthenticationSettingsScreen', () => {
         ['healthy', 'active'],
         ['needs_attention', 'needsAttention'],
     ] as const)('renders the safe Directory fact (%s) for a read-only member without requesting source administration', async (state, label) => {
-        teamContextMock.manageAuthentication = false;
-        teamContextMock.directoryMembership = { providerDisplayName: 'Okta via WorkOS', state };
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        teamFixture.manageAuthentication = false;
+        teamFixture.directoryMembership = { providerDisplayName: 'Okta via WorkOS', state };
+        const screen = await renderAuthentication();
         const fact = screen.findAllByTestId('team-authentication-fact-directory')[0];
         expect(fact?.props).toMatchObject({
             title: 'Okta via WorkOS', subtitle: `teams.authentication.directory.state.${label}`,
             mode: 'info', showChevron: false,
         });
         expect(fact?.props.onPress).toBeUndefined();
-        expect(executeDirectoryMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor(sourcesPath)).toHaveLength(0);
         expect(screen.findAllByTestId('team-authentication-add-menu')).toHaveLength(0);
     });
 
@@ -187,19 +204,19 @@ describe('TeamAuthenticationSettingsScreen', () => {
         [null, 'teams.authentication.directory.empty'],
         [undefined, 'teams.authentication.directory.unknown'],
     ] as const)('distinguishes absent Directory from an omitted older-server fact (%s)', async (fact, title) => {
-        teamContextMock.manageAuthentication = false;
-        teamContextMock.directoryMembership = fact;
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        teamFixture.manageAuthentication = false;
+        teamFixture.directoryMembership = fact;
+        const screen = await renderAuthentication();
         const row = screen.findAllByTestId('team-authentication-fact-directory')[0];
         expect(row?.props).toMatchObject({ title, mode: 'info', showChevron: false });
         expect(row?.props.onPress).toBeUndefined();
-        expect(executeDirectoryMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor(sourcesPath)).toHaveLength(0);
     });
 
     it('tells a read-only member what each fact means, as the same sections do for the managers', async () => {
-        teamContextMock.manageAuthentication = false;
-        teamContextMock.directoryMembership = null;
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        teamFixture.manageAuthentication = false;
+        teamFixture.directoryMembership = null;
+        const screen = await renderAuthentication();
         const text = screen.getTextContent();
         expect(text).toContain('teams.authentication.policy.admissionHelp');
         expect(text).toContain('teams.authentication.policy.acceptedHelp');
@@ -209,13 +226,13 @@ describe('TeamAuthenticationSettingsScreen', () => {
     });
 
     it('uses the translated canonical provider-kind label when the catalog has no display name', async () => {
-        identityStateMock.current.eligibleProviders[0]!.displayName = null;
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        identityFixture.current.eligibleProviders[0]!.displayName = null;
+        const screen = await renderAuthentication();
         expect(menuChoice(screen, 'team-eligible-provider:provider-1')?.title)
             .toBe('identityAdministration.providerOidc');
     });
     it('keeps every connection and eligible provider mounted beyond 100 rows', async () => {
-        identityStateMock.current.items = Array.from({ length: 101 }, (_, index) => ({
+        identityFixture.current.items = Array.from({ length: 101 }, (_, index) => ({
             v: 1,
             id: `connection-${index}`,
             teamId: 'team-1',
@@ -243,7 +260,7 @@ describe('TeamAuthenticationSettingsScreen', () => {
             createdAt: index,
             updatedAt: index,
         }));
-        identityStateMock.current.eligibleProviders = Array.from({ length: 101 }, (_, index) => ({
+        identityFixture.current.eligibleProviders = Array.from({ length: 101 }, (_, index) => ({
             v: 1,
             providerId: `eligible-provider-${index}`,
             providerKind: 'oidc',
@@ -269,7 +286,7 @@ describe('TeamAuthenticationSettingsScreen', () => {
             },
         }));
 
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        const screen = await renderAuthentication();
 
         expect(screen.findByTestId('team-authentication-connection-connection-100')).toBeTruthy();
         // The ways to add another are the section's own "+" menu, closed until asked for.
@@ -278,25 +295,31 @@ describe('TeamAuthenticationSettingsScreen', () => {
     });
 
     it('keeps provider setup visible but disables it for a read-only Team', async () => {
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        const screen = await renderAuthentication();
 
         expect(menuChoice(screen, 'team-eligible-provider:provider-1')?.disabled).toBe(true);
         await choose(screen, 'team-eligible-provider:provider-1');
-        expect(executeMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor(createPath)).toHaveLength(0);
     });
 
     it('blocks setup from a stale allowed-action projection while refreshing', async () => {
-        identityStateMock.current.refreshing = true;
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
-
-        expect(menuChoice(screen, 'team-eligible-provider:provider-1')?.disabled).toBe(true);
+        teamFixture.canMutate = true;
+        const screen = await renderAuthentication();
+        const held = createDeferred<void>();
+        harness.answer(serverId, connectionsPath, { body: TeamIdentityConnectionListResultV1Schema.parse({
+            items: [], eligibleProviders: identityFixture.current.eligibleProviders,
+            admissionModeApplicability: identityFixture.current.admissionModeApplicability, memberSignInUrl: null,
+        }), respondAfter: held.promise });
+        await React.act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+        await waitForHomeGovernance(() => expect(menuChoice(screen, 'team-eligible-provider:provider-1')?.disabled).toBe(true));
         await choose(screen, 'team-eligible-provider:provider-1');
-        expect(executeMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor(createPath)).toHaveLength(0);
+        await React.act(async () => held.resolve());
     });
 
     it('binds an eligible GitHub installation through the shared Team connection action', async () => {
-        teamContextMock.canMutate = true;
-        identityStateMock.current.eligibleProviders = [{
+        teamFixture.canMutate = true;
+        identityFixture.current.eligibleProviders = [{
             v: 1,
             providerId: 'github-provider-1',
             providerKind: 'github_app_identity',
@@ -322,16 +345,12 @@ describe('TeamAuthenticationSettingsScreen', () => {
                 },
             },
         }];
-        executeMock.mockResolvedValueOnce({
-            ok: true,
-            value: { connection: { id: 'connection-1' } },
-        });
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        const screen = await renderAuthentication();
 
         await choose(screen, 'team-eligible-provider:github-provider-1');
 
-        expect(executeMock).toHaveBeenCalledTimes(1);
-        expect(executeMock).toHaveBeenCalledWith('teams.identity.connections.create', {
+        expect(harness.requestsFor(createPath)).toHaveLength(1);
+        expect(harness.requestsFor(createPath)[0]?.input).toEqual({
             v: 1,
             teamId: 'team-1',
             providerInstanceId: 'github-provider-1',
@@ -345,40 +364,30 @@ describe('TeamAuthenticationSettingsScreen', () => {
                 kind: 'github_app_identity',
                 organizationLogin: 'Acme',
             },
-        }, expect.any(Object));
+        });
+        await waitForHomeGovernance(() => expect(routerPushMock).toHaveBeenCalledWith(
+            `/settings/teams/${serverId}/team-1/authentication/connection-1`,
+        ));
     });
 
-    it('navigates to the created connection when a use-existing Action finishes after approval', async () => {
-        teamContextMock.canMutate = true;
-        let complete: ((value: Readonly<{ connection: Readonly<{ id: string }> }>) => void | Promise<void>) | undefined;
-        executeMock.mockImplementationOnce(async (
-            _actionId: string,
-            _input: unknown,
-            options?: Readonly<{ onApprovalSucceeded?: typeof complete }>,
-        ) => {
-            complete = options?.onApprovalSucceeded;
-            return {
-                ok: false,
-                approvalPending: true,
-                artifactId: 'approval-create-1',
-                failure: { code: 'approval_pending', retryable: false },
-            };
-        });
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
-
+    it('navigates to the created connection after the real Ask confirmation succeeds', async () => {
+        teamFixture.canMutate = true;
+        createResponseId = 'connection-approved';
+        await harness.requireUiApproval(serverId, 'teams.identity.connections.create');
+        const screen = await renderAuthentication();
         await choose(screen, 'team-eligible-provider:provider-1');
-        expect(routerPushMock).not.toHaveBeenCalled();
-        expect(complete).toBeTypeOf('function');
-
-        await complete?.({ connection: { id: 'connection-approved' } });
-        expect(routerPushMock).toHaveBeenCalledWith(
-            '/settings/teams/home-1/team-1/authentication/connection-approved',
-        );
+        const { Modal } = await import('@/modal');
+        expect(Modal.confirm).toHaveBeenCalled();
+        expect(harness.requestsFor(createPath)).toHaveLength(1);
+        await waitForHomeGovernance(() => expect(routerPushMock).toHaveBeenCalledWith(
+            `/settings/teams/${serverId}/team-1/authentication/connection-approved`,
+        ));
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it('keeps retained GitHub App registrations reachable when Home policy disables new setup', async () => {
-        teamContextMock.canMutate = true;
-        identityStateMock.current.eligibleProviders = [{
+        teamFixture.canMutate = true;
+        identityFixture.current.eligibleProviders = [{
             v: 1,
             providerId: null,
             providerKind: 'github_app_identity',
@@ -387,21 +396,27 @@ describe('TeamAuthenticationSettingsScreen', () => {
             availability: {
                 status: 'unavailable',
                 code: 'home_policy_prohibited',
-                setupChoice: { kind: 'create_managed', actionId: 'identity.githubApps.manifestSetup.start' },
             },
         }];
 
-        await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
-
-        expect(teamGitHubAppsSectionMock).toHaveBeenCalled();
-        expect(teamGitHubAppsSectionMock.mock.lastCall?.[0]).toEqual(expect.objectContaining({
-            createAvailable: false,
-        }));
+        githubApps = ManagedGitHubAppsListOutputV1Schema.parse({ registrations: [{
+            id: 'registration-retained', owner: { kind: 'team', teamId: 'team-1' }, githubHost: 'https://github.com',
+            githubAppId: '12', githubClientId: 'Iv1.client', githubAppSlug: 'retained-app',
+            githubOwnerId: '22', githubOwnerLogin: 'happier-dev', revision: 2, securityRevision: 1,
+            state: 'disabled', secretHealth: { clientSecretConfigured: true, privateKeyConfigured: true, webhookSecretConfigured: true },
+            lastVerifiedAt: null, createdAt: '2026-08-01T10:00:00.000Z', updatedAt: '2026-09-01T10:00:00.000Z',
+        }], installations: [] });
+        const screen = await renderAuthentication();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-github-app-add')).not.toBeNull());
+        expect(screen.findByTestId('home-github-app-add')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('home-github-app:registration-retained')).not.toBeNull();
+        await screen.pressByTestIdAsync('home-github-app:registration-retained');
+        expect(routerPushMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/github-apps/registration-retained`);
     });
 
     it('disables generic GitHub setup and Add App for provider_setup_unavailable', async () => {
-        teamContextMock.canMutate = true;
-        identityStateMock.current.eligibleProviders = [{
+        teamFixture.canMutate = true;
+        identityFixture.current.eligibleProviders = [{
             v: 1,
             providerId: null,
             providerKind: 'github_app_identity',
@@ -410,21 +425,19 @@ describe('TeamAuthenticationSettingsScreen', () => {
             availability: {
                 status: 'unavailable',
                 code: 'provider_setup_unavailable',
-                setupChoice: { kind: 'create_managed', actionId: 'identity.githubApps.manifestSetup.start' },
             },
         }];
 
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        const screen = await renderAuthentication();
 
         expect(menuChoice(screen, 'team-eligible-provider:github_app_identity')?.disabled).toBe(true);
-        expect(teamGitHubAppsSectionMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
-            createAvailable: false,
-        }));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-github-app-add')).not.toBeNull());
+        expect(screen.findByTestId('home-github-app-add')?.props.disabled).toBe(true);
     });
 
     it('enables generic GitHub setup and Add App only for an available create-managed catalog row', async () => {
-        teamContextMock.canMutate = true;
-        identityStateMock.current.eligibleProviders = [{
+        teamFixture.canMutate = true;
+        identityFixture.current.eligibleProviders = [{
             v: 1,
             providerId: null,
             providerKind: 'github_app_identity',
@@ -436,58 +449,34 @@ describe('TeamAuthenticationSettingsScreen', () => {
             },
         }];
 
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        const screen = await renderAuthentication();
 
         expect(menuChoice(screen, 'team-eligible-provider:github_app_identity')?.disabled).toBe(false);
-        expect(teamGitHubAppsSectionMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
-            createAvailable: true,
-        }));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-github-app-add')).not.toBeNull());
+        expect(screen.findByTestId('home-github-app-add')?.props.disabled).toBe(false);
     });
 
     it('names the Team\'s directory and where its sync stands, and opens that source', async () => {
-        executeDirectoryMock.mockResolvedValue({
-            ok: true,
-            value: {
-                items: [{
-                    v: 1,
-                    id: 'source-acme',
-                    teamId: 'team-1',
-                    kind: 'workos_directory',
-                    displayName: 'Acme directory',
-                    state: 'active',
-                    allowedActions: [],
-                    error: null,
-                    sync: {
-                        mode: 'events_and_full',
-                        attempt: 'succeeded',
-                        freshness: 'fresh',
-                        lastAttemptAt: 1,
-                        lastSuccessAt: 1,
-                        lastFullReconcileAt: 1,
-                        nextScheduledAt: null,
-                    },
-                }],
+        directoryPage = {
+                items: [teamDirectorySourceFixture({ id: 'source-acme', displayName: 'Acme directory' })],
                 nextCursor: null,
-            },
-        });
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        };
+        const screen = await renderAuthentication();
 
         await vi.waitFor(() => {
             expect(screen.findByTestId('team-authentication-directory-source:source-acme')).toBeTruthy();
         });
         expect(findTestInstanceByTypeContainingText(screen.findByTestId('team-authentication-directory-source:source-acme')!, 'Text', 'Acme directory')).toBeDefined();
         await screen.pressByTestIdAsync('team-authentication-directory-source:source-acme');
-        expect(routerPushMock).toHaveBeenCalledWith('/settings/teams/home-1/team-1/authentication/directory/source-acme');
+        expect(routerPushMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory/source-acme`);
     });
 
     it('says a Team without a directory in one quiet line and offers "Add source" as the section action', async () => {
-        const screen = await renderScreen(<TeamAuthenticationSettingsScreen serverId="home-1" teamId="team-1" />, { wrapper: SettingsPage });
+        teamFixture.canMutate = true;
+        const screen = await renderAuthentication();
 
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('team-authentication-directory')).toBeTruthy();
-        });
-        expect(screen.getTextContent()).toContain('teams.authentication.directory.empty');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('teams.authentication.directory.empty'));
         await screen.pressByTestIdAsync('team-authentication-directory-add');
-        expect(routerPushMock).toHaveBeenCalledWith('/settings/teams/home-1/team-1/authentication/directory');
+        expect(routerPushMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory`);
     });
 });

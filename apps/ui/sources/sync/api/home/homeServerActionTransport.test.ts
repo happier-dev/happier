@@ -12,24 +12,16 @@ import {
 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: runtimeFetchMock,
-}));
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    // The barrel imports runtime consumers of tokenStorage while this mock is
-    // still being initialized, deadlocking module collection.
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal: importOriginal as <T = typeof import('@/auth/storage/tokenStorage')>() => Promise<T>,
-        tokenStorage: { getCredentialsForServerUrl: getCredentialsForServerUrlMock },
-    });
-});
 
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createServerAccountConnectionProbeHttpResponse } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 
 import { requestHomeDomain } from './homeServerActionTransport';
 const { readSavedSecretResourceRecipientReadiness } = await import('@/sync/ops/settings/savedSecretResourceOperations');
@@ -51,8 +43,11 @@ function projection(): HomeGovernanceProjectionV1 {
     });
 }
 
+const homeUrls = new Map<string, string>();
 async function addHome(name: string, serverUrl: string): Promise<string> {
-    return (await upsertServerProfile({ serverUrl, name })).id;
+    const serverId = await homes.addHome({ serverUrl, name, accountId: 'account', active: false });
+    homeUrls.set(serverId, serverUrl);
+    return serverId;
 }
 
 async function focusHome(serverId: string): Promise<void> {
@@ -64,8 +59,10 @@ async function focusHome(serverId: string): Promise<void> {
  * so the token-only credential is the real shape this path carries; no
  * encryption material is fabricated to make the transport resolve.
  */
-function plainCredentialsFor(sub: string): void {
-    getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub(sub) });
+async function plainCredentialsFor(sub: string): Promise<void> {
+    for (const [serverId, serverUrl] of homeUrls) {
+        await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, { token: tokenForSub(sub) });
+    }
 }
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -86,12 +83,17 @@ function governanceRequest(serverId: string, accountId = 'account') {
     });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    await homes.reset();
+    homeUrls.clear();
     runtimeFetchMock.mockReset();
-    getCredentialsForServerUrlMock.mockReset();
+    setRuntimeFetch((url, init) => createServerAccountConnectionProbeHttpResponse(new URL(String(url)).pathname)
+        ?? runtimeFetchMock({ url: String(url), init }));
 });
 
-afterEach(() => {
+afterEach(async () => {
+    resetRuntimeFetch();
+    await homes.reset();
     vi.clearAllMocks();
 });
 
@@ -99,7 +101,7 @@ describe('requestHomeDomain', () => {
     it('posts the declared input to the exact Home path and parses the strict domain result', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(jsonResponse(projection(), 200));
 
         const result = await governanceRequest(homeA);
@@ -114,7 +116,7 @@ describe('requestHomeDomain', () => {
     it('reads first and next Saved Secret envelope-census pages through encoded GET queries without bodies', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         const resourceId = 'resource/a +&';
         const firstPage = SavedSecretResourceEnvelopeCensusResponseV1Schema.parse({
             resourceId, revision: 3,
@@ -158,7 +160,7 @@ describe('requestHomeDomain', () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         const homeB = await addHome('Home B', 'https://home-b.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
 
         let releaseResponse: (() => void) | null = null;
         runtimeFetchMock.mockImplementation(async () => {
@@ -183,9 +185,8 @@ describe('requestHomeDomain', () => {
     it('distinguishes a mutation response loss after dispatch from a safe read retry', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
-        runtimeFetchMock.mockImplementation(async (params) => {
-            params.onIssued?.();
+        await plainCredentialsFor('account');
+        runtimeFetchMock.mockImplementation(async () => {
             throw Object.assign(new Error('connection reset after dispatch'), { code: 'ECONNRESET' });
         });
 
@@ -207,8 +208,7 @@ describe('requestHomeDomain', () => {
             failure: { kind: 'unreachable', retryable: true, code: null },
         });
 
-        runtimeFetchMock.mockImplementation(async (params) => {
-            params.onIssued?.();
+        runtimeFetchMock.mockImplementation(async () => {
             throw Object.assign(new Error('connection refused before dispatch'), { code: 'ECONNREFUSED' });
         });
 
@@ -227,7 +227,7 @@ describe('requestHomeDomain', () => {
     it('keeps a mutation retryable when exact-Home authority fails before dispatch', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('someone-else');
+        await plainCredentialsFor('someone-else');
 
         const result = await requestHomeDomain({
             scope: createServerAccountScope(homeA, 'account')!,
@@ -247,7 +247,7 @@ describe('requestHomeDomain', () => {
     it('reports the Home typed denial without retry advice', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(jsonResponse({ error: 'home_governance_forbidden' }, 403));
 
         await expect(governanceRequest(homeA)).resolves.toEqual({
@@ -266,7 +266,7 @@ describe('requestHomeDomain', () => {
         'preserves the domain refusal %s instead of claiming the route is absent', async (code) => {
             const homeA = await addHome('Home A', 'https://home-a.example');
             await focusHome(homeA);
-            plainCredentialsFor('account');
+            await plainCredentialsFor('account');
             runtimeFetchMock.mockResolvedValue(jsonResponse({ error: code }, code.endsWith('forbidden') ? 403 : 404));
 
             await expect(governanceRequest(homeA)).resolves.toEqual({
@@ -279,7 +279,7 @@ describe('requestHomeDomain', () => {
     it('reports a Home without the operation as unsupported rather than as a denial', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(new Response('', { status: 404 }));
 
         await expect(governanceRequest(homeA)).resolves.toEqual({
@@ -291,7 +291,7 @@ describe('requestHomeDomain', () => {
     it('reports a rejected credential as unauthorized', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(new Response('', { status: 401 }));
 
         await expect(governanceRequest(homeA)).resolves.toEqual({
@@ -303,7 +303,7 @@ describe('requestHomeDomain', () => {
     it('preserves the typed conflict code so the editor can reload and resubmit', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(jsonResponse({ error: 'home_policy_revision_conflict' }, 409));
 
         const result = await requestHomeDomain({
@@ -329,7 +329,7 @@ describe('requestHomeDomain', () => {
     it('uses a domain family error schema without teaching the transport its codes', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(jsonResponse({ error: 'github_app_revision_conflict' }, 409));
 
         const result = await requestHomeDomain({
@@ -356,7 +356,7 @@ describe('requestHomeDomain', () => {
     it.each(['account_erasure_transition_cleanup_pending', 'account_erasure_upload_pending', 'account_erasure_deployment_cleanup_required'])('keeps an erasure blocked by %s retryable', async code => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(jsonResponse({ error: code }, 409));
 
         const result = await requestHomeDomain({
@@ -382,7 +382,7 @@ describe('requestHomeDomain', () => {
     it('preserves a typed Team code so a Team surface can explain the refusal', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         // The Home family carries Team intents too. Dropping the Team vocabulary
         // would leave a join or invite surface unable to distinguish "archived"
         // from "not allowed" and force it to invent a second interpretation.
@@ -403,7 +403,7 @@ describe('requestHomeDomain', () => {
     it('preserves the canonical bounded recovery details instead of flattening them to a code', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         const details = {
             v: 1,
             code: 'provider_endpoint_rate_limited',
@@ -428,7 +428,7 @@ describe('requestHomeDomain', () => {
     it('treats an unreachable Home as retryable and publishes no value', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockRejectedValue(new Error('network down'));
 
         await expect(governanceRequest(homeA)).resolves.toEqual({
@@ -440,7 +440,7 @@ describe('requestHomeDomain', () => {
     it('rejects a body the strict domain schema does not accept instead of publishing it', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await focusHome(homeA);
-        plainCredentialsFor('account');
+        await plainCredentialsFor('account');
         runtimeFetchMock.mockResolvedValue(jsonResponse(
             { ...projection(), unexpectedTopLevelField: true },
             200,

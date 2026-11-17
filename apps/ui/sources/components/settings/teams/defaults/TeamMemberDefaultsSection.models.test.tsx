@@ -7,16 +7,11 @@ import { TeamCredentialResourceCatalogEntryV1Schema, TeamPolicySetInputV1Schema,
 import { createMachineFixture, renderScreen, standardCleanup, teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit';
 import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createProviderModelProjectionFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installBundledProviderDeclarationsRpcBoundary, type ProviderRpcRequest } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createProviderModelProjectionFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installBundledProviderDeclarationsRpcBoundary, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
-const transport = vi.hoisted(() => ({ call: vi.fn<(request: ProviderRpcRequest) => Promise<unknown>>() }));
-// test-policy-boundary: Machine RPC is the real process boundary; catalog, picker and Action dispatch stay real.
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: (request: ProviderRpcRequest) => transport.call(request),
-}));
 // Generated packaged artwork is an external build artifact, unrelated to catalog admission.
 vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
     BUNDLED_PLUGIN_UI_APP_ARTIFACTS: Object.freeze([]), BUNDLED_PLUGIN_UI_APP_DECLARATIONS: Object.freeze([]),
@@ -27,6 +22,7 @@ installSettingsViewCommonModuleMocks({ storage: 'real', text: () => vi.importAct
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module });
 const account = createProviderSettingsAccountHarness();
 const declarations = createProviderSettingsHarness();
+installProviderSettingsRpcBoundary(declarations);
 const { TeamNewMembersScreen } = await import('../newMembers/TeamNewMembersScreen');
 const { ModalProvider, Modal } = await import('@/modal');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
@@ -54,19 +50,13 @@ beforeEach(async () => {
     resetTeamActionClientForTests();
     declarations.reset();
     installBundledProviderDeclarationsRpcBoundary(declarations);
-    transport.call.mockReset();
-    transport.call.mockImplementation(async request => {
-        const { method } = request;
-        if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return declarations.machineRpc(request);
-        if (method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return createProviderModelProjectionFixture({
-            agentTargetKey, groups: [], teamCredentialResources: [resource],
-        });
-        // Shape captured from the live Codex agents.models.list answer on QA #164.
-        if (method === RPC_METHODS.CAPABILITIES_INVOKE) return { ok: true, result: {
-            availableModels: [{ id: modelId, name: 'GPT-6.1-Sol' }], supportsFreeform: false, source: 'dynamic', observedAt: Date.now(),
-        } };
-        return { errorCode: 'method_not_found', error: 'Method not found' };
-    });
+    declarations.setResponse(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, createProviderModelProjectionFixture({
+        agentTargetKey, groups: [], teamCredentialResources: [resource],
+    }));
+    // Shape captured from the live Codex agents.models.list answer on QA #164.
+    declarations.setResponse(RPC_METHODS.CAPABILITIES_INVOKE, { ok: true, result: {
+        availableModels: [{ id: modelId, name: 'GPT-6.1-Sol' }], supportsFreeform: false, source: 'dynamic', observedAt: Date.now(),
+    } });
 });
 afterEach(async () => {
     await act(async () => { Modal.hideAll(); });
@@ -107,7 +97,7 @@ it.each(['native', 'team'] as const)('offers the selected Machine and Team model
     // Codex has no Team value, so it waits behind "Other Agents" (design review 2026-11-17).
     await openOtherAgents(screen, 'team-new-members-defaults');
     await waitForHomeGovernance(() => expect(agent()).toBeDefined());
-    expect(transport.call.mock.calls.some(([request]) => request.method === RPC_METHODS.CAPABILITIES_INVOKE)).toBe(false);
+    expect(declarations.state.requests.some(request => request.method === RPC_METHODS.CAPABILITIES_INVOKE)).toBe(false);
     await act(async () => { agent()!.props.onExpandedChange(true); });
     await screen.pressByTestIdAsync(rowId);
     const selection = resource.providerModels[0]!.selection;
@@ -145,14 +135,12 @@ it('shows a failed Team model catalog and reloads it without losing native choic
     account.home.answer(serverId, '/v1/teams/list', { body: { items: [team], nextCursor: null } });
     account.home.answer(serverId, '/v1/teams/credential-resources/entitled/discover', { body: { resources: [resource], nextCursor: null, failures: [] } });
     account.home.answer(serverId, '/v1/teams/credential-resources/entitled/list', { body: { resources: [resource], nextCursor: null } });
-    const healthyTransport = transport.call.getMockImplementation()!;
     let declarationsUnavailable = true;
-    // The loaded failure was declaration phase=error/transport-unavailable, with a retained Team resource.
-    transport.call.mockImplementation(request => {
-        if (declarationsUnavailable && request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
-            return Promise.reject(new Error('Transport unavailable'));
-        }
-        return healthyTransport(request);
+    const healthyDeclarations = declarations.state.interceptors.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!;
+    // The physical daemon transport rejects declaration reads until Refresh succeeds.
+    declarations.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, (request, next) => {
+        if (declarationsUnavailable) return Promise.reject(new Error('Transport unavailable'));
+        return healthyDeclarations(request, next);
     });
     const screen = await renderScreen(<ModalProvider><TeamNewMembersScreen serverId={serverId} teamId="team-1" /></ModalProvider>);
     const agent = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-agent:codex'

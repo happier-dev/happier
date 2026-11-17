@@ -1,3 +1,4 @@
+import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -38,7 +39,7 @@ vi.mock('@/components/systemTasks/createTauriSystemTaskBridge', () => ({ createT
     },
     async subscribe(taskId: string, listeners: SystemTaskBridgeListenerSet) {
         desktop.listeners.set(taskId, listeners);
-        if (!taskId.endsWith('relay.runtime.restart.v1')) queueMicrotask(() => listeners.onResult({
+        if (!taskId.endsWith('relay.runtime.restart.v1')) queueMicrotask(() => listeners.onResult(SystemTaskResultSchema.parse({
             protocolVersion: 1, taskId, ok: true,
             data: taskId.endsWith('relay.runtime.status.v1') ? {
                 channel: 'stable', mode: 'user', installed: true, dataPresent: true, version: '0.3',
@@ -46,7 +47,7 @@ vi.mock('@/components/systemTasks/createTauriSystemTaskBridge', () => ({ createT
                 purpose: { kind: 'personal-home', canonicalServerUrl: 'http://127.0.0.1:3005' },
                 anonymousSignupEnabled: false, service: { active: true, enabled: true },
             } : {},
-        }));
+        })));
         return () => { desktop.listeners.delete(taskId); };
     },
     async cancel() {},
@@ -184,7 +185,7 @@ it.each(['home-runtime-pending-restart.action', 'settings.personalHomeRuntime.re
     let releaseRead!: () => void;
     const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
     home.answer(serverId, SETTINGS_GET, { body: projection(false), respondAfter: readGate });
-    await act(async () => desktop.listeners.get(restartTask!)!.onResult({ protocolVersion: 1, taskId: restartTask, ok: true, data: { healthy: true } }));
+    await act(async () => desktop.listeners.get(restartTask!)!.onResult(SystemTaskResultSchema.parse({ protocolVersion: 1, taskId: restartTask, ok: true, data: { healthy: true } })));
     await waitForHomeGovernance(() => expect(home.requestsFor(SETTINGS_GET)).toHaveLength(2));
     expect(runtimeItem(screen, 'settings.personalHomeRuntime.restart').props.disabled).toBe(true);
     expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-runtime-settings-unknown');

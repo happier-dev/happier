@@ -2,11 +2,12 @@ import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
-import { type MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import { MachinePoolPrivateViewV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
-import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialSourceResourceFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, createMachineFixture, renderScreen, standardCleanup, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialSourceResourceFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -24,30 +25,32 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
-const { createMachineAdministrationTargetSelectionMock, installMachineAdministrationTargetSelectionBoundary } = await import('@/dev/testkit/mocks/machineAdministrationTargetSelection');
-const machineSelection = createMachineAdministrationTargetSelectionMock({
-    serverId: 'server-a',
-    machines: [{ machineId: 'machine-exact', displayName: 'Exact broker' }],
-    selectedMachineId: null,
-});
-installMachineAdministrationTargetSelectionBoundary(machineSelection);
+const { MachineAdministrationTargetSelector } = await import('@/components/settings/machines/MachineAdministrationTargetSelector');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 
-const poolProjection = vi.hoisted(() => ({ pools: [] as MachinePoolViewV1[] }));
-vi.mock('@/sync/engine/machines/useMachinePoolProjections', () => ({
-    useMachinePoolProjections: () => [{
-        serverId: 'server-a', accountId: 'owner', featureStatus: 'enabled', featureEnabled: true,
-        pools: poolProjection.pools, status: 'idle', ready: true,
-    }],
-}));
+async function publishBrokerMachine(serverId: string): Promise<void> {
+    const machine = createMachineFixture({
+        id: 'machine-exact', active: true, activeAt: Date.now(), storageMode: 'plain',
+        metadata: { ...createMachineFixture().metadata!, displayName: 'Exact broker' },
+    });
+    const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'owner', machine });
+    harness.answer(serverId, '/v1/machines', { body: [row] });
+    harness.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: row } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
+}
 
 const LIST_PATH = '/v1/teams/credential-resources/source-resources/list';
 const UPDATE_PATH = '/v1/teams/credential-resources/update';
 
-function selectBrokerMachine(
-    screen: Readonly<{ findByType: (type: string) => ReactTestInstance }>,
+async function selectBrokerMachine(
+    screen: Readonly<{ findByType: (type: typeof MachineAdministrationTargetSelector) => ReactTestInstance }>,
     machineId: string,
-): void {
-    const selection = screen.findByType('MachineAdministrationTargetSelector').props.selection;
+): Promise<void> {
+    await vi.waitFor(() => expect(screen.findByType(MachineAdministrationTargetSelector).props.selection.pickerRows)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ candidate: expect.objectContaining({
+            target: expect.objectContaining({ machineId }),
+        }) })])));
+    const selection = screen.findByType(MachineAdministrationTargetSelector).props.selection;
     const row = selection.pickerRows.find((candidateRow: { candidate: { target: { machineId: string } } }) => (
         candidateRow.candidate.target.machineId === machineId
     ));
@@ -89,8 +92,6 @@ let restorePopoverGlobals: (() => void) | null = null;
 afterEach(() => { restorePopoverGlobals?.(); restorePopoverGlobals = null; });
 beforeEach(async () => {
     restorePopoverGlobals = withPopoverWebGlobals();
-    poolProjection.pools = [];
-    machineSelection.controller.reset();
     confirm.mockReset();
     confirm.mockResolvedValue(false);
     await harness.reset();
@@ -243,11 +244,10 @@ describe('SharedWithTeamsSourceAdministration', () => {
     });
 
     it('renders only server-authorized source-owner controls without needing Team membership', async () => {
-        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example',
+            serverIdentityId: 'srv_shared_resource_home', accountId: 'owner' });
         await harness.selectHomes([serverId]);
-        machineSelection.controller.setMachines([{
-            machineId: 'machine-exact', displayName: 'Exact broker', serverId, serverIdentityId: serverId,
-        }]);
+        await publishBrokerMachine(serverId);
         harness.answer(serverId, LIST_PATH, { body: { resources: [teamCredentialSourceResourceFixture({
             deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
             capabilities: {
@@ -348,11 +348,10 @@ describe('SharedWithTeamsSourceAdministration', () => {
     });
 
     it('submits one exact eligible Machine placement when the row grants that operation', async () => {
-        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example',
+            serverIdentityId: 'srv_shared_resource_home', accountId: 'owner' });
         await harness.selectHomes([serverId]);
-        machineSelection.controller.setMachines([{
-            machineId: 'machine-exact', displayName: 'Exact broker', serverId, serverIdentityId: serverId,
-        }]);
+        await publishBrokerMachine(serverId);
         const row = teamCredentialSourceResourceFixture({
             brokerPlacement: null,
             brokerPresentation: {
@@ -379,7 +378,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         const order = collectRenderedTestIds(screen.tree.toJSON());
         expect(order.indexOf('shared-with-teams:broker:resource-1:save')).toBeGreaterThan(order.indexOf('shared-with-teams:resource:resource-1'));
         expect(JSON.stringify(screen.tree.toJSON())).toContain('teams.credentials.detail.brokerLabel · Claude Enterprise');
-        selectBrokerMachine(screen, 'machine-exact');
+        await selectBrokerMachine(screen, 'machine-exact');
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')?.props.disabled)
             .toBe(false));
         await screen.pressByTestIdAsync('shared-with-teams:broker:resource-1:save');
@@ -392,11 +391,10 @@ describe('SharedWithTeamsSourceAdministration', () => {
     });
 
     it('keeps the original revision as the CAS basis when a dirty broker draft receives a newer row', async () => {
-        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example',
+            serverIdentityId: 'srv_shared_resource_home', accountId: 'owner' });
         await harness.selectHomes([serverId]);
-        machineSelection.controller.setMachines([{
-            machineId: 'machine-exact', displayName: 'Exact broker', serverId, serverIdentityId: serverId,
-        }]);
+        await publishBrokerMachine(serverId);
         const capabilities = {
             manageAudience: false, managePolicy: false, manageLimits: false,
             updateBrokerPlacement: true, narrowDisclosure: true, widenDisclosure: false,
@@ -423,7 +421,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await pressRowAction(screen, 'resource-1', 'broker-location');
-        selectBrokerMachine(screen, 'machine-exact');
+        await selectBrokerMachine(screen, 'machine-exact');
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')?.props.disabled)
             .toBe(false));
 
@@ -441,17 +439,18 @@ describe('SharedWithTeamsSourceAdministration', () => {
     });
 
     it('allows an eligible offline Pool to be saved as a repairable exact placement', async () => {
-        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner', machinePoolsEnabled: true });
         await harness.selectHomes([serverId]);
         const poolId = '00000000-0000-4000-8000-000000000001';
-        poolProjection.pools = [{
+        harness.answer(serverId, '/v1/machines/pools/list', { body: { pools: [MachinePoolPrivateViewV1Schema.parse({
             pool: {
-                id: poolId, name: 'Travel Pool', description: null, revision: 1,
-                createdAt: 1, updatedAt: 1,
+                id: poolId,
+                name: { kind: 'available', label: teamCredentialDisplayNameFixture('Travel Pool') },
+                description: null, revision: 1, createdAt: 1, updatedAt: 1,
                 members: [{ machineId: 'machine-exact', priorityTier: 0, enabled: true, state: 'offline' }],
             },
             availability: { state: 'known', connectedCount: 0, enabledCount: 1 },
-        }];
+        })] } });
         const row = teamCredentialSourceResourceFixture({
             brokerPlacement: null,
             brokerPresentation: {

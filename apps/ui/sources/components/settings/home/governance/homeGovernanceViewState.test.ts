@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance/projection';
+import { homeGovernanceProjectionFixture, homeGovernancePolicyProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 
 import type { HomeGovernanceSnapshot } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 
@@ -7,34 +7,10 @@ import { resolveHomeGovernanceViewState } from './homeGovernanceViewState';
 
 const SCOPE = { serverId: 'srv_1', accountId: 'acc_1' } as const;
 
-const PROJECTION: HomeGovernanceProjectionV1 = {
+const PROJECTION = homeGovernanceProjectionFixture({
     viewer: { accountId: 'acc_1', homeRole: 'owner', status: 'active' },
-    capabilities: {
-        viewAdministration: true,
-        manageAccounts: true,
-        manageHomeRoles: true,
-        manageTeamCreationPolicy: true,
-        manageAuthentication: true,
-        manageHomeSettings: true,
-        eraseAccounts: true,
-        createTeam: true,
-        manageAllTeams: true,
-    },
-    policy: {
-        revision: 3,
-        teamCreationPolicy: 'managed_only',
-        authentication: { status: 'inherited' },
-    },
-    authenticationOptions: {
-        methods: [],
-        permittedAccountModes: ['e2ee'],
-        recommendedProvisioningMode: 'e2ee',
-        signInService: { deploymentMode: null, canDisable: false },
-    },
-    setupState: 'owned',
-    activeOwnerCount: 2,
-    teamsEnabled: true,
-};
+    policy: homeGovernancePolicyProjectionFixture({ revision: 3 }),
+});
 
 function snapshot(overrides: Partial<HomeGovernanceSnapshot> = {}): HomeGovernanceSnapshot {
     return {

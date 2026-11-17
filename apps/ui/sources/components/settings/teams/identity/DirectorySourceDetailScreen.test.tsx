@@ -1,861 +1,346 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TeamGroupNameProjectionV1 } from '@happier-dev/protocol/teams';
-
-import { collectRenderedTestIds, renderScreen, standardCleanup } from '@/dev/testkit';
+import { TeamDirectoryGroupV1Schema, TeamDirectoryGroupPageV1Schema, TeamDirectoryPeoplePageV1Schema, TeamGroupsPageV1Schema, type TeamGroupV1, TeamDirectorySourceRemovalPreflightV1Schema, TeamDirectorySourceRemoveResultV1Schema, TeamExternalGroupBindingV1Schema, type TeamDirectoryGroupV1 } from '@happier-dev/protocol/teams';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture, teamDirectorySourceFixture, teamGroupFixture } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
-const directoryBinding = vi.hoisted(() => ({
-    version: 0,
-    listeners: new Set<() => void>(),
-    state: { kind: 'loading' } as Record<string, unknown>,
-    publish() {
-        this.version += 1;
-        for (const listener of this.listeners) listener();
-    },
-}));
-const directoryGroupsBinding = vi.hoisted(() => ({
-    rows: [] as Array<Record<string, unknown>>,
-    status: 'ready' as 'ready' | 'loading',
-    enabled: null as boolean | null,
-    accountChange: null as Readonly<{ serverId: string; entityId: string }> | null,
-}));
-const nativeGroupsBinding = vi.hoisted(() => ({
-    rows: [] as Array<Readonly<{ id: string; name: TeamGroupNameProjectionV1; memberCount: number }>>,
-    error: null as { kind: 'unreachable'; retryable: boolean; code: null } | null,
-    reload: vi.fn(),
-}));
-const useTeamGroupMock = vi.hoisted(() => vi.fn());
-const openPrivateLabelMock = vi.hoisted(() => vi.fn());
-const canMutateMock = vi.hoisted(() => ({ current: true }));
-const runActionMock = vi.hoisted(() => vi.fn());
-const removeSourceMock = vi.hoisted(() => vi.fn());
-const readRemovalImpactMock = vi.hoisted(() => vi.fn());
-const routerBackMock = vi.hoisted(() => vi.fn());
-const executeExternalGroupBindingMock = vi.hoisted(() => vi.fn());
-const executeIdentityActionMock = vi.hoisted(() => vi.fn());
-const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
-const directoryGroupsReloadMock = vi.hoisted(() => vi.fn());
-const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
-const capabilitiesMock = vi.hoisted(() => ({
-    current: { manageAuthentication: true, manageGroups: true },
-}));
-const announceMock = vi.hoisted(() => vi.fn());
-const refreshSourceMock = vi.hoisted(() => vi.fn());
-const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
-const scrollToIndexMock = vi.hoisted(() => vi.fn());
-const focusedItems = vi.hoisted(() => [] as string[]);
+const routerBack = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
+const announce = vi.hoisted(() => vi.fn());
+const openedUrl = vi.hoisted(() => vi.fn(async () => true));
+const focusedItems = vi.hoisted(() => [] as string[]);
+const scrollToIndex = vi.hoisted(() => vi.fn());
 const virtualWindow = vi.hoisted(() => ({ enabled: false }));
-
-vi.mock('expo-router', () => ({ useRouter: () => ({ back: routerBackMock }), useLocalSearchParams: () => routeParams.current }));
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('react-native')>();
-    return {
-        ...actual,
-        AppState: {
-            ...actual.AppState,
-            addEventListener: (_type: string, listener: (state: string) => void) => {
-                appStateListeners.add(listener);
-                return { remove: () => appStateListeners.delete(listener) };
-            },
-        },
-    };
+const platform = vi.hoisted(() => ({ OS: 'ios' }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { back: routerBack }, params: () => routeParams.current }).module);
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock, createFocusablePressableMock } = await import('@/dev/testkit/mocks/reactNative');
+    const native = await createReactNativeWebMock();
+    return { ...native, Platform: { ...native.Platform, get OS() { return platform.OS; } },
+        AccessibilityInfo: { ...native.AccessibilityInfo, announceForAccessibility: announce },
+        Pressable: createFocusablePressableMock(() => {}, props => { if (typeof props.testID === 'string') focusedItems.push(props.testID); }) };
 });
-vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ spies: { confirm: modalConfirmMock } }).module;
-});
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner', iconMatchedSpinnerSize: (size: number) => size }));
-vi.mock('@/components/ui/lists/Item', async () => {
-    const React = await import('react');
-    return { Item: (props: { testID?: string; rightElement?: unknown; pressableRef?: React.Ref<{ focus: () => void }> }) => {
-        React.useLayoutEffect(() => {
-            const target = { focus: () => { if (props.testID) focusedItems.push(props.testID); } };
-            if (typeof props.pressableRef === 'function') props.pressableRef(target);
-            else if (props.pressableRef) props.pressableRef.current = target;
-            return () => {
-                if (typeof props.pressableRef === 'function') props.pressableRef(null);
-                else if (props.pressableRef) props.pressableRef.current = null;
-            };
-        }, [props.pressableRef, props.testID]);
-        return React.createElement('Item', props, props.rightElement as never);
-    } };
-});
-vi.mock('@/components/ui/forms/FieldTextInput', () => ({ FieldTextInput: 'TextInput' }));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: 'ItemGroup' }));
-vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
-    announceAccessibilityMessage: announceMock,
-}));
-vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
-vi.mock('@/components/ui/lists/virtualized', () => ({
-    VirtualizedList: React.forwardRef((props: Readonly<{
-        data: readonly { key: string; element: React.ReactElement }[];
-        renderItem: (info: { item: { key: string; element: React.ReactElement }; index: number }) => React.ReactNode;
-        ListHeaderComponent: React.ReactNode;
-    }>, ref) => {
-        const [visibleIndex, setVisibleIndex] = React.useState(0);
-        React.useImperativeHandle(ref, () => ({ scrollToIndex: (params: { index: number }) => {
-            scrollToIndexMock(params);
-            if (virtualWindow.enabled) setVisibleIndex(params.index);
-        } }), []);
-        return React.createElement('VirtualizedList', props, props.ListHeaderComponent,
-            ...props.data.flatMap((item, index) => virtualWindow.enabled && index !== visibleIndex
-                ? []
-                : [React.createElement(React.Fragment, { key: item.key }, props.renderItem({ item, index }))]));
-    }),
-}));
-// The generated bundled-plugin inventory is an unrelated build boundary and
-// is intentionally absent from synchronized source-only test targets.
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
-    BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [],
-    BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [],
-}));
-vi.mock('@/hooks/teams/useTeamGroups', () => ({
-    useTeamGroups: () => ({ ...nativeGroupsBinding, isCurrent: !nativeGroupsBinding.error, hasMore: false, status: nativeGroupsBinding.error ? 'error' : 'ready', loadMore: vi.fn() }),
-    useTeamGroup: useTeamGroupMock,
-}));
-vi.mock('@/sync/ops/privateLabels/privateLabelClient', () => ({
-    createPrivateLabelClient: () => ({ open: openPrivateLabelMock }),
-}));
-vi.mock('@/hooks/teams/useTeamPagedList', () => ({
-    useTeamPagedList: (params: Readonly<{
-        enabled: boolean;
-        accountChange?: Readonly<{ serverId: string; entityId: string }>;
-    }>) => {
-        directoryGroupsBinding.enabled = params.enabled;
-        directoryGroupsBinding.accountChange = params.accountChange ?? null;
-        return { rows: directoryGroupsBinding.rows, hasMore: false, status: directoryGroupsBinding.status, error: null, reload: directoryGroupsReloadMock, loadMore: vi.fn() };
-    },
-}));
-vi.mock('./DirectoryPeopleList', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./DirectoryPeopleList')>(),
-    useDirectoryPeopleList: () => ({ rows: [], hasMore: false, status: 'ready', error: null, reload: vi.fn(), loadMore: vi.fn() }),
-}));
-vi.mock('./identityAdministrationClient', async (importOriginal) => ({
-    ...await importOriginal<typeof import('./identityAdministrationClient')>(),
-    createIdentityAdministrationClient: () => ({
-        execute: executeIdentityActionMock,
-        executeDirectory: vi.fn(),
-        executeExternalGroupBinding: executeExternalGroupBindingMock,
-    }),
-}));
-vi.mock('./useDirectoryAdministration', async () => {
+// Legend is the native layout/recycling boundary; the app's list adapter and reveal owner stay real.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@legendapp/list/react-native')>();
     const ReactModule = await import('react');
-    return {
-        useDirectorySourceAdministration: () => {
-            ReactModule.useSyncExternalStore(
-                (listener) => {
-                    directoryBinding.listeners.add(listener);
-                    return () => directoryBinding.listeners.delete(listener);
-                },
-                () => directoryBinding.version,
-            );
-            return {
-                state: directoryBinding.state,
-                refresh: refreshSourceMock,
-                pendingAction: null,
-                runAction: runActionMock,
-                readRemovalImpact: readRemovalImpactMock,
-                removeSource: removeSourceMock,
-            };
-        },
-    };
+    const { state: { refHandle } } = (await import('@/dev/testkit/mocks/legendList')).createCapturingLegendListMock();
+    return { ...original, LegendList: ReactModule.forwardRef((props: Readonly<{ data: readonly { key: string; element: React.ReactElement }[]; renderItem: (info: { item: { key: string; element: React.ReactElement }; index: number }) => React.ReactNode; ListHeaderComponent?: React.ReactNode; ListFooterComponent?: React.ReactNode }>, ref) => {
+        const [visibleKey, setVisibleKey] = ReactModule.useState<string | null>(null);
+        const data = ReactModule.useRef(props.data);
+        data.current = props.data;
+        ReactModule.useImperativeHandle(ref, () => ({ ...refHandle, scrollToIndex: async (params: { index: number }) => { scrollToIndex(params); if (virtualWindow.enabled) setVisibleKey(data.current[params.index]?.key ?? null); } }), []);
+        return ReactModule.createElement('LegendList', props, props.ListHeaderComponent, ...props.data.flatMap((item, index) => virtualWindow.enabled && item.key !== (visibleKey ?? props.data[0]?.key) ? [] : [ReactModule.createElement(ReactModule.Fragment, { key: item.key }, props.renderItem({ item, index }))]), props.ListFooterComponent);
+    }) };
 });
-vi.mock('../TeamSection', () => ({
-    TeamSection: (props: Readonly<{
-        children: (context: unknown, header?: React.ReactNode) => React.ReactNode;
-    }>) => props.children(
-        {
-            team: {
-                id: 'team-1',
-                capabilities: {
-                    manageAuthentication: capabilitiesMock.current.manageAuthentication,
-                    manageGroups: capabilitiesMock.current.manageGroups,
-                },
-            },
-            scope: { serverId: 'home-1', accountId: 'account-1' },
-            address: { serverId: 'home-1', teamId: 'team-1' },
-            canMutate: canMutateMock.current,
-            requestApproval: vi.fn(),
-        },
-        // The real shell hands its approval/stale/archived notices to a
-        // virtualized child. Reproducing that here is what lets these tests see
-        // whether a non-ready branch silently drops them.
-        React.createElement('TeamShellHeader', { testID: 'team-shell-header' }),
-    ),
-}));
-vi.mock('@/text', async () => {
-    // The canonical text mock so a parameterized string is observable as
-    // `key(param=value)`: a count this screen shows must be assertable.
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock();
-});
-
-import { DirectorySourceDetailScreen } from './DirectorySourceDetailScreen';
-import { DIRECTORY_SOURCE_SETTINGS } from './directorySettings';
-
-function privateGroupName(value: string): TeamGroupNameProjectionV1 {
-    return {
-        kind: 'available',
-        label: { content: { t: 'plain', v: value }, recipientEnvelope: null },
-    };
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openedUrl }));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { DirectorySourceDetailScreen } = await import('./DirectorySourceDetailScreen');
+const { DIRECTORY_SOURCE_SETTINGS } = await import('./directorySettings');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+const { reactNativeWebAppState } = await import('@/dev/testkit/mocks/reactNative');
+const { Modal } = await import('@/modal');
+const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
+const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+const { installBrowserRuntimeForTests } = await import('@/dev/testkit/harness/browserRuntimeHarness');
+let serverId: string;
+let browser: Awaited<ReturnType<typeof installBrowserRuntimeForTests>> | null = null;
+function requestsAt(path: string) {
+    return harness.requests.filter(request => new URL(request.path, request.serverUrl).pathname === path);
 }
-
-beforeEach(() => {
+const sourcePath = '/v1/teams/team-1/directory-sources/source-1';
+const groupsPath = `${sourcePath}/groups`;
+const nativeGroupsPath = '/v1/teams/groups/list';
+const bindingPath = '/v1/teams/team-1/external-group-bindings';
+const portalPath = '/v1/teams/identity/workos/admin-portal-link/create';
+const impact = { teamMembershipsRemoved: 0, groupMembershipsRemoved: 0, groupContributionsRemoved: 0, directoryCreatedGroupsRetained: 0, nativeMembershipsPreserved: 0, nativeGroupContributionsPreserved: 0 };
+function directoryGroup(id = 'external-group-1', mapping: TeamDirectoryGroupV1['mapping'] = { state: 'unbound' }): TeamDirectoryGroupV1 {
+    return TeamDirectoryGroupV1Schema.parse({ v: 1, id, sourceId: 'source-1', externalGroupId: `external-${id}`, displayName: 'Engineering', state: 'active', memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping, lastCompleteObservationAt: null, sourceLabel: 'Example directory' });
+}
+function answerGroups(items = [directoryGroup()]) { harness.answer(serverId, groupsPath, { body: TeamDirectoryGroupPageV1Schema.parse({ items, nextCursor: null }) }); }
+function answerNativeGroups(items: TeamGroupV1[] = []) { harness.answer(serverId, nativeGroupsPath, { body: TeamGroupsPageV1Schema.parse({ items, nextCursor: null }) }); }
+function answerTeam(capabilities = { manageAuthentication: true, manageGroups: true }, archivedAt: number | null = null) {
+    harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ archivedAt, capabilities: teamCapabilitiesFixture(capabilities) }) });
+}
+async function renderDetail(readyId = 'team-directory-source-status') {
+    const screen = await renderScreen(<DirectorySourceDetailScreen serverId={serverId} teamId="team-1" sourceId="source-1" />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId(readyId), screen.getTextContent()).not.toBeNull());
+    return screen;
+}
+async function wakeTeams() { await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1])); }
+function textOf(screen: Awaited<ReturnType<typeof renderDetail>>, id: string) {
+    const node = screen.findHostByTestId(id);
+    const text = (value: import('react-test-renderer').ReactTestInstance | string): string => typeof value === 'string' ? value : value.children.map(text).join('');
+    return node ? text(node) : '';
+}
+beforeEach(async () => {
     standardCleanup();
-    modalConfirmMock.mockReset();
-    modalConfirmMock.mockResolvedValue(true);
-    directoryBinding.state = { kind: 'loading' };
-    directoryGroupsBinding.rows = [];
-    directoryGroupsBinding.status = 'ready';
-    directoryGroupsBinding.enabled = null;
-    directoryGroupsBinding.accountChange = null;
-    nativeGroupsBinding.rows = [];
-    nativeGroupsBinding.error = null;
-    nativeGroupsBinding.reload.mockReset();
-    useTeamGroupMock.mockReset();
-    openPrivateLabelMock.mockReset();
-    openPrivateLabelMock.mockImplementation(async (input: Readonly<{
-        label: Readonly<{ content: Readonly<{ t: string; v?: string }> }>;
-    }>) => input.label.content.t === 'plain' ? input.label.content.v ?? null : null);
-    canMutateMock.current = true;
-    runActionMock.mockReset();
-    runActionMock.mockResolvedValue({ ok: true, value: {} });
-    removeSourceMock.mockReset();
-    removeSourceMock.mockResolvedValue({ ok: true, value: { v: 1, sourceId: 'source-1' } });
-    readRemovalImpactMock.mockReset();
-    readRemovalImpactMock.mockResolvedValue({
-        ok: true,
-        value: {
-            v: 1,
-            status: 'allowed',
-            sourceId: 'source-1',
-            sourceLabel: 'Example directory',
-            impact: {
-                teamMembershipsRemoved: 0,
-                groupMembershipsRemoved: 0,
-                groupContributionsRemoved: 0,
-                directoryCreatedGroupsRetained: 0,
-                nativeMembershipsPreserved: 0,
-                nativeGroupContributionsPreserved: 0,
-            },
-        },
-    });
-    routerBackMock.mockReset();
-    executeExternalGroupBindingMock.mockReset();
-    executeIdentityActionMock.mockReset();
-    executeIdentityActionMock.mockResolvedValue({ ok: true, value: { url: 'https://setup.example.test/dsync' } });
-    openExternalUrlMock.mockClear();
-    directoryGroupsReloadMock.mockReset();
-    announceMock.mockReset();
-    refreshSourceMock.mockReset();
-    appStateListeners.clear();
-    scrollToIndexMock.mockClear();
-    focusedItems.length = 0;
+    platform.OS = 'ios';
+    resetTeamsSnapshotsForTests();
+    resetTeamsDirectoryEngineForTests();
+    resetTeamActionClientForTests();
+    await harness.reset();
+    serverId = await harness.addHome({ name: 'Identity Home', serverUrl: 'https://identity-home.example', accountId: 'account-1', teamsEnabled: true });
+    await harness.selectHomes([serverId]);
+    answerTeam();
+    harness.answer(serverId, sourcePath, { body: teamDirectorySourceFixture({ allowedActions: ['teams.directory.sources.sync', 'teams.directory.sources.pause', 'teams.directory.sources.remove'] }) });
+    harness.answer(serverId, `${sourcePath}/people`, { body: TeamDirectoryPeoplePageV1Schema.parse({ items: [], nextCursor: null }) });
+    answerGroups();
+    answerNativeGroups([]);
+    harness.answer(serverId, `${sourcePath}/sync`, { body: { v: 1, status: 'requested', source: teamDirectorySourceFixture() } });
+    harness.answer(serverId, `${sourcePath}/removal-impact`, { body: TeamDirectorySourceRemovalPreflightV1Schema.parse({ v: 1, status: 'allowed', sourceId: 'source-1', sourceLabel: 'Example directory', impact }) });
+    harness.answer(serverId, `DELETE ${sourcePath}`, { body: TeamDirectorySourceRemoveResultV1Schema.parse({ v: 1, status: 'removed', impact }) });
+    harness.answer(serverId, portalPath, { body: { url: 'https://setup.example.test/dsync' } });
     routeParams.current = {};
     virtualWindow.enabled = false;
-    capabilitiesMock.current = { manageAuthentication: true, manageGroups: true };
+    focusedItems.length = 0;
+    scrollToIndex.mockClear();
+    announce.mockClear();
+    routerBack.mockReset();
+    openedUrl.mockReset().mockResolvedValue(true);
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
 });
-
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
-    vi.useRealTimers();
+    if (browser) {
+        await harness.reset();
+        browser.restore();
+        browser = null;
+    }
 });
 
-/** Every string rendered beneath a node, in order. */
-function renderedText(node: import('react-test-renderer').ReactTestInstance | string): string {
-    return typeof node === 'string' ? node : node.children.map(renderedText).join('');
-}
-
-/** What the recomposed control or notice actually says on screen (its rendered text). */
-function textOfTestId(screen: Readonly<{ findHostByTestId(testID: string): import('react-test-renderer').ReactTestInstance | null }>, testID: string): string | undefined {
-    const node = screen.findHostByTestId(testID);
-    return node ? renderedText(node) || undefined : undefined;
-}
-
-describe('DirectorySourceDetailScreen', () => {
+describe('DirectorySourceDetailScreen through real Home governance', () => {
     it.each([
-        ['remove', 'source-remove', 'team-directory-source-remove'],
-        ['searchGroups', 'groups-search', 'directory-groups-search'],
-    ] as const)('reveals the virtual %s search anchor after its source loads', async (setting, rowKey, controlId) => {
+        ['remove', 'team-directory-source-remove'],
+        ['searchGroups', 'directory-groups-search'],
+    ] as const)('reveals the virtual %s search anchor after the source read settles', async (setting, controlId) => {
         const anchor = DIRECTORY_SOURCE_SETTINGS.settings[setting].anchor;
         routeParams.current = { setting: anchor };
         virtualWindow.enabled = true;
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
+        const held = createDeferred<void>();
+        harness.answer(serverId, sourcePath, { body: teamDirectorySourceFixture({ allowedActions: ['teams.directory.sources.remove'] }), respondAfter: held.promise });
+        answerGroups(Array.from({ length: 30 }, (_, index) => directoryGroup(`external-group-${index}`)));
+        const screen = await renderDetail('team-directory-source-loading');
         expect(screen.findByTestId(controlId)).toBeNull();
-        expect(scrollToIndexMock).not.toHaveBeenCalled();
-
-        await act(async () => {
-            directoryBinding.state = {
-                kind: 'ready', refreshing: false, stale: false, failure: null,
-                item: {
-                    v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                    state: 'active', allowedActions: ['teams.directory.sources.remove'], error: null,
-                    sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-                },
-            };
-            directoryGroupsBinding.rows = Array.from({ length: 30 }, (_, index) => ({
-                id: `external-group-${index}`, displayName: `External Group ${index}`,
-                memberCount: 0, boundAccountCount: 0, unboundPeopleCount: 0, mapping: { state: 'unbound' },
-            }));
-            directoryBinding.publish();
-        });
-
-        const list = screen.findByTestId('directory-source-detail-virtualized-list');
-        const index = list?.props.data.findIndex((row: { key: string }) => row.key === rowKey);
-        expect(index).toBeGreaterThan(0);
-        expect(scrollToIndexMock).toHaveBeenCalledWith(expect.objectContaining({ index }));
-        expect(screen.findByTestId(controlId)).not.toBeNull();
+        expect(scrollToIndex).not.toHaveBeenCalled();
+        await act(async () => held.resolve());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(controlId)).not.toBeNull());
+        expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ animated: false }));
         expect(screen.findByTestId(`setting-reveal.${anchor}`)).not.toBeNull();
-
-        scrollToIndexMock.mockClear();
-        await act(async () => {
-            directoryGroupsBinding.rows = [...directoryGroupsBinding.rows, { id: 'new-group', displayName: 'New Group', memberCount: 0, boundAccountCount: 0, unboundPeopleCount: 0, mapping: { state: 'unbound' } }];
-            directoryBinding.publish();
-        });
-        expect(scrollToIndexMock).not.toHaveBeenCalled();
+        scrollToIndex.mockClear();
+        answerGroups([directoryGroup('new-group')]);
+        await wakeTeams();
+        await waitForHomeGovernance(() => expect(requestsAt(groupsPath).length).toBeGreaterThan(1));
+        expect(scrollToIndex).not.toHaveBeenCalled();
     });
-
-    it('explains a denied Group search target without loading or exposing Group data', async () => {
-        vi.useFakeTimers();
+    it('explains a denied Group search without loading or exposing Groups', async () => {
         routeParams.current = { setting: DIRECTORY_SOURCE_SETTINGS.settings.searchGroups.anchor };
-        capabilitiesMock.current = { manageAuthentication: true, manageGroups: false };
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+        answerTeam({ manageAuthentication: true, manageGroups: false });
+        const screen = await renderDetail();
         expect(screen.findByTestId('directory-groups-forbidden')).not.toBeNull();
-        expect(screen.findByTestId(`setting-reveal.${DIRECTORY_SOURCE_SETTINGS.sectionRefs.groups.id}`)).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`setting-reveal.${DIRECTORY_SOURCE_SETTINGS.sectionRefs.groups.id}`)).not.toBeNull());
         expect(screen.findByTestId('directory-groups-search')).toBeNull();
-        expect(directoryGroupsBinding.enabled).toBe(false);
+        expect(requestsAt(groupsPath)).toHaveLength(0);
+        expect(requestsAt(nativeGroupsPath)).toHaveLength(0);
     });
-
-    it('renders a bound directory Group with the canonical Team Group display name', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = [{
-            id: 'external-group-1', sourceId: 'source-1', externalGroupId: 'external-1', displayName: 'External engineering',
-            memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'bound', bindingId: 'binding-1', teamGroupId: 'team-group-opaque-id', teamGroupName: privateGroupName('Platform Engineering') },
-        }];
-        nativeGroupsBinding.rows = [];
-
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        await vi.waitFor(() => expect(screen.findByTestId('directory-group:external-group-1')?.props.subtitle)
-            .toBe('identityAdministration.mappedTo: Platform Engineering'));
-        directoryGroupsBinding.rows = [{ ...directoryGroupsBinding.rows[0], mapping: {
-            state: 'bound', bindingId: 'binding-1', teamGroupId: 'team-group-opaque-id', teamGroupName: null,
-        } }];
-        nativeGroupsBinding.rows = [{ id: 'team-group-opaque-id', name: privateGroupName('A retained name the reader withheld'), memberCount: 4 }];
-        // This fixture hook has no subscription: mount the withheld projection rather than
-        // pretending an equal-props update can wake the memoized real screen.
-        const withheldScreen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-        expect(withheldScreen.findByTestId('directory-group:external-group-1')?.props.subtitle)
-            .toBe('identityAdministration.mappedTo: identityAdministration.mappedGroupNotVisible');
+    it('uses directory-projected mapping names and respects a withheld target name', async () => {
+        const name = teamGroupFixture({ name: 'Platform Engineering' }).name;
+        answerGroups([directoryGroup('external-group-1', { state: 'bound', mode: 'native_target', bindingId: 'binding-1', teamGroupId: 'opaque-group', teamGroupName: name })]);
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(textOf(screen, 'directory-group:external-group-1')).toContain('identityAdministration.mappedTo: Platform Engineering'));
+        answerGroups([directoryGroup('external-group-1', { state: 'bound', mode: 'native_target', bindingId: 'binding-1', teamGroupId: 'opaque-group', teamGroupName: null })]);
+        answerNativeGroups([teamGroupFixture({ id: 'opaque-group', name: 'Retained hidden name' })]);
+        await wakeTeams();
+        await waitForHomeGovernance(() => expect(textOf(screen, 'directory-group:external-group-1')).toContain('identityAdministration.mappedTo: identityAdministration.mappedGroupNotVisible'));
+        expect(textOf(screen, 'directory-group:external-group-1')).not.toContain('Retained hidden name');
     });
-
-    it('projects a full directory page of mapping labels from the directory reader', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = Array.from({ length: 50 }, (_, index) => ({
-            id: `external-group-${index}`,
-            displayName: `External Group ${index}`,
-            memberCount: index,
-            boundAccountCount: index,
-            unboundPeopleCount: 0,
-            mapping: { state: 'bound', teamGroupId: `team-group-${index}`, teamGroupName: privateGroupName(`Team Group ${index}`) },
-        }));
-        nativeGroupsBinding.rows = Array.from({ length: 50 }, (_, index) => ({
-            id: `team-group-${index}`,
-            name: privateGroupName(`Team Group ${index}`),
-            memberCount: index,
-        }));
-
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        await vi.waitFor(() => expect(screen.findByTestId('directory-group:external-group-49')?.props.subtitle)
-            .toBe('identityAdministration.mappedTo: Team Group 49'));
-        expect(useTeamGroupMock).not.toHaveBeenCalled();
+    it('opens a full directory page of mapping labels without point-reading every Group', async () => {
+        answerGroups(Array.from({ length: 50 }, (_, index) => directoryGroup(`external-group-${index}`, { state: 'bound', mode: 'native_target', bindingId: `binding-${index}`, teamGroupId: `group-${index}`, teamGroupName: teamGroupFixture({ name: `Team Group ${index}` }).name })));
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(textOf(screen, 'directory-group:external-group-49')).toContain('identityAdministration.mappedTo: Team Group 49'));
+        expect(requestsAt('/v1/teams/groups/get')).toHaveLength(0);
     });
-
-    it('disables source and mapping mutations for a read-only Team', async () => {
-        canMutateMock.current = false;
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: ['teams.directory.sources.sync', 'teams.directory.sources.remove'], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = [{
-            id: 'external-group-1', displayName: 'Engineering', memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'unbound' },
-        }];
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        expect(screen.findByTestId('team-directory-source-sync')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('team-directory-source-remove')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('directory-group:external-group-1')?.props.disabled).toBe(true);
+    it('disables source and mapping writes for an archived Team', async () => {
+        answerTeam({ manageAuthentication: true, manageGroups: true }, 1);
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')).not.toBeNull());
+        for (const id of ['team-directory-source-sync', 'team-directory-source-remove', 'directory-group:external-group-1']) expect(screen.findByTestId(id)?.props.disabled).toBe(true);
     });
-
-    it.each(['source', 'groups'])('blocks mapping mutations while its authoritative %s projection refreshes', async (reader) => {
-        directoryGroupsBinding.status = reader === 'groups' ? 'loading' : 'ready';
-        directoryBinding.state = {
-            kind: 'ready', refreshing: reader === 'source', stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: ['teams.directory.sources.sync', 'teams.directory.sources.remove'], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = [{
-            id: 'external-group-1', displayName: 'Engineering', memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'unbound' },
-        }];
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        expect(screen.findByTestId('team-directory-source-sync')?.props.disabled).toBe(reader === 'source');
-        expect(screen.findByTestId('team-directory-source-remove')?.props.disabled).toBe(reader === 'source');
-        expect(screen.findByTestId('directory-group:external-group-1')?.props.disabled).toBe(true);
+    it.each(['source', 'groups'])('blocks mapping writes during the authoritative %s refresh', async reader => {
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')).not.toBeNull());
+        const held = createDeferred<void>();
+        harness.answer(serverId, reader === 'source' ? sourcePath : groupsPath, { body: reader === 'source' ? teamDirectorySourceFixture({ allowedActions: ['teams.directory.sources.sync', 'teams.directory.sources.remove'] }) : TeamDirectoryGroupPageV1Schema.parse({ items: [directoryGroup()], nextCursor: null }), respondAfter: held.promise });
+        await wakeTeams();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')?.props.disabled).toBe(true));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-sync')?.props.disabled).toBe(reader === 'source'));
+        await act(async () => held.resolve());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')?.props.disabled).toBe(false));
     });
-
-    it('keeps its hook order stable when the source finishes loading', async () => {
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-        await expect(act(async () => {
-            directoryBinding.state = {
-                kind: 'ready',
-                refreshing: false,
-                stale: false,
-                failure: null,
-                item: {
-                    v: 1,
-                    id: 'source-1',
-                    teamId: 'team-1',
-                    kind: 'workos_directory',
-                    displayName: 'Example directory',
-                    state: 'paused',
-                    allowedActions: ['teams.directory.sources.resume'],
-                    sync: {
-                        mode: 'events_and_full',
-                        attempt: 'paused',
-                        freshness: 'stale',
-                        lastAttemptAt: null,
-                        lastSuccessAt: null,
-                        lastFullReconcileAt: null,
-                        nextScheduledAt: null,
-                    },
-                    error: null,
-                },
-            };
-            directoryBinding.publish();
-        })).resolves.toBeUndefined();
-        // The state is the header's first fact.
-        expect(screen.findByTestId('team-directory-source-status')).not.toBeNull();
-        expect(renderedText(screen.tree.root)).toContain('teams.authentication.directory.state.paused');
-        expect(screen.tree.root.findAllByType('VirtualizedList' as never)).toHaveLength(1);
+    it('keeps its Team notice through a delayed source read and a paused result', async () => {
+        answerTeam({ manageAuthentication: true, manageGroups: true }, 1);
+        const held = createDeferred<void>();
+        const source = teamDirectorySourceFixture({ state: 'paused', allowedActions: ['teams.directory.sources.resume'] });
+        harness.answer(serverId, sourcePath, { body: source, respondAfter: held.promise });
+        const screen = await renderDetail('team-directory-source-loading');
+        expect(screen.findByTestId('team-archived')).not.toBeNull();
+        await act(async () => held.resolve());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-source-status')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('teams.authentication.directory.state.paused');
+        expect(screen.findByTestId('team-archived')).not.toBeNull();
     });
-
-    it('keeps the Team shell notices and one list root while the source is still loading', async () => {
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        expect(screen.findByTestId('team-shell-header')).not.toBeNull();
-        expect(screen.tree.root.findAllByType('VirtualizedList' as never)).toHaveLength(1);
+    it('keeps Team notices when the source read fails', async () => {
+        answerTeam({ manageAuthentication: true, manageGroups: true }, 1);
+        harness.answer(serverId, sourcePath, { status: 503, body: { error: 'home_unreachable' } });
+        const screen = await renderDetail('team-directory-source-unavailable');
+        expect(screen.findByTestId('team-archived')).not.toBeNull();
     });
-
-    it('keeps the Team shell notices and one list root when the source is unavailable', async () => {
-        directoryBinding.state = {
-            kind: 'unavailable',
-            failure: { code: 'home_unreachable', retryable: true },
-        };
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        expect(screen.findByTestId('team-shell-header')).not.toBeNull();
-        expect(screen.findByTestId('team-directory-source-unavailable')).not.toBeNull();
-        expect(screen.tree.root.findAllByType('VirtualizedList' as never)).toHaveLength(1);
-    });
-
-    it('keeps the Team shell notices when the viewer may not manage this directory', async () => {
-        vi.useFakeTimers();
+    it('keeps Team notices when authentication administration is forbidden', async () => {
         routeParams.current = { setting: DIRECTORY_SOURCE_SETTINGS.settings.searchGroups.anchor };
-        capabilitiesMock.current = { manageAuthentication: false, manageGroups: false };
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-
-        expect(screen.findByTestId('team-shell-header')).not.toBeNull();
-        expect(screen.findByTestId('team-directory-source-forbidden')).not.toBeNull();
-        expect(screen.findByTestId(`setting-reveal.${DIRECTORY_SOURCE_SETTINGS.sectionRefs.actions.id}`)).not.toBeNull();
+        answerTeam({ manageAuthentication: false, manageGroups: false }, 1);
+        const screen = await renderDetail('team-directory-source-forbidden');
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`setting-reveal.${DIRECTORY_SOURCE_SETTINGS.sectionRefs.actions.id}`)).not.toBeNull());
+        expect(screen.findByTestId('team-archived')).not.toBeNull();
+        expect(requestsAt(sourcePath)).toHaveLength(0);
     });
-
-    it('keeps source administration available without exposing Group mappings to an authentication-only manager', async () => {
-        capabilitiesMock.current = { manageAuthentication: true, manageGroups: false };
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: ['teams.directory.sources.sync', 'teams.directory.sources.pause', 'teams.directory.sources.remove'], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = [{
-            id: 'external-group-1', displayName: 'Engineering', memberCount: 4, mapping: { state: 'unbound' },
-        }];
-
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        expect(screen.findByTestId('team-directory-source-status')).not.toBeNull();
-        expect(screen.findByTestId('team-directory-source-sync')?.props.disabled).toBe(false);
-        expect(screen.findByTestId('team-directory-source-pause')?.props.disabled).toBe(false);
-        expect(screen.findByTestId('team-directory-source-remove')?.props.disabled).toBe(false);
+    it('keeps source administration available to an authentication-only manager without reading Groups', async () => {
+        answerTeam({ manageAuthentication: true, manageGroups: false });
+        const screen = await renderDetail();
         expect(screen.findByTestId('directory-groups-search')).toBeNull();
-        expect(screen.findByTestId('directory-group:external-group-1')).toBeNull();
-        expect(directoryGroupsBinding.enabled).toBe(false);
-
+        expect(requestsAt(groupsPath)).toHaveLength(0);
+        expect(requestsAt(nativeGroupsPath)).toHaveLength(0);
+        for (const id of ['team-directory-source-sync', 'team-directory-source-pause', 'team-directory-source-remove']) {
+            expect(screen.findByTestId(id)?.props.disabled).toBe(false);
+        }
         await screen.pressByTestIdAsync('team-directory-source-sync');
-        expect(runActionMock).toHaveBeenCalledWith('teams.directory.sources.sync', {
-            onApprovalFailed: expect.any(Function),
-        });
+        await waitForHomeGovernance(() => expect(requestsAt(`${sourcePath}/sync`)).toHaveLength(1));
     });
-
-    it('does not let Group authority substitute for authentication administration authority', async () => {
-        capabilitiesMock.current = { manageAuthentication: false, manageGroups: true };
-
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        expect(screen.findByTestId('team-directory-source-forbidden')).not.toBeNull();
+    it('does not substitute Group administration for authentication authority', async () => {
+        answerTeam({ manageAuthentication: false, manageGroups: true });
+        const screen = await renderDetail('team-directory-source-forbidden');
         expect(screen.findByTestId('directory-groups-search')).toBeNull();
+        expect(requestsAt(groupsPath)).toHaveLength(0);
     });
-
-    it('presents the canonical typed message for source and action failures', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'needs_attention', allowedActions: ['teams.directory.sources.sync'],
-                error: { code: 'directory_source_permission_lost', retryable: false },
-                sync: { mode: 'events_and_full', attempt: 'failed', freshness: 'stale', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        runActionMock.mockResolvedValueOnce({
-            ok: false,
-            failure: { code: 'directory_sync_rate_limited', retryable: true },
-        });
-
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        // A lost directory permission is an administrator's job, not a provider
-        // outage: the one failure owner answers `needs_attention` so no Retry
-        // is offered for something a retry cannot clear.
-        expect(textOfTestId(screen, 'team-directory-source-error'))
-            .toContain('identityAdministration.errorNeedsAttention');
+    it('presents and announces the canonical typed source and sync failures', async () => {
+        harness.answer(serverId, sourcePath, { body: teamDirectorySourceFixture({ state: 'needs_attention', allowedActions: ['teams.directory.sources.sync'], error: { code: 'directory_source_permission_lost', retryable: false } }) });
+        harness.answer(serverId, `${sourcePath}/sync`, { status: 429, body: { error: 'directory_sync_rate_limited' } });
+        const screen = await renderDetail();
+        expect(textOf(screen, 'team-directory-source-error')).toContain('identityAdministration.errorNeedsAttention');
         await screen.pressByTestIdAsync('team-directory-source-sync');
-        const visibleMessage = textOfTestId(screen, 'team-directory-source-action-error');
-        expect(visibleMessage).toBe('identityAdministration.errorRateLimited');
-        expect(announceMock).toHaveBeenCalledWith(visibleMessage);
-
-        // The Home refuses Sync with needs-attention only for a paused source
-        // (child 05 :498), whose recovery is Resume.
-        runActionMock.mockResolvedValueOnce({
-            ok: false,
-            failure: { code: 'directory_sync_needs_attention', retryable: false },
-        });
+        await waitForHomeGovernance(() => expect(textOf(screen, 'team-directory-source-action-error')).toBe('identityAdministration.errorRateLimited'));
+        expect(announce).toHaveBeenCalledWith('identityAdministration.errorRateLimited');
+        harness.answer(serverId, `${sourcePath}/sync`, { status: 409, body: { error: 'directory_sync_needs_attention' } });
         await screen.pressByTestIdAsync('team-directory-source-sync');
-        expect(textOfTestId(screen, 'team-directory-source-action-error'))
-            .toBe('identityAdministration.errorSyncPaused');
+        await waitForHomeGovernance(() => expect(textOf(screen, 'team-directory-source-action-error')).toBe('identityAdministration.errorSyncPaused'));
     });
-
-    it('offers the existing Sync control as Retry while the source reports a failure', async () => {
-        const sourceWith = (error: Record<string, unknown> | null) => ({
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: error ? 'needs_attention' : 'active',
-                allowedActions: ['teams.directory.sources.sync', 'teams.directory.sources.pause'],
-                error,
-                sync: { mode: 'events_and_full', attempt: error ? 'failed' : 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        });
-        directoryBinding.state = sourceWith({ code: 'directory_source_permission_lost', retryable: false });
-
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        // child 05 §14.1: a failed source offers Retry, and pressing it runs
-        // the one Sync Action (a complete scan), not a Pause → Resume detour.
-        expect(textOfTestId(screen, 'team-directory-source-sync')).toBe('common.retry');
+    it('uses Sync as Retry and restores its ordinary label after recovery', async () => {
+        harness.answer(serverId, sourcePath, { body: teamDirectorySourceFixture({ state: 'needs_attention', allowedActions: ['teams.directory.sources.sync'], error: { code: 'directory_source_permission_lost', retryable: false } }) });
+        const screen = await renderDetail();
+        expect(textOf(screen, 'team-directory-source-sync')).toBe('common.retry');
+        harness.answer(serverId, sourcePath, { body: teamDirectorySourceFixture({ allowedActions: ['teams.directory.sources.sync'] }) });
         await screen.pressByTestIdAsync('team-directory-source-sync');
-        expect(runActionMock).toHaveBeenCalledWith('teams.directory.sources.sync', expect.anything());
-
-        await act(async () => {
-            directoryBinding.state = sourceWith(null);
-            directoryBinding.publish();
-        });
-        expect(textOfTestId(screen, 'team-directory-source-sync'))
-            .toBe('teams.authentication.directory.actions.sync');
+        await waitForHomeGovernance(() => expect(textOf(screen, 'team-directory-source-sync')).toBe('teams.authentication.directory.actions.sync'));
     });
-
-    it('binds the mounted directory Group list to its exact Home Team wake', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-
-        await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
-        // A projection change is published as the Team AccountChange; without
-        // this subscription a mounted Group list kept its old rows until remount.
-        expect(directoryGroupsBinding.accountChange)
-            .toEqual({ serverId: 'home-1', entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+    it('refreshes mounted Groups from the exact Home Team change', async () => {
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')).not.toBeNull());
+        answerGroups([directoryGroup('new-group')]);
+        await act(async () => { publishHomeAccountChange('another-home', [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]); publishHomeAccountChange(serverId, ['home-governance']); });
+        expect(screen.findByTestId('directory-group:new-group')).toBeNull();
+        await wakeTeams();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:new-group')).not.toBeNull());
     });
-
-    it('opens exact source-bound WorkOS recovery for immediate and approved results', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                workosAdminPortalConnectionId: 'connection-1',
-                state: 'needs_attention', allowedActions: ['teams.directory.sources.sync'], error: null,
-                sync: { mode: 'events_and_full', attempt: 'failed', freshness: 'stale', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
+    it.each([false, true])('opens source-bound WorkOS recovery and refreshes on native return (Ask=%s)', async ask => {
+        harness.answer(serverId, sourcePath, { body: teamDirectorySourceFixture({ workosAdminPortalConnectionId: 'connection-1', state: 'needs_attention' }) });
+        if (ask) await harness.requireUiApproval(serverId, 'teams.identity.workos.adminPortalLink.create');
+        const screen = await renderDetail();
         await screen.pressByTestIdAsync('team-directory-source-open-workos');
-        expect(executeIdentityActionMock).toHaveBeenCalledWith(
-            'teams.identity.workos.adminPortalLink.create',
-            {
-                v: 1,
-                teamId: 'team-1',
-                connectionId: 'connection-1',
-                directorySourceId: 'source-1',
-                intent: 'dsync',
-            },
-            expect.objectContaining({
-                onApprovalSucceeded: expect.any(Function),
-                onApprovalFailed: expect.any(Function),
-            }),
-        );
-        expect(openExternalUrlMock).toHaveBeenCalledWith('https://setup.example.test/dsync');
-        await act(async () => {
-            for (const listener of appStateListeners) listener('active');
-        });
-        expect(refreshSourceMock).toHaveBeenCalledOnce();
-
-        let continueApproved: ((value: Readonly<{ url: string }>) => Promise<void>) | undefined;
-        executeIdentityActionMock.mockImplementationOnce(async (
-            _actionId: string,
-            _input: unknown,
-            options: Readonly<{ onApprovalSucceeded: typeof continueApproved }>,
-        ) => {
-            continueApproved = options.onApprovalSucceeded;
-            return { ok: false, approvalPending: true, artifactId: 'approval-portal', failure: { code: 'approval_pending', retryable: false } };
-        });
-        await screen.pressByTestIdAsync('team-directory-source-open-workos');
-        expect(continueApproved).toBeTypeOf('function');
-        await act(async () => {
-            await continueApproved?.({ url: 'https://setup.example.test/approved' });
-        });
-        expect(openExternalUrlMock).toHaveBeenCalledWith('https://setup.example.test/approved');
+        await waitForHomeGovernance(() => expect(openedUrl).toHaveBeenCalledWith('https://setup.example.test/dsync'));
+        expect(requestsAt(portalPath)[0]?.input).toEqual({ v: 1, teamId: 'team-1', connectionId: 'connection-1', directorySourceId: 'source-1', intent: 'dsync' });
+        const before = requestsAt(sourcePath).length;
+        await act(async () => reactNativeWebAppState.emit('active'));
+        await waitForHomeGovernance(() => expect(requestsAt(sourcePath).length).toBeGreaterThan(before));
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
-
-    it('navigates back exactly once when approved source removal executes', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: ['teams.directory.sources.remove'], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        let finishRemoval: ((value: Readonly<{ sourceId: string }>) => void | Promise<void>) | undefined;
-        removeSourceMock.mockImplementationOnce(async (
-            options?: Readonly<{ onApprovalSucceeded?: typeof finishRemoval }>,
-        ) => {
-            finishRemoval = options?.onApprovalSucceeded;
-            return {
-                ok: false,
-                approvalPending: true,
-                artifactId: 'approval-source-remove',
-                failure: { code: 'approval_pending', retryable: false },
-            };
-        });
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
+    it('removes a source once after real preflight and native Ask', async () => {
+        await harness.requireUiApproval(serverId, 'teams.directory.sources.remove');
+        const screen = await renderDetail();
         await screen.pressByTestIdAsync('team-directory-source-remove');
-        expect(removeSourceMock).toHaveBeenCalledWith(expect.objectContaining({
-            onApprovalSucceeded: expect.any(Function),
-            onApprovalFailed: expect.any(Function),
-        }));
-        expect(finishRemoval).toBeTypeOf('function');
-        expect(routerBackMock).not.toHaveBeenCalled();
-        expect(screen.findByTestId('team-directory-source-action-error')).toBeNull();
-
-        await act(async () => {
-            await finishRemoval?.({ sourceId: 'source-1' });
-        });
-        expect(routerBackMock).toHaveBeenCalledOnce();
+        await waitForHomeGovernance(() => expect(routerBack).toHaveBeenCalledOnce());
+        expect(requestsAt(`${sourcePath}/removal-impact`)).toHaveLength(1);
+        expect(requestsAt(sourcePath).filter(request => request.method === 'DELETE')).toHaveLength(1);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
-
-    it('reloads a mapping after approval and exposes terminal failure for retry', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = [{
-            id: 'external-group-1', sourceId: 'source-1', externalGroupId: 'external-1', displayName: 'Engineering',
-            memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'unbound' },
-        }];
-        let finishMapping: (() => void | Promise<void>) | undefined;
-        let failMapping: ((code: string) => void) | undefined;
-        executeExternalGroupBindingMock.mockImplementationOnce(async (
-            _actionId: string,
-            _input: unknown,
-            options?: Readonly<{
-                onApprovalSucceeded?: typeof finishMapping;
-                onApprovalFailed?: typeof failMapping;
-            }>,
-        ) => {
-            finishMapping = options?.onApprovalSucceeded;
-            failMapping = options?.onApprovalFailed;
-            return {
-                ok: false,
-                approvalPending: true,
-                artifactId: 'approval-group-map',
-                failure: { code: 'approval_pending', retryable: false },
-            };
-        });
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
+    it.each([true, false])('settles mapping through native Ask and leaves it recoverable (accepted=%s)', async accepted => {
+        await harness.requireUiApproval(serverId, 'teams.externalGroupBindings.set');
+        vi.mocked(Modal.confirm).mockResolvedValue(accepted);
+        harness.answer(serverId, `PUT ${bindingPath}`, { body: TeamExternalGroupBindingV1Schema.parse({ v: 1, id: 'binding-1', teamId: 'team-1', owner: { kind: 'directory_source', directorySourceId: 'source-1' }, externalGroupId: 'external-external-group-1', mode: 'directory_created', target: { teamGroupId: 'team-group-1', name: teamGroupFixture().name, archivedAt: null } }) });
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')).not.toBeNull());
         await screen.pressByTestIdAsync('directory-group:external-group-1');
         await screen.pressByTestIdAsync('directory-group-map-create');
-        expect(executeExternalGroupBindingMock).toHaveBeenCalledWith(
-            'teams.externalGroupBindings.set',
-            expect.any(Object),
-            expect.objectContaining({
-                onApprovalSucceeded: expect.any(Function),
-                onApprovalFailed: expect.any(Function),
-            }),
-        );
-        expect(finishMapping).toBeTypeOf('function');
-        expect(failMapping).toBeTypeOf('function');
-        expect(directoryGroupsReloadMock).not.toHaveBeenCalled();
-        expect(screen.findByTestId('directory-group-mapping-failure')).toBeNull();
-
-        await act(async () => {
-            await finishMapping?.();
-        });
-        expect(directoryGroupsReloadMock).toHaveBeenCalledOnce();
-        expect(screen.findByTestId('directory-group-map-create')).toBeNull();
-
-        await act(async () => {
-            failMapping?.('approval_rejected');
-        });
-        expect(screen.findByTestId('directory-group-mapping-failure')).not.toBeNull();
-        expect(screen.findByTestId('directory-group:external-group-1')?.props.disabled).toBe(false);
+        await waitForHomeGovernance(() => expect(Modal.confirm).toHaveBeenCalled());
+        if (accepted) {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group-map-create')).toBeNull());
+            expect(requestsAt(groupsPath).length).toBeGreaterThan(1);
+        } else {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group-mapping-failure')).not.toBeNull());
+            expect(requestsAt(bindingPath)).toHaveLength(0);
+            expect(screen.findByTestId('directory-group:external-group-1')?.props.disabled).toBe(false);
+        }
     });
-
-
-    it('opens the mapping chooser beside the pressed group instead of after the whole list', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = Array.from({ length: 30 }, (_, index) => ({
-            id: `external-group-${index}`,
-            displayName: `External Group ${index}`,
-            memberCount: index,
-            boundAccountCount: index,
-            unboundPeopleCount: 0,
-            mapping: { state: 'unbound' },
-        }));
-        nativeGroupsBinding.rows = [{ id: 'team-group-1', name: privateGroupName('Platform Engineering'), memberCount: 4 }];
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
+    it('opens the chooser beside its Group and returns focus on Escape', async () => {
+        browser = await installBrowserRuntimeForTests({ url: 'https://identity-ui.example' });
+        platform.OS = 'web';
+        await harness.switchAccount(serverId, 'account-1');
+        answerGroups(Array.from({ length: 30 }, (_, index) => directoryGroup(`external-group-${index}`)));
+        answerNativeGroups([teamGroupFixture({ name: 'Platform Engineering' })]);
+        const screen = await renderDetail('directory-group:external-group-0');
         await screen.pressByTestIdAsync('directory-group:external-group-0');
-
         const order = collectRenderedTestIds(screen.tree.toJSON());
-        expect(order.indexOf('directory-group:external-group-0'))
-            .toBeLessThan(order.indexOf('directory-group-map-create'));
-        expect(order.indexOf('directory-group-map-create'))
-            .toBeLessThan(order.indexOf('directory-group:external-group-1'));
-        expect(screen.findByTestId('directory-group:external-group-0')?.props.accessibilityExpanded).toBe(true);
+        expect(order.indexOf('directory-group:external-group-0')).toBeLessThan(order.indexOf('directory-group-map-create'));
+        expect(order.indexOf('directory-group-map-create')).toBeLessThan(order.indexOf('directory-group:external-group-1'));
+        expect(screen.findByTestId('directory-group:external-group-0')?.props.accessibilityState?.expanded).toBe(true);
         expect(focusedItems).toContain('directory-group-map-create');
-        expect(scrollToIndexMock).toHaveBeenCalledWith(expect.objectContaining({ index: expect.any(Number), animated: false }));
-        await act(async () => { screen.findByTestId('directory-group-map-create')?.props.onKeyDown({ key: 'Escape' }); });
+        expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: expect.any(Number), animated: false }));
+        await act(async () => screen.findByTestId('directory-group-map-create')?.props.onKeyDown({ key: 'Escape' }));
         expect(screen.findByTestId('directory-group-map-create')).toBeNull();
         expect(focusedItems.at(-1)).toBe('directory-group:external-group-0');
     });
-
-    it('shows existing Groups directly without an inert map-existing action', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = [{
-            id: 'external-group-1', displayName: 'Engineering', memberCount: 4, boundAccountCount: 4, unboundPeopleCount: 0, mapping: { state: 'unbound' },
-        }];
-        nativeGroupsBinding.rows = [{ id: 'team-group-1', name: privateGroupName('Platform Engineering'), memberCount: 4 }];
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
-
+    it('shows existing Groups directly and closes the chooser with Cancel', async () => {
+        answerNativeGroups([teamGroupFixture({ id: 'team-group-1', name: 'Platform Engineering' })]);
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')).not.toBeNull());
         await screen.pressByTestIdAsync('directory-group:external-group-1');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group-native-target:team-group-1')).not.toBeNull());
         expect(screen.findByTestId('directory-group-map-existing')).toBeNull();
-        expect(screen.findByTestId('directory-group-native-target:team-group-1')).not.toBeNull();
-
         await screen.pressByTestIdAsync('directory-group-chooser-cancel');
         expect(screen.findByTestId('directory-group-chooser-cancel')).toBeNull();
     });
-
-    it('shows a failed Team Group chooser read and retries the native Group reader', async () => {
-        directoryBinding.state = {
-            kind: 'ready', refreshing: false, stale: false, failure: null,
-            item: {
-                v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
-                state: 'active', allowedActions: [], error: null,
-                sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null, lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
-            },
-        };
-        directoryGroupsBinding.rows = [{ id: 'external-group-1', displayName: 'Engineering', memberCount: 0, boundAccountCount: 0, unboundPeopleCount: 0, mapping: { state: 'unbound' } }];
-        nativeGroupsBinding.error = { kind: 'unreachable', retryable: true, code: null };
-        nativeGroupsBinding.rows = [{ id: 'retained-group', name: privateGroupName('Retained Group'), memberCount: 4 }];
-        const screen = await renderScreen(<DirectorySourceDetailScreen serverId="home-1" teamId="team-1" sourceId="source-1" />);
+    it('retains unavailable native Groups as disabled targets and retries their reader', async () => {
+        answerNativeGroups([teamGroupFixture({ id: 'retained-group', name: 'Retained Group' })]);
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')).not.toBeNull());
         await screen.pressByTestIdAsync('directory-group:external-group-1');
-        expect(screen.findByTestId('directory-native-groups-error')).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group-native-target:retained-group')).not.toBeNull());
+        await screen.pressByTestIdAsync('directory-group-chooser-cancel');
+        harness.answer(serverId, nativeGroupsPath, { status: 503, body: { error: 'home_unreachable' } });
+        await wakeTeams();
+        await screen.pressByTestIdAsync('directory-group:external-group-1');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-native-groups-error')).not.toBeNull());
         expect(screen.findByTestId('directory-native-groups-empty')).toBeNull();
         expect(screen.findByTestId('directory-group-native-target:retained-group')?.props.disabled).toBe(true);
+        answerNativeGroups([teamGroupFixture({ id: 'retained-group' })]);
         await screen.pressByTestIdAsync('directory-native-groups-retry');
-        expect(nativeGroupsBinding.reload).toHaveBeenCalledOnce();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-native-groups-error')).toBeNull());
+        const recoveredTarget = screen.findByTestId('directory-group-native-target:retained-group');
+        expect(recoveredTarget).not.toBeNull();
+        expect(recoveredTarget?.props.disabled).not.toBe(true);
     });
 });

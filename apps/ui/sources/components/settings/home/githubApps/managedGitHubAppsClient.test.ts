@@ -1,49 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const serverFetchMock = vi.hoisted(() => vi.fn());
-const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: serverFetchMock,
-    createServerFetchAtEndpoint: () => async (path: string) => {
-        if (path.startsWith('/v1/account/encryption')) {
-            return new Response(JSON.stringify({ mode: 'plain', updatedAt: 0 }), { status: 200 });
-        }
-        if (path.startsWith('/v2/account/settings')) {
-            return new Response(JSON.stringify({ content: null, version: 0 }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
-    },
-}));
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: runtimeFetchMock,
-}));
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: { getCredentialsForServerUrl: getCredentialsForServerUrlMock },
-    });
-});
-
+import { ManagedGitHubAppsListOutputV1Schema, ManagedGitHubAppErrorV1Schema } from '@happier-dev/protocol/identity/githubApps';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
-import { createManagedGitHubAppsClient } from './managedGitHubAppsClient';
-import { resetScopedHomeActionExecutorsForTests } from '@/sync/ops/actions/scopedHomeActionExecutor';
+const { createManagedGitHubAppsClient } = await import('./managedGitHubAppsClient');
+const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+// Collect the real executor graph after boundaries, before a test owns its first Action.
+await import('@/sync/ops/actions/defaultActionExecutor');
 
-function tokenForSub(sub: string): string {
-    const payload = globalThis.btoa(JSON.stringify({ sub }))
-        .replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-    return `e30.${payload}.signature`;
-}
-
-beforeEach(() => {
-    runtimeFetchMock.mockReset();
-    serverFetchMock.mockReset();
-    getCredentialsForServerUrlMock.mockReset();
-    getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
+beforeEach(async () => {
+    await harness.reset();
     resetScopedHomeActionExecutorsForTests();
 });
 
@@ -54,10 +23,11 @@ afterEach(() => {
 
 describe('createManagedGitHubAppsClient', () => {
     it('rejects a non-canonical GitHub App Action input before transport', async () => {
-        const serverId = (await upsertServerProfile({
+        const serverId = await harness.addHome({
             serverUrl: 'https://github-app-invalid.example',
             name: 'GitHub App Home',
-        })).id;
+            accountId: 'account-1',
+        });
         const scope = createServerAccountScope(serverId, 'account-1')!;
         const inputWithUnknownField = Object.assign(
             { owner: { kind: 'home' as const } },
@@ -73,19 +43,17 @@ describe('createManagedGitHubAppsClient', () => {
             kind: 'failed',
             failure: { code: 'invalid_parameters', retryable: false },
         });
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
+        expect(harness.requestsFor('/v1/identity/github-apps/list')).toHaveLength(0);
     });
 
     it('lists Home-owned GitHub Apps through the Action-declared scoped route', async () => {
-        const serverId = (await upsertServerProfile({
+        const serverId = await harness.addHome({
             serverUrl: 'https://github-app-home.example',
             name: 'GitHub App Home',
-        })).id;
+            accountId: 'account-1',
+        });
         const scope = createServerAccountScope(serverId, 'account-1')!;
-        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
-            registrations: [],
-            installations: [],
-        }), { status: 200 }));
+        harness.answer(serverId, '/v1/identity/github-apps/list', { body: ManagedGitHubAppsListOutputV1Schema.parse({ registrations: [], installations: [] }) });
 
         const result = await createManagedGitHubAppsClient(scope).execute(
             'identity.githubApps.list',
@@ -93,23 +61,22 @@ describe('createManagedGitHubAppsClient', () => {
         );
 
         expect(result).toEqual({ kind: 'succeeded', value: { registrations: [], installations: [] } });
-        const request = runtimeFetchMock.mock.calls[0]?.[0];
-        expect(request?.url).toBe('https://github-app-home.example/v1/identity/github-apps/list');
-        expect(request?.init?.method).toBe('POST');
-        expect(JSON.parse(request?.init?.body ?? 'null')).toEqual({ owner: { kind: 'home' } });
-        expect(serverFetchMock).not.toHaveBeenCalled();
+        const request = harness.requestsFor('/v1/identity/github-apps/list')[0];
+        expect(request?.serverUrl + request?.path).toBe('https://github-app-home.example/v1/identity/github-apps/list');
+        expect(request?.method).toBe('POST');
+        expect(request?.input).toEqual({ owner: { kind: 'home' } });
     });
 
     it('preserves a GitHub removal blocker code from the Home', async () => {
-        const serverId = (await upsertServerProfile({
+        const serverId = await harness.addHome({
             serverUrl: 'https://github-app-blocked.example',
             name: 'GitHub App Home',
-        })).id;
+            accountId: 'account-1',
+        });
         const scope = createServerAccountScope(serverId, 'account-1')!;
-        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
-            error: 'github_installation_in_use',
-            blockers: { identityProviderInstances: 2, directorySources: 1 },
-        }), { status: 409 }));
+        harness.answer(serverId, '/v1/identity/github-apps/remove', { status: 409, body: ManagedGitHubAppErrorV1Schema.parse({
+            error: 'github_installation_in_use', blockers: { identityProviderInstances: 2, directorySources: 1 },
+        }) });
 
         const result = await createManagedGitHubAppsClient(scope).execute(
             'identity.githubApps.remove',
@@ -123,15 +90,13 @@ describe('createManagedGitHubAppsClient', () => {
     });
 
     it('surfaces an ambiguous GitHub App mutation response loss as outcome unknown', async () => {
-        const serverId = (await upsertServerProfile({
+        const serverId = await harness.addHome({
             serverUrl: 'https://github-app-unknown.example',
             name: 'GitHub App Home',
-        })).id;
-        const scope = createServerAccountScope(serverId, 'account-1')!;
-        runtimeFetchMock.mockImplementation(async (request) => {
-            request.onIssued?.();
-            throw Object.assign(new Error('connection reset after dispatch'), { code: 'ECONNRESET' });
+            accountId: 'account-1',
         });
+        const scope = createServerAccountScope(serverId, 'account-1')!;
+        harness.answer(serverId, '/v1/identity/github-apps/remove', { dispatchThenFail: true });
 
         const result = await createManagedGitHubAppsClient(scope).execute(
             'identity.githubApps.remove',

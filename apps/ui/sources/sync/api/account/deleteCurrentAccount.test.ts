@@ -1,17 +1,29 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createServerAccountConnectionProbeHttpResponse } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 const serverFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/http/client', () => ({ serverFetch }));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 import { deleteCurrentAccount } from './deleteCurrentAccount';
 import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 describe('deleteCurrentAccount', () => {
-  beforeEach(() => serverFetch.mockReset());
+  beforeEach(async () => {
+    await homes.reset();
+    await homes.addHome({ name: 'Deletion Home', serverUrl: 'https://delete-account.test', accountId: 'account', active: true });
+    serverFetch.mockReset();
+    setRuntimeFetch((url, init) => createServerAccountConnectionProbeHttpResponse(new URL(String(url)).pathname)
+      ?? serverFetch(String(url), init));
+  });
+  afterEach(async () => { resetRuntimeFetch(); await homes.reset(); });
   it('sends exact confirmation and accepts only typed success', async () => {
     serverFetch.mockResolvedValue(new Response(JSON.stringify({ status: 'deleted' }), { status: 200 }));
     await expect(deleteCurrentAccount({ token: 'signed' })).resolves.toEqual({ status: 'deleted' });
-    expect(serverFetch).toHaveBeenCalledWith('/v1/auth/account/delete', expect.objectContaining({ body: JSON.stringify({ confirmation: 'DELETE' }) }), { includeAuth: false });
+    expect(serverFetch).toHaveBeenCalledWith('https://delete-account.test/v1/auth/account/delete', expect.objectContaining({ body: JSON.stringify({ confirmation: 'DELETE' }) }));
+    expect(new Headers(serverFetch.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe('Bearer signed');
   });
   it('rejects PAT and malformed success responses', async () => {
     serverFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'present_user_required' }), { status: 403 }));

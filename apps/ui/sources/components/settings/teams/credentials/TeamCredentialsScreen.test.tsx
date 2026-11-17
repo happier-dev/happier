@@ -16,6 +16,7 @@ const modalSpies = vi.hoisted(() => ({
 }));
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: routerPush, back: vi.fn(), replace: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),

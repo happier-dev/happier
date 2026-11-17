@@ -39,7 +39,7 @@ import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponse
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionWithDisplayRecordFixture as createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -93,7 +93,8 @@ import { projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionStateEvidenceSchema,
   type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import * as machineRpcBoundary from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { buildUsageBreakdownList } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { formatUsageCost } from '@happier-dev/protocol/usage/usageFormatting';
 import { summarizeUsageWork } from '@/components/settings/usage/widgets/usageWorkPresentation';
@@ -113,10 +114,16 @@ vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testk
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-// Vitest 3.2.4's manual factory can bypass a mock during concurrent lazy
-// imports. Automatic spy registration keeps every RPC on this same boundary.
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', { spy: true });
-beforeEach(() => { vi.spyOn(machineRpcBoundary, 'machineRpcWithServerScope').mockImplementation(scmTransport); });
+// Only the external daemon acknowledgement is substituted; scoped RPC admission stays real.
+beforeEach(() => {
+  scmTransport.mockReset();
+  installSessionActionRpcBoundary((request, transport) => {
+    const separator = request.method.indexOf(':');
+    if (separator < 1) throw new Error('Expected a Machine daemon RPC');
+    return scmTransport({ machineId: request.method.slice(0, separator),
+      method: request.method.slice(separator + 1), payload: request.params, authorization: request.authorization, serverUrl: transport.serverUrl });
+  });
+});
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 let homeSequence = 0;
@@ -178,6 +185,10 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
         }
       }
       if (response) return response;
+      const machineRead = createPlainMachineReadHttpResponseFixture(request.path, {
+        method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      }, 'account-a', { activeAt: Date.now() });
+      if (machineRead) return machineRead;
       if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
       if (request.path === '/v1/machines') return Response.json(Object.values(storage.getState().machines)
         .map(machine => createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine })));
@@ -2069,7 +2080,7 @@ describe('usage query captured Resource adapter', () => {
     });
     storage.getState().applySessions([createSessionFixture({ id: 'work-session', serverId: captured.accountLifetime.scope.serverId,
       metadata: { machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test' } })]);
-    storage.getState().applyMachines([createMachineFixture({ id: 'work-machine', activeAt: Date.now() })]);
+    storage.getState().applyMachines([createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })]);
     const witness: UsageWorkEvidence = { sessionId: 'work-session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
       checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
       pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
@@ -3090,7 +3101,7 @@ describe('usage query captured Resource adapter', () => {
     const captured = await context(request => request.path === '/v2/usage/query'
       ? Response.json({ ...value, contributions: [workContribution] }) : undefined);
     const scope = captured.accountLifetime.scope;
-    const machine = createMachineFixture({ id: 'work-machine', active: false, activeAt: 1, presenceProtocolVersion: 1 });
+    const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } });
     storage.getState().applyMachines([machine]);
     storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true, serverId: scope.serverId,
       metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
@@ -3659,7 +3670,7 @@ describe('usage query captured Resource adapter', () => {
     const fetch = home!.fetch;
     setRuntimeFetch(async (url, init) => {
       const path = new URL(String(url)).pathname;
-      if (path === (held === 'settings' ? '/v2/account/settings' : '/v1/account/encryption')) {
+      if (path === (held === 'settings' ? '/v2/account/settings' : '/v1/account/encryption/currentness')) {
         events.push('held');
         await gate.promise;
         events.push('released');
@@ -3667,6 +3678,12 @@ describe('usage query captured Resource adapter', () => {
       }
       return fetch(url, init);
     });
+    if (held !== 'settings') {
+      // Bootstrap already owns a settled Account identity. Model its real withdrawal
+      // before holding the next identity read, rather than expecting a redundant probe.
+      const { invalidateAccountEncryptionModeCache } = await import('./apiAccountEncryptionMode');
+      invalidateAccountEncryptionModeCache({ serverId: captured.accountLifetime.scope.serverId });
+    }
     const quotaAdmission = vi.spyOn(ConnectedServiceQuotaGetResultV1Schema, 'parse');
     const query = normalizeUsageQuery({ period: { startMs: now - 1000, endMs: now }, includeSessionEvidence: false, includeWorkEvidence: false });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
@@ -4388,7 +4405,7 @@ describe('usage query captured Resource adapter', () => {
       range: { complete: false }, ranked: [], sources: [{ source: 'native-history', path: 'native', status: 'available',
         eventCount: 1, machineId: 'work-machine', captureKind: 'from_logs', asOfMs: 100 }] } };
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(observed) : undefined);
-    const machine = createMachineFixture({ id: 'work-machine' });
+    const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { } });
     storage.getState().applyMachines([{ ...machine, metadata: { ...machine.metadata!, displayName: 'Private workstation', homeDir: '/private/home' } }]);
     const account = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
     try {
@@ -5031,7 +5048,7 @@ describe('usage query captured Resource adapter', () => {
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(observed) : undefined);
     storage.setState({ profileScope: captured.accountLifetime.scope,
       profile: AccountProfileSchema.parse({ id: captured.accountLifetime.scope.accountId }) });
-    const machine = createMachineFixture({ id: 'work-machine' });
+    const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { } });
     storage.getState().applyMachines([{ ...machine, metadata: { ...machine.metadata!, displayName: 'Workstation',
       host: 'private-host', homeDir: '/private/home', happyHomeDir: '/private/logs' } }]);
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
@@ -5467,7 +5484,7 @@ describe('usage query captured Resource adapter', () => {
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }) : undefined);
     storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true,
       serverId: captured.accountLifetime.scope.serverId, metadata: { machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test' } })]);
-    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createMachineFixture({ id: 'work-machine', activeAt: Date.now() })]);
+    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })]);
     scmTransport.mockImplementation(async request => held ? work.promise : workBatch(request, { status: 'unsupported' }));
     const query = normalizeUsageQuery({ ...(explicit ? { session: 'work-session' } : {}), period: { startMs: 0, endMs: 1000 } });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
@@ -6559,7 +6576,7 @@ describe('usage query captured Resource adapter', () => {
     });
     storage.getState().applySessions([createSessionFixture({ id: 'staged-session', active: true,
       serverId: captured.accountLifetime.scope.serverId, metadata: { machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test' } })]);
-    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createMachineFixture({ id: 'work-machine', activeAt: Date.now() })]);
+    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })]);
     scmTransport.mockImplementation(() => work.promise);
     const query = normalizeUsageQuery({ session: 'staged-session', period: { startMs: 0, endMs: 1000 } });
     const entry = getUsageQueryResourceStore(captured)
@@ -8577,7 +8594,7 @@ describe('usage query Work composition', () => {
       serverId: captured.accountLifetime.scope.serverId, metadata: {
         machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test',
       } })]);
-    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createMachineFixture({ id: 'work-machine', activeAt: Date.now() })]);
+    await publishMachineInventoryForTest(captured.accountLifetime.scope, [createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })]);
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness] }));
     storage.setState({ settings: { ...storage.getState().settings, scmGitRepoPreferredBackend: 'sapling' } });
     const result = await readUiUsageQueryBatch(captured, { queries: [query, other, workOnly, accountingOnly] });
@@ -8585,7 +8602,8 @@ describe('usage query Work composition', () => {
     expect(scmTransport).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'work-machine', method: 'scm.workEvidence.read',
       payload: { sessions: [{ sessionId: 'session', cwd: '/repo', turnIds: ['turn'] }], backendPreference: { kind: 'prefer', backendId: 'sapling' } },
       authorization: { kind: 'scm.workEvidence', sessionIds: ['session'] },
-      ...captured.accountLifetime.scope }));
+      serverUrl: home!.homes.a!.serverUrl,
+    }));
     const evidenceDemands = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
       .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
     const transcriptDemands = () => evidenceDemands().filter(demand => demand.query.includeTranscriptEvidence);
@@ -8647,7 +8665,7 @@ describe('usage query Work composition', () => {
       .map(query => ({ query, sessionIds: ['session'] }));
     expect(transcriptDemands()).toHaveLength(admittedTranscripts.length);
     expect(transcriptDemands()).toEqual(expect.arrayContaining(admittedTranscripts));
-    const machine = createMachineFixture({ id: 'work-machine', activeAt: Date.now() });
+    const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { activeAt: Date.now() } });
     await publishMachineInventoryForTest(captured.accountLifetime.scope, [machine]);
     const hostEntry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
       input: projectNativeJsonValueForTransport({ queries: [workOnly] }) });

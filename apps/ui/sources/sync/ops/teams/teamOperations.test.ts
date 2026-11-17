@@ -1,199 +1,93 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { getTeamSnapshot, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
-const runTeamActionMock = vi.hoisted(() => vi.fn());
-const applyTeamProjectionMock = vi.hoisted(() => vi.fn());
+const confirmNative = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: confirmNative } }).module;
+});
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+// Resolve the lazy Action graph during collection, outside interaction deadlines.
+await import('@/sync/ops/actions/defaultActionExecutor');
+const { archiveTeam, removeTeamLogo, restoreTeam, setTeamLogo, setTeamPolicy } = await import('./teamOperations');
 
-vi.mock('./teamActionClient', () => ({
-    runTeamAction: runTeamActionMock,
-}));
-vi.mock('@/sync/store/teams/teamsSnapshots', () => ({
-    applyTeamProjection: applyTeamProjectionMock,
-}));
+beforeEach(async () => {
+    await harness.reset();
+    resetTeamsSnapshotsForTests();
+    confirmNative.mockClear();
+});
+afterEach(() => {
+    resetTeamsSnapshotsForTests();
+    standardCleanup();
+});
 
-import {
-    archiveTeam,
-    removeTeamLogo,
-    restoreTeam,
-    setTeamLogo,
-    setTeamPolicy,
-} from './teamOperations';
+async function target() {
+    const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'account' });
+    return { scope: createServerAccountScope(serverId, 'account')!, address: { serverId, teamId: 'team-1' } };
+}
 
-const TEAM = {
-    id: 'team-1',
-    name: 'Team',
-    description: null,
-    logo: null,
-    archivedAt: null,
-    policy: {
-        v: 1 as const,
-        sessionCreationPolicy: 'private_default' as const,
-        externalSharingPolicy: 'allowed' as const,
-        defaultSessionHistoryAccess: 'from_membership' as const,
-        admissionMode: 'invite_only' as const,
-        authenticationPolicy: null,
-    },
-    viewerRole: 'owner' as const,
-    capabilities: {
-        viewTeam: true,
-        viewRoster: true,
-        manageSettings: true,
-        managePolicy: true,
-        manageMembers: true,
-        manageGroups: true,
-        manageInvitations: true,
-        manageOwners: true,
-        manageAuthentication: true,
-        archiveTeam: true,
-        restoreTeam: false,
-        leave: false,
-    },
-    admission: { historyChoice: { admin: 'choice' as const, member: 'choice' as const, guest: 'hidden' as const } },
-    counts: null,
-};
-
-type TeamLifecycleConfirmationFixture = Parameters<typeof archiveTeam>[0];
+type Confirmation = Parameters<typeof archiveTeam>[0];
 
 describe('Team lifecycle and logo mutations', () => {
-    // Each case carries its own invocation: `it.each` does not correlate the
-    // operation with its arguments, so a shared argument object would have to
-    // satisfy every operation's input at once.
     it.each([
-        ['archive', async (confirmation: TeamLifecycleConfirmationFixture) => { await archiveTeam(confirmation); }],
-        ['restore', async (confirmation: TeamLifecycleConfirmationFixture) => { await restoreTeam(confirmation); }],
-        ['set logo', async (confirmation: TeamLifecycleConfirmationFixture) => {
-            await setTeamLogo({ ...confirmation, image: { mimeType: 'image/png', dataBase64: 'aGVsbG8=' } });
-        }],
-        ['remove logo', async (confirmation: TeamLifecycleConfirmationFixture) => { await removeTeamLogo(confirmation); }],
-    ] as const)('leaves %s approval policy to the shared Action front door', async (_name, invoke) => {
-        runTeamActionMock.mockResolvedValueOnce({ kind: 'succeeded', value: TEAM });
+        ['archive', '/v1/teams/archive', async (confirmation: Confirmation) => archiveTeam(confirmation)],
+        ['restore', '/v1/teams/restore', async (confirmation: Confirmation) => restoreTeam(confirmation)],
+        ['set logo', '/v1/teams/logo/set', async (confirmation: Confirmation) =>
+            setTeamLogo({ ...confirmation, image: { mimeType: 'image/png', dataBase64: 'aGVsbG8=' } })],
+        ['remove logo', '/v1/teams/logo/remove', async (confirmation: Confirmation) => removeTeamLogo(confirmation)],
+    ] as const)('publishes the %s result through the shared Action front door', async (_name, path, invoke) => {
+        const confirmation = await target();
+        const team = teamSummaryFixture({ name: 'Updated Team' });
+        harness.answer(confirmation.scope.serverId, path, { body: team });
 
-        const legacySurfaceConfirmation = {
-            scope: { serverId: 'home-1', accountId: 'account-1' },
-            address: { serverId: 'home-1', teamId: 'team-1' },
-            confirmedByPresentUser: true as const,
-        };
-        await invoke(legacySurfaceConfirmation);
+        await expect(invoke(confirmation)).resolves.toEqual({ kind: 'succeeded', team });
 
-        expect(runTeamActionMock).toHaveBeenCalledWith(expect.not.objectContaining({
-            approval: expect.anything(),
-        }));
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(getTeamSnapshot(confirmation.scope, confirmation.address)?.data).toEqual(team);
     });
 });
 
 describe('setTeamPolicy', () => {
-    it('forwards the canonical authentication prior value and replacement as one policy patch', async () => {
-        const team = {
-            id: 'team-1',
-            name: 'Team',
-            description: null,
-            logo: null,
-            archivedAt: null,
-            policy: {
-                v: 1,
-                sessionCreationPolicy: 'private_default',
-                externalSharingPolicy: 'allowed',
-                defaultSessionHistoryAccess: 'from_membership',
-                admissionMode: 'invite_only',
-                authenticationPolicy: null,
-            },
-            viewerRole: 'owner',
-            capabilities: {
-                viewTeam: true,
-                viewRoster: true,
-                manageSettings: true,
-                managePolicy: true,
-                manageMembers: true,
-                manageGroups: true,
-                manageInvitations: true,
-                manageOwners: true,
-                manageAuthentication: true,
-                archiveTeam: true,
-                restoreTeam: false,
-                leave: false,
-            },
-            admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
-            counts: null,
+    it('submits the prior authentication value and replacement as one policy patch', async () => {
+        const confirmation = await target();
+        const authenticationPolicy = {
+            v: 1 as const,
+            mode: 'restricted' as const,
+            accepted: [{ kind: 'home_method' as const, methodId: 'email_password' }],
         };
-        runTeamActionMock.mockResolvedValueOnce({ kind: 'succeeded', value: team });
+        const team = teamSummaryFixture({ policy: teamPolicyFixture({ authenticationPolicy }) });
+        const path = '/v1/teams/policy/set';
+        harness.answer(confirmation.scope.serverId, path, { body: team });
 
-        await setTeamPolicy({
-            scope: { serverId: 'home-1', accountId: 'account-1' },
-            address: { serverId: 'home-1', teamId: 'team-1' },
-            previousAuthenticationPolicy: null,
-            authenticationPolicy: {
-                v: 1,
-                mode: 'restricted',
-                accepted: [{ kind: 'home_method', methodId: 'email_password' }],
-            },
+        await expect(setTeamPolicy({ ...confirmation, previousAuthenticationPolicy: null, authenticationPolicy }))
+            .resolves.toEqual({ kind: 'succeeded', team });
+
+        expect(harness.requestsFor(path)[0]?.input).toEqual({
+            v: 1, teamId: 'team-1', previousAuthenticationPolicy: null, authenticationPolicy,
         });
-
-        expect(runTeamActionMock).toHaveBeenCalledWith(expect.objectContaining({
-            actionId: 'teams.policy.set',
-            input: {
-                v: 1,
-                teamId: 'team-1',
-                previousAuthenticationPolicy: null,
-                authenticationPolicy: {
-                    v: 1,
-                    mode: 'restricted',
-                    accepted: [{ kind: 'home_method', methodId: 'email_password' }],
-                },
-            },
-        }));
+        expect(getTeamSnapshot(confirmation.scope, confirmation.address)?.data?.policy.authenticationPolicy).toEqual(authenticationPolicy);
     });
 
-    it('forwards the canonical repair basis so a malformed stored policy can be replaced', async () => {
-        const team = {
-            id: 'team-1',
-            name: 'Team',
-            description: null,
-            logo: null,
-            archivedAt: null,
-            recovery: null,
-            policy: {
-                v: 1,
-                sessionCreationPolicy: 'private_default',
-                externalSharingPolicy: 'allowed',
-                defaultSessionHistoryAccess: 'from_membership',
-                admissionMode: 'invite_only',
-                authenticationPolicy: null,
-                authenticationPolicyStatus: 'available',
-            },
-            viewerRole: 'owner',
-            capabilities: {
-                viewTeam: true,
-                viewRoster: true,
-                manageSettings: true,
-                managePolicy: true,
-                manageMembers: true,
-                manageGroups: true,
-                manageInvitations: true,
-                manageOwners: true,
-                manageAuthentication: true,
-                archiveTeam: true,
-                restoreTeam: false,
-                leave: false,
-            },
-            admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
-            counts: null,
-        };
-        runTeamActionMock.mockResolvedValueOnce({ kind: 'succeeded', value: team });
+    it('replaces a malformed stored authentication policy using its repair basis', async () => {
+        const confirmation = await target();
+        const team = teamSummaryFixture({ policy: teamPolicyFixture({ authenticationPolicy: null }) });
+        const path = '/v1/teams/policy/set';
+        harness.answer(confirmation.scope.serverId, path, { body: team });
 
-        await setTeamPolicy({
-            scope: { serverId: 'home-1', accountId: 'account-1' },
-            address: { serverId: 'home-1', teamId: 'team-1' },
+        await expect(setTeamPolicy({
+            ...confirmation,
             previousAuthenticationPolicy: { v: 1, status: 'repair_required' },
-            authenticationPolicy: { v: 1, mode: 'inherit' },
-        });
+            authenticationPolicy: null,
+        })).resolves.toEqual({ kind: 'succeeded', team });
 
-        expect(runTeamActionMock).toHaveBeenCalledWith(expect.objectContaining({
-            actionId: 'teams.policy.set',
-            input: {
-                v: 1,
-                teamId: 'team-1',
-                previousAuthenticationPolicy: { v: 1, status: 'repair_required' },
-                authenticationPolicy: { v: 1, mode: 'inherit' },
-            },
-        }));
+        expect(harness.requestsFor(path)[0]?.input).toEqual({
+            v: 1, teamId: 'team-1', previousAuthenticationPolicy: { v: 1, status: 'repair_required' },
+            authenticationPolicy: null,
+        });
     });
 });

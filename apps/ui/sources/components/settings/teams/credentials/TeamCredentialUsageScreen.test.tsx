@@ -14,6 +14,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -65,7 +66,7 @@ function usageResult(overrides?: Readonly<{
     series?: readonly { bucketStartMs: number; bucketEndMs: number; requestCount: number; tokens: number }[];
     limits?: readonly Record<string, unknown>[];
 }>) {
-    return {
+    return TeamCredentialUsageQueryResultV1Schema.parse({
         v: 1,
         resourceDisplayName: teamCredentialResourceFixture().displayName,
         totals: {
@@ -118,7 +119,7 @@ function usageResult(overrides?: Readonly<{
             : {}),
         nextCursor: overrides?.nextCursor ?? null,
         limits: overrides?.limits ?? [],
-    };
+    });
 }
 
 async function renderUsage(serverId: string) {
