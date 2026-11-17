@@ -68,6 +68,14 @@ const DiscussionParticipantPolicySetHttpWireInputV1Schema = lazyZodSchema(() => 
   DiscussionParticipantPolicySetRequestV1Schema, { discussionId: DiscussionIdSchema },
 ));
 
+function discussionResolvedParticipantHttpInputSchemaV1(actionId: DiscussionActionIdV1): z.ZodMiniType | null {
+  switch (actionId) {
+    case 'discussion.invite': return DiscussionInviteHttpWireInputV1Schema;
+    case 'discussion.participant.policy.set': return DiscussionParticipantPolicySetHttpWireInputV1Schema;
+    default: return null;
+  }
+}
+
 /** The closed post-sealing input, including metadata-bound route operands. */
 export function discussionActionHttpWireInputSchemaV1(
   actionId: DiscussionActionIdV1,
@@ -77,9 +85,7 @@ export function discussionActionHttpWireInputSchemaV1(
     case 'discussion.post': return DiscussionPostHttpWireInputV1Schema;
     case 'discussion.reply': return DiscussionReplyHttpWireInputV1Schema;
     case 'discussion.rename': return DiscussionRenameHttpWireInputV1Schema;
-    case 'discussion.invite': return DiscussionInviteHttpWireInputV1Schema;
-    case 'discussion.participant.policy.set': return DiscussionParticipantPolicySetHttpWireInputV1Schema;
-    default: return discussionActionInputSchemaV1(actionId);
+    default: return discussionResolvedParticipantHttpInputSchemaV1(actionId) ?? discussionActionInputSchemaV1(actionId);
   }
 }
 
@@ -116,8 +122,7 @@ export function bindDiscussionActionHttpRequestV1(
   }
   return bindHomeDomainHttpRequestV1({
     transport: spec.serverTransport,
-    inputSchema: actionId === 'discussion.invite' || actionId === 'discussion.participant.policy.set'
-      ? discussionActionHttpWireInputSchemaV1(actionId) : spec.inputSchema,
+    inputSchema: discussionResolvedParticipantHttpInputSchemaV1(actionId) ?? spec.inputSchema,
     input,
   });
 }
