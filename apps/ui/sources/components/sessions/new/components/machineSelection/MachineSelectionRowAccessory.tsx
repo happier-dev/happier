@@ -19,6 +19,7 @@ import { useManagedProvisionerPresentation } from '@/components/settings/machine
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 
 type AccessoryPressEvent = Readonly<{ stopPropagation?: () => void; nativeEvent?: unknown }>;
 
@@ -131,10 +132,11 @@ export function MachineSelectionRowAccessory<TMachine extends MachineDisplayRend
         props.onToggleFavorite?.(props.machine);
     }, [props]);
 
-    // On web the star stays out of the way until the person reaches the row (lab m-pick: no per-row star
+    // With a hover-capable pointer the star stays out of the way until the person reaches the row (lab m-pick: no per-row star
     // noise); a favorite keeps its filled star. Touch has no pointer to reach a row with, so it keeps the star.
     const rowState = React.useContext(SelectionListOptionStateContext);
-    const reached = Platform.OS !== 'web' || props.isFavorite || rowState === null || rowState.hovered || rowState.focused;
+    const hoverCapable = useHoverCapablePrimaryPointer();
+    const reached = !hoverCapable || props.isFavorite || rowState === null || rowState.hovered || rowState.focused;
     const showFavoriteToggle = props.showFavoriteToggle && props.onToggleFavorite !== undefined && reached;
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const online = resolveMachinePickerPresence(props.machine, undefined, binding?.isCurrent() ? binding.scope : null).selectable;

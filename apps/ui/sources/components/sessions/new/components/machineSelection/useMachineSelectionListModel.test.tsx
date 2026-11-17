@@ -707,13 +707,20 @@ describe('useMachineSelectionListModel', () => {
         expect(titles).not.toContain('newSession.machinePicker.allTitle');
     });
 
-    it('shows a machine\'s favorite star on web only when it is a favorite or its row is under the pointer or keyboard', async () => {
+    it.each([
+        { pointer: 'mouse with a touchscreen', fine: true, idleStars: 0 },
+        { pointer: 'touch', fine: false, idleStars: 1 },
+    ])('keeps machine favorites reachable with a $pointer primary pointer', async ({ fine, idleStars }) => {
         const { Platform } = await import('react-native');
         const { renderScreen } = await import('@/dev/testkit');
         const { SelectionListOptionStateContext } = await import('@/components/ui/selectionList/SelectionListOptionStateContext');
         const { MachineSelectionRowAccessory } = await import('./MachineSelectionRowAccessory');
         const previousOS = Platform.OS;
         Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true, writable: true });
+        // Browser media is the boundary; keep the shared pointer owner real.
+        vi.stubGlobal('matchMedia', (query: string) => ({ matches: fine
+            ? query === '(pointer: fine)' || query === '(hover: hover)' || query === '(any-pointer: coarse)'
+            : query === '(pointer: coarse)' || query === '(hover: none)' }));
         try {
             const machine = { ...createMachine('quiet'), active: false, activeAt: 0 };
             const stars = async (state: Readonly<{ hovered: boolean; focused: boolean }>, isFavorite: boolean) => {
@@ -728,12 +735,13 @@ describe('useMachineSelectionListModel', () => {
                 await screen.unmount();
                 return count;
             };
-            expect(await stars({ hovered: false, focused: false }, false)).toBe(0);
+            expect(await stars({ hovered: false, focused: false }, false)).toBe(idleStars);
             expect(await stars({ hovered: true, focused: false }, false)).toBeGreaterThan(0);
             expect(await stars({ hovered: false, focused: true }, false)).toBeGreaterThan(0);
             expect(await stars({ hovered: false, focused: false }, true)).toBeGreaterThan(0);
         } finally {
             Object.defineProperty(Platform, 'OS', { value: previousOS, configurable: true, writable: true });
+            vi.unstubAllGlobals();
         }
     });
 
