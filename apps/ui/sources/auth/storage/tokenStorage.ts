@@ -1,3 +1,5 @@
+import type { AuthCredentials, TokenOnlyAuthCredentials, LegacyAuthCredentials, DataKeyAuthCredentials } from './authCredentials';
+export type { AuthCredentials, TokenOnlyAuthCredentials, LegacyAuthCredentials, DataKeyAuthCredentials, AccountE2eeMaterialCustody } from './authCredentials';
 import { Platform } from 'react-native';
 import tweetnacl from 'tweetnacl';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -842,36 +844,6 @@ function getRecoveryKeyReminderDismissedKeySync(): string | null {
 // Cache for synchronous access
 const credentialsCacheByKey = new Map<string, string>();
 const recoveryKeyReminderDismissedCacheByKey = new Map<string, string>();
-
-export type TokenOnlyAuthCredentials = Readonly<{
-    token: string;
-}>;
-
-/**
- * This device's own classification of the Account E2EE material it holds.
- * Absent means active: older stored shapes keep the downgrade pin. Only this
- * device writes `historical` (its own conversion, or the person's explicit
- * reclassification); a Home's reported mode never does.
- */
-export type AccountE2eeMaterialCustody = Readonly<{ custody?: 'historical' }>;
-
-export type LegacyAuthCredentials = Readonly<{
-    token: string;
-    secret: string;
-}> & AccountE2eeMaterialCustody;
-
-export type DataKeyAuthCredentials = Readonly<{
-    token: string;
-    encryption: Readonly<{
-        publicKey: string;
-        machineKey: string;
-    }>;
-}> & AccountE2eeMaterialCustody;
-
-export type AuthCredentials =
-    | TokenOnlyAuthCredentials
-    | LegacyAuthCredentials
-    | DataKeyAuthCredentials;
 
 /**
  * The derived Account content-key pair retained by Account Directory custody.

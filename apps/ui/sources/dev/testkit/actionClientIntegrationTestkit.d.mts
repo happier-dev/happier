@@ -1,3 +1,4 @@
+import type { AuthCredentials } from '../../auth/storage/authCredentials.js';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -13,7 +14,7 @@ export function createUiMachineOutputFixture(serverId: string): Readonly<{
 export function connectUiActionClient(params: Readonly<{
     serverUrl: string;
     publicEndpoint?: string;
-    credentials: Readonly<{ token: string }>;
+    credentials: AuthCredentials;
 }>): Promise<Readonly<{
     serverId: string;
     execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
@@ -47,7 +48,7 @@ export function allowRealActionServerSocketBoundary(serverUrl: string): Readonly
 
 export function createMachineClientEnrollmentOutputFixture(options: Readonly<{
     serverId: string; homeId: string; machineId: string; baseUrl: string; publicEndpoint: string;
-    credentials: Readonly<{token: string}>; prepareManagedBootstrapResponse?: () => Promise<unknown>;
+    credentials: AuthCredentials; prepareManagedBootstrapResponse?: () => Promise<unknown>;
 }>): Promise<Readonly<{
     cases: ReadonlyMap<ActionId, () => unknown | Promise<unknown>>;
     execute(actionId: ActionId, input: unknown): Promise<ActionExecuteResult>;
