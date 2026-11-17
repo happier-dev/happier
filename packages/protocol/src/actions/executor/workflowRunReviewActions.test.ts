@@ -8,6 +8,7 @@ import { encodeBase64 } from '../../crypto/base64.js';
 import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from './workflowRunActions.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
 import { createActionExecutor } from '../actionExecutor.js';
+import { normalizeActionsSettingsV1, setActionApprovalOverride } from '../actionSettings.js';
 import type { WorkflowActionExecuteArgs } from './types.js';
 import {
   WorkflowDefinitionV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema,
@@ -198,11 +199,14 @@ describe('Account review Actions', () => {
 
   it.each([false, true])('completes an auto-approved agent review with agent provenance and exact currentness (stale=%s)', async stale => {
     const h = harness({ callerAccountId: 'account-1' });
+    const actionsSettings = setActionApprovalOverride({ settings: normalizeActionsSettingsV1({ v: 1 }),
+      actionId: 'workflow.run.invocations.complete_review', surface: 'agent', approvalRequired: false });
     // These unreachable ports represent other transport boundaries. Review uses
     // the real Workflow owner above and only substitutes HTTP/Artifact storage.
     const unreachable = async (): Promise<never> => { throw new Error('unexpected_transport'); };
     const unavailable = async () => ({ ok: false as const, errorCode: 'source_unavailable' as const, error: 'unused' });
     const executor = createActionExecutor({
+      readActionsSettings: () => actionsSettings,
       executionRunStart: unreachable, executionRunList: unreachable, executionRunGet: unreachable,
       detachedExecutionRunSend: unreachable, executionRunStop: unreachable, executionRunAction: unreachable,
       executionRunWait: unreachable, sessionOpen: unreachable, sessionFork: unreachable, sessionRollback: unreachable,

@@ -36,9 +36,9 @@ describe('Workflow per-run key admission', () => {
       resolveAccountId: async () => 'owner',
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       storage: { execute: async (operation) => {
-        if (operation.operation === 'get') return { run: null, keyCensus: { runId, ownerAccountId: 'owner', access: 'owner',
-          encryptionMode: 'plain', visibleTeamId: null, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [],
-          ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } };
+        // Plain Start reads the ordinary exact-Run endpoint, whose absence is
+        // a typed refusal rather than the E2EE admission-census response.
+        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
         if (operation.operation === 'admit') {
           admitted = operation;
           return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'owner', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'queued', revision: 0,
@@ -185,5 +185,44 @@ describe('Workflow per-run key admission', () => {
     expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId, parentRecordId: rootId, cursor: 'next-page' }, context: {} }))
       .toEqual({ invocations: [], parentRevision: 6 });
     await expect(readAs(true).execute(request)).rejects.toMatchObject({ code: 'encryption_setup_required' });
+
+    const neighborId = '44444444-4444-4444-8444-444444444444';
+    const newRecipient = recipient('new-recipient');
+    for (const refusal of [
+      { status: 503, error: 'database_transaction_timeout', reason: 'storage_unavailable' },
+      { status: 403, error: 'run_access_denied', reason: 'run_access_denied' },
+    ]) {
+      let commitAttempted = false;
+      const maintenanceReader = createWorkflowAccountRunActionOwner({
+        resolveAccountId: async () => 'viewer',
+        resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'e2ee', version: 1,
+          contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(viewer.material.contentPublicKeyFingerprint) },
+          material: viewer.material }),
+        // Opaque Run storage is the remote transport boundary. Real recipient
+        // encryption and the partial-row projection remain beneath this fixture.
+        storage: { execute: async operation => {
+          if (operation.operation === 'list') return { runs: [run, { ...run, id: neighborId }],
+            acceptedEnvelopesByRunId: { [runId]: admitted?.acceptedEnvelope }, keyCensusByRunId: {
+              [runId]: { ...census, recipients: [...census.recipients, newRecipient.census] },
+              [neighborId]: { ...census, runId: neighborId },
+            } };
+          if (operation.operation === 'run-key.commit') {
+            commitAttempted = true;
+            throw Object.assign(new Error('maintenance refused'), { response: { status: refusal.status, data: { error: refusal.error } } });
+          }
+          throw new Error(`Unexpected maintenance operation ${operation.operation}`);
+        } },
+        definitions: { get: async () => { throw new Error('list does not rematerialize'); } },
+        normalizeAbsolutePath: path => path, randomBytes,
+      });
+      const listed = await maintenanceReader.execute({ actionId: 'workflow.run.list', input: {}, context: {} });
+      expect(commitAttempted).toBe(true);
+      expect(listed).toMatchObject({ runs: [{ id: runId }, { id: neighborId }], metadataByRunId: {
+        [runId]: { kind: 'unavailable', reason: refusal.reason },
+      } });
+      // A pending neighbor with no private snapshot remains a useful public row;
+      // one failed maintenance write must not turn the whole list into a refusal.
+      expect(listed).not.toHaveProperty(`metadataByRunId.${neighborId}`);
+    }
   });
 });
