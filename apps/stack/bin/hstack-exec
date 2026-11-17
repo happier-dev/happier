@@ -167,6 +167,15 @@ resolve_command_policy() {
     native_policy_loaded=1
   fi
   resolve_native_command_policy "$@" || exit $?
+  require_sibling_basis_bootstrap
+}
+
+# A --repo sibling basis is its own checkout with its own lockfile, and its
+# replica may never have been installed: an unclassified payload (`pnpm exec
+# node <runner>`) would otherwise reach a tree without node_modules. Its own
+# bootstrap installs on first dispatch and only verifies readiness when warm.
+require_sibling_basis_bootstrap() {
+  if [ -n "${command_repo_root-}" ] && [ "${policy_placement-}" = worker-eligible ]; then policy_bootstrap=1; fi
 }
 
 resolve_self_publisher_policy() {
@@ -196,7 +205,7 @@ resolve_self_publisher_policy() {
   # The same manifest owner resolves aliases, preparation and admission. Its
   # shell-quoted assignments preserve package paths and tool unions verbatim.
   case "$self_publisher_policy" in
-    policy_placement=*) eval "$self_publisher_policy" ;;
+    policy_placement=*) eval "$self_publisher_policy"; require_sibling_basis_bootstrap ;;
     *) printf '%s\n' '[preferred-execution] invalid package command policy' >&2; exit 2 ;;
   esac
   nested_worker_tool=$policy_workerTool

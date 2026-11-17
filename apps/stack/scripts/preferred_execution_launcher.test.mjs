@@ -105,6 +105,39 @@ function nativeFixtureRuntime(stackDir) {
     env: { HAPPIER_STACK_STORAGE_DIR: dirname(stackDir) } });
 }
 
+test('a sibling basis prepares its own dependencies on first dispatch even for an unclassified command', { skip: process.platform === 'win32' }, async t => {
+  // L12-JOURNEY-ACCEPT 2026-11-17: `--repo <sibling> -- pnpm --dir packages/tests exec node
+  // scripts/run-vitest-with-heartbeat.mjs …` reached its runner with no node_modules ("vitest not found").
+  const fixture = await createTempFixture(t, { prefix: 'hstack-sibling-first-dispatch-', parentDir: dirname(repoRoot) });
+  const owners = fixture.path('apps/stack/scripts/utils/dev_targets');
+  await mkdir(owners, { recursive: true });
+  await mkdir(fixture.path('packages/tests/scripts'), { recursive: true });
+  await writeFile(fixture.path('package.json'), JSON.stringify({ private: true, packageManager: 'pnpm@12.14.0' }));
+  await writeFile(fixture.path('pnpm-lock.yaml'), '# sibling fixture\n');
+  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+  await writeFile(fixture.path('apps/stack/package.json'), JSON.stringify({ name: '@happier-dev/stack' }));
+  await writeFile(fixture.path('packages/tests/package.json'), JSON.stringify({ name: '@happier-dev/tests' }));
+  await writeFile(fixture.path('packages/tests/scripts/run-vitest-with-heartbeat.mjs'), '');
+  // The sibling checkout's own bootstrap owner (its process boundary) installs its dependencies.
+  await writeFile(join(owners, 'remote_dependency_bootstrap.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs';
+mkdirSync(new URL('../../../../../node_modules', import.meta.url), { recursive: true });
+writeFileSync(new URL('../../../../../node_modules/.installed', import.meta.url), process.argv.slice(2).join(' '));
+`);
+  const { binDir } = writeFakeBin({ root: fixture.root, name: 'pnpm', content: `#!${process.execPath}
+const { existsSync } = require('node:fs');
+if (!existsSync(${JSON.stringify(fixture.path('node_modules/.installed'))})) { console.error('Command "vitest" not found'); process.exit(37); }
+console.log('Vitest reached'); process.exit(17);
+` });
+  const env = { ...executionNeutralEnv, PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`, CI: '1',
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1',
+    HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
+  const result = spawnSync('/bin/sh', [launcher, `--repo=${fixture.root}`, '--cwd=.', '--local', '--', 'env', 'A=1', 'pnpm',
+    '--dir', 'packages/tests', 'exec', 'node', 'scripts/run-vitest-with-heartbeat.mjs', 'suites/x.test.ts'],
+  { cwd: repoRoot, env, encoding: 'utf8' });
+  assert.equal(result.status, 17, result.stderr);
+  assert.match(result.stdout, /Vitest reached/);
+});
+
 test('sibling basis bootstrap and preparation use the basis UI tool contract', { skip: process.platform === 'win32' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-basis-bootstrap-', parentDir: dirname(repoRoot) });
   const ui = fixture.path('apps/ui');
