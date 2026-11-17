@@ -5455,3 +5455,20 @@ test('ordinary source starts transport sentinel facts without retaining them in 
     assert.ok(!text.includes('HAPPIER_STACK_LOAD_SENTINEL_PASSES='));
   }
 });
+
+test('a direct node run of the e2e Vitest heartbeat wrapper is admitted like its package script', () => {
+  // PLUGIN-PREPUB-HANG-1117 (2026-11-17): `hstack-exec -- env … node scripts/run-vitest-with-heartbeat.mjs`
+  // was unclassified, so the routed run held no admission and its nested package-dist
+  // publisher queued (55 → 51) until the test's own budget killed it. The same file via
+  // `pnpm run test:core` was admitted as validation.
+  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const tail = ['scripts/run-vitest-with-heartbeat.mjs', '--config', 'vitest.core.config.ts', 'suites/core-layer/x.test.ts'];
+  const options = { cwd: 'packages/tests', repoRoot, env: {} };
+  const viaScript = resolveRemoteCommandPolicy(['pnpm', 'run', 'test:core', 'suites/core-layer/x.test.ts'], options);
+  assert.equal(viaScript.heavyClass, 'validation');
+  for (const args of [['node', ...tail], ['env', 'HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT=1', 'node', ...tail]]) {
+    const policy = resolveRemoteCommandPolicy(args, options);
+    assert.equal(policy.heavyClass, viaScript.heavyClass, args.join(' '));
+    assert.equal(policy.workerTool, 'vitest', args.join(' '));
+  }
+});

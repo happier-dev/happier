@@ -221,7 +221,9 @@ const COMMAND_RULES = [
   { when: { command: ['vitest'] }, set: { runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { command: ['node', 'nodejs', 'tsx'], entry: ['vitest.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { command: ['node', 'nodejs'], entry: ['runVitestShards.mjs'], component: ['apps/cli'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest' } },
-  { when: { managerNode: ['1'], entry: ['run-vitest-with-heartbeat.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
+  // A direct `node` run of the e2e heartbeat wrapper is the same workload as its package scripts.
+  ...[{ command: ['node', 'nodejs'] }, { managerNode: ['1'] }].map(when => ({ when: { ...when, entry: ['run-vitest-with-heartbeat.mjs'] },
+    set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } })),
   ...['apps/ui', 'apps/cli'].flatMap(componentOverride => [
     { when: { command: ['node', 'nodejs'], entryPath: [`${componentOverride}/scripts/runVitestShards.mjs`] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1', componentOverride } },
     { when: { managerNode: ['1'], entryPath: [`${componentOverride}/scripts/runVitestShards.mjs`] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1', componentOverride } },

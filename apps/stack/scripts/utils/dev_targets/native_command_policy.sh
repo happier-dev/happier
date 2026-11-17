@@ -242,6 +242,14 @@ native_command_policy_base() {
     policy_runnerKnown='1'
     policy_workerTool='vitest'
   fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'run-vitest-with-heartbeat.mjs' ]; }; then
+    policy_validation='1'
+    policy_bootstrap='1'
+    policy_heavyClass='validation'
+    policy_runnerKnown='1'
+    policy_workerTool='vitest'
+    policy_workerArguments='1'
+  fi
   if { [ "$policy_managerNode" = '1' ]; } && { [ "$policy_entry" = 'run-vitest-with-heartbeat.mjs' ]; }; then
     policy_validation='1'
     policy_bootstrap='1'
