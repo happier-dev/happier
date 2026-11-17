@@ -1,5 +1,6 @@
 import type { Theme } from '@/theme';
-import { fixedThemePaint, tokenThemePaint } from '../../../theme/profiles/themePaint';
+import { deriveThemePaint, fixedThemePaint, tokenThemePaint } from '../../../theme/profiles/themePaint';
+import { deriveHoverInk } from '../../../theme/selectionInk';
 
 /** One paint selection for menu, list and command-palette row anatomy. */
 export function resolveSelectableRowPaint(theme: Pick<Theme, 'colors' | 'dark'>, input: Readonly<{
@@ -14,7 +15,9 @@ export function resolveSelectableRowPaint(theme: Pick<Theme, 'colors' | 'dark'>,
     const background = input.selected
         ? tokenThemePaint(theme, input.menu ? 'surface.selected' : 'surface.pressedOverlay')
         : input.hovered && !input.disabled
-            ? tokenThemePaint(theme, input.selectable ? (theme.dark ? 'surface.elevated' : 'surface.inset') : 'surface.hover')
+            ? input.selectable
+                ? tokenThemePaint(theme, theme.dark ? 'surface.elevated' : 'surface.inset')
+                : deriveThemePaint([tokenThemePaint(theme, 'text.primary')], ink => deriveHoverInk(ink, theme.dark))
             : input.pressed && !input.disabled
                 ? tokenThemePaint(theme, 'surface.pressed')
                 : fixedThemePaint('transparent');

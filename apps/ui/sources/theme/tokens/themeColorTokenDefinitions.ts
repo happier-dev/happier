@@ -66,7 +66,7 @@ const focusIndicatorContrast = [
     { tokenId: 'surface.elevated', minRatio: 3 },
 ] as const;
 
-const defineEditableThemeColorToken = <TDefinition extends EditableThemeColorTokenDefinitionInput>(definition: TDefinition) => definition;
+const defineEditableThemeColorToken = <const TDefinition extends EditableThemeColorTokenDefinitionInput>(definition: TDefinition) => definition;
 
 export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'state.success.textForeground', path: ['state', 'success', 'textForeground'], group: 'state', label: 'Success text', description: 'Text on tinted success badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.success.background') }),
