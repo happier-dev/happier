@@ -61,6 +61,10 @@ describe('receipt structural integrity', () => {
         expect(DeploymentContentV1Schema.parse(content)).toEqual(content);
         expect(DeploymentContentV1Schema.safeParse({ ...content, platform: { ...content.platform, dataCreation: undefined } }).success).toBe(false);
     });
+    it('settles an admitted provider build that finishes between queued observations', () => {
+        expect(canTransitionDeploymentV1('queued', 'succeeded')).toBe(true);
+        expect(canTransitionDeploymentV1('queued', 'running_unverified')).toBe(true);
+    });
     it('never promotes an unknown outcome to success after the effect slot is released', () => {
         expect(canTransitionDeploymentV1('running', 'succeeded')).toBe(true);
         expect(canTransitionDeploymentV1('running', 'running_unverified')).toBe(true);

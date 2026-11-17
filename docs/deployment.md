@@ -1301,7 +1301,9 @@ The installed controller derives the exact provider id, credential
 principal and operation identity from retained content and calls the target's
 declared observe Action through the existing reviewed-child owner. Receipt content
 and terminal state use the same installation-signed transition and CAS as Deploy;
-no second work queue or observation scheduler is introduced. In current development
+no second work queue or observation scheduler is introduced. A provider receipt
+may settle directly from queued when its build finishes between observations;
+the observer does not manufacture an intermediate running state. In current development
 source, own-server calls to `deployments.receipts.observe` and
 `deployments.observation.get` return `unsupported_action` with
 `reason: target_not_supported`, the target kind and a `deployments.receipts.get`

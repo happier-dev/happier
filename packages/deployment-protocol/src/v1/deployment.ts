@@ -249,6 +249,6 @@ export function canTransitionDeploymentV1(from: DeploymentStateV1, to: Deploymen
     if (from === to) return true;
     if (isDeploymentSettledV1(from)) return false;
     if (from === 'outcome_unknown') return to === 'failed' || to === 'cancelled';
-    if (from === 'queued') return to === 'running' || to === 'failed' || to === 'cancelled' || to === 'outcome_unknown';
+    // A provider build may finish between queued status observations.
     return to !== 'queued';
 }
