@@ -29,6 +29,7 @@ import {
 
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs'
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs'
+import { withWorkspaceBundleLock } from '../../../packages/cli-common/workspaceBundleLock.mjs'
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 import { isCliTestBuildSkipped } from '../scripts/vitestPreparation.mjs'
 
@@ -217,31 +218,69 @@ async function staleProcessCustodyTargets(projectRoot: string) {
 }
 
 /**
+ * Session target artifacts (the musl holders and the target custody helpers) are
+ * read only by placed-Session (container) tests; a preparation for a selection
+ * without them prepares this Machine's own artifacts only.
+ */
+export type NativeCustodyPreparationOptions = Readonly<{
+  sessionTargets?: boolean
+  log?: (line: string) => void
+}>
+
+function logNativeCustodyLine(line: string): void {
+  process.stderr.write(`${line}\n`)
+}
+
+/** One line per artifact, on by default: whether it was current or rebuilt, and how long that took. */
+async function prepareLoggedArtifact(label: string, log: (line: string) => void, prepare: () => Promise<boolean>): Promise<void> {
+  const startedAt = Date.now()
+  const rebuilt = await prepare()
+  log(`[native-custody] ${label} ${rebuilt ? 'rebuilt' : 'current'} ${Date.now() - startedAt}ms`)
+}
+
+/**
+ * Single flight per artifact: a concurrent preparation of the same checkout
+ * waits for the build in progress and then finds it current, instead of
+ * queueing its own admitted build of the same inputs.
+ */
+async function withNativeArtifactPublication<T>(identityPath: string, work: () => Promise<T>): Promise<T> {
+  return await withWorkspaceBundleLock(work, { lockPath: identityPath.replace(/\.json$/u, '.lock'), timeoutMs: null })
+}
+
+/**
  * The one CLI source native preparation: the Go process-custody helper and the
  * Rust Session holder. Each is ready only when built from the current sources
  * (recorded input identity + output digest), never because a file exists.
  */
-export async function prepareNativeCustody(projectRoot: string, runCommand: RunCommand = execOrThrow): Promise<void> {
+export async function prepareNativeCustody(projectRoot: string, runCommand: RunCommand = execOrThrow,
+  { sessionTargets = true, log = logNativeCustodyLine }: NativeCustodyPreparationOptions = {}): Promise<void> {
   const { target } = resolveNativeCustodyTarget(projectRoot)
   const repoRoot = resolveRepoRoot(projectRoot)
-  await prepareProcessCustodyRuntime({
-    repoRoot, payloadDir: projectRoot, target, runCommand,
+  await prepareLoggedArtifact(`process-custody ${target.os}-${target.arch}`, log, async () => {
+    if (await isProcessCustodyRuntimeCurrent({ repoRoot, payloadDir: projectRoot, target })) return false
+    await prepareProcessCustodyRuntime({ repoRoot, payloadDir: projectRoot, target, runCommand })
+    return true
   })
-  if ((await staleProcessCustodyTargets(projectRoot)).length) {
-    const publications = await processCustodyTargetPublications(projectRoot)
-    await stageProcessCustodyTargetRuntimes({ repoRoot, payloadDir: projectRoot, runCommand })
-    const currentInputs = await processCustodyTargetPublications(projectRoot)
-    for (const [index, publication] of publications.entries()) {
-      if (currentInputs[index]?.inputIdentity !== publication.inputIdentity) {
-        throw new Error('[native-custody] process custody sources changed during build; prepare again')
+  if (sessionTargets) {
+    await prepareLoggedArtifact(`process-custody targets ${PROCESS_CUSTODY_TARGET_ARCHES.map(arch => `linux-${arch}`).join(',')}`, log, async () => {
+      if (!(await staleProcessCustodyTargets(projectRoot)).length) return false
+      const publications = await processCustodyTargetPublications(projectRoot)
+      await stageProcessCustodyTargetRuntimes({ repoRoot, payloadDir: projectRoot, runCommand })
+      const currentInputs = await processCustodyTargetPublications(projectRoot)
+      for (const [index, publication] of publications.entries()) {
+        if (currentInputs[index]?.inputIdentity !== publication.inputIdentity) {
+          throw new Error('[native-custody] process custody sources changed during build; prepare again')
+        }
+        await recordPublishedNativeArtifact({ identityPath: publication.identityPath, inputIdentity: publication.inputIdentity,
+          sha256: createHash('sha256').update(await readFile(publication.executablePath)).digest('hex') })
       }
-      await recordPublishedNativeArtifact({ identityPath: publication.identityPath, inputIdentity: publication.inputIdentity,
-        sha256: createHash('sha256').update(await readFile(publication.executablePath)).digest('hex') })
-    }
+      return true
+    })
   }
   const builder = await loadSessionHolderBuilder()
   const { identityPath, packageDir } = sessionHolderPublication(projectRoot)
-  if (!await isSessionHolderCurrent(projectRoot, builder)) {
+  await prepareLoggedArtifact(`session-holder ${process.platform}-${process.arch}`, log, () => withNativeArtifactPublication(identityPath, async () => {
+    if (await isSessionHolderCurrent(projectRoot, builder)) return false
     const inputIdentity = builder.readSessionHolderInputIdentity({ packageDir })
     const artifact = await builder.buildSessionHolder({ packageDir, runCommand })
     if (builder.readSessionHolderInputIdentity({ packageDir }) !== inputIdentity) {
@@ -249,32 +288,49 @@ export async function prepareNativeCustody(projectRoot: string, runCommand: RunC
     }
     await recordPublishedNativeArtifact({ identityPath, inputIdentity,
       sha256: createHash('sha256').update(await readFile(artifact)).digest('hex') })
-  }
-  const staleTargets = await staleSessionTargetHolders(projectRoot, builder)
-  if (!staleTargets.length) return
-  // The target musl standard libraries are the Rust toolchain owner's (the preparation worker installs them).
-  await builder.buildSessionTargetHolders({ packageDir, arches: staleTargets.map(target => target.arch), runCommand,
-    prepareTargetToolchain: () => undefined })
-  for (const target of staleTargets) {
-    if (builder.readSessionTargetHolderInputIdentity({ packageDir, arch: target.arch }) !== target.inputIdentity) {
-      throw new Error('[native-custody] Session holder sources changed during build; prepare again')
-    }
-    await recordPublishedNativeArtifact({ identityPath: target.identityPath, inputIdentity: target.inputIdentity,
-      sha256: createHash('sha256').update(await readFile(target.executablePath)).digest('hex') })
+    return true
+  }))
+  if (!sessionTargets) return
+  for (const publication of sessionTargetHolderPublications(projectRoot, builder)) {
+    await prepareLoggedArtifact(`session-holder target linux-${publication.arch}-musl`, log, () => withNativeArtifactPublication(publication.identityPath, async () => {
+      const current = sessionTargetHolderPublications(projectRoot, builder).find(candidate => candidate.arch === publication.arch)!
+      if (await isPublishedNativeArtifactCurrent({ ...current, executable: true })) return false
+      // The target musl standard libraries are the Rust toolchain owner's (the preparation worker installs them).
+      await builder.buildSessionTargetHolders({ packageDir, arches: [current.arch], runCommand,
+        prepareTargetToolchain: () => undefined })
+      if (builder.readSessionTargetHolderInputIdentity({ packageDir, arch: current.arch }) !== current.inputIdentity) {
+        throw new Error('[native-custody] Session holder sources changed during build; prepare again')
+      }
+      await recordPublishedNativeArtifact({ identityPath: current.identityPath, inputIdentity: current.inputIdentity,
+        sha256: createHash('sha256').update(await readFile(current.executablePath)).digest('hex') })
+      return true
+    }))
   }
 }
 
-/** Source collection never compiles: native custody must already be current. */
+/** Source collection never compiles: this Machine's native custody must already be current. */
 async function assertNativeCustodyCurrent(projectRoot: string): Promise<void> {
   const { target, executablePath } = resolveNativeCustodyTarget(projectRoot)
   const stale: string[] = []
   if (!await isProcessCustodyRuntimeCurrent({ repoRoot: resolveRepoRoot(projectRoot), payloadDir: projectRoot, target })) stale.push(executablePath)
-  stale.push(...(await staleProcessCustodyTargets(projectRoot)).map(target => target.executablePath))
   const builder = await loadSessionHolderBuilder()
   if (!await isSessionHolderCurrent(projectRoot, builder)) stale.push(resolveSessionHolderSourcePath(projectRoot))
-  stale.push(...(await staleSessionTargetHolders(projectRoot, builder)).map(target => target.executablePath))
   if (stale.length) {
     throw new Error(`CLI source tests require public native preparation (missing or built from older sources): ${stale.join(', ')}`)
+  }
+}
+
+/**
+ * A placed-Session test reads the Session target artifacts. Preparation builds
+ * them only for selections that include such a test, so the test refuses
+ * artifacts that are missing or built from older sources rather than run them.
+ */
+export async function assertSessionTargetArtifactsCurrent(projectRoot: string = resolveCliProjectRoot()): Promise<void> {
+  const builder = await loadSessionHolderBuilder()
+  const stale = [...(await staleProcessCustodyTargets(projectRoot)), ...(await staleSessionTargetHolders(projectRoot, builder))]
+    .map(target => target.executablePath)
+  if (stale.length) {
+    throw new Error(`Session target tests require native preparation of the target artifacts (missing or built from older sources): ${stale.join(', ')}`)
   }
 }
 

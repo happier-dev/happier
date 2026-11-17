@@ -255,7 +255,7 @@ describe('CLI test global setup', () => {
 
     it.skipIf(process.platform === 'win32')('prepares current target custody helpers required by placed Sessions', async () => {
         const { projectRoot, runCommand } = await createSetupFixture();
-        const { setup, prepareNativeCustody } = await importSetupModule();
+        const { setup, prepareNativeCustody, assertSessionTargetArtifactsCurrent } = await importSetupModule();
         const options = { buildMode: 'none' as const, dependencies: { resolveProjectRoot: () => projectRoot, runCommand } };
         await prepareNativeCustody(projectRoot, runCommand);
         for (const arch of PROCESS_CUSTODY_TARGET_ARCHES) {
@@ -267,10 +267,12 @@ describe('CLI test global setup', () => {
         expect(goBuilds(runCommand)).toBe(compiled);
         const damaged = join(projectRoot, resolveProcessCustodyTargetExecutableRelativePath(PROCESS_CUSTODY_TARGET_ARCHES[0]));
         await writeFile(damaged, 'damaged target helper');
-        await expect(setup(options)).rejects.toThrow(damaged);
+        // Collection needs this Machine's artifacts only; the placed-Session test refuses the damaged target helper.
+        await setup(options);
+        await expect(assertSessionTargetArtifactsCurrent(projectRoot)).rejects.toThrow(damaged);
         await prepareNativeCustody(projectRoot, runCommand);
         await expect(readFile(damaged, 'utf8')).resolves.toBe('compiled native custody');
-        await setup(options);
+        await assertSessionTargetArtifactsCurrent(projectRoot);
     });
 
     it.skipIf(process.platform === 'win32')('keeps the Session target holders (every target architecture) current with the holder sources', async () => {
@@ -280,7 +282,7 @@ describe('CLI test global setup', () => {
         await mkdir(dirname(holderSource), { recursive: true });
         await writeFile(holderSource, 'fn main() {}\n');
         const targetBuilds = () => runCommand.mock.calls.filter(call => call[0] === 'cargo' && String(call[1]).includes('-unknown-linux-musl')).length;
-        const { setup, prepareNativeCustody } = await importSetupModule();
+        const { setup, prepareNativeCustody, assertSessionTargetArtifactsCurrent } = await importSetupModule();
         const options = { buildMode: 'none' as const, dependencies: { resolveProjectRoot: () => projectRoot, runCommand } };
 
         await prepareNativeCustody(projectRoot, runCommand);
@@ -293,15 +295,83 @@ describe('CLI test global setup', () => {
         expect(targetBuilds()).toBe(2);
         await setup(options);
 
-        // A target holder built from older holder sources is stale: collection refuses it, preparation rebuilds it.
+        // A target holder built from older holder sources is stale: the placed-Session test refuses it, preparation rebuilds it.
         await writeFile(join(iroh, 'native', 'targets', 'happier-session-holder.linux-arm64-musl'), 'old holder');
-        await expect(setup(options)).rejects.toThrow('happier-session-holder.linux-arm64-musl');
+        await expect(assertSessionTargetArtifactsCurrent(projectRoot)).rejects.toThrow('happier-session-holder.linux-arm64-musl');
         await prepareNativeCustody(projectRoot, runCommand);
         expect(targetBuilds()).toBe(3);
         await writeFile(holderSource, 'fn main() { serve_session_mcp(); }\n');
         await prepareNativeCustody(projectRoot, runCommand);
         expect(targetBuilds()).toBe(5);
         await setup(options);
+        await assertSessionTargetArtifactsCurrent(projectRoot);
+    });
+
+    it.skipIf(process.platform === 'win32')('prepares no Session target artifact for a selection without placed-Session tests', async () => {
+        const { projectRoot, runCommand } = await createSetupFixture();
+        const iroh = join(projectRoot, '..', '..', 'packages', 'iroh-native');
+        const holderSource = join(iroh, 'rust', 'happier-session-holder', 'src', 'main.rs');
+        await mkdir(dirname(holderSource), { recursive: true });
+        await writeFile(holderSource, 'fn main() {}\n');
+        const muslBuilds = () => runCommand.mock.calls.filter(call => call[0] === 'cargo' && String(call[1]).includes('-unknown-linux-musl')).length;
+        const hostHolderBuilds = () => runCommand.mock.calls.filter(call => call[0] === 'cargo' && !String(call[1]).includes('-unknown-linux-musl')).length;
+        const { setup, prepareNativeCustody, assertSessionTargetArtifactsCurrent } = await importSetupModule();
+        const options = { buildMode: 'none' as const, dependencies: { resolveProjectRoot: () => projectRoot, runCommand } };
+        const hostOnly = { sessionTargets: false, log: () => undefined };
+
+        await prepareNativeCustody(projectRoot, runCommand, hostOnly);
+        await setup(options);
+        // Someone's in-progress holder edit: an unrelated selection rebuilds this Machine's holder, and no cross target.
+        await writeFile(holderSource, 'fn main() { serve_ops_socket(); }\n');
+        await prepareNativeCustody(projectRoot, runCommand, hostOnly);
+        await setup(options);
+        // Go: this Machine's process-custody helper only (no target helper).
+        expect({ muslBuilds: muslBuilds(), goBuilds: goBuilds(runCommand), hostHolderBuilds: hostHolderBuilds() })
+            .toEqual({ muslBuilds: 0, goBuilds: 1, hostHolderBuilds: 2 });
+        await expect(assertSessionTargetArtifactsCurrent(projectRoot)).rejects.toThrow('happier-session-holder.linux-x64-musl');
+
+        // A placed-Session (holder) selection still builds every target from the live sources.
+        await prepareNativeCustody(projectRoot, runCommand, { log: () => undefined });
+        await assertSessionTargetArtifactsCurrent(projectRoot);
+        expect(muslBuilds()).toBe(2);
+    });
+
+    it.skipIf(process.platform === 'win32')('logs one current-or-rebuilt line with its duration for every native artifact', async () => {
+        const { projectRoot, runCommand } = await createSetupFixture();
+        const holderSource = join(projectRoot, '..', '..', 'packages', 'iroh-native', 'rust', 'happier-session-holder', 'src', 'main.rs');
+        await mkdir(dirname(holderSource), { recursive: true });
+        await writeFile(holderSource, 'fn main() {}\n');
+        const { prepareNativeCustody } = await importSetupModule();
+        const lines: string[] = [];
+        const log = (line: string) => { lines.push(line); };
+        const host = `${process.platform}-${process.arch}`;
+
+        await prepareNativeCustody(projectRoot, runCommand, { log });
+        await writeFile(holderSource, 'fn main() { serve_ops_socket(); }\n');
+        await prepareNativeCustody(projectRoot, runCommand, { log, sessionTargets: false });
+        const artifacts = (states: string[]) => states.map(state => expect.stringMatching(new RegExp(`^\\[native-custody\\] ${state} \\d+ms$`)));
+        expect(lines).toEqual(artifacts([
+            `process-custody ${host} rebuilt`, 'process-custody targets linux-x64,linux-arm64 rebuilt', `session-holder ${host} rebuilt`,
+            'session-holder target linux-x64-musl rebuilt', 'session-holder target linux-arm64-musl rebuilt',
+            `process-custody ${host} current`, `session-holder ${host} rebuilt`,
+        ]));
+    });
+
+    it.skipIf(process.platform === 'win32')('builds a stale holder once for concurrent preparations of the same sources', async () => {
+        const { projectRoot, runCommand } = await createSetupFixture();
+        const holderSource = join(projectRoot, '..', '..', 'packages', 'iroh-native', 'rust', 'happier-session-holder', 'src', 'main.rs');
+        await mkdir(dirname(holderSource), { recursive: true });
+        await writeFile(holderSource, 'fn main() {}\n');
+        const { prepareNativeCustody } = await importSetupModule();
+        const options = { log: () => undefined };
+        await prepareNativeCustody(projectRoot, runCommand, options);
+        const holderBuilds = () => runCommand.mock.calls.filter(call => call[0] === 'cargo').length;
+        const before = holderBuilds();
+
+        await writeFile(holderSource, 'fn main() { serve_ops_socket(); }\n');
+        // Two lanes' runs on one host: the second waits for the first build instead of queueing its own.
+        await Promise.all([prepareNativeCustody(projectRoot, runCommand, options), prepareNativeCustody(projectRoot, runCommand, options)]);
+        expect(holderBuilds() - before).toBe(3);
     });
 
     it.skipIf(process.platform === 'win32')('requires public native preparation before POSIX source collection', async () => {

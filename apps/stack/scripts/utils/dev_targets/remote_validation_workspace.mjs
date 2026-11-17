@@ -121,7 +121,7 @@ export async function prepareRemoteValidationWorkspace({
   const normalizedComponentPath = componentPath.replaceAll('\\', '/');
   if (validationKind === 'source-test') {
     if (normalizedComponentPath === 'apps/cli' && requiredTools.split(/\s+/u).includes('go')) {
-      await prepareCliSourceNativeCustody(repoDir, env);
+      await prepareCliSourceNativeCustody(repoDir, env, { sessionTargets: preparationScope !== 'host-native' });
     }
     if (normalizedComponentPath === 'apps/ui') await prepareUiSourceAssets(repoDir, env, signal, focusedTest);
     return { ok: true, built: [], skipped: ['workspace-source-test'] };

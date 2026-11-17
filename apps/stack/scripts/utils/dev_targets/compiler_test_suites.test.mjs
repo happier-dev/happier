@@ -136,3 +136,20 @@ test('explicit selections of up to ten existing test files take the focused clas
   // Recorded single-file CLI peak (focused-vitest-reservation-1105: 1,783,032 KiB live HWM) rounds to 2 GiB.
   assert.equal(resolveHeavyweightMemoryFloorKiB('focused-validation-cli'), 2 * 1024 * 1024);
 });
+
+// P03-HOLDER-PREP: the Session target artifacts (three cross builds) are prepared
+// only for CLI selections that include a placed-Session test.
+test('a CLI selection without a placed-Session test prepares only this Machine\'s native artifacts', async t => {
+  const { resolvePackageCommandPolicy } = await import(policyOwner);
+  for (const [tail, expected] of [
+    [['src/utils/path/expandHomeDirPath.test.ts'], 'host-native'],
+    [['src/utils/path/expandHomeDirPath.test.ts', 'src/subprocess/supervision/sessionHolder.target.test.ts'], ''],
+    [['sessionHolder'], ''],
+    [['src/subprocess/supervision'], ''],
+    [['-t', 'holder'], ''],
+    [[], ''],
+  ]) await t.test(`apps/cli ${tail.join(' ') || '(whole suite)'} -> ${expected || 'every artifact'}`, async () => {
+    const policy = await resolvePackageCommandPolicy(['pnpm', '--dir', 'apps/cli', 'exec', 'vitest', 'run', ...tail], { repoRoot: repo, cwd: repo });
+    assert.equal(policy.preparationScope, expected);
+  });
+});

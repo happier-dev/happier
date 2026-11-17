@@ -26,7 +26,7 @@ function preparationFailure(error, step, env) {
   return { code, phase, retryable: false, cause };
 }
 
-async function prepareWorker(projectRoot, repoDir, resultPath) {
+async function prepareWorker(projectRoot, repoDir, resultPath, sessionTargets) {
   /** @type {PreparationStep} */
   let step = 'dependency-refresh';
   try {
@@ -42,7 +42,7 @@ async function prepareWorker(projectRoot, repoDir, resultPath) {
       ]);
     });
     step = 'native-staging';
-    await prepareNativeCustody(projectRoot, async (command, args, options) => {
+    const runCommand = async (command, args, options) => {
       step = 'go-build';
       const result = await runWorkspaceBuildAdmission({ ...options, command, args,
         repoDir, admissionClass: 'native-custody',
@@ -51,7 +51,9 @@ async function prepareWorker(projectRoot, repoDir, resultPath) {
       if (result.status !== 0 || result.signal) throw Object.assign(new Error('Native custody Go build failed'),
         { exitCode: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr });
       step = 'post-build';
-    });
+    };
+    // Each artifact's current/rebuilt line reaches the caller (prepareCliSourceNativeCustody prints it).
+    await prepareNativeCustody(projectRoot, runCommand, { sessionTargets, log: line => process.stderr.write(`${line}\n`) });
   } catch (error) {
     const failure = preparationFailure(error, step, process.env);
     await writeFile(resultPath, JSON.stringify(failure));
@@ -59,17 +61,22 @@ async function prepareWorker(projectRoot, repoDir, resultPath) {
   }
 }
 
-export async function prepareCliSourceNativeCustody(repoDir, env) {
+const ARTIFACT_LINE = /^\[native-custody\] \S.* (?:current|rebuilt) \d+ms$/u;
+
+/** `sessionTargets: false` prepares this Machine's artifacts only (a selection without placed-Session tests). */
+export async function prepareCliSourceNativeCustody(repoDir, env, { sessionTargets = true, stderr = process.stderr } = {}) {
   const projectRoot = resolve(repoDir, 'apps/cli');
   const resultDir = await mkdtemp(resolve(tmpdir(), 'happier-native-custody-result-'));
   const resultPath = resolve(resultDir, 'failure.json');
   try {
     const result = await runCaptureResult(process.execPath, [
-      fileURLToPath(import.meta.url), '--worker', projectRoot, repoDir, resultPath], {
+      fileURLToPath(import.meta.url), '--worker', projectRoot, repoDir, resultPath, ...(sessionTargets ? [] : ['--host-only'])], {
       // Only Go requests capacity. It finishes before the canonical publication
       // lock is acquired. The worker releases import custody before Go admission.
       cwd: repoDir, env,
     });
+    // Only the worker's own artifact lines: any other worker output stays captured (failures are redacted below).
+    for (const line of String(result.err ?? '').split(/\r?\n/u)) if (ARTIFACT_LINE.test(line)) stderr.write(`${line}\n`);
     if (!result.ok) {
       const failure = await readFile(resultPath, 'utf8').then(JSON.parse).catch(error => {
         if (error.code !== 'ENOENT') throw error;
@@ -88,5 +95,5 @@ export async function prepareCliSourceNativeCustody(repoDir, env) {
 
 const entryPath = String(process.argv[1] ?? '').trim();
 if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url && process.argv[2] === '--worker') {
-  await prepareWorker(process.argv[3], process.argv[4], process.argv[5]);
+  await prepareWorker(process.argv[3], process.argv[4], process.argv[5], process.argv[6] !== '--host-only');
 }

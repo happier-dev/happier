@@ -60,6 +60,29 @@ export const COMPILER_TEST_SUITES = Object.freeze([
     { component: 'apps/cli', configs: ['vitest.integration.config.ts'], compilerSetup: true, compilerFiles: cliIntegrationCompilerFiles },
   ].map(suite => Object.freeze({ ...suite, configs: Object.freeze(suite.configs), compilerFiles: Object.freeze(suite.compilerFiles) })));
 
+// Placed-Session tests that read the Session target artifacts (the Linux musl
+// holders and target custody helpers). Other CLI source selections prepare
+// only this Machine's artifacts. A test missing here refuses stale artifacts
+// itself (`assertSessionTargetArtifactsCurrent`), so an omission fails loudly.
+export const SESSION_TARGET_TEST_FILES = Object.freeze({
+    'apps/cli': Object.freeze(['src/subprocess/supervision/sessionHolder.target.test.ts']),
+  });
+
+/** Vitest selects a file when a filter is a substring of its path (or an absolute prefix of it). */
+function selectsAnyFile(files, filters, packageRoot) {
+  return files.some(file => {
+    const path = `${packageRoot}/${file}`;
+    return filters.some(value => {
+      const absolute = /^(?:\/|[a-z]:\/)/iu.test(value);
+      if (absolute && path.startsWith(value)) return true;
+      const relativeFilter = posix.relative(packageRoot, absolute ? value : posix.join(packageRoot, value))
+        + (value.endsWith('/') ? '/' : '');
+      return file.toLocaleLowerCase().includes(value.toLocaleLowerCase())
+        || file.toLocaleLowerCase().includes(relativeFilter.toLocaleLowerCase());
+    });
+  });
+}
+
 const requireVitest = createRequire(new URL('../../../../../apps/ui/package.json', import.meta.url));
 export async function refineCompilerSuiteSelection(policy, facts, repoRoot, skipCompilerSetup = false, env = process.env) {
   if (facts.admissionWrapper === '1') return;
@@ -72,17 +95,12 @@ export async function refineCompilerSuiteSelection(policy, facts, repoRoot, skip
   const filters = await readVitestFileFilters(facts, env);
   if (!filters.length) return;
   const packageRoot = posix.join(repoRoot.replaceAll('\\', '/'), facts.component);
-  const selectedCompiler = suite?.compilerFiles.some(file => {
-    const path = `${packageRoot}/${file}`;
-    return filters.some(value => {
-      const absolute = /^(?:\/|[a-z]:\/)/iu.test(value);
-      if (absolute && path.startsWith(value)) return true;
-      const relativeFilter = posix.relative(packageRoot, absolute ? value : posix.join(packageRoot, value))
-        + (value.endsWith('/') ? '/' : '');
-      return file.toLocaleLowerCase().includes(value.toLocaleLowerCase())
-        || file.toLocaleLowerCase().includes(relativeFilter.toLocaleLowerCase());
-    });
-  });
+  const sessionTargetTests = SESSION_TARGET_TEST_FILES[facts.component];
+  if (policy.kind === 'source-test' && sessionTargetTests && !policy.preparationScope
+    && !selectsAnyFile(sessionTargetTests, filters, packageRoot)) {
+    policy.preparationScope = 'host-native';
+  }
+  const selectedCompiler = Boolean(suite) && selectsAnyFile(suite.compilerFiles, filters, packageRoot);
   if (policy.compilerSuite === '1' && !selectedCompiler) {
     policy.heavyClass = 'validation';
     policy.localCompile = '0';

@@ -11,6 +11,7 @@ import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/nod
 import { ensureManagedGuestSessionHolder } from '@happier-dev/cli-common/machines/managed';
 
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
+import { assertSessionTargetArtifactsCurrent } from '@/test-setup';
 
 import { currentSessionHolderScope, registerSessionMcpRelayAcceptor, SessionHolderChild, type SessionHolderTarget } from './sessionHolder';
 import { readSessionTargetHolderArtifacts } from './sessionHolderTargetArtifacts';
@@ -135,6 +136,7 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session hold
     }, 60_000);
 
     it.skipIf(process.platform !== 'linux')('admits a real Agent-tree MCP relay and refuses a same-user peer outside that tree', async () => {
+        await assertSessionTargetArtifactsCurrent();
         const provider = localTarget(directory, holderExecutable!);
         // The real target bootstrap selects and verifies the published holder/helper;
         // the provider boundary here is the local shell in a private guest HOME.

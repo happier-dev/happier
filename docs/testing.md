@@ -67,12 +67,21 @@ Source-test tool requirements come from the selected package's optional
 `package.json#happierSourceTestTools` array of executable names, for both direct
 Vitest and package-manager requests. An absent declaration adds no prerequisite;
 a malformed present declaration fails visibly. Current CLI source declares Go.
-On POSIX, public source-test preparation stages current native custody through
-the existing Go build owner on each invocation; Go owns source/module/build-cache
-currentness. This phase uses joint package-dist admission and the existing
-`cli-dist-build.lock`, so it can wait for publication, then releases both before
-the test payload. Source global setup only consumes the prepared executable and
-fails visibly if it is missing; it does not compile again. Windows source global
+On POSIX, public source-test preparation (`prepareNativeCustody` in
+`apps/cli/src/test-setup.ts`) makes this Machine's Go process-custody helper and
+Rust Session holder current, each keyed on its recorded input identity and output
+digest. It logs one line per artifact, `[native-custody] <artifact> current|rebuilt
+<ms>ms`, where the time includes the build's `native-custody` admission wait. A Session
+holder build runs under its publication lock, so concurrent preparations of
+one checkout build stale inputs once and the others then find them current. The
+Session target artifacts (the Linux musl holders and target custody helpers, two
+cross builds each) are prepared only when the Vitest selection can include a
+placed-Session test (`SESSION_TARGET_TEST_FILES` in
+`apps/stack/scripts/utils/dev_targets/compiler_test_suites.mjs`; whole-suite,
+directory and name-only selections include them). Such a test calls
+`assertSessionTargetArtifactsCurrent` and refuses stale artifacts itself. Source
+global setup only consumes this Machine's prepared executables and fails visibly
+if one is missing or stale; it does not compile again. Windows source global
 setup retains native preparation because its public wrapper has no preflight.
 Artifact-consuming CLI Vitest validation retains its payload lease; source unit
 runs still do not build full CLI `dist`. Generator-only checks do not acquire this CLI lease.
