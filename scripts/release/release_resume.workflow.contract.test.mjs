@@ -65,7 +65,7 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
   assert.match(source, /--artifact-id "\$STATUS_ARTIFACT_ID"/);
   assert.match(source, /--artifact-digest "\$EXPECTED_DIGEST"/);
   assert.match(source, /resolve-release-resume\.mjs[\s\S]*--mode resolve/);
-  assert.equal((source.match(/\/jobs\?filter=latest&per_page=100/g) ?? []).length, 1, 'one canonical origin retrieval owns nested completion evidence');
+  assert.equal((source.match(/\/jobs\?filter=latest&per_page=50/g) ?? []).length, 1, 'one canonical origin retrieval owns nested completion evidence');
   assert.match(source, /--jobs-json "\$RUNNER_TEMP\/resume-jobs.json"/);
 
   const ui = workflow('promote-ui.yml');

@@ -222,8 +222,10 @@ jobs:
           gh api --paginate --slurp \
             "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/artifacts?per_page=100" \
             > "$RUNNER_TEMP/resume-artifacts.json"
+          # 100-job pages of a full combined release run (772 jobs, 2026-11-17)
+          # returned HTTP 502 deterministically on some pages; 50-job pages did not.
           gh api --paginate --slurp \
-            "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/jobs?filter=latest&per_page=100" \
+            "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/jobs?filter=latest&per_page=50" \
             > "$RUNNER_TEMP/resume-jobs.json"
           node scripts/pipeline/release/resolve-release-resume.mjs \
             --mode inspect \
