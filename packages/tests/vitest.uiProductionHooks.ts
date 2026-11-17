@@ -127,6 +127,9 @@ const appSourceAliasesPlugin: Plugin = {
     if (id === '@happier-tests/ui-action-client') {
       return uiSource('dev/testkit/actionClientIntegrationTestkit.ts');
     }
+    if (id === '@happier-tests/ui-terminal-enrollment') {
+      return uiSource('dev/testkit/terminalEnrollmentIntegrationTestkit.ts');
+    }
     if (id === '@happier-tests/ui-scm-refine-admission') {
       return uiSource('dev/testkit/scmRefineAdmissionIntegrationTestkit.ts');
     }

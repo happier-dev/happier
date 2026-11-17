@@ -14,6 +14,7 @@ import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/app
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
+import { completeTerminalConnectForTest } from '@happier-tests/ui-terminal-enrollment';
 import { readAccountIdFromToken } from '../../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { decodeStoredCredentials, type Settings } from '../../../../../apps/cli/src/persistence';
 import { createCliActionExecutorFromCredentials } from '../../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
@@ -27,10 +28,6 @@ import { startServerLight, type TestDbProvider } from '../process/serverLight';
 import { claimTestHomeOwner } from '../homeOwner';
 import { fetchSessionMetadataV2 } from '../sessionHandoffMetadata';
 import { startTestDaemon, type StartedDaemon } from './daemon';
-import { approveTerminalPairing } from '../../../../../apps/ui/sources/auth/terminal/approveTerminalPairing';
-import { buildEstablishedHomeTransportDescriptor, resolveHomeEnrollmentTransport } from '../../../../../apps/ui/sources/auth/enrollment/homeEnrollmentTransport';
-import { decodeBase64 } from '../../../../../apps/ui/sources/encryption/base64';
-import { parseTerminalConnectUrl } from '../../../../../apps/ui/sources/utils/path/terminalConnectUrl';
 import { resolveMachineIdForServerFromSettings } from '../../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
 import type { CliTestLaunchSpec } from '../process/cliLaunchSpec';
 import type { TestAccountCliAuthCredentials } from '../cliAuth';
@@ -263,22 +260,9 @@ export async function enrollProjectDaemonHome(params: Readonly<{
     cliLaunchSpec, waitForConnectUrlReady: false, env: { ...process.env, ...params.env, NODE_OPTIONS: params.sourceOptions,
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' } });
   try {
-    const link = parseTerminalConnectUrl(login.connectUrl);
-    if (!link?.pairing) throw new Error('Production CLI did not publish a current terminal pairing link');
-    const descriptor = link.homeConnectionDescriptor ?? buildEstablishedHomeTransportDescriptor({
-      canonicalServerUrl: params.serverUrl, homeServerIdentityId: params.serverId });
-    if (!descriptor) throw new Error('Established fixture Home transport unavailable');
-    const resolution = await resolveHomeEnrollmentTransport(descriptor);
-    if (!resolution.ok) throw new Error(`Fixture Home pairing unavailable: ${resolution.reason}`);
-    try {
-      const result = await approveTerminalPairing({ target: resolution.transport, targetCredentials: account.uiCredentials,
-        requesterPublicKey: decodeBase64(link.publicKeyB64Url, 'base64url'),
-        pairingContext: { secret: decodeBase64(link.pairing.secretB64Url, 'base64url'),
-          createdAtMs: link.pairing.createdAtMs, expiresAtMs: link.pairing.expiresAtMs },
-        supportsTokenOnly: link.supportsTokenOnly === true });
-      if (result !== 'approved') throw new Error(`Production terminal approval did not complete: ${result}`);
-      await login.waitForSuccess();
-    } finally { await resolution.transport.close(); }
+    await completeTerminalConnectForTest({ connectUrl: login.connectUrl,
+      canonicalServerUrl: params.serverUrl, homeServerIdentityId: params.serverId,
+      credentials: account.uiCredentials, waitForSuccess: () => login.waitForSuccess() });
   } finally { await login.stop(); }
   return readEnrolledProjectDaemonHome({ homeDir, serverId: params.serverId, accountToken: account.auth.token });
 }
