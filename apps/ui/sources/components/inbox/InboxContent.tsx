@@ -483,8 +483,9 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
             {sourcesIncomplete ? (
                 viewHasRows ? (
                     <FreshnessSlot page={page}>
+                        {/* The cause's own mark: a refresh arrow beside the Retry link read as a second Retry. */}
                         <SurfaceFreshnessLine testID="inbox.artifacts_stale" reason={t('inbox.work.stale.sources')}
-                            action={sourcesRetry} />
+                            glyph="warning" action={sourcesRetry} />
                     </FreshnessSlot>
                 ) : page ? (
                     // Nothing retained here: the page's own state block in its column, never a lone strip over blank space.

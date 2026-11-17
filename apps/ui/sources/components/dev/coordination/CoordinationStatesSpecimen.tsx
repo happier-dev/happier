@@ -332,9 +332,11 @@ function AskScene() {
       }),
     [],
   );
+  // The record sits in the thread column, as MessageView draws it, never across the whole pane.
+  const column = useLayoutMaxWidthStyle();
   return (
     <SessionTranscriptSourceProvider source={source}>
-      <View style={styles.transcript}>
+      <View style={[styles.transcript, column]}>
         {ASKS.map((message) => {
           const record = projectSessionMessageInvocationRead({
             entry: readSessionMessageInvocation(message, {

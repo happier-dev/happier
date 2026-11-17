@@ -166,7 +166,10 @@ function summarize(
       count((entry) => entry.target.status === 'passed'),
       'session.askRecord.summaryPassed',
     ],
-    [count((entry) => entry.state.failed), 'session.askRecord.summaryFailed'],
+    // One word per chip state: a refusal, a request-bound failure and an unknown delivery are counted apart.
+    [count((entry) => entry.target.status === 'failed' && !entry.target.requestBound), 'session.askRecord.summaryFailed'],
+    [count((entry) => entry.target.status === 'failed' && entry.target.requestBound), 'session.askRecord.summaryNotAnswered'],
+    [count((entry) => entry.target.status === 'unknown'), 'session.askRecord.summaryUnsure'],
     [
       count(
         (entry) =>
@@ -532,13 +535,23 @@ export function SessionAskRecordContent(
           ))}
         </View>
       ) : null}
-      {record.origin === 'composer' && failedTargets.length > 0 ? (
+      {record.origin === 'composer' && targets.some((target) => target.status === 'failed') ? (
         <Text
           variant="meta"
           style={[styles.hint, { color: theme.colors.text.tertiary }]}
           testID={`session-ask-record-retry:${record.sourceRowId}`}
         >
           {t('session.askRecord.retryHint')}
+        </Text>
+      ) : null}
+      {/* An unknown delivery may have arrived: the person checks it before sending again, so no retry is offered. */}
+      {targets.some((target) => target.status === 'unknown') ? (
+        <Text
+          variant="meta"
+          style={[styles.hint, { color: theme.colors.text.tertiary }]}
+          testID={`session-ask-record-unsure:${record.sourceRowId}`}
+        >
+          {t('session.askRecord.unsureHint')}
         </Text>
       ) : null}
     </View>

@@ -198,6 +198,7 @@ const styles = StyleSheet.create((theme) => ({
   // lead and child cards are never read as cards inside a card.
   pane: {
     width: 360,
+    maxWidth: '100%',
     backgroundColor: theme.colors.surface.base,
   },
   paneWide: { width: 500 },

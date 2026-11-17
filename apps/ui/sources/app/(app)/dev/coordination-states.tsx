@@ -1,7 +1,8 @@
-import { useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import * as React from 'react';
 
 import { CoordinationStatesSpecimen } from '@/components/dev/coordination/CoordinationStatesSpecimen';
+import { t } from '@/text';
 
 /**
  * Dev-only: coordination states drawn by their real owners (lab coordination-v3). `?scene=followers` is People's
@@ -9,9 +10,12 @@ import { CoordinationStatesSpecimen } from '@/components/dev/coordination/Coordi
  */
 export default function CoordinationStatesDevScreen() {
   const params = useLocalSearchParams<{ scene?: string }>();
+  const followers = params.scene === 'followers';
   return (
-    <CoordinationStatesSpecimen
-      scene={params.scene === 'followers' ? 'followers' : 'ask'}
-    />
+    <>
+      {/* The phone page takes its title from the screen header, as the Followers route sets it. */}
+      {followers ? <Stack.Screen options={{ headerShown: true, title: t('session.collaboration.pane.followersTitle') }} /> : null}
+      <CoordinationStatesSpecimen scene={followers ? 'followers' : 'ask'} />
+    </>
   );
 }

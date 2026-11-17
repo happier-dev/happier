@@ -116,7 +116,25 @@ describe('Ask record row', () => {
         expect(label(screen, 'session-ask-record-target-state:a')).toBe('Answered');
         expect(label(screen, 'session-ask-record-target-state:c')).toBe('Passed');
         expect(label(screen, 'session-ask-record-target-state:b')).toBe('Not sent');
-        expect(screen.getTextContent()).toContain('1 answered · 1 passed · 1 not delivered');
+        expect(screen.getTextContent()).toContain('1 answered · 1 passed · 1 not sent');
+        await screen.unmount();
+    });
+
+    it('counts a target whose delivery is unknown as unsure in the summary, never as not delivered', async () => {
+        const serverId = await homes.addHome({ name: 'Ask record', serverUrl: 'https://ask-record.test', accountId: 'alice', currentAccount: true });
+        await activateHome(serverId);
+        answerReplies(serverId, { a: 'answer' });
+        const unknown = { ok: false, errorCode: 'outcome_unknown', error: 'Lost' } as const satisfies ActionExecuteResult;
+        const message = composerEntry(serverId, { selector: 'siblings' }, [['a', accepted], ['b', unknown]]);
+        const screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId="source" serverId={serverId}>
+            <SessionAskRecord message={message} sessionId="source" serverId={serverId} />
+        </AppSessionTranscriptSourceProvider>);
+        await flushHookEffects({ cycles: 20 });
+        expect(label(screen, 'session-ask-record-target-state:b')).toBe('Not sure it was sent');
+        expect(screen.getTextContent()).toContain('1 answered · 1 not sure');
+        // It may have arrived: the person checks before sending again, so no retry prompt invites a duplicate.
+        expect(screen.findHostByTestId(`session-ask-record-retry:${message.id}`)).toBeNull();
+        expect(screen.findHostByTestId(`session-ask-record-unsure:${message.id}`)).not.toBeNull();
         await screen.unmount();
     });
 
