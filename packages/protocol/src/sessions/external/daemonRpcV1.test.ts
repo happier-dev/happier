@@ -42,13 +42,15 @@ it('projects complete native prompt frames into candidate titles without changin
   }
 });
 
-it('omits delivery-only and truncated prompt previews from titles while preserving explicit names and transcripts', () => {
+it('preserves visible text in truncated prompt wrappers while omitting empty delivery frames', () => {
   const plan = renderSessionInputPromptPlanV1(buildPromptPlanV1({ modality: 'coding', blocks: [
     { id: 'resource', scope: 'session', text: 'Dynamic resource context' },
   ] }));
   const context = renderSessionInputContextPromptV1({ inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
     transformedUserText: 'Visible request' });
-  for (const preview of [plan, plan.slice(0, -5), context.slice(0, context.indexOf('</happier_input_context>')),
+  expect(daemonRpcV1.projectExternalSessionCandidateTitle(plan.slice(0, -5), { source: 'prompt' }))
+    .toBe('Dynamic resource context');
+  for (const preview of [plan, '<happier_coding_prompt length="10">\n', context.slice(0, context.indexOf('</happier_input_context>')),
     context.slice(0, context.indexOf('</happier_input_context>') + '</happier_input_context>'.length)]) {
     expect(daemonRpcV1.projectExternalSessionCandidateTitle(preview, { source: 'prompt' })).toBe('');
     expect(daemonRpcV1.projectExternalSessionCandidateTitle(preview)).toBe(preview);

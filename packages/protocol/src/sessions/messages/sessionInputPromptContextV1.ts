@@ -30,7 +30,7 @@ const MAX_CONTEXT_VALUE_CODE_POINTS = 128;
 const INPUT_CONTEXT_OPEN = '<happier_input_context v="1">';
 const INPUT_CONTEXT_CLOSE = '</happier_input_context>';
 
-/** Summaries omit delivery frames, including truncated native previews; transcripts retain their evidence. */
+/** Summaries omit delivery frames but retain visible text in truncated native previews. */
 export function readSessionInputPromptTitleTextV1(text: string): string {
   let remaining = text.trim();
   while (remaining) {
@@ -38,6 +38,13 @@ export function readSessionInputPromptTitleTextV1(text: string): string {
     if (afterPlan !== null) {
       remaining = afterPlan;
       continue;
+    }
+    const partialPlan = remaining.match(/^<happier_coding_prompt length="(\d+)">\n/);
+    if (partialPlan) {
+      // Native previews can end inside the body or closing tag. The declared
+      // body length keeps a partial closing tag out of the visible title.
+      remaining = remaining.slice(partialPlan[0].length, partialPlan[0].length + Number(partialPlan[1]));
+      break;
     }
     if (remaining.startsWith('<happier_coding_prompt ')) return '';
     if (!remaining.startsWith(INPUT_CONTEXT_OPEN)) break;
