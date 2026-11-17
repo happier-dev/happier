@@ -24,7 +24,7 @@ export async function loadCaptureCostPricingContext(context: PluginInvocationCon
     modelIds: readonly string[]): Promise<CaptureCostPricingContext> {
     const settings = await context.services.actions.execute('settings.get', { anchor: 'usage.modelPrices' }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(settings)) throw new PluginError({ code: 'approval_required' });
-    const viewerOverrides = UsageModelPriceOverridesV1Schema.parse(settings.value);
+    const viewerOverrides = UsageModelPriceOverridesV1Schema.parse('unset' in settings ? {} : settings.value);
     // Mapping targets are price identifiers, not copied tariffs or locally resolved aliases.
     const selectedIds = [...new Set([...modelIds, ...Object.values(viewerOverrides).flatMap(value => value.kind === 'map' ? [value.modelId] : [])])];
     const prices = await context.services.actions.execute('usage.prices.get', { modelIds: selectedIds }, { signal: context.signal });

@@ -67,7 +67,8 @@ it('reads one selected cost aggregate through the published Action and prices it
     // These are the SDK host's authenticated Account Actions, not a replacement estimator.
     const actions = { async execute(id: string, input: unknown) {
         calls.push({ id, input });
-        if (id === 'settings.get') return { anchor: 'usage.modelPrices', value: summaryOnly ? {} : { 'private-model': { kind: 'map', modelId: 'reference' } } };
+        if (id === 'settings.get') return summaryOnly ? { anchor: 'usage.modelPrices', unset: true }
+            : { anchor: 'usage.modelPrices', value: { 'private-model': { kind: 'map', modelId: 'reference' } } };
         if (id === 'usage.prices.get') return summaryOnly ? { v: 1, modelCount: 1, provenance: catalog.provenance } : catalog;
         throw new Error(`Unexpected host Action ${id}`);
     } } as unknown as PluginServices['actions'];
