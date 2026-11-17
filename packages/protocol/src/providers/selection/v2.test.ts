@@ -8,12 +8,33 @@ import {
   SessionModelSelectionV2Schema,
   projectSessionModelSelectionV2ToV1,
   sessionModelSelectionV2TeamBindingIntent,
+  isSessionModelRefSourceBound,
+  readSessionModelRefProviderConnectionId,
+  SessionModelSelectionSchema,
 } from './v2.js';
 import { readExactSessionActiveModelSelection, readExactSessionActiveModelSelectionV1 } from './activeSelectionValidationV1.js';
 import { SessionActiveModelSelectionV1Schema } from './v1.js';
 import { SessionOwnerMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
 
 describe('SessionModelSelectionV2', () => {
+  it('distinguishes credential-backed sources from Account connection identity', () => {
+    const selections = [
+      { selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'native' } }, bound: false },
+      { selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'backend:codex', providerConnectionId: 'connection', modelId: 'account' } }, bound: true },
+      { selection: { v: 2, updatedAt: 1, ref: { source: 'native', agentTargetKey: 'backend:codex', modelId: 'native' } }, bound: false },
+      { selection: { v: 2, updatedAt: 1, ref: { source: 'account_provider_connection', agentTargetKey: 'backend:codex', providerConnectionId: 'connection', modelId: 'account' } }, bound: true },
+      { selection: { v: 2, updatedAt: 1, ref: { source: 'team_resource', agentTargetKey: 'backend:codex', modelId: 'team',
+        teamId: 'team', resourceId: 'resource', expectedResourceRevision: 1, deliveryMode: 'brokered' } }, bound: true },
+    ];
+    for (const { selection: input, bound } of selections) {
+      const selection = SessionModelSelectionSchema.parse(input);
+      expect(isSessionModelRefSourceBound(selection.ref)).toBe(bound);
+      if (selection.v === 2 && selection.ref.source === 'team_resource') {
+        expect(readSessionModelRefProviderConnectionId(selection.ref)).toBeNull();
+      }
+    }
+  });
+
   it('retains the exact model source across process transport while accepting retained V1 inputs', () => {
     const selections = [
       { v: 1 as const, updatedAt: 1, ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'legacy' } },

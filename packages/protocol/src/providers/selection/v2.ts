@@ -89,6 +89,11 @@ export function readSessionModelRefProviderConnectionId(ref: SessionModelRef): S
   return 'providerConnectionId' in ref ? ref.providerConnectionId : null;
 }
 
+/** Team is credential-backed even though it has no Account Provider Connection id. */
+export function isSessionModelRefSourceBound(ref: SessionModelRef): boolean {
+  return 'source' in ref ? ref.source !== 'native' : ref.providerConnectionId !== null;
+}
+
 /** Older readers may consume only the two sources they can represent. */
 export function projectSessionModelSelectionV2ToV1(
   value: SessionModelSelectionV2,
