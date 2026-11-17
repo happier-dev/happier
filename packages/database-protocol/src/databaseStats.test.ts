@@ -1,11 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { compareDatabaseStatsCountersV1, compareDatabaseStatsSizeV1, type DatabaseStatsCounterSampleV1 } from './databaseStats.js';
+import { compareDatabaseEvidenceWindowsV1, compareDatabaseStatsCountersV1, compareDatabaseStatsSizeV1,
+    type DatabaseMeasuredWindowV1, type DatabaseStatsCounterSampleV1 } from './databaseStats.js';
 
 const sample = (rows: DatabaseStatsCounterSampleV1['rows'], observedAtMs: number): DatabaseStatsCounterSampleV1 => ({
     engineId: 'postgresql', observedAtMs, coverage: { status: 'complete' }, rows,
     intervalBasis: { bindingKey: 'deployment:one', databaseIdentity: '16384', selectionKey: 'statements:totalTime:page-one', statsResetAt: '2026-11-16T00:00:00Z' },
 });
 describe('database stats comparisons', () => {
+    it('compares retained measured windows without inventing a result for incomplete or incompatible evidence', () => {
+        const compare = compareDatabaseEvidenceWindowsV1;
+        const before: DatabaseMeasuredWindowV1 = { measure: 'p95', unit: 'ms', basis: 'metric_points', value: 100,
+            window: { since: 1000, until: 2000 }, completeness: 'complete', reasons: [], producers: [] };
+        const after = { ...before, value: 180, window: { since: 2000, until: 3000 } };
+        expect(compare(before, after)).toEqual({ status: 'comparable', before: 100, after: 180, change: 80, changePercent: 80 });
+        expect(compare({ ...before, value: 0 }, after)).toMatchObject({ status: 'comparable', changePercent: null });
+        expect(compare({ ...before, completeness: 'partial', reasons: ['sampled_traffic'] }, after))
+            .toEqual({ status: 'inconclusive', reasons: ['sampled_traffic'] });
+        expect(compare(before, { ...after, basis: 'sampled_spans' })).toEqual({ status: 'inconclusive', reasons: ['incompatible_measurements'] });
+        expect(compare(before, { ...after, value: undefined, reasons: ['no_traffic'] }))
+            .toEqual({ status: 'inconclusive', reasons: ['no_traffic'] });
+        expect(compare(before, { ...after, window: { since: 1500, until: 2500 } }))
+            .toEqual({ status: 'inconclusive', reasons: ['incompatible_windows'] });
+        expect(compare(before, { ...after, producers: [{ serviceVersion: 'one' }, { serviceVersion: 'two' }] }))
+            .toEqual({ status: 'inconclusive', reasons: ['mixed_versions'] });
+        const partialBefore: DatabaseMeasuredWindowV1 = { ...before, completeness: 'partial', reasons: ['boundary_gap'] };
+        const partialAfter: DatabaseMeasuredWindowV1 = { ...after, completeness: 'partial', reasons: ['boundary_gap'] };
+        expect(compare(partialBefore, partialAfter)).toMatchObject({ status: 'comparable', changePercent: 80 });
+        expect(compare(partialBefore, { ...partialAfter, completeness: 'unknown', reasons: ['boundary_gap', 'gap'] }))
+            .toEqual({ status: 'inconclusive', reasons: ['boundary_gap', 'gap'] });
+    });
     it('compares common keys with lossless deltas and computes mean from total time rather than subtracting means', () => {
         const before = sample([{ key: 'db:user:query:top', calls: '9007199254740993', totalTimeMs: 100, rows: '9007199254740998' },
             { key: 'evicted', calls: '5', totalTimeMs: 20, rows: '5' }], 1000);

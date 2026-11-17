@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import type { HealthCheckResultV1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { DatabaseEngineIdV1Schema } from './databaseTargets.js';
 import { DatabaseStatsRelationV1Schema } from './databaseOperands.js';
 import { DatabaseCompletenessV1Schema } from './databaseContinuations.js';
@@ -127,4 +128,37 @@ export function compareDatabaseStatsSizeV1(previous: Readonly<{ bytes: string; o
     if (!previous) return { status: 'unavailable', reason: 'previous_sample_required' };
     if (previous.bindingKey !== current.bindingKey || previous.observedAtMs >= current.observedAtMs) return { status: 'unavailable', reason: 'comparison_unavailable' };
     return { status: 'available', bytes: (BigInt(current.bytes) - BigInt(previous.bytes)).toString(), fromMs: previous.observedAtMs, toMs: current.observedAtMs };
+}
+
+export type DatabaseMeasuredWindowV1 = NonNullable<HealthCheckResultV1['measurements']>;
+export type DatabaseEvidenceWindowComparisonV1 = Readonly<{
+    status: 'comparable'; before: number; after: number; change: number; changePercent: number | null;
+}> | Readonly<{ status: 'inconclusive'; reasons: readonly string[] }>;
+
+/** P4 owns comparison arithmetic; telemetry supplies its retained, already measured windows. */
+export function compareDatabaseEvidenceWindowsV1(previous: DatabaseMeasuredWindowV1,
+    current: DatabaseMeasuredWindowV1): DatabaseEvidenceWindowComparisonV1 {
+    // The metric owner retains complete export intervals inside a person’s
+    // window. Boundary-only coverage stays visibly partial; it does not mean
+    // that those measured intervals are missing, reset or sampled.
+    const usable = (window: DatabaseMeasuredWindowV1) => window.completeness === 'complete'
+        || window.completeness === 'partial' && window.reasons.length > 0 && window.reasons.every(reason => reason === 'boundary_gap');
+    if (!usable(previous) || !usable(current)
+        || previous.value === undefined || current.value === undefined) {
+        const reasons = [...new Set([...previous.reasons, ...current.reasons])];
+        return { status: 'inconclusive', reasons: reasons.length ? reasons : ['incomplete_measurements'] };
+    }
+    if (previous.measure !== current.measure || previous.unit !== current.unit || previous.basis !== current.basis) {
+        return { status: 'inconclusive', reasons: ['incompatible_measurements'] };
+    }
+    if ([previous, current].some(window => new Set(window.producers?.flatMap(producer =>
+        producer.serviceVersion === undefined ? [] : [producer.serviceVersion])).size > 1)) {
+        return { status: 'inconclusive', reasons: ['mixed_versions'] };
+    }
+    const duration = previous.window.until - previous.window.since;
+    if (duration <= 0 || current.window.until - current.window.since !== duration
+        || previous.window.until > current.window.since) return { status: 'inconclusive', reasons: ['incompatible_windows'] };
+    const change = current.value - previous.value;
+    return { status: 'comparable', before: previous.value, after: current.value, change,
+        changePercent: previous.value === 0 ? null : change / previous.value * 100 };
 }
