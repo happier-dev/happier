@@ -3,7 +3,7 @@ import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryModelOutputSchema, Sc
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryGeneratorSelectionSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ScmDiffSummaryOutputs } from '@happier-dev/protocol';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ExecutionRunIntentProfile, ExecutionRunProfileTurnCompleteParams, ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { stripTrailingJsonObjectFromText } from '@/agent/executionRuns/profiles/shared/stripTrailingJsonObjectFromText';
@@ -152,7 +152,12 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = bindScmExecution
       ...(sessionId ? { sessionId } : {}),
     });
     const trustedInput = { ...input, comparison: context.comparison, metadata: context.metadata };
-    const modelSelection = ProviderBoundModelRefSchema.safeParse(request.modelSelection);
+    let generatorModelRef: unknown = request.modelSelection;
+    if (request.teamCredentialModel) {
+      const { kind: _kind, ...teamRef } = request.teamCredentialModel;
+      generatorModelRef = { source: 'team_resource', ...teamRef };
+    }
+    const modelSelection = SessionModelRefSchema.safeParse(generatorModelRef);
     const generator = ScmDiffSummaryGeneratorSelectionSchema.parse({
       backendTarget: readBackendTargetRefV2(request.backendTarget),
       ...(outputLanguage ? { outputLanguage } : {}),

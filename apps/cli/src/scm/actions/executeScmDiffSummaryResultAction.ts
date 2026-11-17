@@ -12,6 +12,7 @@ import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSu
 import { buildDiffSummaryPrompt, buildDiffSummaryRefinementTask } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';
 import { presentScmDiffSummaryModelContext, scopeScmDiffSummaryComparison } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/presentScmDiffSummaryModelContext';
 import { findingCitationInstructions } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
+import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 type ExecuteCanonicalAction = Parameters<ScmActionExecute>[0]['executeCanonicalAction'];
 export type ScmDiffSummarySavedActionId = Extract<ScmActionId,
@@ -113,14 +114,15 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
   if (discuss?.startNew || (!affordances.canSend && !affordances.canResume && params.actionId !== 'scm.diffSummary.discuss')) {
     const originalSelection = run?.resolvedSelection;
     const originalModelId = originalSelection?.modelSelection?.modelId ?? originalSelection?.modelId ?? run?.requestedConfiguration?.modelId;
-    // Historical results can recover their exact observed Run selection. Team custody
-    // is not representable by this saved generator and cannot become a native choice.
+    // Historical results without a saved generator recover only their observed V1 selection.
     const generator: ScmDiffSummaryGeneratorSelection | undefined = result.generator ?? (run && !originalSelection?.teamCredentialModel
       ? { backendTarget: readBackendTargetRefV2(run.backendTarget),
         ...(originalModelId ? { modelId: originalModelId } : {}),
         ...(originalSelection?.modelSelection ? { modelSelection: originalSelection.modelSelection } : {}),
         ...(originalSelection?.connectedServices !== undefined ? { connectedServices: originalSelection.connectedServices } : {}) } : undefined);
     if (!generator || !result.output.comparison) return { success: false, errorCode: 'discussion_unavailable', error: 'A proven generator selection is unavailable for a new conversation.' };
+    const executionSelection = generator.modelSelection
+      ? projectSessionModelRefToExecutionModelSelection(generator.modelSelection) : undefined;
     const savedModelId = generator.modelSelection?.modelId ?? generator.modelId;
     // Historical saved generators omitted the credential route. Recover only an observed
     // original selection for this exact Agent/model/Provider, never a different saved choice.
@@ -132,10 +134,11 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
       return { success: false, errorCode: 'discussion_unavailable', error: 'A proven generator selection is unavailable for a new conversation.' };
     }
     const sameOriginalRoute = sameOriginalAgentAndModel && !originalSelection.teamCredentialModel
-      && (generator.modelSelection?.providerConnectionId ?? null) === (originalSelection.modelSelection?.providerConnectionId ?? null);
+      && !executionSelection?.teamCredentialModel
+      && (executionSelection?.modelSelection?.providerConnectionId ?? null) === (originalSelection.modelSelection?.providerConnectionId ?? null);
     const connectedServices = generator.connectedServices !== undefined ? generator.connectedServices
       : sameOriginalRoute ? originalSelection.connectedServices : undefined;
-    const { investigateSurroundingFiles, outputLanguage: _savedLanguage, ...engine } = generator;
+    const { investigateSurroundingFiles, outputLanguage: _savedLanguage, modelSelection: _savedSelection, ...engine } = generator;
     const initialInputId = randomUUID();
     const explanationInputId = explanationRequest ? initialInputId : undefined;
     if (explanationInputId) {
@@ -147,6 +150,7 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
       ...runTarget, ...(!sessionId ? { machineId, cwd: scope.cwd } : {}),
       localInputId: initialInputId,
       kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, intent: 'scm_diff_summary', ...engine,
+      ...executionSelection,
       ...(connectedServices !== undefined ? { connectedServices } : {}),
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
       intentInput: { cwd: scope.cwd, ...(sessionId ? { sessionId } : {}), source: result.output.comparison.source, comparisonId: result.output.comparison.id,

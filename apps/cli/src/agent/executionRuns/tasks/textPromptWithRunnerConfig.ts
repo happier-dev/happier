@@ -2,6 +2,7 @@ import type { ExecutionRunIntent } from '@happier-dev/protocol';
 import { convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { LlmTaskRunnerChoiceV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { LlmTaskIdV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
+import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import {
   runEphemeralExecutionRunTextPrompt,
@@ -31,7 +32,7 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
   return await runEphemeralExecutionRunTextPrompt({
     sessionId: params.sessionId,
     backendTarget,
-    modelSelection: runner.modelSelection,
+    ...projectSessionModelRefToExecutionModelSelection(runner.modelSelection),
     ...(runner.connectedServices !== undefined ? { connectedServices: runner.connectedServices } : {}),
     ...(runner.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: runner.sessionConfigOptionOverrides } : {}),
     permissionMode: runner.permissionMode ?? 'no_tools',

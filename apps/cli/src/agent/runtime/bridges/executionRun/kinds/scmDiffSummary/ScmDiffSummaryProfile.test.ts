@@ -227,8 +227,10 @@ describe('initial generation context', () => {
 
 async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'replacement' | 'explicitChoice',
   assertContinuation: (observed: { prompt: string; admittedInstructions?: unknown; savedLanguage?: unknown; replacementLanguage?: unknown;
-    savedConnectedServices?: unknown; replacementConnectedServices?: unknown }) => void,
-  connectedRouteAtStartOnly = false) {
+    savedConnectedServices?: unknown; replacementConnectedServices?: unknown; savedModelSelection?: unknown;
+    replacementTeamCredentialModel?: unknown; replacementModelSelection?: unknown }) => void,
+  connectedRouteAtStartOnly = false,
+  teamCredentialModel?: import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1) {
   const previous = getActiveAccountSettingsSnapshot();
   setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({ 'scm.diffSummary.outputLanguage': 'de' }),
     settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'saved-language-account' });
@@ -240,6 +242,7 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
           source: 'connected' as const, selection: 'profile' as const, profileId: 'saved-subscription',
         } } };
       const request = { kind: 'scm_diff_summary.v1' as const, backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' }, intent: 'scm_diff_summary' as const,
+        ...(teamCredentialModel ? { teamCredentialModel, modelId: teamCredentialModel.modelId } : {}),
         ...(!connectedRouteAtStartOnly ? { connectedServices } : {}),
         permissionMode: 'read_only', retentionPolicy: 'resumable' as const, runClass: 'long_lived' as const, ioMode: 'streaming' as const,
         intentInput: { cwd, source: captured.comparison.source, comparisonId: captured.comparison.id, outputs: ['summary'], outputLanguage: 'fr' } };
@@ -257,6 +260,8 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
       let admittedInstructions: unknown;
       let replacementLanguage: unknown;
       let replacementConnectedServices: unknown;
+      let replacementTeamCredentialModel: unknown;
+      let replacementModelSelection: unknown;
       // Only Run transport is substituted; profile admission, capture, persistence, Action routing and strict readers are real.
       const executeCanonicalAction: Parameters<ScmActionExecute>[0]['executeCanonicalAction'] = async (id, input) => {
         if (id === 'execution.run.get') return operation === 'replacement' || operation === 'explicitChoice'
@@ -275,6 +280,8 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
           admittedInstructions = (admitted.intentInput as { instructions?: unknown }).instructions;
           replacementLanguage = (admitted.intentInput as { outputLanguage?: unknown }).outputLanguage;
           replacementConnectedServices = admitted.connectedServices;
+          replacementTeamCredentialModel = admitted.teamCredentialModel;
+          replacementModelSelection = admitted.modelSelection;
           const prepared = await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: null, request: admitted });
           prompt = ExecutionRunStartRequestSchema.parse({ ...admitted, ...prepared }).instructions ?? '';
           return { ok: true, result: { runId: 'replacement', callId: 'call', sidechainId: 'sidechain', status: 'running' } };
@@ -289,7 +296,8 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
         actionContext: { surface: 'rpc', authority: 'present_user', externalActionTarget: { kind: 'machine', machineId: 'machine' } } });
       expect(result, JSON.stringify(result)).toMatchObject({ success: true });
       assertContinuation({ prompt, admittedInstructions, replacementLanguage, savedLanguage: saved.generator?.outputLanguage,
-        savedConnectedServices: saved.generator?.connectedServices, replacementConnectedServices });
+        savedConnectedServices: saved.generator?.connectedServices, replacementConnectedServices,
+        savedModelSelection: saved.generator?.modelSelection, replacementTeamCredentialModel, replacementModelSelection });
     });
   } finally {
     if (previous) setActiveAccountSettingsSnapshot(previous); else clearActiveAccountSettingsSnapshot();
@@ -299,6 +307,20 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
 const fence = '`'.repeat(3);
 
 describe('ScmDiffSummaryProfile', () => {
+
+  it('retains an admitted Team generator through saved preparation and replacement', async () => {
+    return runWithScmAccountScope('account', async () => {
+      const teamCredentialModel = { kind: 'team_credential_provider_model' as const,
+        agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-model', resourceId: 'resource', teamId: 'team',
+        expectedResourceRevision: 4, deliveryMode: 'brokered' as const };
+      await exerciseSavedContinuation('replacement', ({ savedModelSelection, replacementTeamCredentialModel, replacementModelSelection }) => {
+        const { kind: _kind, ...ref } = teamCredentialModel;
+        expect(savedModelSelection).toEqual({ source: 'team_resource', ...ref });
+        expect(replacementTeamCredentialModel).toEqual(teamCredentialModel);
+        expect(replacementModelSelection).toBeUndefined();
+      }, false, teamCredentialModel);
+    });
+  });
 
   it.each([false, true])('persists the generator Connected Services and reuses them when refinement replaces a lost Run (resolved at start=%s)', async connectedRouteAtStartOnly => {
     return runWithScmAccountScope('account', async () => {

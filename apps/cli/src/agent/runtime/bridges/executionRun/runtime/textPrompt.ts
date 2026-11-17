@@ -3,6 +3,7 @@ import type {
   ActionExecutorContext,
   BackendTargetRefV1,
   ExecutionRunIntent,
+  TeamCredentialProviderModelSelectionV1,
 } from '@happier-dev/protocol';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -90,6 +91,7 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
   backendTarget: BackendTargetRefV1;
   modelId?: string;
   modelSelection?: ProviderBoundModelRef;
+  teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   permissionMode: string;
   intent: ExecutionRunIntent;
   prompt: string;
@@ -109,6 +111,7 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
     intent: params.intent,
     backendTarget: params.backendTarget,
     ...(params.modelSelection ? { modelSelection: params.modelSelection } : modelId ? { modelId } : {}),
+    ...(params.teamCredentialModel ? { teamCredentialModel: params.teamCredentialModel } : {}),
     permissionMode: params.permissionMode,
     retentionPolicy: 'ephemeral',
     runClass: 'bounded',
