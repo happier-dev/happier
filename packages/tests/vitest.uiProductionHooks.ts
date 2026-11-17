@@ -109,6 +109,7 @@ const workspacePackages = readHostWorkspacePackageSpecs(repoRoot, resolve(repoRo
 const workspaceSourcesPlugin = createWorkspacePackageSourcesPlugin(
   workspacePackages,
   'happier-tests-workspace-package-sources',
+  { exportConditions: ['happier-source'] },
 );
 
 const appSourceAliasesPlugin: Plugin = {
