@@ -47,15 +47,22 @@ const HEAD_PRIORITY_RANKS = new Map([
 ]);
 const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
 const PRODUCER_RANK = 2;
-// P03 ORCH 2026-11-17: a preparation is a prerequisite step of the run it
-// prepares, so it is admitted at that run's class rank (never a script rank and
-// never a rank of its own). Only preparation classes take `preparesClass`.
-const PREPARATION_CLASSES = new Set(['native-custody']);
+// P03 ORCH 2026-11-17: a preparation step is a prerequisite of every run waiting
+// on its output, so it takes the highest class rank among the runs currently
+// waiting on it (`preparesClass`; never a script rank), or its own rank when that
+// is higher. Only these classes take `preparesClass`.
+const PREPARATION_CLASSES = new Set(['native-custody', 'package-dist', 'source-asset', 'dependency-install']);
+function preparedRank(request) {
+  return PREPARATION_CLASSES.has(request.resourceClass ?? request.className) && typeof request.preparesClass === 'string'
+    && !PREPARATION_CLASSES.has(request.preparesClass) ? headPriorityRank({ className: request.preparesClass }) : 0;
+}
+// Requests for the same step share its output: the same class and publication
+// locks, or (without locks) the same command identity.
+function preparationStepKey(item) {
+  const paths = item.locks.map(lock => lock.path).sort();
+  return JSON.stringify([item.resourceClass ?? item.className, paths.length ? paths : identityKey(item) ?? item.arrivalOrder]);
+}
 function headPriorityRank(request) {
-  const preparation = PREPARATION_CLASSES.has(request.resourceClass ?? request.className);
-  if (preparation && typeof request.preparesClass === 'string' && !PREPARATION_CLASSES.has(request.preparesClass)) {
-    return headPriorityRank({ className: request.preparesClass });
-  }
   const classPriority = HEAVYWEIGHT_COMMAND_RESOURCES[request.resourceClass ?? request.className]?.headPriority;
   if (classPriority !== undefined) return classPriority;
   if (FOCUSED_TEST_CLASSES.has(request.resourceClass ?? request.className)) return FOCUSED_TEST_PRIORITY_RANK;
@@ -283,8 +290,22 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   const compareService = now => (left, right) => Number(overdue(right, now)) - Number(overdue(left, now))
     || (overdue(left, now) ? 0 : right.headPriority - left.headPriority)
     || left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
-  // Order is a function of time; re-derive it on every pass, never on a timer.
-  const orderWaiting = () => waiting.sort(compareService(Date.now()));
+  // Order is a function of time and of who waits on a shared step; re-derive it
+  // on every pass, never on a timer.
+  const orderWaiting = () => {
+    const stepRanks = new Map();
+    for (const item of waiting) {
+      if (item.slot || !PREPARATION_CLASSES.has(item.resourceClass ?? item.className)) continue;
+      const key = preparationStepKey(item);
+      stepRanks.set(key, Math.max(stepRanks.get(key) ?? 0, item.preparedPriority));
+    }
+    for (const item of waiting) {
+      if (PREPARATION_CLASSES.has(item.resourceClass ?? item.className)) {
+        item.headPriority = Math.max(item.ownPriority, stepRanks.get(preparationStepKey(item)) ?? 0);
+      }
+    }
+    return waiting.sort(compareService(Date.now()));
+  };
 
   function slotResourceBudget() {
     let reservedMemoryKiB = 0;
@@ -343,7 +364,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
     // Non-admitted memory cannot be recovered by draining broker slots. Keep
     // this request's age, but reserve only once the observed floor is achievable.
-    return !item.slot && !item.blocked && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
+    // An overdue waiter keeps its guaranteed start while its publication is busy:
+    // it holds the pledge, so it can start the moment the lock frees.
+    return !item.slot && (!item.blocked || overdue(item, Date.now())) && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores;
   }
   function status() {
@@ -680,8 +703,22 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         && minimumCpuCores(item) <= availableCpuCores) : []);
     const ordered = hostBoundFirst.size
       ? [...hostBoundFirst, ...waiting.filter(item => !hostBoundFirst.has(item))] : [...waiting];
+    const assignHead = item => {
+      head = item;
+      reserveHead(head);
+      const reservation = headReservation(head);
+      // A producer head lends nothing (no EASY backfill past it).
+      lendableKiB = head.headPriority >= PRODUCER_RANK ? 0 : Math.min(reservation.memoryKiB, availableMemoryKiB);
+      availableMemoryKiB = Math.max(0, availableMemoryKiB - reservation.memoryKiB);
+      availableCpuCores = Math.max(0, availableCpuCores - reservation.cpuCores);
+      if (lendableKiB > 0) headStartAt = projectedHeadStartAt(head, Date.now());
+    };
     for (const item of ordered) {
-      if (item.slot || item.blocked) continue;
+      if (item.slot) continue;
+      if (item.blocked) {
+        if (!head && canReserveHead(item)) assignHead(item);
+        continue;
+      }
       if (item.socket.destroyed) { removeWaiting(item); continue; }
       const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
       if (minimumFloorKiB > sample.totalMemoryKiB) {
@@ -720,16 +757,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
-          } else if (!head && canReserveHead(item)) {
-            head = item;
-            reserveHead(head);
-            const reservation = headReservation(head);
-            // A producer head lends nothing (no EASY backfill past it).
-            lendableKiB = head.headPriority >= PRODUCER_RANK ? 0 : Math.min(reservation.memoryKiB, availableMemoryKiB);
-            availableMemoryKiB = Math.max(0, availableMemoryKiB - reservation.memoryKiB);
-            availableCpuCores = Math.max(0, availableCpuCores - reservation.cpuCores);
-            if (lendableKiB > 0) headStartAt = projectedHeadStartAt(head, Date.now());
           }
+          if (!head && canReserveHead(item)) assignHead(item);
         }
         continue;
       }
@@ -874,7 +903,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         send(socket, { kind: 'refused', reason: 'HSTACK_INVALID_ADMISSION' }); socket.end(); return;
       }
       item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false,
-        arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder, headPriority: headPriorityRank(request) };
+        arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder, ownPriority: headPriorityRank(request),
+        preparedPriority: preparedRank(request) };
+      item.headPriority = Math.max(item.ownPriority, item.preparedPriority);
       item.floorKiB = recordedIdentityFloorKiB(item);
       item.floorOptions = recordedIdentityFloorOptions(item);
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });

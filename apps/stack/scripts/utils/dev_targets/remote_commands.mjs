@@ -1804,17 +1804,17 @@ export function buildRemoteExecCommand(
       ?? policy.preparationBuildMode;
     body.push(`export HAPPIER_WORKSPACE_BUILD_MODE=${posixQuote(defaultBuildMode)}`);
     const cacheEnv = `env ${posixQuote(`HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`;
+    // P03 ORCH 2026-11-17: preparation steps are admitted at the rank of the run they prepare.
+    const preparesEnv = admissionClass ? ` ${posixQuote(`HAPPIER_ADMISSION_PREPARES_CLASS=${admissionClass}`)}` : '';
     if (preparation?.bootstrap) {
       const prefix = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache/pnpm-toolchain`;
       body.push(`export npm_config_prefix=${posixQuote(prefix)}`, `export PATH=${posixQuote(`${prefix}/bin`)}:"$PATH"`);
       const diskOwner = posix.join(target.executorRepoDir ?? repoDir, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs');
       body.push(`${cacheEnv} node ${posixQuote(diskOwner)} --admit --cold-dependencies --class=dependency-install ${posixQuote(`--repo=${repoDir}`)} >/dev/null`);
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs --execution-placement=remote ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
+      body.push(`${cacheEnv}${preparesEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs --execution-placement=remote ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      // P03 ORCH 2026-11-17: preparation steps are admitted at the rank of the run they prepare.
-      const preparesEnv = admissionClass ? ` ${posixQuote(`HAPPIER_ADMISSION_PREPARES_CLASS=${admissionClass}`)}` : '';
       body.push(`${cacheEnv}${preparesEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--preparation-scope=${policy.preparationScope}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}${FOCUSED_TEST_ADMISSION_CLASSES.includes(policy.heavyClass) ? ' --focused-test' : ''}`);
     }
     body.push(`cd -- ${posixQuote(workingDirectory)}`);

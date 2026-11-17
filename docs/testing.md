@@ -685,15 +685,22 @@ unchanged. Waiting clients survive a broker succession: each reconnects with its
 original arrival and the successor admits it in that order. Focused test runs (the `focusedTest` classes in `command_resources.mjs`:
 an explicit selection of up to ten existing test files, owner ruling 2026-11-16) rank
 between the producers and the commit gate compiler, so a routed focused run starts at the
-next free slot. A CLI test's `native-custody` preparation (the Session holder and
-Go helper builds) is a step of the run it prepares, so it takes that run's class rank
-(P03 ORCH, 2026-11-17): the routed body exports the run's admission class to the
-preparation as `HAPPIER_ADMISSION_PREPARES_CLASS`, the client sends it as
-`preparesClass`, and the broker honors it only for preparation classes. Ranks order only
+next free slot. A preparation step (`native-custody`, `package-dist`, `source-asset`,
+`dependency-install`) is a prerequisite of every run waiting on its output, so it takes
+the highest class rank among the runs currently waiting on it, or its own rank when
+higher (P03 ORCH, 2026-11-17): the routed body exports the run's admission class to its
+bootstrap and preparation as `HAPPIER_ADMISSION_PREPARES_CLASS`, the client sends it as
+`preparesClass`, and the broker takes the maximum over waiting requests for the same
+step (same class and publication locks, or the same command identity without locks).
+Other classes ignore the field. Ranks order only
 waiters within the 22m24s bound: a waiter that has waited past it is served first, in
 arrival order, whatever its rank, so sustained ranked arrivals cannot starve rank-0 work
 (the bound's guaranteed start, owner 2026-11-13; on nl1 on 2026-11-17 package-dist and
 native-custody waited 2.5 h while focused runs and producers kept heading the queue).
+An overdue waiter whose publication lock is busy stays head and keeps its pledge, so it
+starts as soon as the lock frees; a waiter within the bound reserves nothing while its
+publication is blocked (nl1 2026-11-17: in-slot declaration passes held the protocol
+locks ~98% of the time and a blocked waiter never met a free lock with room).
 The sample's `head.headPriority` is the head's rank (0 = ordinary).
 Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation

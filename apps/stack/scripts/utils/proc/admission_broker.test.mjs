@@ -371,8 +371,8 @@ async function request(root, value) {
   socket.write(JSON.stringify(value) + '\n');
   return { socket, next: async () => {
     let response;
-    // Queue notices are diagnostic; these broker assertions consume decisions.
-    do { response = JSON.parse((await iterator.next()).value); } while (response.kind === 'queued');
+    // Queue and capacity-wait notices are diagnostic; these broker assertions consume decisions.
+    do { response = JSON.parse((await iterator.next()).value); } while (response.kind === 'queued' || response.kind === 'capacity-wait');
     return response;
   } };
 }
@@ -615,6 +615,50 @@ test('a waiter past the reservation bound heads the queue ahead of later priorit
   const next = await producer.admit();
   await next.release();
   await focused.admit();
+});
+
+test('a shared preparation step takes the highest rank among the runs waiting on it', linux, async t => {
+  // P03 ORCH 2026-11-17: a package-dist build is a prerequisite of every run waiting
+  // on its output, so a later focused run's request for the same build raises it.
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 100, t)).admit();
+  const locks = [{ path: join(root, 'protocol.lock') }];
+  const step = preparesClass => ({ className: 'package-dist', resourceClass: 'package-dist', preparesClass, locks,
+    component: 'packages/protocol', entry: 'node ensureWorkspacePackagesBuilt.mjs', projects: ['packages/protocol'] });
+  const shared = await acquire(root, 60, t, step('validation'));
+  const commit = await acquire(root, 60, t, priorityIdentity(root, 'commit'));
+  const focused = await acquire(root, 60, t, step('focused-validation-cli'));
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.head.className, 'package-dist', 'the earlier shared step heads the queue');
+  assert.equal(sample.head.headPriority, 1.5, 'it is ranked by its highest-ranked waiting run');
+  await holder.release();
+  const started = await shared.admit();
+  await started.release();
+  const next = await focused.admit();
+  await next.release();
+  await commit.admit();
+});
+
+test('an overdue head whose publication is busy keeps its reservation and starts when the lock frees', linux, async t => {
+  // nl1 2026-11-17: protocol/database-protocol package-dist waited 3.5 h. A UI
+  // typecheck's in-slot declaration passes held their publication locks ~98% of the
+  // time; the blocked waiter never kept memory, so it never met a free lock with room.
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 50, t)).admit();
+  const locks = [{ path: join(root, 'publication.lock') }];
+  const publication = await tryWorkspaceBuildResources({ locks });
+  assert.equal(publication.acquired, true);
+  let released = false;
+  t.after(async () => { if (!released) await publication.release(); });
+  const overdue = await acquire(root, 60, t, { locks, arrivedAt: Date.now() - headReservationDelayMs });
+  const sample = await requestAdmissionSample(root);
+  assert.equal(sample.head?.ageMs >= headReservationDelayMs, true, 'the blocked overdue waiter is still the head');
+  await holder.release();
+  const younger = await acquire(root, 60, t, { noWait: true });
+  assert.equal((await younger.next()).reason, 'HSTACK_MEMORY_BUSY', 'released memory stays pledged to the blocked overdue head');
+  released = true;
+  await publication.release();
+  await overdue.admit();
 });
 
 test('a producer-ranked head holds free capacity too: nothing backfills past it once it is next', linux, async t => {
