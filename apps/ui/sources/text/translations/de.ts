@@ -2865,6 +2865,7 @@ export const de: TranslationStructure = {
         default: 'Standard',
         enabled: 'Aktiviert',
         disabled: 'Deaktiviert',
+        notChecked: "Nicht geprüft",
         requestFailed: 'Anfrage fehlgeschlagen.',
         saveError: 'Speichern fehlgeschlagen.',
 
@@ -4197,6 +4198,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         machines: {
             none: 'Keine Rechner',
+          checkFailed: "Maschinen konnten nicht geprüft werden",
           calmOnline: 'Online · keine Probleme',
             status: ({ status }: { status: string }) => `Status: ${status}`,
         },

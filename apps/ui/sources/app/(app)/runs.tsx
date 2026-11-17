@@ -522,7 +522,7 @@ export default function RunsScreen() {
               >
                 {answeredEntries.map(renderMachineRow)}
                 {notReadEntries.length > 0 ? (
-                  <CountedDisclosureItem testID="runs.offline-machines" title={t('common.unknown')} count={notReadEntries.length}>
+                  <CountedDisclosureItem testID="runs.offline-machines" title={t('common.notChecked')} count={notReadEntries.length}>
                     {notReadEntries.map(renderMachineRow)}
                   </CountedDisclosureItem>
                 ) : null}

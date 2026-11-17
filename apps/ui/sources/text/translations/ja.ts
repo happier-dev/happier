@@ -3164,6 +3164,7 @@ export const ja: TranslationStructure = {
     default: "既定",
     enabled: "有効",
     disabled: "無効",
+    notChecked: "未確認",
     requestFailed: "リクエストに失敗しました。",
     saveAs: "名前を付けて保存",
 
@@ -4893,6 +4894,7 @@ localTailscale: {
     },
     machines: {
       none: "マシンなし",
+      checkFailed: "マシンを確認できませんでした",
       calmOnline: 'オンライン · 問題なし',
       status: ({ status }: { status: string }) => `状態: ${status}`,
     },

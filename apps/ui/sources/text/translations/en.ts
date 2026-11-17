@@ -3209,6 +3209,7 @@ const enCommon = {
   default: 'Default',
   enabled: 'Enabled',
   disabled: 'Disabled',
+  notChecked: "Not checked",
   requestFailed: 'Request failed.',
   saveError: 'Failed to save.',
 
@@ -4717,6 +4718,7 @@ const enSystemStatus = {
   },
   machines: {
     none: 'No machines',
+    checkFailed: "Couldn't check machines",
     calmOnline: 'Online · no issues',
     status: ({ status }: { status: string }) => `Status: ${status}`,
   },

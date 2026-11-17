@@ -566,7 +566,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                   <Item
                     title={status === 'idle' && Array.isArray(list) ? t('systemStatus.machines.none')
                       : status === 'loading' ? t('common.loading')
-                        : status === 'error' ? t('common.requestFailed') : t('common.unknown')}
+                        : status === 'error' ? t('systemStatus.machines.checkFailed') : t('common.notChecked')}
                     mode="info"
                   />
                 </ItemGroup>
@@ -615,7 +615,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
               const subtitle = (
                 <View>
                   <Text style={{ color: theme.colors.text.secondary }}>
-                    {online ? t('systemStatus.machine.online') : reachability(machine) === 'unknown' ? t('common.unknown') : t('systemStatus.machine.offline')}
+                    {online ? t('systemStatus.machine.online') : reachability(machine) === 'unknown' ? t('common.notChecked') : t('systemStatus.machine.offline')}
                     {meta?.platform ? ` • ${meta.platform}` : ''}
                     {meta?.arch ? ` • ${meta.arch}` : ''}
                     {meta?.happyCliVersion ? t('systemStatus.machine.cliVersionBullet', { version: meta.happyCliVersion }) : ''}

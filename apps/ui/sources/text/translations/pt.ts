@@ -3219,6 +3219,7 @@ export const pt: TranslationStructure = {
     default: "Padrão",
     enabled: "Ativado",
     disabled: "Desativado",
+    notChecked: "Não verificado",
     requestFailed: "Falha na solicitação.",
 
     more: "Mais",
@@ -4668,6 +4669,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     machines: {
       none: "Nenhuma máquina",
+      checkFailed: "Não foi possível verificar as máquinas",
       calmOnline: 'Online · sem problemas',
       status: ({ status }: { status: string }) => `Status: ${status}`,
     },

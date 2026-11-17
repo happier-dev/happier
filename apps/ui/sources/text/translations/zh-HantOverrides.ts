@@ -3412,6 +3412,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
       common: {
+        notChecked: "未檢查",
         apply: "套用",
         hide: "隱藏",
         decrease: "減少",
@@ -4399,6 +4400,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         machines: {
             none: '沒有機器',
+          checkFailed: "無法檢查機器",
           calmOnline: '線上 · 無問題',
             status: ({ status }: { status: string }) => `狀態：${status}`,
         },

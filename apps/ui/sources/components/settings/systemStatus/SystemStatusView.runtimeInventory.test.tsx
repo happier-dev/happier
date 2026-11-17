@@ -328,7 +328,7 @@ describe('SystemStatusView runtime inventory', () => {
         expect(storage.getState().machineListStatusByServerId).toEqual(statuses);
         expect(screen.getTextContent()).not.toContain('systemStatus.machines.none');
         expect(screen.getTextContent()).toContain(status === 'loading' ? 'common.loading'
-            : status === 'error' ? 'common.requestFailed' : 'common.unknown');
+            : status === 'error' ? 'systemStatus.machines.checkFailed' : 'common.notChecked');
         await act(async () => storage.setState({
             machineListByServerId: { srv_1: [] },
             machineListStatusByServerId: { srv_1: 'idle' },
@@ -381,7 +381,7 @@ describe('SystemStatusView runtime inventory', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
         expect(screen.getTextContent()).toContain('Studio');
-        expect(screen.getTextContent()).toContain('common.unknown');
+        expect(screen.getTextContent()).toContain('common.notChecked');
         const offlineRows = screen.findAll(node => node.props.title === 'systemStatus.machine.offline' && node.props.detail === '1');
         expect(offlineRows.length).toBeGreaterThan(0);
     });

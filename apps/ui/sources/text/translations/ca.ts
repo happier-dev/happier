@@ -3009,6 +3009,7 @@ export const ca: TranslationStructure = {
         default: 'Per defecte',
         enabled: 'Activat',
           disabled: 'Desactivat',
+          notChecked: "Sense comprovar",
           requestFailed: 'La sol·licitud ha fallat.',
 
           more: 'Més',
@@ -4268,6 +4269,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         },
         machines: {
             none: 'Cap màquina',
+          checkFailed: "No s’han pogut comprovar les màquines",
           calmOnline: 'En línia · sense problemes',
             status: ({ status }: { status: string }) => `Estat: ${status}`,
         },

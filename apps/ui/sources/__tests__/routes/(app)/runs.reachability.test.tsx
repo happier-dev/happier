@@ -85,7 +85,7 @@ it('suppresses automatic run reads after request failure but explicit refresh st
     await flushHookEffects({ cycles: 4 });
     expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toHaveLength(0);
     // A skipped registry read establishes no Machine presence fact.
-    expect(screen.findByType(CountedDisclosureItem).props).toMatchObject({ title: t('common.unknown'), count: 1 });
+    expect(screen.findByType(CountedDisclosureItem).props).toMatchObject({ title: t('common.notChecked'), count: 1 });
     const HeaderRight = header.getResolved()?.headerRight as React.ComponentType | undefined;
     expect(HeaderRight).toBeDefined();
     const refresh = await renderScreen(React.createElement(HeaderRight!));

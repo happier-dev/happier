@@ -3025,6 +3025,7 @@ export const ru: TranslationStructure = {
     default: "По умолчанию",
     enabled: "Включено",
     disabled: "Отключено",
+    notChecked: "Не проверено",
     requestFailed: "Запрос не выполнен.",
 
     more: "Ещё",
@@ -4284,6 +4285,7 @@ export const ru: TranslationStructure = {
     },
     machines: {
       none: "Нет машин",
+      checkFailed: "Не удалось проверить машины",
       calmOnline: 'В сети · без проблем',
       status: ({ status }: { status: string }) => `Статус: ${status}`,
     },

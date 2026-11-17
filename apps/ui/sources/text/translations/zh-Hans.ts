@@ -2984,6 +2984,7 @@ export const zhHans: TranslationStructure = {
     notProvided: "未提供",
     unavailable: "不可用",
     dialog: "对话框",
+    notChecked: "未检查",
     requestFailed: "请求失败。",
 
     more: "更多",
@@ -4325,6 +4326,7 @@ export const zhHans: TranslationStructure = {
     },
     machines: {
       none: "暂无机器",
+      checkFailed: "无法检查机器",
       calmOnline: '在线 · 无问题',
       status: ({ status }: { status: string }) => `状态：${status}`,
     },

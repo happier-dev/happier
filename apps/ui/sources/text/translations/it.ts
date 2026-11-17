@@ -2999,6 +2999,7 @@ export const it: TranslationStructure = {
     enabled: "Abilitato",
     disabled: "Disabilitato",
     saveAs: "Salva con nome",
+    notChecked: "Non verificato",
     requestFailed: "Richiesta non riuscita.",
 
     more: "Altro",
@@ -4748,6 +4749,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     machines: {
       none: "Nessuna macchina",
+      checkFailed: "Impossibile verificare le macchine",
       calmOnline: 'Online · nessun problema',
       status: ({ status }: { status: string }) => `Stato: ${status}`,
     },
