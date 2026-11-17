@@ -54,6 +54,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   failure: { color: theme.colors.state.danger.textForeground, flexShrink: 1 },
 }));
 
+/** Yours · Shared with you · Built-in (lab `automations-states-pick`). */
+const LINK_GROUP_ORDER = { yours: 0, shared: 1, builtin: 2 } as const;
+
 /**
  * Link a workflow to this resource (05 S5 `automations:states:{pick,link,share}`): **Workflow**, **When** (the
  * resource's own before/after Actions and Events, from the section's one start read), the before trigger's wait
@@ -110,12 +113,12 @@ export function ResourceLinkWorkflowSheet(
 
   const workflowItems = React.useMemo<ValueFieldSelectItem[]>(
     () =>
-      workflowOptions.map((option) => ({
+      // The menu keeps first-seen group order.
+      [...workflowOptions].sort((a, b) => LINK_GROUP_ORDER[a.origin ?? 'yours'] - LINK_GROUP_ORDER[b.origin ?? 'yours']).map((option) => ({
         id: option.ref,
         title: option.title,
-        ...(option.origin === 'builtin'
-          ? { category: t('workflows.triggers.link.builtIn') }
-          : {}),
+        category: t(option.origin === 'builtin' ? 'workflows.triggers.link.builtIn'
+          : option.origin === 'shared' ? 'workflows.triggers.link.sharedWithYou' : 'workflows.triggers.link.yours'),
         ...(option.unavailableReason
           ? { disabled: true, subtitle: option.unavailableReason }
           : {}),

@@ -19238,6 +19238,8 @@ const it: WorkflowTriggersCopy = {
         chooseWhen: "Scegli quando parte",
         noStarts: "Qui niente può ancora avviare un workflow",
         builtIn: "Integrato",
+        yours: "Tuoi",
+        sharedWithYou: "Condivisi con te",
         groupActions: "Azioni",
         groupEvents: "Eventi",
         beforeAction: ({ action }: { action: string }) => `Prima di ogni ${action}`,

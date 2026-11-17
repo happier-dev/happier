@@ -19250,6 +19250,8 @@ const ca: WorkflowTriggersCopy = {
         chooseWhen: "Tria quan s’executa",
         noStarts: "Aquí encara res no pot iniciar un flux",
         builtIn: "Integrat",
+        yours: "Teves",
+        sharedWithYou: "Compartides amb tu",
         groupActions: "Accions",
         groupEvents: "Esdeveniments",
         beforeAction: ({ action }: { action: string }) => `Abans de cada ${action}`,

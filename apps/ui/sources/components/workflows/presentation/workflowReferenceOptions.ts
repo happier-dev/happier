@@ -6,7 +6,7 @@ import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '@happier-dev/proto
 import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 import { useShallow } from 'zustand/react/shallow';
 
-import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
+import { isSharedWithYouWorkflowDefinition, useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
 import { captureDaemonMergedProjectionReader } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { getStorage, useActiveServerAccountScopeLifetime, useSetting } from '@/sync/domains/state/storage';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
@@ -32,8 +32,8 @@ function workflowReferenceHeaderTitle(header: DecryptedArtifact['rawHeader'] | n
 export type WorkflowReferenceOption = Readonly<{
     ref: string;
     title: string;
-    /** "Built-in" for catalog workflows; absent for the person's own. */
-    origin?: 'builtin';
+    /** "Built-in" for catalog workflows, "shared" for one shared with this person; absent for the person's own. */
+    origin?: 'builtin' | 'shared';
     /** The built-in's own mark. */
     icon?: BuiltinWorkflowIconV1;
     unavailableReason?: string;
@@ -188,6 +188,7 @@ export function useWorkflowReferenceLibrary(options?: Readonly<{ enabled?: boole
     const references = React.useMemo(
         (): readonly WorkflowReferenceOption[] => [
             ...library.definitions.map((definition) => ({ ref: definition.definitionId, title: formatWorkflowDefinitionLibraryTitle(definition),
+                ...(isSharedWithYouWorkflowDefinition(definition) ? { origin: 'shared' as const } : {}),
                 ...(definition.contentStatus === 'unavailable'
                     ? { unavailableReason: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {}) })),
             ...library.pluginWorkflows.map((source) => ({ ref: source.workflow, title: source.title })),

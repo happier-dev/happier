@@ -86,6 +86,11 @@ function createCell<T>(initial: T) {
 
 export type WorkflowLibraryDefinition = WorkflowDefinitionListResultV1['definitions'][number];
 
+/** The definition list names the caller's access on each row; a row without it, or with `owner`, is yours. */
+export function isSharedWithYouWorkflowDefinition(definition: Pick<WorkflowLibraryDefinition, 'access'>): boolean {
+    return definition.access !== undefined && definition.access !== 'owner';
+}
+
 // A deletion acknowledgement is brief feedback, including when the editor deletes before landing here.
 const DELETION_RECEIPT_VISIBLE_MS = 6_000;
 

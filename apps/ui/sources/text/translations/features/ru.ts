@@ -19265,6 +19265,8 @@ const ru: WorkflowTriggersCopy = {
         chooseWhen: "Выберите, когда он запускается",
         noStarts: "Здесь пока ничто не может запустить сценарий",
         builtIn: "Встроенный",
+        yours: "Ваши",
+        sharedWithYou: "Доступные вам",
         groupActions: "Действия",
         groupEvents: "События",
         beforeAction: ({ action }: { action: string }) => `Перед каждым действием «${action}»`,

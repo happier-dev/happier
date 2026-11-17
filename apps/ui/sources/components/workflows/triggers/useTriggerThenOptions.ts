@@ -40,7 +40,7 @@ export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: bool
     const workflowOptions = React.useMemo((): readonly TriggerWorkflowOption[] => [
         ...(libraryEnabled ? listBuiltinWorkflowReferenceOptions() : [])
             .filter((option) => option.ref !== KEEP_GOING_REF)
-            .map((option) => ({ ref: option.ref, title: option.title })),
+            .map((option) => ({ ref: option.ref, title: option.title, ...(option.origin === undefined ? {} : { origin: option.origin }) })),
         ...libraryOptions,
     ], [libraryEnabled, libraryOptions]);
     return { workflowOptions, resolveWorkflowTitle };

@@ -1,7 +1,7 @@
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
 
-import type { WorkflowLibraryDefinition } from '@/components/workflows/library/workflowLibraryReads';
+import { isSharedWithYouWorkflowDefinition, type WorkflowLibraryDefinition } from '@/components/workflows/library/workflowLibraryReads';
 import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 /**
@@ -16,10 +16,7 @@ export function readOpenWorkflowDefinition(pathname: string): string | null {
     try { return decodeURIComponent(match[1]!); } catch { return match[1]!; }
 }
 
-/**
- * Your saved workflows and the ones shared with you. The definition list names the caller's access
- * on each row; a row without it, or with `owner`, is yours.
- */
+/** Your saved workflows and the ones shared with you (`isSharedWithYouWorkflowDefinition`). */
 export function splitLibraryDefinitions(
     definitions: readonly WorkflowLibraryDefinition[],
     pluginWorkflows: readonly WorkflowPluginSourceV1[] = [],
@@ -31,7 +28,7 @@ export function splitLibraryDefinitions(
     const library: WorkflowLibraryDefinition[] = [];
     const sharedWithYou: WorkflowLibraryDefinition[] = [];
     for (const definition of definitions) {
-        (definition.access === undefined || definition.access === 'owner' ? library : sharedWithYou).push(definition);
+        (isSharedWithYouWorkflowDefinition(definition) ? sharedWithYou : library).push(definition);
     }
     return { library, sharedWithYou, fromPlugins: pluginWorkflows };
 }

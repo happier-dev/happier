@@ -118,6 +118,17 @@ describe('Link a workflow to a resource', () => {
     } finally { await screen.unmount(); }
   });
 
+  it('groups the Workflow choices as yours, shared with you, then built-in', async () => {
+    const screen = await renderScreen(<ResourceLinkWorkflowSheet anchorRef={React.createRef<never>()}
+      resourceName="Production" link={linkFor([]) as never} serverId={null} machineId={null} accountLifetime={null}
+      onRequestClose={() => undefined} onLinked={() => undefined} />);
+    try {
+      const [workflowSelect] = screen.findAllByType(ValueFieldSelect);
+      const builtin = workflowSelect!.props.items.find((item: { id: string }) => item.id === 'builtin:review-and-converge');
+      expect(builtin?.category).toBe('workflows.triggers.link.builtIn');
+    } finally { await screen.unmount(); }
+  });
+
   it('drafts a before link that waits by default, offers If it fails, and asks to share on a shared resource', async () => {
     const link = linkFor([
       { kind: 'team', teamId: 'team-studio' } as PrincipalRefV1,

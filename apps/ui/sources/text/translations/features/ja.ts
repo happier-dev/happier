@@ -19173,6 +19173,8 @@ const ja: WorkflowTriggersCopy = {
         chooseWhen: "実行するタイミングを選択",
         noStarts: "ここではまだワークフローを開始できるものがありません",
         builtIn: "組み込み",
+        yours: "あなたのもの",
+        sharedWithYou: "共有されたもの",
         groupActions: "アクション",
         groupEvents: "イベント",
         beforeAction: ({ action }: { action: string }) => `毎回の ${action} の前`,

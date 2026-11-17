@@ -150,6 +150,8 @@ export const en = {
         chooseWhen: "Choose when it runs",
         noStarts: "Nothing here can start a workflow yet",
         builtIn: "Built-in",
+        yours: "Yours",
+        sharedWithYou: "Shared with you",
         groupActions: "Actions",
         groupEvents: "Events",
         beforeAction: ({ action }: { action: string }) => `Before each ${action}`,

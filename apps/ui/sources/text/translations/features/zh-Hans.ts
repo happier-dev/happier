@@ -19118,6 +19118,8 @@ const zhHans: WorkflowTriggersCopy = {
         chooseWhen: "选择何时运行",
         noStarts: "这里暂时没有可以启动工作流的内容",
         builtIn: "内置",
+        yours: "你的",
+        sharedWithYou: "与你共享",
         groupActions: "操作",
         groupEvents: "事件",
         beforeAction: ({ action }: { action: string }) => `每次 ${action} 前`,
