@@ -18,6 +18,9 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { Fastify as AppFastify } from '../../../../server/sources/app/api/types';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../server/sources/testkit/lightSqliteHarness';
+import { setEligibleMachineAccessGrantInTx } from '../../../../server/sources/testkit/machineAccessGrant.testkit';
+import { inTx } from '../../../../server/sources/storage/inTx';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { enableSchemaValidation } from '../../../../server/sources/app/api/utils/enableSchemaValidation';
 import { enableErrorHandlers } from '../../../../server/sources/app/api/utils/enableErrorHandlers';
 import { enableAuthentication } from '../../../../server/sources/app/api/utils/enableAuthentication';
@@ -44,6 +47,7 @@ import { prepareRequesterAccountActionContext } from '../../../../cli/src/daemon
 import { createCliActionDeps } from '../../../../cli/src/session/actions/createCliActionDeps';
 import type { StoredCredentials } from '../../../../cli/src/persistence';
 import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
+import { observeServerFeaturesSnapshot } from '../../../../cli/src/features/serverFeaturesClient';
 import { Encryption } from '@/sync/encryption/encryption';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
@@ -98,8 +102,10 @@ describe('recipient directory through real Home, socket and daemon filesystem ow
                 host: 'recipient-directory', platform: 'linux', happyCliVersion: '0.3', homeDir: database.baseDir,
                 happyHomeDir: database.baseDir,
             })) } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: requester.id,
-            accessLevel: 'view', createdByAccountId: owner.id } });
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: owner.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'view',
+        }))).toMatchObject({ kind: 'saved' });
         await db.machineKeyEnvelope.create({ data: { machineId: machine.id, recipientAccountId: requester.id,
             encryptedDataKey: new Uint8Array(requesterEnvelope), machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(ownerEnvelope),
             recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(requesterEncryption.contentDataKey) } });
@@ -111,6 +117,8 @@ describe('recipient directory through real Home, socket and daemon filesystem ow
         registerExternalActionRoutes(app);
         onTestFinished(async () => { await app.close(); });
         const endpoint = await app.listen({ host: '127.0.0.1', port: 0 });
+        const snapshot = await observeServerFeaturesSnapshot({ serverUrl: endpoint });
+        if (snapshot.status !== 'ready') throw new Error('Machine Home features did not settle');
         const manager = new RpcHandlerManager({ scopePrefix: machine.id, localMachineId: machine.id,
             encryptionKey: machineKey, encryptionVariant: 'dataKey', authorizeRequest: request => authorizeMachineRpcRequest(request, {
                 machineId: machine.id, resolveCustodianAccountId: async () => owner.id, resolveInstallationId: () => installationId,
@@ -173,6 +181,13 @@ describe('recipient directory through real Home, socket and daemon filesystem ow
         await new Promise<void>((resolve, reject) => { daemonSocket.once('connect', resolve); daemonSocket.once('connect_error', reject); daemonSocket.connect(); });
         expect(await manager.waitForRegisteredHandlers([RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
             EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1], { timeoutMs: integrationConfig.test!.testTimeout! })).toEqual({ status: 'ready' });
+        // Connection claims withdraw connection-owned facts. Publish the installed
+        // authorization boundary's support through the current socket after registration.
+        expect(MachineUpdateOperationProtocolCapabilitiesResponseV1Schema.parse(await daemonSocket.emitWithAck(
+            MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, { machineId: machine.id,
+                capabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] },
+                    requesterExecutionIsolation: snapshot.features.capabilities?.machines?.requesterExecutionIsolation } },
+        ))).toMatchObject({ result: 'success' });
         const profile = await adoptHomeProfile({ descriptor: { serverUrl: endpoint, homeServerIdentityId: serverIdentityId,
             displayName: 'Recipient directory' }, source: 'manual' });
         const credentials = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint, { serverId: profile.id }, {
