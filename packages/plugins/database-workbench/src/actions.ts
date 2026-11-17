@@ -2,6 +2,7 @@ import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import * as database from '@happier-dev/database-protocol';
 import { databaseActionMetadata } from '@happier-dev/database-protocol';
+import { exportSelectedRows } from './selectedExport.js';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 
 export { databaseActionMetadata, databaseActionOperationClass } from '@happier-dev/database-protocol';
@@ -31,6 +32,14 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const actions: Record<string, PluginActionDefinition> = {};
     const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin'] } as const;
     const readSurfaces = ['ui', 'cli', 'plugin', 'agent', 'mcp'] as const;
+    const { agentDefault: _exportAgentDefault, ...exportMetadata } = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_ACTION_ID_V1];
+    actions[database.databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_ACTION_ID_V1)] = {
+        ...common, ...exportMetadata, surfaces: readSurfaces,
+        inputSchema: database.DatabaseSelectedRowsExportInputV1ProtocolSchema,
+        resultSchema: database.DatabaseSelectedRowsExportResultV1ProtocolSchema,
+        // The SDK admits the supplied selected-result shape; serialization performs no database read.
+        run: (input: JsonValue) => projectNativeJsonValueForTransport(exportSelectedRows(input as database.DatabaseSelectedRowsExportInputV1)),
+    };
     const listTargets = producers.listTargets;
     if (listTargets) {
         const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_TARGETS_LIST_ACTION_ID_V1];

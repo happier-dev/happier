@@ -7,7 +7,7 @@ export function projectColumn(column: DatabaseColumnV1, structure?: DatabaseRela
     const foreignColumn = foreign?.targetColumns[foreign.columns.indexOf(column.name)];
     return { name: column.name, typeLabel: column.nativeType, kind: cellKinds[column.semanticType],
         primaryKey: structure?.primaryKey.includes(column.name) ?? false,
-        ...(foreign && foreignColumn ? { foreignKey: { schema: foreign.target.schema, table: foreign.target.name, column: foreignColumn } } : {}) };
+        ...(foreign && foreignColumn ? { foreignKey: { ...foreign, schema: foreign.target.schema, table: foreign.target.name, column: foreignColumn } } : {}) };
 }
 export function projectRelationPage(result: DatabaseRowsResultV1, structure: DatabaseRelationStructureV1) {
     return { columns: result.columns.map(column => projectColumn(column, structure)),

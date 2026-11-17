@@ -31,6 +31,10 @@ export const databaseActionMetadata = {
         ...read, title: 'Read database rows', approvalInputCustody: 'live_only',
         secretInputPaths: ['filter.**.value.value', 'page.continuation.binding.filter.**.value.value', 'page.continuation.values.[].value.value'],
     },
+    [database.DATABASE_ROWS_EXPORT_ACTION_ID_V1]: {
+        ...read, title: 'Export selected database rows', approvalInputCustody: 'live_only',
+        secretInputPaths: ['result.rows.[].cells.[].value', 'result.rows.[].identity.**.value.value', 'result.completeness.continuation.**.value.value'],
+    },
     [database.DATABASE_CELL_READ_ACTION_ID_V1]: {
         ...read, title: 'Read database cell', approvalInputCustody: 'live_only', secretInputPaths: ['key.[].value.value'],
     },

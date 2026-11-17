@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
-    DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_ROWS_READ_ACTION_ID_V1,
+    DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_ROWS_EXPORT_ACTION_ID_V1,
     DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
     DATABASE_ACCESS_SET_ACTION_ID_V1,
     DATABASE_TARGETS_CONNECT_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1,
@@ -225,7 +225,7 @@ describe('producer-backed database Action declarations', () => {
         });
     });
 
-    it('declares no operation without its producer', () => {
-        expect(createDatabaseActions({})).toEqual({});
+    it('declares no database operation without its producer, retaining the loaded-result serializer', () => {
+        expect(Object.keys(createDatabaseActions({}))).toEqual([databaseActionLocalIdV1(DATABASE_ROWS_EXPORT_ACTION_ID_V1)]);
     });
 });

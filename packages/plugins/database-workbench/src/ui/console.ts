@@ -6,6 +6,7 @@ import type { createConsoleState } from './consoleState.js';
 import type { WorkbenchClient, WorkbenchOptions, WorkbenchControlBinding } from './models.js';
 import { createKeyedState } from './state.js';
 import { selectConsoleStatements, type ConsoleSelection } from './consoleSelection.js';
+import { parameterInput, readConsoleParameter, type ConsoleParameterInput } from './consoleParameters.js';
 import { databaseActionSettlement } from './actionSettlement.js';
 
 export type ConsoleExecution = Readonly<{
@@ -23,7 +24,7 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
     const text = instance.consoleState(targetKey);
     const selection = createKeyedState<ConsoleSelection>(() => ({ start: 0, end: 0 }));
     const execution = createKeyedState<ConsoleExecution>(() => ({ mode: 'read', running: false }));
-    let parameters: readonly (readonly DatabaseValueV1[])[] = [];
+    const parameterInputs = createKeyedState<readonly (readonly ConsoleParameterInput[])[]>(() => []);
     let cancellation = new AbortController();
     let closed = false;
     function binding(explainMode?: 'plan' | 'analyze'): WorkbenchControlBinding {
@@ -36,7 +37,13 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
                 submitted = selectConsoleStatements(text.get().sql, selection.get('selection'), explainMode ? 'read' : submittedMode,
                     instance.statementRanges(text.get().sql, instance.target(targetKey).engine));
                 if (!submitted.length) return null;
-                const operands: DatabaseStatementV1[] = submitted.map((statement, index) => ({ sql: statement.sql, parameters: [...(parameters[index] ?? [])] }));
+                const values = parameterInputs.get('parameters').map(inputs => inputs.map(readConsoleParameter));
+                if (values.some(inputs => inputs.some(value => value === undefined))) {
+                    execution.set('run', { mode: submittedMode, running: false, error: { code: 'invalid_parameters', message: 'A parameter does not match its selected type.' } });
+                    return null;
+                }
+                const operands: DatabaseStatementV1[] = submitted.map((statement, index) => ({ sql: statement.sql,
+                    parameters: (values[index] ?? []).filter((value): value is DatabaseValueV1 => value !== undefined) }));
                 const target = instance.target(targetKey).target;
                 execution.set('run', { mode: submittedMode, running: true });
                 return { input: projectNativeJsonValueForTransport(explainMode
@@ -75,11 +82,12 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
     const explain = binding('plan');
     const analyze = binding('analyze');
     return {
-        text, selection, execution,
+        text, selection, execution, parameterInputs,
         setText: (sql: string) => text.edit(sql).catch(instance.client.presentDeviceStorageError),
         setSelection: (value: ConsoleSelection) => { const held = selection.get('selection'); if (held.start !== value.start || held.end !== value.end) selection.set('selection', value); },
         setMode: (mode: ConsoleExecution['mode']) => { const held = execution.get('run'); if (held.mode !== mode) execution.set('run', { ...held, mode }); },
-        setParameters: (value: typeof parameters) => { parameters = value; },
+        setParameters: (value: readonly (readonly DatabaseValueV1[])[]) => { parameterInputs.set('parameters', value.map(inputs => inputs.map(parameterInput))); },
+        setParameterInputs: (value: readonly (readonly ConsoleParameterInput[])[]) => { parameterInputs.set('parameters', value); },
         run: () => run, explain: (mode: 'plan' | 'analyze' = 'plan') => mode === 'analyze' ? analyze : explain,
         cancel: async () => {
             if (!execution.get('run').running) return;
@@ -88,7 +96,7 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
             running.abort();
         },
         clearHistory: () => text.clearHistory().catch(instance.client.presentDeviceStorageError),
-        close() { closed = true; parameters = []; execution.set('run', { mode: 'read', running: false }); },
+        close() { closed = true; parameterInputs.set('parameters', []); execution.set('run', { mode: 'read', running: false }); },
     };
 }
 export type WorkbenchConsole = ReturnType<typeof createConsole>;

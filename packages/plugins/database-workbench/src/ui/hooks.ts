@@ -103,7 +103,8 @@ export function useRelationPage(location: WorkbenchLocation) {
         sort: location.sort, conditions: location.conditions,
         capabilities: snapshot.data?.capabilities ?? { edit: false, insert: false, delete: false },
         status: projectWorkbenchStatus(snapshot, snapshot.data?.rows.length === 0), error: snapshot.error,
-        cellValue: snapshot.data?.cellValue, refresh: () => resource.invalidate() }), [snapshot, resource, location]);
+        cellValue: snapshot.data?.cellValue, inspectJson: snapshot.data?.inspectJson, foreignKey: snapshot.data?.foreignKey,
+        exportInput: snapshot.data?.exportInput, refresh: () => resource.invalidate() }), [snapshot, resource, location]);
 }
 export function useStructure(relation: DatabaseRelationV1) {
     const instance = useWorkbenchInstance();
@@ -112,6 +113,7 @@ export function useStructure(relation: DatabaseRelationV1) {
     const snapshot = useResource(resource);
     return useMemo(() => ({ columns: snapshot.data?.columns.map(column => ({ name: column.name, type: column.nativeType,
         nullable: column.nullable, default: column.defaultExpression ?? null })) ?? emptyColumns,
+        viewDefinition: snapshot.data?.viewDefinition,
         primaryKey: snapshot.data?.primaryKey ?? emptyColumns, foreignKeys: snapshot.data?.foreignKeys ?? emptyRows,
         indexes: snapshot.data?.indexes.map(index => ({ ...index, method: null })) ?? emptyRows,
         status: snapshot.status === 'failed' ? 'unsupported' as const : snapshot.status === 'loading' ? 'loading' as const
@@ -121,7 +123,7 @@ export function useStructure(relation: DatabaseRelationV1) {
 export function useWorkbenchLocation() {
     const instance = useWorkbenchInstance();
     const location = useLocationValue(instance, selectLocation);
-    return useMemo(() => ({ ...location, navigate: instance.navigate }), [instance, location]);
+    return useMemo(() => ({ ...location, navigate: instance.navigate, back: instance.back }), [instance, location]);
 }
 /** Call from the resize-end intent; pointer movement stays inside Collection. */
 export function useWorkbenchColumnWidths(relation: DatabaseRelationV1) {
@@ -193,13 +195,16 @@ export function useDatabaseConsole(targetKey: string) {
     const subscribeExecution = useCallback((listener: () => void) => controller.execution.subscribe('run', listener), [controller]);
     const getExecution = useCallback(() => controller.execution.get('run'), [controller]);
     const execution = useSyncExternalStore(subscribeExecution, getExecution, getExecution);
+    const subscribeParameters = useCallback((listener: () => void) => controller.parameterInputs.subscribe('parameters', listener), [controller]);
+    const getParameters = useCallback(() => controller.parameterInputs.get('parameters'), [controller]);
+    const parameterInputs = useSyncExternalStore(subscribeParameters, getParameters, getParameters);
     const onSelection = useCallback((range: CodeEditorSelectionRange | null) => { if (range) controller.setSelection(range); }, [controller]);
     const editorProps = useMemo(() => ({ value: text.sql, onChange: controller.setText, onSelection, completionSource,
         language: 'sql', resetKey: targetKey } satisfies CodeEditorProps), [controller, onSelection, completionSource, targetKey, text.sql]);
-    return useMemo(() => ({ text: text.sql, history: text.history, selection, ...execution,
-        setText: controller.setText, setSelection: controller.setSelection, setMode: controller.setMode, setParameters: controller.setParameters,
+    return useMemo(() => ({ text: text.sql, history: text.history, selection, parameterInputs, ...execution,
+        setText: controller.setText, setSelection: controller.setSelection, setMode: controller.setMode, setParameters: controller.setParameters, setParameterInputs: controller.setParameterInputs,
         run: controller.run, explain: controller.explain, cancel: controller.cancel, clearHistory: controller.clearHistory,
-        editorProps }), [controller, text, selection, execution, editorProps]);
+        editorProps }), [controller, text, selection, parameterInputs, execution, editorProps]);
 }
 export function useWorkbenchCellState(rowKey: string, column: string) {
     const instance = useWorkbenchInstance();

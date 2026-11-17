@@ -109,3 +109,46 @@ it('prepares Apply for a host gesture and retains proposals edited while the sub
         expect(instance.applyOutcomes.get(JSON.stringify([targetKey, relation]))).toMatchObject({ kind: 'applied', count: '1' });
     } finally { instance.close(); }
 });
+
+it('keeps typed filters, full FK Back state and loaded-only export on the same cached page owner', async () => {
+    const relation = { schema: 'public', name: 'items' };
+    const location: WorkbenchLocation = { targetKey, relation, mode: 'data', columns: ['id', 'parent'], sort: [],
+        conditions: { kind: 'comparison', column: 'id', operator: 'eq', value: { type: 'integer', value: '9007199254740993' } },
+        page: { rows: 40, offset: 0 }, fkTrail: [] };
+    const columns = ['id', 'parent'].map(name => ({ name, nativeType: 'bigint', semanticType: 'integer' as const, nullable: false, generated: false }));
+    let rowReads = 0;
+    const unexpected = async (): Promise<never> => { throw new Error('Only demanded reads may execute'); };
+    const client: WorkbenchClient = { targets: unexpected, access: unexpected, subscribeOwnWrites: () => () => {},
+        navigate: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; },
+        operation: async input => {
+            if (input.operation === 'relation.structure') return { ok: true, operation: input.operation, structure: { relation, kind: 'table', columns,
+                primaryKey: ['id'], indexes: [], capabilities: [], foreignKeys: [{ name: 'parent_fk', columns: ['parent'], target: { schema: 'public', name: 'parents' }, targetColumns: ['id'] }] } };
+            if (input.operation === 'rows.read') {
+                rowReads++;
+                expect(input.filter).toEqual(location.conditions);
+                return { ok: true, operation: input.operation, result: { columns, rows: [{ cells: [{ type: 'integer', value: '9007199254740993' }, { type: 'integer', value: '4' }], identity: { key: [{ column: 'id', value: { type: 'integer', value: '9007199254740993' } }], original: [] } }], completeness: { complete: false, reason: 'page' } } };
+            }
+            return unexpected();
+        } };
+    const instance = createWorkbenchInstance({ client, scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
+        workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } }, location, selectedTarget: descriptor,
+        cataloguePageRows: 40, statementRanges: () => [], consoleStorage: () => ({ read: async () => null, write: async () => {} }) });
+    try {
+        const resource = instance.page(location);
+        await resource.demand();
+        const page = resource.get().data!;
+        expect(page.exportInput([page.rows[0]!.rowKey], 'json')).toMatchObject({ result: { rows: [{ cells: page.rows[0]!.cells }], completeness: { complete: false, reason: 'page' } } });
+        expect(page.exportInput([], 'csv').result.rows).toEqual([]);
+        // The resource is reused while source paging changes; its FK closure uses the current location.
+        await instance.navigate({ page: { rows: 40, offset: 80 } });
+        const source = instance.local.get('location');
+        const destination = page.foreignKey(page.rows[0]!.rowKey, 'parent_fk');
+        expect(destination.status).toBe('ready');
+        if (destination.status !== 'ready') throw new Error('Expected a referenced row');
+        await instance.navigate(destination.location);
+        expect(instance.local.get('location').conditions).toEqual({ kind: 'comparison', column: 'id', operator: 'eq', value: { type: 'integer', value: '4' } });
+        await instance.back();
+        expect(instance.local.get('location')).toEqual(source);
+        expect(rowReads).toBe(1);
+    } finally { instance.close(); }
+});

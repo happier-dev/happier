@@ -22,7 +22,8 @@ export type WorkbenchLocation = Readonly<{
     sort: readonly DatabaseOrderV1[];
     columns: readonly string[];
     page: Readonly<{ rows: number; continuation?: Extract<DatabaseOperationInputV1, { operation: 'rows.read' }>['page']['continuation']; offset: number }>;
-    fkTrail: readonly Readonly<{ relation: DatabaseRelationV1; conditions?: DatabaseFilterV1 }>[];
+    fkTrail: readonly Readonly<{ relation: DatabaseRelationV1; conditions?: DatabaseFilterV1;
+        mode?: WorkbenchLocation['mode']; sort?: WorkbenchLocation['sort']; columns?: WorkbenchLocation['columns']; page?: WorkbenchLocation['page'] }>[];
 }>;
 export type WorkbenchAccess = Readonly<{
     word: string;

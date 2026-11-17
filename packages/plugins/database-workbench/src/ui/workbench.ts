@@ -3,6 +3,7 @@ import type {
     DatabaseRelationV1, DatabaseTargetV1, DatabaseTargetsListInputV1,
     DatabaseStatsReadV1, DatabaseStatsObservationV1,
 } from '@happier-dev/database-protocol';
+import { inspectJsonCell } from './cellInspection.js';
 import { createConsoleState } from './consoleState.js';
 import { createConsole, type WorkbenchConsole } from './console.js';
 import { createStagedEdits } from './drafts.js';
@@ -10,7 +11,7 @@ import { projectRelationPage } from './projections.js';
 import { createResource, type WorkbenchResource } from './resource.js';
 import { createKeyedState } from './state.js';
 import { createApplyControl, selectRelationChanges } from './apply.js';
-import { sameRelation, mergeWorkbenchLocation } from './location.js';
+import { sameRelation, mergeWorkbenchLocation, foreignKeyNavigation, foreignKeyBack } from './location.js';
 import type {
     DatabaseRelations, DatabaseTargets, WorkbenchApplyOutcome, WorkbenchChange, WorkbenchLocation,
     WorkbenchOptions, WorkbenchReview, WorkbenchCellState, WorkbenchActivityResource, WorkbenchControlBinding,
@@ -171,7 +172,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                 const result = success(await client.operation({ operation: 'relations.list', target: target(targetKey).target, schema,
                     page: { rows: options.cataloguePageRows, ...(after ? { after } : {}) } }, reads.signal), 'relations.list');
                 return { relations: result.relations.map(item => ({ name: item.relation.name,
-                    kind: item.kind === 'materialized_view' ? 'matview' as const : item.kind, approxRows: item.estimatedRows ?? null })),
+                    kind: item.kind === 'materialized_view' ? 'matview' as const : item.kind, approxRows: item.estimatedRows ?? null, ...(item.size ? { size: item.size } : {}) })),
                     completeness: result.completeness };
             }, targetKey);
         },
@@ -192,21 +193,41 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                 const available = capability?.available === true;
                 return { ...projected, page: { offset: location.page.offset, limit: location.page.rows, approxTotal: result.estimate ?? null,
                     hasNext: !result.completeness.complete && result.completeness.continuation?.kind === 'keyset' || !result.completeness.complete && result.completeness.continuation?.kind === 'offset' },
-                    sort: location.sort, conditions: location.conditions, capabilities: { edit: available, insert: available, delete: available,
-                        ...(capability?.available === false ? { reason: capability.reason } : {}) },
-                    cellValue: async (rowKey: string, column: string, range: Parameters<import('./models.js').WorkbenchCellRead>[2]): Promise<DatabaseCellResultV1> => {
+                    sort: location.sort, conditions: location.conditions,
+                    foreignKey(rowKey: string, constraintName: string) {
                         const row = projected.rows.find(candidate => candidate.rowKey === rowKey);
-                        if (!row?.identity) throw new Error('This result has no row identity for value inspection');
-                        const cell = resource(key(['cell', location.targetKey, relation, row.identity.key, column, range]), async () => {
-                            const value = success(await client.operation({ operation: 'cell.read', target: target(location.targetKey).target,
-                                relation, key: row.identity!.key, column, range }, reads.signal), 'cell.read');
-                            return { value: value.value, completeness: value.completeness };
-                        }, location.targetKey, relation);
-                        await cell.demand();
-                        const held = cell.get();
-                        if (held.status === 'failed') throw held.error;
-                        return held.data!;
+                        const foreignKey = metadata.data!.foreignKeys.find(candidate => candidate.name === constraintName);
+                        if (!row || !foreignKey) return { status: 'unavailable' as const, reason: 'missing_key' as const };
+                        return foreignKeyNavigation(local.get('location'), foreignKey, result.columns.map(column => column.name), row.cells);
+                    },
+                    exportInput(rowKeys: readonly string[], format: 'csv' | 'json') {
+                        const selected = new Set(rowKeys);
+                        return { format, result: { columns: result.columns,
+                            rows: result.rows.filter((_row, index) => selected.has(projected.rows[index]!.rowKey)).map(({ cells }) => ({ cells })),
+                            completeness: result.completeness } };
+                    },
+                    capabilities: { edit: available, insert: available, delete: available,
+                        ...(capability?.available === false ? { reason: capability.reason } : {}) },
+                    cellValue: readCell,
+                    inspectJson(rowKey: string, column: string) {
+                        const row = projected.rows.find(candidate => candidate.rowKey === rowKey);
+                        const cell = row?.cells[result.columns.findIndex(candidate => candidate.name === column)];
+                        if (!cell) throw new Error('Select a loaded cell first');
+                        return inspectJsonCell(cell, range => readCell(rowKey, column, range));
                     } };
+                async function readCell(rowKey: string, column: string, range: Parameters<import('./models.js').WorkbenchCellRead>[2]): Promise<DatabaseCellResultV1> {
+                    const row = projected.rows.find(candidate => candidate.rowKey === rowKey);
+                    if (!row?.identity) throw new Error('This result has no row identity for value inspection');
+                    const cell = resource(key(['cell', location.targetKey, relation, row.identity.key, column, range]), async () => {
+                        const value = success(await client.operation({ operation: 'cell.read', target: target(location.targetKey).target,
+                            relation, key: row.identity!.key, column, range }, reads.signal), 'cell.read');
+                        return { value: value.value, completeness: value.completeness };
+                    }, location.targetKey, relation);
+                    await cell.demand();
+                    const held = cell.get();
+                    if (held.status === 'failed') throw held.error;
+                    return held.data!;
+                }
             }, location.targetKey, relation);
         },
         access(targetKey: string) { return resource(key(['access', targetKey]), () => client.access(target(targetKey).target, reads.signal), targetKey); },
@@ -219,6 +240,10 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             const next = mergeWorkbenchLocation(local.get('location'), intent);
             await client.navigate(next);
             local.set('location', next);
+        },
+        async back() {
+            const previous = foreignKeyBack(local.get('location'));
+            if (previous) { await client.navigate(previous); local.set('location', previous); }
         },
         refresh: invalidate,
         apply(relation: DatabaseRelationV1): WorkbenchControlBinding {

@@ -67,3 +67,25 @@ it('stops the exact host control signal and leaves the same console ready for an
     expect(next.aborted).toBe(false);
     expect(await binding.controller.prepare({ signal: next })).toMatchObject({ input: { statement: { sql: 'select 1' } } });
 });
+
+it('publishes typed parameter inputs locally and submits them without persisting values', async () => {
+    const writes: unknown[] = [];
+    const text = createConsoleState({ read: async () => null, write: async value => { writes.push(value); } });
+    const console = createConsole({ consoleState: () => text, target: () => descriptor,
+        statementRanges: sql => [{ start: 0, end: sql.length }], client: { presentDeviceStorageError(error) { throw error; } } }, 'target');
+    await console.setText('select $1, $2');
+    console.setParameterInputs([[{ type: 'integer', text: 'invalid private value' }]]);
+    expect(await console.run().controller.prepare({ signal: new AbortController().signal })).toBeNull();
+    expect(console.execution.get('run').error).toEqual({ code: 'invalid_parameters', message: 'A parameter does not match its selected type.' });
+    expect(JSON.stringify(console.execution.get('run'))).not.toContain('invalid private value');
+    console.setParameterInputs([[{ type: 'integer', text: '9007199254740993' }, { type: 'text', text: 'secret parameter' }]]);
+    expect(console.parameterInputs.get('parameters')[0]?.[0]).toEqual({ type: 'integer', text: '9007199254740993' });
+    const binding = console.run();
+    expect(await binding.controller.prepare({ signal: new AbortController().signal })).toMatchObject({ input: { statement: { parameters: [
+        { type: 'integer', value: '9007199254740993' }, { type: 'text', value: 'secret parameter' }] } } });
+    binding.controller.onSettled({ ok: true, result: { ok: true, operation: 'statement.run', results: [] } });
+    expect(JSON.stringify(writes)).not.toContain('secret parameter');
+    expect(JSON.stringify(text.get())).not.toContain('9007199254740993');
+    console.close();
+    expect(console.parameterInputs.get('parameters')).toEqual([]);
+});
