@@ -21,6 +21,26 @@ describe('detached theme stylesheet security boundary', () => {
     });
     afterAll(async () => { await browser?.close(); });
 
+    it('keeps the runtime dark palette when default CSS is reapplied', async () => {
+        await page.emulateMedia({ colorScheme: 'light' });
+        const paint = await page.evaluate(() => {
+            const api = (globalThis as unknown as { themeSheet: typeof import('./themeStylesheet.web') }).themeSheet;
+            const palette = document.createElement('style');
+            palette.textContent = ':root { --primary: #222222; --canvas: #f5f5f5; } :root.dark { --primary: #efefef; --canvas: #141212; } [data-surface] { color: var(--primary); background: var(--canvas); }';
+            document.head.append(palette);
+            // The runtime has already selected Dark. A repeated selection is a no-op there.
+            document.documentElement.classList.add('dark');
+            api.applyThemeStylesheet(null, 'dark');
+            api.applyThemeStylesheet(null, 'dark');
+            const style = getComputedStyle(document.querySelector('[data-surface]')!);
+            const result = { color: style.color, background: style.backgroundColor };
+            palette.remove();
+            document.documentElement.classList.remove('dark');
+            return result;
+        });
+        expect(paint).toEqual({ color: 'rgb(239, 239, 239)', background: 'rgb(20, 18, 18)' });
+    });
+
     it('makes zero requests from detached parsing through attachment, replacement and recovery', async () => {
         const result = await page.evaluate(async () => {
             // The script bundle exposes the real adapter in this browser realm.

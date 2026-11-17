@@ -80,6 +80,17 @@ const pairedProfileState = {
 } as unknown as ThemeProfilesLocalStateV1;
 
 describe('theme profile runtime', () => {
+    it.each([false, true])('keeps dark base text on system-dark startup with light-only selection %s', (selectLight) => {
+        const themes = resolveThemeRuntimeStartupThemes({
+            themePreference: 'adaptive', systemTheme: 'dark', platform: 'web',
+            themeProfiles: {
+                profiles: profileState.profiles,
+                activeProfileIds: { light: selectLight ? 'ocean' : null, dark: null },
+            },
+        });
+        expect(themes.themes.dark.colors.text.primary).toBe('#EFEFEF');
+        expect(themes.backgroundColor).toBe(darkTheme.colors.background.canvas);
+    });
     it('renders one retained preview mode and restores the latest saved selection when it clears', () => {
         platformRuntime.setStatusBarStyle.mockClear();
         const parsed = parseThemeProfileDocument({ ...profileState.profiles[0],

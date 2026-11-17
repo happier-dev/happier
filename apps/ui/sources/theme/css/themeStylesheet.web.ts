@@ -83,7 +83,8 @@ function sanitizeThemeSheet(sheet: CSSStyleSheet, stripped: Stripping[]): void {
     walk(sheet);
 }
 
-export function applyThemeStylesheet(prepared: ThemeStylesheetInput | null, mode: 'light' | 'dark'): ThemeStylesheetResult {
+export function applyThemeStylesheet(prepared: ThemeStylesheetInput | null, _mode: 'light' | 'dark'): ThemeStylesheetResult {
+    // Unistyles owns the root mode class, including when no custom stylesheet is selected.
     if (typeof document === 'undefined') return { available: false, stripped: [], error: 'CSS is unavailable in this runtime' };
     if (prepared === null) {
         if (installed) document.adoptedStyleSheets = document.adoptedStyleSheets.filter((sheet) => sheet !== installed);
@@ -92,12 +93,10 @@ export function applyThemeStylesheet(prepared: ThemeStylesheetInput | null, mode
         fallback = null;
         previousSource = null;
         previousResult = null;
-        document.documentElement.classList.remove('dark');
         publishCss(null);
         return { available: true, stripped: [] };
     }
     if (prepared.source === previousSource && previousResult) {
-        document.documentElement.classList.toggle('dark', mode === 'dark');
         return previousResult;
     }
     let result: ThemeStylesheetResult;
@@ -134,7 +133,6 @@ export function applyThemeStylesheet(prepared: ThemeStylesheetInput | null, mode
             fallback = next;
             installed = null;
         }
-        document.documentElement.classList.toggle('dark', mode === 'dark');
         previousSource = prepared.source;
         result = { available: true, sanitizedCss: sanitizedText, stripped };
         previousResult = result;
