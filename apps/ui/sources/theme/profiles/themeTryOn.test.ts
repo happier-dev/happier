@@ -64,9 +64,9 @@ describe('one-document theme try-on', () => {
             expect(state.owner.readGlobalPresentation()).toBe(preview);
             const leave = state.owner.present(preview.previewRef);
             expect(state.owner.readGlobalPresentation()).toBeNull();
-            // An unrelated/stale card never hides a replacement preview.
+            // A visible editor/listing keeps controls for its origin across face/draft changes; stale agent cards cannot hide a new proposal.
             const replacement = state.owner.begin({ document: document('replacement'), mode: 'dark', origin });
-            expect(state.owner.readGlobalPresentation()).toBe(replacement);
+            expect(state.owner.readGlobalPresentation()).toBe(kind === 'agent' ? replacement : null);
             leave();
             expect(state.owner.readGlobalPresentation()).toBe(replacement);
             const stop = state.owner.present(replacement.previewRef);

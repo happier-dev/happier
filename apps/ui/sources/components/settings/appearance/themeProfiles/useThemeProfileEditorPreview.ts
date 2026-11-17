@@ -29,8 +29,9 @@ export function useThemeProfileEditorPreview(input: Readonly<{
             const next = current?.origin.kind === 'editor' ? current.previewRef : null;
             if (next === previewRef) return;
             previewRef = next;
-            leave?.();
+            const previousLeave = leave;
             leave = next ? input.owner.present(next) : undefined;
+            previousLeave?.();
         };
         const stop = input.owner.subscribe(update);
         update();

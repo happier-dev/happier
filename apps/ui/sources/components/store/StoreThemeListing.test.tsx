@@ -150,6 +150,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
         { expectedScope: storage.getState().settingsScope })).item.payload.themes;
     await act(async () => { getThemeTryOnOwner().begin({ document: faces[0]!.document, mode: faces[0]!.mode,
         origin: { kind: 'store', listing: { sourceId, itemId: 'palette' } } }); });
+    await vi.waitFor(() => expect(screen.findAllByType(ThemeTryBar)[0]?.props).toMatchObject({ visible: false, disabled: false }));
     barCommits = 0;
     for (let index = 1; index <= 10; index++) {
         const face = faces[index % faces.length]!;

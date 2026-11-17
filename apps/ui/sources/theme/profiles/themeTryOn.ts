@@ -18,6 +18,14 @@ export type ThemeTryOnInput = Readonly<{
 }> & (Readonly<{ document: ThemeProfileDocument; selection?: ThemeReference | null }>
     | Readonly<{ document: null; selection: null }>);
 export type ThemeTryOnSnapshot = ThemeTryOnInput & Readonly<{ previewRef: PreviewRef }>;
+
+function presentationKey(snapshot: ThemeTryOnSnapshot): string {
+    switch (snapshot.origin.kind) {
+        case 'agent': return JSON.stringify(['agent', snapshot.previewRef]);
+        case 'editor': return 'editor';
+        case 'store': return JSON.stringify(['store', snapshot.origin.listing.sourceId, snapshot.origin.listing.itemId]);
+    }
+}
 export interface ThemeTryOnOwner {
     begin(input: ThemeTryOnInput): ThemeTryOnSnapshot;
     replace(previewRef: PreviewRef, input: ThemeTryOnInput): ThemeTryOnSnapshot;
@@ -39,7 +47,7 @@ export function createThemeTryOnOwner(deps: Readonly<{
 }>): ThemeTryOnOwner {
     let current: { snapshot: ThemeTryOnSnapshot; scope: AccountSettingsScope | null; keeping?: Promise<ThemeLibraryMutationResult> } | null = null;
     const listeners = new Set<() => void>();
-    const presenters = new Map<PreviewRef, number>();
+    const presenters = new Map<string, number>();
     const publish = () => { for (const listener of listeners) listener(); };
     const requireCurrent = (previewRef: PreviewRef) => {
         if (!current || current.snapshot.previewRef !== previewRef) {
@@ -73,18 +81,21 @@ export function createThemeTryOnOwner(deps: Readonly<{
         replace(previewRef, input) { requireScopedCurrent(previewRef); return begin(input); },
         read,
         present(previewRef) {
-            presenters.set(previewRef, (presenters.get(previewRef) ?? 0) + 1);
+            const snapshot = read();
+            if (!snapshot || snapshot.previewRef !== previewRef) return () => {};
+            const key = presentationKey(snapshot);
+            presenters.set(key, (presenters.get(key) ?? 0) + 1);
             publish();
             return () => {
-                const remaining = (presenters.get(previewRef) ?? 1) - 1;
-                if (remaining) presenters.set(previewRef, remaining);
-                else presenters.delete(previewRef);
+                const remaining = (presenters.get(key) ?? 1) - 1;
+                if (remaining) presenters.set(key, remaining);
+                else presenters.delete(key);
                 publish();
             };
         },
         readGlobalPresentation() {
             const snapshot = read();
-            return snapshot && !presenters.has(snapshot.previewRef) ? snapshot : null;
+            return snapshot && !presenters.has(presentationKey(snapshot)) ? snapshot : null;
         },
         revert(previewRef) { requireCurrent(previewRef); current = null; publish(); },
         async keep(previewRef) {
