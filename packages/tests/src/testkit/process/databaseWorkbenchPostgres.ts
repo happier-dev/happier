@@ -14,7 +14,7 @@ export const DATABASE_WORKBENCH_SCALE = Object.freeze({ rows: 1_200_000, stateme
 /** Owns only its returned Docker container; never accepts an existing database URL. */
 export async function startDatabaseWorkbenchPostgres(options: Readonly<{ preloadStatistics?: boolean }> = {}) {
   const plan = buildDbContainerPlan({ db: 'postgres', name: `dbw-qa-${randomUUID()}` });
-  const env = sanitizeDockerEnv(process.env);
+  const env = { ...sanitizeDockerEnv(process.env), NODE_ENV: process.env.NODE_ENV };
   const { stdout } = await execute('docker', ['run', '--detach', '--rm',
     '--name', plan.name, '--publish', plan.ports.publishSpec,
     ...Object.entries(plan.env).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
