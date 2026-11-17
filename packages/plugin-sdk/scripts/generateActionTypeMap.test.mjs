@@ -1135,8 +1135,8 @@ test('Action DTO failure causes retain the public errors type identity', () => {
     },
   });
   const support = outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
-  assert.match(support, /import type \{ ActionFailureCauseV1 \} from '\.\.\/\.\.\/errors\.js';/u);
-  assert.match(support, /export type \{ ActionFailureCauseV1 \} from '\.\.\/\.\.\/errors\.js';/u);
+  assert.match(support, /import type \{ ActionFailureCauseV1 \} from '\.\.\/\.\.\/errors\/index\.js';/u);
+  assert.match(support, /export type \{ ActionFailureCauseV1 \} from '\.\.\/\.\.\/errors\/index\.js';/u);
   for (const output of outputs.values()) {
     assert.doesNotMatch(output, /export type ActionFailureCauseV1\s*=/u);
   }
