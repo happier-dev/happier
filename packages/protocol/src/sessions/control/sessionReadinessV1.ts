@@ -6,6 +6,7 @@ import { MachinesAgentsSignInStartInputSchema } from '../../daemon/agentSignIn.j
 import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_INPUT_SCHEMAS } from '../../connect/authenticationActionsV1.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { TeamCredentialResourceReadinessV1Schema } from '../../teams/credentials/resourceReadinessV1.js';
+import { readTeamCredentialDeliveryReadinessV1 } from '../../teams/credentials/deliveryV1.js';
 import { TeamCredentialResourceRecoveryActionV1Schema, resolveTeamResourceConnectedServiceSelectionV1 } from '../../teams/credentials/resourceV1.js';
 import { SessionEffectiveAccessV1Schema } from '../access/sessionEffectiveAccessV1.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
@@ -65,7 +66,8 @@ export function readSessionTeamCredentialReadiness(input: Readonly<{
     services: input.selection.deliveryMode === 'direct' ? [input.selection.disclosedMember.service]
       : source?.kind === 'connected_service' ? [source.service] : [] });
   return { kind: 'team', teamId: input.teamId, resourceId: input.selection.resourceId,
-    readiness: current ? resource.readiness : null, recoveryAction: current ? resource.recoveryAction : null };
+    readiness: current ? readTeamCredentialDeliveryReadinessV1(resource.readiness, input.selection.deliveryMode) : null,
+    recoveryAction: current ? resource.recoveryAction : null };
 }
 
 /** The existing purpose/profile owner decides usability; this projection never selects another account. */

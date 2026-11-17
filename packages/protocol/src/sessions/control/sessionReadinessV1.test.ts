@@ -49,7 +49,7 @@ it('keeps the purpose resource owner detail only for the current exact Team sele
   const purpose = { consumer: { pluginId: service.pluginId, localId: 'helper' }, purpose: 'outside-write' };
   const selection = { source: 'team_resource' as const, resourceId: 'resource', deliveryMode: 'direct' as const,
     disclosedMember: { service, accountId: 'work' } };
-  const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: selection.resourceId, teamId: 'team', displayName: 'Acme',
+  const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: selection.resourceId, teamId: 'team', displayName: { content: { t: 'plain', v: 'Acme' }, recipientEnvelope: null },
     resourceRevision: 1, readiness: { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-10-20T00:00:00Z' },
     recoveryAction: 'source_owner_action', mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current',
     sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [selection], sourcePresentation: { kind: 'connected_service', service } });
@@ -68,9 +68,9 @@ it('keeps the purpose resource owner detail only for the current exact Team sele
   const credential = readSessionOperationCredentialReadinessV1(input);
   expect(readSessionOperationCredentialReadinessV1({ ...input, teamSelection: undefined })).toEqual({ kind: 'unknown' });
   expect(credential).toEqual({ kind: 'team', teamId: 'team', resourceId: 'resource',
-    readiness: resource.readiness, recoveryAction: resource.recoveryAction });
+    readiness: { kind: 'available' }, recoveryAction: resource.recoveryAction });
   expect(SessionReadinessV1Schema.parse(composeSessionReadinessV1({ ...facts, operation: 'credential', credential })))
-    .toMatchObject({ status: 'unavailable', cause: 'credential', credential });
+    .toMatchObject({ status: 'ready', cause: null, credential });
   expect(readSessionOperationCredentialReadinessV1({ ...input, teamResource: { ...resource,
     connectedServiceSelections: [{ ...selection, disclosedMember: { service, accountId: 'replacement' } }] } }))
     .toEqual({ kind: 'team', teamId: 'team', resourceId: 'resource', readiness: null, recoveryAction: null });

@@ -4,6 +4,7 @@ import type { PluginConnectedAccountAuthenticationV2, QualifiedConnectedAccountP
 import { PluginError } from '../plugins/errors.js';
 import type { ConnectedAccountActionFormSelectionV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 
 /** Keyholding hosts open recipient labels before this display-only projection. */
 export type ConnectedAccountPurposeTeamResource = Omit<TeamCredentialResourceCatalogEntryV1, 'displayName'> & Readonly<{ displayName: string | null }>;
@@ -99,16 +100,19 @@ export function projectConnectedAccountActionFormOptions(input: Readonly<{
     .filter(entry => entry.state === 'connected').map(entry => Object.freeze({ value: entry.account, label: entry.displayName }));
   for (const resource of input.teamResources ?? []) {
     const source = resource.sourcePresentation;
-    if (resource.readiness.kind !== 'available' || source?.kind !== 'connected_service'
+    if (source?.kind !== 'connected_service'
       || !input.serviceRefs.some(service => service.pluginId === source.service.pluginId && service.localId === source.service.localId)) continue;
     const selections = [...resource.connectedServiceSelections];
     if (resource.mayBroker && !selections.some(selection => selection.deliveryMode === 'brokered')) {
       selections.push({ source: 'team_resource', resourceId: resource.id, deliveryMode: 'brokered' });
     }
-    for (const selection of selections) options.push(Object.freeze({
-      value: Object.freeze({ teamId: resource.teamId, selection }),
-      label: boundedDisplayName(resource.displayName, resource.id),
-    }));
+    for (const selection of selections) {
+      if (readTeamCredentialDeliveryReadinessV1(resource.readiness, selection.deliveryMode).kind !== 'available') continue;
+      options.push(Object.freeze({
+        value: Object.freeze({ teamId: resource.teamId, selection }),
+        label: boundedDisplayName(resource.displayName, resource.id),
+      }));
+    }
   }
   if (options.length > CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND) throw new PluginError({
     code: 'plugin_ui_unavailable',
