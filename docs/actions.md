@@ -9701,7 +9701,16 @@ with a newer one. Reviewed prompt-document updates are described above.
 
 #### Saved approval profiles (0.3 development source)
 
-An Account can save named approval profiles in `actionsSettingsV1.approvalProfiles`.
+In unreleased 0.3 source, a saved approval profile is a private
+`approval-profile.v1` Artifact. Its body contains `kind` and `profile`; the
+profile content is `{ name, actions?, approvalWaivedSurfaces? }`, and its id is
+the Artifact id. The Account settings no longer contain profile bodies.
+
+The Artifact/settings migration, held catalogs and overlay applier are unreleased
+0.3 development code. Creation owns profile selection and captures the inherited
+source bit; admission consumes the stored selection. Retained authoring copy paths
+are still being corrected, and composed creation/runtime validation remains incomplete.
+
 A profile is a per-Action overlay of the Account's Approval settings:
 `{ id, name, actions?, approvalWaivedSurfaces? }`, where each `actions` row holds
 only `enabled`, `disabledSurfaces` and `approvalRequiredSurfaces` and only the
@@ -9714,20 +9723,32 @@ reference privately in its runtime owner. Agent permission modes continue to
 govern Agent tools separately from Action approval.
 
 `actionsSettingsV1.machineApprovalProfiles` maps a Machine id to the person's
-profile for new Sessions on that Machine. In unreleased 0.3 source, the creation
-context builder fills an absent member approval choice from this map; the shared
-defaults resolver applies the [one field order](teams.md#managed-session-defaults)
+profile for new Sessions on that Machine. In unreleased Team setup source, the
+creation context builder fills an absent member approval choice from this map;
+the shared defaults resolver applies the [one field order](teams.md#managed-session-defaults)
 and birth stores its result. Later Action admissions read only that stored id;
-`null` or absence uses Account settings. Changing the map therefore affects new
-Sessions. An inherited Project, Team or Group choice also stores
-`approvalProfileTeamOrGroupDerived: true`, which the existing profile applier
-consumes in tighten-only mode. An explicit choice, including accepting the same
-id, clears the bit and permits full application. These development source
-changes still require the composed creation/runtime validation.
+`null` or absence uses Account settings and never selects a Machine default.
+Changing the map therefore affects new Sessions. An inherited project, Team or
+Group choice also stores `approvalProfileTeamOrGroupDerived: true`, which the
+existing profile applier consumes in tighten-only mode. An explicit choice,
+including accepting the same id, clears the bit and permits full application.
+These source changes still require the composed creation/runtime validation.
 
-Profile rows and Machine defaults are written by
-`actions.policy.set` `profileChange` (`upsert`, `delete`, `machine_default`);
-deleting a profile also clears the Machine defaults that named it.
+Profile rows are written by `actions.policy.set` `profileChange` (`create`,
+`update`, `delete`). Updates and deletes carry the expected Artifact header/body
+revision; a stale revision returns `currentness_conflict`. An unchanged update
+writes and publishes nothing. `machine_default` remains a deliberate Account
+preference. Deleting a profile also clears the Machine defaults that named it.
+Generic Artifact writes cannot edit this internal kind.
+
+Sharing uses the existing Artifact grants and encryption owner, with Account,
+Team and Group principals. Can use maps to view access; Can edit maps to edit.
+`actions.policy.get { profiles: true }` returns readable rows with their access,
+owner and revision. The host binds the selected row once from its held catalog;
+built-in and contributed Action routing consume that same bound value. Catalog refresh
+follows the existing change stream and reconnect lifecycle, including kind-filtered
+Artifact changes. The composed PostgreSQL/daemon journey is still unverified;
+source-level checks do not establish that gate.
 
 An Agent or MCP caller changing a child selection to a different profile, including
 explicit `null`, defaults to Ask under `session.approval_profile.set`. Run profile
@@ -9745,14 +9766,21 @@ Descriptive Machine provenance alone does not select an execution target.
 A contextual Session id, including a standalone CLI/MCP host's `cli-global`,
 does not select a new target after approval. Existing Machine/Home mismatch
 and explicit Session target refusals remain in the replay currentness owner.
-Fork and replay-continuation Actions use this same caller inheritance. Native
-direct fork/continuation requests that omit the reference retain the source
-Session's selection.
+Fork and Continue preserve an omitted choice, including the source Session's
+inherited-profile provenance, in unreleased 0.3 source. Explicitly selecting the
+same profile accepts its full overlay.
 
 `resolveActionApprovalRouting` applies the selected profile once, at the top:
 `applyApprovalProfileOverlayV1` replaces the Account row and waiver list of each
-Action the profile names, and the ordinary evaluator then decides on the merged
-settings. A profile can therefore ask, allow or turn an Action Off exactly where
+Action the profile names for a member-chosen profile. For a captured Team/Group
+or project default, it only adds Off and Ask requirements and retains the
+member's stricter choices. The applier then consumes any admitted database
+agent level supplied by the target owner: `readWriteAsk` requires Ask, while
+`readWriteNoApproval` may waive Ask unless the member explicitly chose Ask or
+Off. The existing database type owns this value; the applier performs no database
+access read. These are invocation-local `targetApproval` inputs, not profile-body
+fields or creation defaults. The ordinary evaluator decides on the resulting settings.
+A member-chosen profile can therefore ask, allow or turn an Action Off exactly where
 the Account screen could; it has no other waiver authority, and the egress,
 authority and person-class defaults and scoped Machine/Environment preferences
 apply as usual. Exact completed reviews retain the existing admitted-child/replay
@@ -9762,10 +9790,10 @@ decided by the Account settings rather than by the profile being changed.
 A Session-bound MCP host advertises through `createSessionActionSettingsView`,
 the same overlay on its Account settings, so a profile's Off hides the tool.
 
-A deleted, unavailable or retired built-in id resolves to Account settings with
+A deleted, unavailable or inaccessible profile id resolves to Account settings with
 typed `status: 'missing'` and the requested id. Approval metadata and deferred
 results carry that resolution so a caller can show the warning. Deleting a
-profile therefore loosens its Sessions to Account settings at their next Action.
+profile returns its Sessions to Account settings at their next Action.
 
 In 0.3 development, CLI Action invocations with
 `HAPPIER_SESSION_MCP_CONTEXT_FILE` use the Session's existing local MCP bridge,
@@ -9797,8 +9825,8 @@ could read a sibling Session's bridge token and act as that Session. A profile
 does not provide isolation between those sibling Sessions.
 
 The existing Account policy Actions own CRUD: `actions.policy.get` accepts
-`{profiles:true}`, and `actions.policy.set` accepts `profileChange` with `upsert`
-or `delete`. Existing Session attachment uses `session.approval_profile.set`
+`{profiles:true}`, and `actions.policy.set` accepts `profileChange` with `create`,
+`update` or `delete`. Existing Session attachment uses `session.approval_profile.set`
 with its metadata revision; Run attachment uses the native
 `execution.run.action` control `approval_profile.set`. Both accept a nullable
 reference. The existing Workflow-definition and trigger update Actions own

@@ -437,7 +437,7 @@ field before anything is written and commits wholly or not at all.
 In 0.3 development source, one nullable JSON column stores the strict `ManagedDefaultsV1`
 document `{ team, groups: { [teamGroupId]: defaults } }`. The shared schema and per-field
 precedence owner are `packages/protocol/src/teams/managedDefaults.ts`. Values cover placement,
-Agent permission intent, model selection, and qualified connected-service purposes. New
+Agent permission intent, model selection, approval profile, and qualified connected-service purposes. New
 Session reads the member-qualified context through `useManagedSessionDefaults`. Without a primary
 Team context, a draft shared with one Team (directly or through its Groups) reads that Team's
 defaults; sharing with several Teams does not choose one by grant order. Its placement,
@@ -486,6 +486,17 @@ Team-change push and member-qualified Team snapshots supply updates; no addition
 or defaults storage is introduced by the precedence resolver. Home defaults are stored in
 `HomeGovernancePolicy.sessionDefaults` and projected in Team policy as `homeDefaults`;
 machine policy remains a separate source.
+
+An approval-profile default references a readable `approval-profile.v1` Artifact;
+sharing the profile uses its existing Artifact grants. The committed 0.3 development
+applier supports tightening the member's own approvals (Off > Ask first > Allowed)
+when a stored source bit identifies a Team, Group or shared project default. The
+creation owner captures this reference and source bit; admission consumes the stored
+selection. Retained authoring copy paths are still being corrected. Explicitly selecting a profile, including the same id,
+enables its full overlay. Profile-body edits affect the next admission through the
+held catalog. See [saved approval profiles](actions.md#saved-approval-profiles-03-development-source)
+for the development contract and the outstanding
+composed validation.
 
 The receiving daemon's `session.spawn_new` admission fills unset permission, model and
 qualified connected-service facets through that same resolver. It reads the acting Account's
