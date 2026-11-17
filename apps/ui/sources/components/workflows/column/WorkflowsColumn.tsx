@@ -51,10 +51,16 @@ import { useSettingRevealRequested } from '@/components/settings/shell/SettingRo
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 import { readOpenWorkflowDefinition } from './workflowsColumnModel';
 import { WorkflowLibraryFreshness } from '../library/WorkflowLibraryFreshness';
+import { isWorkflowEventsPath, useWorkflowsColumnEvents, WorkflowsColumnEventsFilters, WorkflowsColumnEventsListening, WorkflowsColumnEventsRows } from '../events/WorkflowsColumnEvents';
+import { WORKFLOWS_EVENTS_ROUTE } from '../workflowsRoutes';
 
 
 function isRunPath(pathname: string): boolean {
     return /^\/workflows\/runs(?:\/|$)/.test(pathname);
+}
+
+function readPathView(pathname: string): WorkflowsColumnView {
+    return isRunPath(pathname) ? 'runs' : isWorkflowEventsPath(pathname) ? 'events' : 'definitions';
 }
 
 /** Definitions and the canonical Sessions list's Runs view share the destination's column. */
@@ -74,7 +80,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
         target => { creationRef.current = target; }, []);
     const pathname = usePathname();
     const params = useGlobalSearchParams<{ trigger?: string }>();
-    const [view, setView] = React.useState<WorkflowsColumnView>(() => isRunPath(pathname) ? 'runs' : 'definitions');
+    const [view, setView] = React.useState<WorkflowsColumnView>(() => readPathView(pathname));
     const filtersRequested = useSettingRevealRequested([collectionSpaceSettingRefs('workflow').filters]);
     React.useEffect(() => {
         if (filtersRequested) setView('definitions');
@@ -82,6 +88,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     React.useEffect(() => {
         if (params.trigger) setView('definitions');
         else if (isRunPath(pathname)) setView('runs');
+        else if (isWorkflowEventsPath(pathname)) setView('events');
         else if (readOpenWorkflowDefinition(pathname)) setView('definitions');
     }, [pathname, params.trigger]);
     // As the page the switch is a row of its own on the sheets' edge; in the column it is the compact icon
@@ -97,6 +104,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                 tabs={[
                     { id: 'definitions', label: t('workflows.title') },
                     { id: 'runs', label: t('workflows.tabs.runs') },
+                    { id: 'events', label: t('workflows.tabs.events') },
                 ]}
                 activeTabId={view}
                 onSelectTab={setView}
@@ -144,6 +152,9 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                     ? <PageFrame column="wide" content="column" style={styles.pageRuns}><SessionsList fixedShow="runs" pathname={pathname} /></PageFrame>
                     : <SessionsList fixedShow="runs" pathname={pathname} />}
             </RetainedPanelSurface>
+            <RetainedPanelSurface isActive={view === 'events'} hiddenMode="activity" testID="workflows-column:events">
+                <WorkflowsColumnEventsPage active={view === 'events'} />
+            </RetainedPanelSurface>
         </View></WorkflowsColumnCreationRefContext.Provider>;
     }
     const headerAction = access.kind === 'workflows' ? <WorkflowsColumnActions canCreate /> : null;
@@ -177,7 +188,15 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
 }>) {
     const presented = useLayoutPresentationActive();
     const definitions = props.view === 'definitions';
+    const eventsShown = props.view === 'events';
     const libraryView = useWorkflowLibraryView(presented && definitions);
+    const events = useWorkflowsColumnEvents(presented && eventsShown);
+    const router = useRouter();
+    // Beside the main pane the Events view opens its page there ("Pick an event"); the other views leave main as it is.
+    const selectView = useEventCallback((next: WorkflowsColumnView) => {
+        props.onSelectView(next);
+        if (next === 'events' && !isWorkflowEventsPath(props.pathname)) router.push(WORKFLOWS_EVENTS_ROUTE as never);
+    });
     const header = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-column-space');
     // Beside the page the column is navigation (owner 2026-11-12, anatomy "collection page home"): the library home's
     // toolbar owns the one scope, filter and search over the same draft, so the column carries no second copy.
@@ -191,9 +210,10 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         tabs={[
             { id: 'definitions', label: t('workflows.title'), icon: <Icon name="tree-structure" size={15} color={theme.colors.text.secondary} /> },
             { id: 'runs', label: t('workflows.tabs.runs'), icon: <Icon name="play-circle" size={15} color={theme.colors.text.secondary} /> },
+            { id: 'events', label: t('workflows.tabs.events'), icon: <Icon name="pulse" size={15} color={theme.colors.text.secondary} /> },
         ]}
         activeTabId={props.view}
-        onSelectTab={props.onSelectView}
+        onSelectTab={selectView}
     />;
     return <CollectionList
         testID="workflows-column:list"
@@ -202,9 +222,10 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         {...(spaceControls ? { titleControl: header.titleControl } : {})}
         strip={<>
             <View testID="workflows-column:view-band" style={styles.viewBand}>
-                <View style={styles.viewBandLead}>{spaceControls ? header.strip : null}</View>
+                <View style={styles.viewBandLead}>{spaceControls ? header.strip : eventsShown ? <WorkflowsColumnEventsListening state={events} /> : null}</View>
                 {viewSwitch}
             </View>
+            {eventsShown ? <WorkflowsColumnEventsFilters state={events} /> : null}
             {spaceControls ? header.conditionRow : null}
             {spaceControls ? header.overlays : null}
         </>}
@@ -216,8 +237,12 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
                     <WorkflowsColumnDefinitions libraryView={libraryView} />
                 </ItemList>
             </RetainedPanelSurface>
-            <RetainedPanelSurface isActive={!definitions} hiddenMode="activity" testID="workflows-column:runs">
+            <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
                 <SessionsList fixedShow="runs" pathname={props.pathname} />
+            </RetainedPanelSurface>
+            <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
+                <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface={props.surface}
+                    active={presented && eventsShown} />
             </RetainedPanelSurface>
         </>}
     />;
@@ -439,6 +464,7 @@ const styles = StyleSheet.create((theme) => ({
     /** The page form's head keeps no page-end padding of its own: the views' content follows it. */
     pageHead: { paddingBottom: 0 },
     pageRuns: { flex: 1, paddingBottom: 0 },
+    eventsPageHead: { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx, paddingTop: theme.space.s12, gap: theme.space.s4 },
     // Under the page's large title, the same gap the Inbox's tabs keep (lab `phone-P4`).
     viewsUnderPageTitle: { paddingTop: theme.space.s8, paddingBottom: 0 },
     viewTabs: { flex: 1, minWidth: 0 },
@@ -453,6 +479,21 @@ const styles = StyleSheet.create((theme) => ({
     stale: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingTop: theme.space.s4 },
     // A column section's state is the one in-list state line, on the rows' content edge.
 }));
+
+/** The Events view as the destination's page: the listening line and chips on the page's edge, then the rows. */
+const WorkflowsColumnEventsPage = React.memo(function WorkflowsColumnEventsPage(props: Readonly<{ active: boolean }>) {
+    const presented = useLayoutPresentationActive();
+    const events = useWorkflowsColumnEvents(presented && props.active);
+    return <PageFrame column="wide" content="column" style={styles.pageRuns}>
+        <View style={styles.eventsPageHead}>
+            <WorkflowsColumnEventsListening state={events} />
+            <WorkflowsColumnEventsFilters state={events} edge="page" />
+        </View>
+        <ItemList presentation="grouped" style={styles.definitionsList}>
+            <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface="page" active={presented && props.active} />
+        </ItemList>
+    </PageFrame>;
+});
 
 /** Whether a Library row is the open one: its definition's page, or the account workflow a deep link opened. */
 function libraryRowSelected(

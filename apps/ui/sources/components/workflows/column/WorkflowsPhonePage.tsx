@@ -6,6 +6,7 @@ import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
@@ -13,13 +14,15 @@ import { useWorkflowLibraryView } from '@/components/workflows/library/useWorkfl
 import { useWorkflowLibrarySpaceHeader } from '@/components/workflows/library/useWorkflowLibrarySpaceHeader';
 import { t } from '@/text';
 
+import { useWorkflowsColumnEvents, WorkflowsColumnEventsFilters, WorkflowsColumnEventsListening, WorkflowsColumnEventsRows } from '../events/WorkflowsColumnEvents';
+
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import {
   WorkflowsColumnLibraryContext,
   type WorkflowsColumnLentLibrary,
 } from './workflowsColumnCreation';
 
-export type WorkflowsColumnView = 'definitions' | 'runs';
+export type WorkflowsColumnView = 'definitions' | 'runs' | 'events';
 
 /**
  * Workflows as a phone's main screen (owner 11-11): the shell's Home line, then the main-screen head — the library's
@@ -39,6 +42,8 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
   const presented = useLayoutPresentationActive();
   const definitions = props.view === 'definitions';
   const libraryView = useWorkflowLibraryView(presented && definitions);
+  const eventsShown = props.view === 'events';
+  const events = useWorkflowsColumnEvents(presented && eventsShown);
   const spaceHeader = useWorkflowLibrarySpaceHeader(
     libraryView,
     'workflows-column-space',
@@ -103,6 +108,7 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
                 tabs={[
                   { id: 'definitions', label: t('workflows.title') },
                   { id: 'runs', label: t('workflows.tabs.runs') },
+                  { id: 'events', label: t('workflows.tabs.events') },
                 ]}
                 activeTabId={props.view}
                 onSelectTab={props.onSelectView}
@@ -110,6 +116,12 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
               />
               {definitions ? spaceHeader.strip : null}
               {definitions ? spaceHeader.conditionRow : null}
+              {eventsShown ? (
+                <View style={styles.eventsHead}>
+                  <WorkflowsColumnEventsListening state={events} />
+                  <WorkflowsColumnEventsFilters state={events} edge="page" />
+                </View>
+              ) : null}
             </>
           }
         />
@@ -121,13 +133,21 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
           {props.definitionsContent}
         </WorkflowsColumnLibraryContext.Provider>
       </RetainedPanelSurface>
-      <RetainedPanelSurface isActive={!definitions} hiddenMode="activity" testID="workflows-column:runs">
+      <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
         <SessionsList fixedShow="runs" pathname={props.pathname} />
+      </RetainedPanelSurface>
+      <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
+        <ItemList presentation="grouped" style={styles.events}>
+          <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface="page"
+            active={presented && eventsShown} />
+        </ItemList>
       </RetainedPanelSurface>
     </View>
   );
 });
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
   column: { flex: 1, minHeight: 0 },
+  events: { backgroundColor: 'transparent' },
+  eventsHead: { gap: theme.space.s4, paddingTop: theme.space.s4 },
 }));

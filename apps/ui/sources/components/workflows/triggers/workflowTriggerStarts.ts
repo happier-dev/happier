@@ -280,6 +280,29 @@ export function commitWorkflowTriggerWhen(params: Readonly<{
     return editWorkflowTriggerDraft(params.draft, { kind: 'update', triggerId: params.row.triggerId, trigger: definition, enabled, ...declaration });
 }
 
+let triggerClientSequence = 0;
+/** A new trigger's identity on screen until Save gives it one. */
+export function createWorkflowTriggerClientId(): string {
+    triggerClientSequence += 1;
+    return `trigger-draft-${Date.now().toString(36)}-${triggerClientSequence}`;
+}
+
+/**
+ * Adds one new trigger that starts with this When (Add a trigger, Live events' "Add to this workflow"): into
+ * the draft when it is complete, else held beside it as incomplete until its Session or Event is chosen.
+ */
+export function addWorkflowTriggerWhen(params: Readonly<{
+    draft: WorkflowTriggerDraft;
+    when: TriggerWhenValue;
+    onChangeDraft: (next: WorkflowTriggerDraft) => void;
+    updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
+}>): void {
+    const clientId = createWorkflowTriggerClientId();
+    const next = commitWorkflowTriggerWhen({ draft: params.draft, row: { kind: 'new', clientId }, when: params.when, enabled: true });
+    if (next !== null) params.onChangeDraft(next);
+    else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, { clientId, when: params.when }] }));
+}
+
 export function removeWorkflowTriggerRow(draft: WorkflowTriggerDraft, row: WorkflowTriggerRowRef): WorkflowTriggerDraft {
     return row.kind === 'new'
         ? editWorkflowTriggerDraft(draft, { kind: 'discardAdd', clientId: row.clientId })

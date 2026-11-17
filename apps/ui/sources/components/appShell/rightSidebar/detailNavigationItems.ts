@@ -165,7 +165,9 @@ export function resolveDetailNavigationItems(input: MachineNavigationInput | Wor
                 { ...page('flow', t('workflows.tabs.flow'), 'graph'), navigation: { kind: 'both', page: 'flow', companion: 'flow', desktop: 'tabs' } },
                 // The whole workflow as one sentence (round 1116c): the same definition, read and changed in place.
                 page('sentence', t('workflows.tabs.sentence'), 'article'),
-                ...(input.agentAvailable ? [companion('agent', t('workflows.authoring.agent'), 'sparkle')] : [])]
+                ...(input.agentAvailable ? [companion('agent', t('workflows.authoring.agent'), 'sparkle')] : []),
+                // The Events feed beside the workflow being written (D11); on a phone, in More.
+                companion('events', t('workflows.events.liveEvents'), 'pulse')]
             : [page('flow', t('workflows.tabs.map'), 'graph'), page('steps', t('workflows.tabs.steps'), 'list'),
                 page('activity', t('workflows.tabs.activity'), 'pulse')];
         return Object.freeze(descriptors.map((item, phoneOrder) => Object.freeze({ ...item, phoneOrder,

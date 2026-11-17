@@ -980,7 +980,7 @@ export function resolveDestinationRefFromHref(
     if (first === 'workflows' && second === 'runs' && third && rest.length === 0) {
         return { kind: 'workflowRun', params: { ...query, runId: third } };
     }
-    if (first === 'workflows' && second && third === undefined && !['runs', 'new', 'edit', 'settings'].includes(second)) {
+    if (first === 'workflows' && second && third === undefined && !['runs', 'events', 'new', 'edit', 'settings'].includes(second)) {
         return { kind: 'workflow', params: { ...query, id: second } };
     }
     if (first === 'automations' && second && third === undefined && !['settings', 'new', 'edit'].includes(second)) {

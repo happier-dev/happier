@@ -125,6 +125,11 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
                 headerTitle: t('workflows.run.title'),
                 headerBackTitle: back,
             },
+            workflowsEvent: {
+                headerShown: true,
+                headerTitle: t('workflows.tabs.events'),
+                headerBackTitle: back,
+            },
             automationsSettings: {
                 headerShown: true,
                 headerTitle: t('automations.settings.title'),
@@ -270,6 +275,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         'boards/[boardId]': options.boards,
         'workflows/runs/[runId]': options.workflowsRunDetail,
         'workflows/runs/index': options.workflowsHistory,
+        'workflows/events/index': options.workflowsIndex,
+        'workflows/events/[eventKey]': options.workflowsEvent,
         'workflows/settings': options.workflowsRunSettings,
         'projects/[workspaceRefId]/terminal': options.hiddenHeader,
         'projects/index': options.hiddenHeader,

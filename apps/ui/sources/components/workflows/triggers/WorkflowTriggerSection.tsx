@@ -62,6 +62,7 @@ import {
     buildWorkflowTriggerStartOptions,
     EMPTY_WORKFLOW_TRIGGER_INCOMPLETE,
     commitWorkflowTriggerWhen,
+    addWorkflowTriggerWhen,
     createWorkflowTriggerStartWhen,
     readWorkflowTriggerStartId,
     removeWorkflowTriggerRow,
@@ -367,7 +368,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     );
     const addStart = (id: string) => {
         const when = createWorkflowTriggerStartWhen(id);
-        if (when !== null) editPending(createClientId(), when);
+        if (when !== null) addWorkflowTriggerWhen({ draft: props.draft, when, onChangeDraft: change, updateIncomplete });
     };
     if (props.presentation === 'sentence') {
         // The same rows, handlers and pickers as the card: each line's detail chip opens that trigger's own block.
@@ -603,10 +604,4 @@ function WorkflowTriggerRunsOnRow(props: Readonly<{
                 accountLifetime={props.accountLifetime} retention="trigger" />
         </View>
     );
-}
-
-let clientSequence = 0;
-function createClientId(): string {
-    clientSequence += 1;
-    return `trigger-draft-${Date.now().toString(36)}-${clientSequence}`;
 }

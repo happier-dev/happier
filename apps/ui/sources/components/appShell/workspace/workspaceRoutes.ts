@@ -118,6 +118,8 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "session/[id]/automations/when-turn-finishes": "./(app)/session/[id]/automations/when-turn-finishes.tsx",
     "workflows/[id]": "./(app)/workflows/[id]/index.tsx",
     "workflows/edit": "./(app)/workflows/edit.tsx",
+    "workflows/events/[eventKey]": "./(app)/workflows/events/[eventKey].tsx",
+    "workflows/events": "./(app)/workflows/events/index.tsx",
     "workflows": "./(app)/workflows/index.tsx",
     "workflows/new": "./(app)/workflows/[id]/index.tsx",
     "workflows/runs/[runId]": "./(app)/workflows/runs/[runId].tsx",

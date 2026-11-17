@@ -1,6 +1,8 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
 import { useWorkflowPageNavigationShown, WorkflowPageNavigation, WorkflowCompanionNavigation } from '../navigation/WorkflowNavigationViews';
+import { WorkflowLiveEventsPane } from '../events/WorkflowLiveEventsPane';
+import type { TriggerWhenValue } from '../triggers/sessionTriggerForm';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -292,7 +294,7 @@ const STEP_OPTIONS_MAX_HEIGHT_PX = 640;
 
 export type WorkflowEditorView = 'steps' | 'flow' | 'sentence';
 
-type WorkflowEditorCompanion = 'agent';
+type WorkflowEditorCompanion = 'agent' | 'events';
 
 /** The page's first cards' disclosure ids, in the editor view state's disclosure map. */
 const WORKFLOW_WHEN_CARD_ID = 'card:when';
@@ -428,6 +430,8 @@ export type WorkflowEditorBodyProps = Readonly<{
     triggersSection?: React.ReactNode;
     /** The same triggers as the Sentence view's When clause (round 1116c). */
     triggersSentence?: React.ReactNode;
+    /** Live events' "Add to this workflow" (D11): adds that event's start to the triggers above; absent when they are not this person's to change. */
+    onAddTriggerWhen?: (when: TriggerWhenValue) => void;
     /** The document's reading presentation (04 §4.11), for a read-only workflow. */
     documentPresentation?: WorkflowDocumentPresentation;
     /** Options for Action-step fields with an `optionsSourceId`, for the workflow's Where Machine. */
@@ -1103,6 +1107,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const closeFlowPane = pane.closeRight;
     React.useEffect(() => { if (compactLayout && flowOpen) closeFlowPane(); }, [closeFlowPane, compactLayout, flowOpen]);
     const closeSettings = React.useCallback(() => setDetailsCompanion(null), []);
+    const liveEventsAnchorRef = React.useRef<View | null>(null);
     const shownCompanion = detailsCompanion;
     const settingsOpen = shownCompanion !== null;
     const agentCompanionAvailable = hasAgentTab && (!compactLayout || Boolean(props.authoringSessionId));
@@ -1124,6 +1129,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             if (flowOpen) { pane.closeRight(); return; }
             flowRequestedBesideRef.current = shownCompanion !== null;
             pane.openRight();
+            return;
+        }
+        if (id === 'events') {
+            setDetailsCompanion((current) => (current === 'events' ? null : 'events'));
             return;
         }
         if (id !== 'agent') return;
@@ -1653,6 +1662,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const companionDetails: AppPaneDestinationDetails | null = compactLayout || shownCompanion === null ? null : {
         pane: (
             <View testID={`${testIDPrefix}-${shownCompanion}-pane`} style={styles.paneBody}>
+                {shownCompanion === 'events' ? <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
+                    onAddTrigger={props.onAddTriggerWhen ?? null} onClose={closeSettings} /> : null}
                 {companionHeader}
                 {agentCompanionAvailable ? agentSessionPane : null}
                 {shownCompanion === 'agent' && !props.authoringSessionId && props.authoringDraft !== undefined ? (
@@ -1667,7 +1678,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     };
 
     return (
-        <View testID={testIDPrefix} style={styles.root}>
+        <View testID={testIDPrefix} style={styles.root} ref={liveEventsAnchorRef} collapsable={false}>
             <WorkflowEditorPaneScopeHost
                 draftStore={draftStore}
                 scopeId={WORKFLOW_EDITOR_PANE_SCOPE_ID}
@@ -1681,6 +1692,17 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 mainMinWidthPx={WORKFLOW_EDITOR_MAIN_MIN_WIDTH_PX}
             />
             {validationPublisher}
+            {compactLayout && shownCompanion === 'events' ? (
+                // A phone opens Live events from More as the shared sheet, over the page it adds to.
+                <Popover open anchorRef={liveEventsAnchorRef} boundaryRef={null} placement="auto-vertical" phonePresentation="sheet"
+                    sheetMaterial="solid" accessibilityLabel={t('workflows.events.liveEvents')} onRequestClose={closeSettings}
+                    portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}>
+                    {({ maxHeight }) => <View style={{ height: maxHeight }}>
+                        <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
+                            onAddTrigger={props.onAddTriggerWhen ?? null} onClose={closeSettings} />
+                    </View>}
+                </Popover>
+            ) : null}
         </View>
     );
 }

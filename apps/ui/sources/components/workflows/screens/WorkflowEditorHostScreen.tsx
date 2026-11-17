@@ -30,7 +30,8 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 
 import { matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { readDeviceTimeZone } from '../triggers/sessionTriggerForm';
+import { readDeviceTimeZone, type TriggerWhenValue } from '../triggers/sessionTriggerForm';
+import { addWorkflowTriggerWhen } from '../triggers/workflowTriggerStarts';
 import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, workflowStarterRequiresSession } from '@happier-dev/protocol/workflows/builtins/examples';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -2058,6 +2059,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         incomplete: { state: triggers.incomplete, onChange: triggers.updateIncomplete },
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
+                        onAddTriggerWhen: (when: TriggerWhenValue) => addWorkflowTriggerWhen({ draft: triggers.draft, when,
+                            onChangeDraft: section.onChangeDraft, updateIncomplete: triggers.updateIncomplete }),
                         resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,
                         triggersSentence: <WorkflowTriggerSection {...section} presentation="sentence" /> };
