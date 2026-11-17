@@ -102,6 +102,7 @@ import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, Man
 import { isManagedEnrollmentPolicyChildActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedPowerOrDeleteActionIdV1, readSessionAgentReadinessRoleV1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { ActionOperationGetV2RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { ProviderAccountUsageRecordIdSchema } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -1383,6 +1384,11 @@ async function isReviewedManagedAcquirePurpose(binding: ExternalActionExecutionA
         && sameManagedInput(root.workflowPreparation?.acquisition, input);
 }
 
+/** Preparation reads its retained review under the containing Action's authority. */
+function isProjectPrepareReviewEffect(rootActionId: string, effectActionId: string): boolean {
+    return rootActionId === PROJECT_PREPARE_ACTION_ID_V1 && effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1;
+}
+
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof) {
@@ -1442,8 +1448,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         teamUsage: isTeamCredentialUsageExportReadEffect(binding.actionId, effectActionId),
         archiveStop: isSessionArchiveStopEffect(binding.actionId, effectActionId),
         deploymentRead: isDeploymentReadPreparation(binding, effectActionId),
-        projectPrepareReview: binding.actionId === PROJECT_PREPARE_ACTION_ID_V1
-            && effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1,
+        projectPrepareReview: isProjectPrepareReviewEffect(binding.actionId, effectActionId),
         projectSessionDefaults: binding.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1
             && binding.projectSessionDefaultsAdmission !== undefined
             && (effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1 || effectActionId === 'teams.get' || effectActionId === 'home.governance.get'),
@@ -1470,7 +1475,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose
-        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead;
+        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
@@ -3708,7 +3713,8 @@ export async function verifyExternalActionDomainExecutionRequest(
             || getActionSpec(root.data).executionPlacement === 'session' && verified.target.kind === 'session')
         && (verified.effectActionId === verified.binding.actionId
             || isContributedActionRoot(verified.binding.actionId)
-            || verified.signedChildPurpose.sibling.archiveStop)
+            || verified.signedChildPurpose.sibling.archiveStop
+            || verified.signedChildPurpose.sibling.projectPrepareReview)
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined
         && proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`;
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(verified.binding.actionId);
@@ -4941,8 +4947,14 @@ export async function verifyExternalActionMachineRpcExecution(
             || preparePending.data.requestedAction.kind === 'send_now')
         ? { sessionId: preparePending.data.sessionId, targetMachineId: preparePending.data.targetMachineId } : null;
     if (pendingEvent && binding.actionId !== 'session.message.send' && !transitionPurpose && !refineInputPurpose && !prepareInputPurpose) return null;
+    const projectPrepareReviewPurpose = isProjectPrepareReviewEffect(binding.actionId, execution.effectActionId)
+        && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+        && execution.target.kind === 'machine' && execution.target.machineId === binding.machineId
+        && request.method === `${binding.machineId}:${ACTION_OPERATION_RPC_METHODS_V2.get}`;
     const effect = parseExternalActionEffectAction(binding, execution.effectActionId);
-    if (!effect.success || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId) && !readinessPurpose && !prepareInputPurpose
+    if (!effect.success
+        || binding.actionId === PROJECT_PREPARE_ACTION_ID_V1 && binding.actionId !== execution.effectActionId && !projectPrepareReviewPurpose
+        || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId) && !readinessPurpose && !prepareInputPurpose && !projectPrepareReviewPurpose
         || (binding.handoffContinuation || binding.handoffPreflight) && binding.actionId !== execution.effectActionId) return null;
     if (binding.managedAdmission?.actionId === 'action.operations.get' && typeof request.params !== 'string') {
         // Encrypted input is compared at the reached daemon. Visible ordinary
@@ -4985,7 +4997,7 @@ export async function verifyExternalActionMachineRpcExecution(
             : pendingEvent
             ? request.method === request.event ? 'session.message.send' : null
             : resolveMachineRpcExternalActionEffectV1(method, binding);
-        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !scmRunStartPurpose && (binding.actionId !== execution.effectActionId
+        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !scmRunStartPurpose && !projectPrepareReviewPurpose && (binding.actionId !== execution.effectActionId
                 && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)
             || effectActionId !== execution.effectActionId)) return null;
@@ -5033,7 +5045,7 @@ export async function verifyExternalActionMachineRpcExecution(
     const currentPrincipal = await verifyCurrentExternalActionPrincipal(binding);
     const principal = currentPrincipal && projectVerifiedExternalActionBoundPrincipal(binding, currentPrincipal);
     if (!principal) return null;
-    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || scmRunStartPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
+    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || scmRunStartPurpose || projectPrepareReviewPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(binding)) : effect;
     if (!credentialAction.success || !readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, machine)
         || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),

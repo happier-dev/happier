@@ -222,6 +222,7 @@ import { executeExternalAction } from '../../../../../../cli/src/daemon/external
 import { createHarness as createInstalledProjectApprovalHarness, resetFilesystemApprovalSocketBoundary } from '../../../../../../cli/src/daemon/externalActions/executeExternalAction.filesystemApprovals.testkit';
 import { createAccountServerWorkspaceWorkerPreferenceClient } from '../../../../../../cli/src/api/workspaces/workspaceWorkerPreferences';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
+import { ACTION_OPERATION_RPC_METHODS_V2, ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/methodsV1';
 import { createDaemonExternalActionTargetResolver } from '../../../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { resolveExternalActionRootInvocationAuthority, verifyExternalActionExecutionAuthorizationCurrent } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
@@ -2938,6 +2939,63 @@ describe("external Action execution authorization", () => {
             await app.close();
             await rm(directory, { recursive: true, force: true });
         }
+    });
+
+    it.each(['terminal', 'api_token'] as const)('opens only the retained review Machine codec under the admitted prepare root (%s)', async credential => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const actionId = 'projects.prepare';
+        const token = credential === 'terminal'
+            ? await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' })
+            : (await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(),
+                label: plainPrivateLabel('Prepare only'), grant: { ...API_TOKEN_FULL_GRANT_V1,
+                    actions: { families: [], ids: [actionId] }, targets: { sessions: [], machines: [fixture.machine.id] } } })).token;
+        const workspace = { serverId: await getOrCreateServerIdentityId(), workspaceId: 'retained-review',
+            machineId: fixture.machine.id, rootPath: '/workspace/project' };
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, undefined, true);
+        try {
+            const authorization = await mint(app, fixture, actionId,
+                { ...fixture.envelope, input: { workspace, phase: 'setup' } }, token);
+            const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
+            const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
+            const verify = (effectActionId: string) => app.inject({ method: 'POST', url: verifyPath, payload: body,
+                headers: machineHeaders({ authorizationToken: authorization.token, effectActionId,
+                    method: 'POST', path: verifyPath, body, privateKey: fixture.keyPair.secretKey }) });
+            // Admission/currentness succeeds before the child opens its RPC codec.
+            expect((await verify(actionId)).statusCode).toBe(200);
+            expect((await verify('action.operations.get')).statusCode).toBe(200);
+            const path = `/v1/machines/${encodeURIComponent(fixture.machine.id)}`;
+            const read = (effectActionId: string, readPath = path) => app.inject({ method: 'GET', url: readPath,
+                headers: machineHeaders({ authorizationToken: authorization.token, effectActionId,
+                    method: 'GET', path: readPath, body: undefined, privateKey: fixture.keyPair.secretKey }) });
+            const control = await read(actionId);
+            expect(control.statusCode, control.body).toBe(200);
+            const retainedReview = await read('action.operations.get');
+            expect.soft(retainedReview.statusCode, retainedReview.body).toBe(200);
+            if (retainedReview.statusCode === 200) expect(retainedReview.json()).toEqual(control.json());
+            expect((await read('action.operations.cancel')).statusCode).toBe(401);
+            expect((await read('action.operations.list')).statusCode).toBe(401);
+            expect((await read('action.operations.get', '/v1/machines/unselected-machine')).statusCode).toBe(401);
+            const requestId = crypto.randomUUID();
+            const params = { operationId: 'held-setup-operation', refreshSetupReview: true };
+            const verifyRpc = (effectActionId: string, rpcMethod: string = ACTION_OPERATION_RPC_METHODS_V2.get,
+                machineId = fixture.machine.id) => {
+                const method = `${machineId}:${rpcMethod}`;
+                const execution = { v: 1 as const, authorization, effectActionId,
+                    target: authorization.binding.target, installationId: authorization.binding.installationId,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                        effectActionId, target: authorization.binding.target, installationId: authorization.binding.installationId,
+                        method, requestId, params, privateKey: fixture.keyPair.secretKey }) };
+                return verifyExternalActionMachineRpcExecution(execution, { method, requestId, params });
+            };
+            // This is the authenticated projection consumed by the actual get RPC;
+            // a passing currentness POST alone cannot authorize its transport.
+            expect(await verifyRpc('action.operations.get')).toMatchObject({ binding: authorization.binding,
+                effectActionId: 'action.operations.get', principal: { accountId: fixture.account.id } });
+            expect(await verifyRpc('action.operations.cancel', ACTION_OPERATION_RPC_METHODS_V1.cancel)).toBeNull();
+            expect(await verifyRpc('action.operations.list', ACTION_OPERATION_RPC_METHODS_V2.list)).toBeNull();
+            expect(await verifyRpc('action.operations.get', ACTION_OPERATION_RPC_METHODS_V2.get, 'unselected-machine')).toBeNull();
+            expect(await verifyRpc('action.operations.get', ACTION_OPERATION_RPC_METHODS_V2.list)).toBeNull();
+        } finally { await app.close(); }
     });
 
     it.each(['projects.prepare', 'projects.script.run', 'projects.compute.exec', 'projects.inspect', 'projects.worker.status', 'localServices.launcher.start',
