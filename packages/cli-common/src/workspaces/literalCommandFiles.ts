@@ -24,17 +24,27 @@ type Family = Readonly<{
     subcommand?: string;
     /** PowerShell flags are case-insensitive. */
     caseInsensitive?: boolean;
-    /** A folder operand loads its package.json `main` (default index.js). */
-    packageEntry?: true;
+    /** How the runtime resolves a path operand to the file it runs (extensions, folder `main`, index). */
+    resolution?: Resolution;
 }>;
 
+/**
+ * `extensions` are tried on the operand, a folder `main` and `index`. Node's CommonJS order is
+ * known, so only candidates up to the first present file can change what runs. tsx and bun
+ * resolve TypeScript and ES module forms in their own orders, so every candidate is recorded.
+ */
+type Resolution = Readonly<{ extensions: readonly string[]; recordEvery: boolean }>;
+const NODE_RESOLUTION: Resolution = { extensions: ['.js', '.json', '.node'], recordEvery: false };
+const TYPESCRIPT_RESOLUTION: Resolution = { extensions: ['.js', '.json', '.node', '.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.jsx'], recordEvery: true };
+
 const SHELL: Family = { inline: ['-c'], valued: ['-o', '+o', '-O', '+O'] };
-const NODE: Family = { packageEntry: true, inline: ['-e', '-p', '--eval', '--print'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--max-old-space-size', '--stack-size', '--inspect-port', '--title'] };
+const NODE: Family = { resolution: NODE_RESOLUTION, inline: ['-e', '-p', '--eval', '--print'], valued: ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--max-old-space-size', '--stack-size', '--inspect-port', '--title'] };
 const FAMILIES: Readonly<Record<string, Family>> = {
     sh: SHELL, bash: SHELL, zsh: SHELL, dash: SHELL, ksh: SHELL, fish: SHELL,
     source: { inline: [] }, '.': { inline: [] },
-    node: NODE, tsx: { ...NODE, subcommand: 'watch' },
-    deno: { ...NODE, subcommand: 'run' }, bun: { ...NODE, subcommand: 'run' },
+    node: NODE, tsx: { ...NODE, subcommand: 'watch', resolution: TYPESCRIPT_RESOLUTION },
+    // deno runs the exact operand; it does not resolve extensions or folders.
+    deno: { ...NODE, subcommand: 'run', resolution: undefined }, bun: { ...NODE, subcommand: 'run', resolution: TYPESCRIPT_RESOLUTION },
     python: { inline: ['-c', '-m'], valued: ['-W', '-X'] },
     ruby: { inline: ['-e'], valued: ['-r', '-I', '-C'] },
     perl: { inline: ['-e', '-E'] },
@@ -70,7 +80,7 @@ export type LiteralCommandLines = string | readonly (string | Readonly<{ command
 
 function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLines) {
     const files = new Set<string>();
-    const packageOperands = new Set<string>();
+    const packageOperands = new Map<string, Resolution>();
     const within = (path: string) => {
         const local = relative(root, path);
         return local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local) ? local : undefined;
@@ -127,7 +137,7 @@ function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLi
                     continue;
                 }
                 const file = add(token);
-                if (file && family.packageEntry) packageOperands.add(file);
+                if (file && family.resolution) packageOperands.set(file, family.resolution);
                 break;
             }
         }
@@ -176,24 +186,29 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
         facts.set(file, fact);
         return null;
     };
-    // Node's CommonJS order for a path operand: the exact file, then .js/.json/.node; for a
-    // folder, its package.json `main` (as a file, then as a folder's index), then its
-    // index.js/.json/.node. The first present file runs; every absent candidate tried before it
-    // is recorded too, because adding one would take precedence and must ask again.
+    // A path operand resolves to the exact file, then its extensions; for a folder, its
+    // package.json `main` (as a file, then as a folder's index), then its index. For Node the
+    // first present file runs, and every absent candidate tried before it is recorded too,
+    // because adding one would take precedence and must ask again. Other runtimes record all.
     const sub = (folder: string, name: string) => folder === '.' ? name : `${folder}/${name}`;
-    const asFile = (path: string) => path === '.' ? [] : [path, `${path}.js`, `${path}.json`, `${path}.node`];
-    const asIndex = (folder: string) => ['index.js', 'index.json', 'index.node'].map(name => sub(folder, name));
-    const resolveNodeOperand = async (operand: string): Promise<string | null> => {
+    const resolveOperand = async (operand: string, resolution: Resolution): Promise<string | null> => {
+        const asFile = (path: string) => path === '.' ? [] : [path, ...resolution.extensions.map(extension => `${path}${extension}`)];
+        const asIndex = (folder: string) => resolution.extensions.map(extension => sub(folder, `index${extension}`));
         const tried: LiteralCommandFileFactV1[] = [];
         const first = async (candidates: readonly string[]): Promise<'found' | 'missing' | Readonly<{ refused: string }>> => {
+            let found = false;
             for (const candidate of candidates) {
                 const fact = facts.get(candidate) ?? await read(candidate);
                 if ('refused' in fact) return fact;
-                if ('digest' in fact || 'linkTarget' in fact) { facts.set(candidate, fact); return 'found'; }
-                if ('absent' in fact) tried.push(fact);
+                if ('digest' in fact || 'linkTarget' in fact) {
+                    facts.set(candidate, fact);
+                    found = true;
+                    if (!resolution.recordEvery) return 'found';
+                } else if ('absent' in fact) tried.push(fact);
             }
-            return 'missing';
+            return found ? 'found' : 'missing';
         };
+        const settled = (result: Awaited<ReturnType<typeof first>>) => typeof result === 'object' || (result === 'found' && !resolution.recordEvery);
         const settle = (result: Awaited<ReturnType<typeof first>>) => {
             if (typeof result === 'object') return result.refused;
             for (const fact of tried) facts.set(fact.file, fact);
@@ -201,7 +216,7 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
         };
         const asPath = await first(asFile(operand));
         const operandFact = facts.get(operand);
-        if (asPath !== 'missing' || !operandFact || !('directory' in operandFact)) return settle(asPath);
+        if (settled(asPath) || !operandFact || !('directory' in operandFact)) return settle(asPath);
         // Deeper imports are setupInputs.
         const manifest = sub(operand, 'package.json');
         let main: string | undefined;
@@ -220,7 +235,7 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
             const entry = relative(root, resolve(root, operand, main)).replaceAll('\\', '/');
             if (entry !== '' && entry !== '..' && !entry.startsWith('../') && !isAbsolute(entry)) {
                 const asMain = await first([...asFile(entry), ...asIndex(entry)]);
-                if (asMain !== 'missing') return settle(asMain);
+                if (settled(asMain)) return settle(asMain);
             }
         }
         return settle(await first(asIndex(operand)));
@@ -228,8 +243,9 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
     for (const file of scan.files) {
         const refused = await record(file);
         if (refused) return { kind: 'refused', code: refused };
-        if (!scan.packageOperands.has(file)) continue;
-        const entryRefused = await resolveNodeOperand(file);
+        const resolution = scan.packageOperands.get(file);
+        if (!resolution) continue;
+        const entryRefused = await resolveOperand(file, resolution);
         if (entryRefused) return { kind: 'refused', code: entryRefused };
     }
     return { kind: 'read', files: [...facts.values()].sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0) };

