@@ -129,6 +129,7 @@ const sessionDbMocks = createDbMocks({
     sessionOrganizationLabel: ["findMany"],
     sessionOrganizationCheckpoint: ["findUnique"],
     sessionGrant: ["findMany"],
+    teamMembership: ["findFirst"],
     sessionMessage: ["findMany", "findFirst", "findUnique"],
     sessionPendingMessage: ["count"],
     sessionTurn: ["findFirst", "findMany"],
@@ -144,7 +145,7 @@ const txDbMocks = createDbMocks({
     homeSettings: ["findUnique"],
     homeGovernancePolicy: ["findUnique"],
     identityProviderInstance: ["findMany"],
-    teamMembership: ["findMany"],
+    teamMembership: ["findMany", "findFirst"],
     
     
     sessionTeamCredentialBinding: ["findMany"],

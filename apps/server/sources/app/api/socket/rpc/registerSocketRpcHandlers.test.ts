@@ -205,6 +205,7 @@ vi.mock("@/storage/db", async () => {
         ephemeralRunnerActivation: { findFirst: ephemeralRunnerActivationFindFirstMock },
         session: { findUnique: sessionFindUniqueMock, findFirst: sessionFindFirstMock, findMany: sessionFindManyMock },
         sessionGrant: { findUnique: sessionShareFindUniqueMock },
+        teamMembership: { findFirst: async () => null },
         accountApiToken: { findUnique: apiTokenFindUniqueMock, findFirst: apiTokenFindUniqueMock, updateMany: vi.fn(async () => ({ count: 1 })) },
         simpleCache: { findUnique: vi.fn(async () => ({ value: `srv_${'a'.repeat(32)}` })) },
     };

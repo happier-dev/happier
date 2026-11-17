@@ -40,6 +40,7 @@ vi.mock("@/storage/db", async (importOriginal) => {
             session: {
                 findUnique: (...args: unknown[]) => currentTx.session.findUnique(...args),
             },
+            teamMembership: { findFirst: async () => null },
         },
     };
 });
@@ -156,6 +157,7 @@ describe("pendingMessageService", () => {
             },
             sessionFollowEdge: { findMany: vi.fn(async () => []) },
             sessionGrant: { findMany: vi.fn(async () => []) },
+            teamMembership: { findFirst: vi.fn(async () => null) },
             
             
             managedMachine: { findUnique: vi.fn(async () => null) },

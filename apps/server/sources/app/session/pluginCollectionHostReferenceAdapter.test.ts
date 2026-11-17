@@ -56,6 +56,7 @@ function txFixture(input: Readonly<{
         tx: {
             session: { findUnique: sessionFindUnique },
             sessionGrant: { findUnique: sessionShareFindUnique },
+            teamMembership: { findFirst: async () => null },
             accountChange: { findUnique: accountChangeFindUnique },
         } as unknown as Tx,
         sessionShareFindUnique,

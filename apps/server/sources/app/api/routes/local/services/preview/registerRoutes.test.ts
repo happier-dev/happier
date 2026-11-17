@@ -50,7 +50,7 @@ vi.mock('@/storage/db', async () => {
         machine: { findFirst: machineFindFirst, findUnique: machineFindUnique,
             findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
                 (await Promise.all(where.id.in.map(id => machineFindUnique({ where: { id } })))).filter(row => row !== null),
-        }, session: { findUnique: sessionFindUnique }, account: { findUnique: async () => ({ tokenEpoch: 0, status: 'active' }) },
+        }, session: { findUnique: sessionFindUnique }, teamMembership: { findFirst: async () => null }, account: { findUnique: async () => ({ tokenEpoch: 0, status: 'active' }) },
         homeSettings: { findUnique: homeSettingsFindUnique }, homeGovernancePolicy: { findUnique: async () => null } };
     return { db: createDbTransactionMock(() => boundary).wrapDb(boundary) };
 });

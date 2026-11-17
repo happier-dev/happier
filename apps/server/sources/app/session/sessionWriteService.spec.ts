@@ -83,6 +83,7 @@ type SessionWriteTxMock = {
     };
     teamMembership: {
         findMany: MockFunction;
+        findFirst: MockFunction;
     };
 
     automationTrigger: {
@@ -340,6 +341,7 @@ const dbMocks = createDbMocks({
     session: ["findUnique"],
     sessionGrant: ["findUnique"],
     sessionMessage: ["findUnique", "findMany"],
+    teamMembership: ["findFirst"],
 } as const);
 const transactionBoundary = createDbTransactionMock(() => withSessionProjectionQueries(transactionQueue.shift() ?? currentTx));
 installDbModuleMock({ db: transactionBoundary.wrapDb(dbMocks.db) });
@@ -485,6 +487,7 @@ describe("sessionWriteService", () => {
             // against the same empty database relations as the Session rows.
             teamMembership: {
                 findMany: vi.fn().mockResolvedValue([]),
+                findFirst: vi.fn().mockResolvedValue(null),
             },
             
             

@@ -46,7 +46,7 @@ import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
     readAccountStoredContentCompatibilityForHttpRequest,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
-import { resolveSessionAccessForRowsInTx, resolveSessionAccessCapabilitiesForRowsInTx, SESSION_ACCESS_SESSION_BATCH_SIZE, type SessionAccessOperationDecision } from "@/app/session/access/sessionAccess";
+import { readSessionAccessProjectionContextInTx, resolveSessionAccessForRowsInTx, resolveSessionAccessCapabilitiesForRowsInTx, SESSION_ACCESS_SESSION_BATCH_SIZE, type SessionAccessOperationDecision, type SessionAccessProjectionContext } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
 import { loadPendingActivationPublicationsInTx } from '@/app/session/pending/publishPendingMutation';
@@ -90,7 +90,7 @@ async function findV2SessionDetailRowsInTx(tx: Tx, params: Readonly<{
     sessionIds: readonly string[];
     accessProjectionVersion?: number;
     usageProjection?: boolean;
-}>) {
+}> & SessionAccessProjectionContext) {
     const current = createV2SessionListRowSelect(params);
     const legacy = createV2SessionListLegacyRowSelect(params);
     const readCurrentRows = async () => {
@@ -215,6 +215,7 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                     : await readAccountFollowRuleProjectionRowsInTx(tx, { accountId: userId, authentication });
                 const result = new Map<string, SessionDetailCapture>();
                 const rows = await findV2SessionDetailRowsInTx(tx, { ...input,
+                    ...await readSessionAccessProjectionContextInTx(tx, [userId]),
                     sessionIds: managedIds ? batch.filter(id => managedIds.has(id)) : batch });
                 const combined = !runtimeManagedSubtree && input.turnResults
                     ? await resolveSessionAccessCapabilitiesForRowsInTx(tx, { accountId: userId, authentication }, rows,

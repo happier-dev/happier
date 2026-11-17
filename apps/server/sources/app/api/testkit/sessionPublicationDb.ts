@@ -21,6 +21,7 @@ export function createSessionPublicationDbFixture(params: SessionPublicationDbPa
                 session = row && { id: params.sessionId, account: { status: 'active' }, ...row };
                 return session ? [session] : [];
             } },
+            teamMembership: { findFirst: async () => null },
             sessionGrant: { findMany: async () => Array.isArray(session?.grants)
                 ? session.grants.map(value => ({ sessionId: params.sessionId, ...record(value) })) : [] },
         };

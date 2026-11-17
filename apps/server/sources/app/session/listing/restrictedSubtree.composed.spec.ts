@@ -34,7 +34,7 @@ const query: SessionListQueryV1 = { v: 1, storage: 'active', includeInactive: tr
 function fixture() {
     const mocks = createDbMocks({ account: ['findUnique', 'findMany'], session: ['findUnique', 'findFirst', 'findMany'],
         ephemeralRunnerActivation: ['findFirst'], machine: ['findFirst'], accessKey: ['findUnique'],
-        sessionFollowEdge: ['findMany'], teamMembership: ['findMany'], homeSettings: ['findUnique'],
+        sessionFollowEdge: ['findMany'], teamMembership: ['findMany', 'findFirst'], homeSettings: ['findUnique'],
         sessionGrant: ['findMany'],  
         homeGovernancePolicy: ['findUnique'], simpleCache: ['findUnique'] });
     const account = { id: 'account', status: 'active', tokenEpoch: 0, encryptionMode: 'plain' };

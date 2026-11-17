@@ -23,7 +23,9 @@ const requests = [{}, { capability: 'readTranscript' }, { capability: 'manageAcc
 describe('Session capability bundle admission', () => {
     it('reads facts once for multiple permissions and preserves same-grant delegation and the released seam', async () => {
         const findUnique = vi.fn(async () => row());
-        const results = await resolveSessionAccessCapabilityDecisions({ session: { findUnique } } as unknown as Tx, actor, requests);
+        // The reader holds the Team membership its row shows, so the projection keeps the collective branches.
+        const teamMembership = { findFirst: vi.fn(async () => ({ id: 'membership' })) };
+        const results = await resolveSessionAccessCapabilityDecisions({ session: { findUnique }, teamMembership } as unknown as Tx, actor, requests);
         expect(findUnique).toHaveBeenCalledTimes(1);
         expect(results.map(result => result.status)).toEqual(['allowed', 'allowed', 'allowed', 'allowed', 'unavailable', 'unavailable']);
         expect(results[0]).toMatchObject({ access: { accountId: 'reader', sessionId: 'session', level: 'admin' } });

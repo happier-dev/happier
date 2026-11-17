@@ -14,6 +14,7 @@ import {
     buildSessionAccessProjectionSelect,
     buildSessionAccessProjectionSelectForAccounts,
     projectEffectiveSessionAccess,
+    readSessionAccessProjectionContextInTx,
     type EffectiveSessionAccess,
     type SessionAccessProjectionContext,
 } from "@/app/session/access/sessionAccess";
@@ -318,7 +319,8 @@ export async function loadSessionViewerProjection(params: Readonly<{ accountId: 
         });
         const row = await tx.session.findFirst({
             where: { AND: [{ id: params.sessionId }, accessResolution.where] },
-            select: withSessionContentSelect(createSessionPersonalProjectionSelect(params.accountId)),
+            select: withSessionContentSelect(createSessionPersonalProjectionSelect(params.accountId,
+                await readSessionAccessProjectionContextInTx(tx, [params.accountId]))),
         }).then(decodeSessionStoredContent);
         if (!row) return null;
         const failureSequences = await loadSessionLatestFailureSequencesInTx(tx, [row]);

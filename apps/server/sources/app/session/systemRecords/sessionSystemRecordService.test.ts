@@ -65,7 +65,7 @@ type ProtocolActivationDatabase = Parameters<typeof initializeSessionSystemRecor
 type TxMock = {
     account: { findUnique: ReturnType<typeof vi.fn> };
     sessionGrant: { findMany: ReturnType<typeof vi.fn> };
-    teamMembership: { findMany: ReturnType<typeof vi.fn> };
+    teamMembership: { findMany: ReturnType<typeof vi.fn>; findFirst: ReturnType<typeof vi.fn> };
     sessionFollowEdge: { findMany: ReturnType<typeof vi.fn> };
     session: {
         findUnique: ReturnType<typeof vi.fn>;
@@ -100,6 +100,7 @@ vi.mock("@/storage/db", async () => {
             // PostgreSQL captures empty Home settings and governance in one joined statement.
             $queryRawUnsafe: async () => [{ revision: null, values: null, encryptedSecrets: null, authenticationPolicy: null }],
             session: { findUnique: testState.readAccessSession, fields: client.session.fields },
+            teamMembership: { findFirst: async () => null },
             // No stored Home rows: feature bits come from the (stubbed) deployment env.
             homeSettings: { findUnique: async () => null },
             homeGovernancePolicy: { findUnique: async () => null },
@@ -279,7 +280,7 @@ describe("sessionSystemRecordService account scoping", () => {
             sessionGrant: { findMany: vi.fn().mockResolvedValue([]) },
             
             
-            teamMembership: { findMany: vi.fn().mockResolvedValue([]) },
+            teamMembership: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
             // Standalone mutations run behind Account admission; these fixtures have no Follow edges.
             sessionFollowEdge: { findMany: vi.fn().mockResolvedValue([]) },
             session: {

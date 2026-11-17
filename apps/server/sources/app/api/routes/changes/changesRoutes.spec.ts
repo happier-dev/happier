@@ -9,6 +9,7 @@ const { db, reset: resetDbMocks } = createDbMocks({
     session: ["findUnique", "findMany"],
     sessionGrant: ["findUnique"],
     sessionPendingMessage: ["findMany"],
+    teamMembership: ["findFirst"],
 });
 
 const accountFindUnique = db.account.findUnique;

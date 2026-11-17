@@ -33,6 +33,7 @@ vi.mock("@/storage/db", async () => {
                 const result = await read({
                     ...inTxPostgresControlStatementMock,
                     session: { findUnique: findSession, findFirst: async () => null },
+                    teamMembership: { findFirst: async () => null },
                     account: { findUnique: async () => null },
                     ephemeralRunnerActivation: { findFirst: async () => null },
                     machine: { findFirst: async () => null },
