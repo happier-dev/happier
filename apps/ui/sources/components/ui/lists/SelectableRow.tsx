@@ -12,6 +12,7 @@ import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOptica
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { ITEM_TITLE_MAX_LINES_WITHOUT_SUBTITLE } from './itemTextClamp';
 import { HappierOptionRow, useHappierMaterialColorResolver, type HappierFocusable, type HappierOptionRowControlProps, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
+import { resolveSelectableRowPaint } from './selectableRowPaint';
 
 
 /**
@@ -85,15 +86,17 @@ export type SelectableRowProps = Readonly<{
     subtitleStyle?: StyleProp<TextStyle>;
 }>;
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create((theme) => {
+    const paint = resolveSelectableRowPaint(theme);
+    return {
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         // A row: the `md` step of the one radius base.
         borderRadius: theme.borderRadius.md,
-        backgroundColor: 'transparent',
+        backgroundColor: paint.background.color,
         borderWidth: RNStyleSheet.hairlineWidth || 1,
-        borderColor: 'transparent',
+        borderColor: paint.border.color,
     },
     rowSlim: {
         paddingHorizontal: theme.space.s16,
@@ -112,23 +115,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginVertical: theme.space.s2,
         borderRadius: theme.borderRadius.md,
     },
-    rowPressed: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    rowHovered: {
-        backgroundColor: theme.colors.surface.hover,
-    },
-    rowSelected: {
-        backgroundColor: theme.colors.surface.pressedOverlay,
-        borderColor: theme.colors.border.strong,
-    },
-    // Palette variant states (match old CommandPaletteItem styles exactly)
-    rowSelectablePressed: {
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    rowSelectableHovered: {
-        backgroundColor: theme.dark ? theme.colors.surface.elevated : theme.colors.surface.inset,
-    },
     rowDisabled: {
         opacity: 0.5,
     },
@@ -138,9 +124,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...MENU_ROW_SHAPE,
         marginVertical: 0,
         borderWidth: 0,
-    },
-    rowMenuSelected: {
-        backgroundColor: theme.colors.surface.selected,
     },
     left: {
         marginRight: theme.space.s12,
@@ -175,23 +158,23 @@ const stylesheet = StyleSheet.create((theme) => ({
     // The one menu row type, shared with plugin menus (`HAPPIER_MENU_ROW_TEXT`).
     title: {
         ...Typography.default(),
-        color: theme.colors.text.primary,
+        color: paint.foreground.color,
         fontSize: HAPPIER_MENU_ROW_TEXT.label.fontSize,
         lineHeight: HAPPIER_MENU_ROW_TEXT.label.lineHeight,
         letterSpacing: HAPPIER_MENU_ROW_TEXT.label.letterSpacing,
     },
     titleSelectable: {
-        color: theme.colors.text.primary,
+        color: paint.foreground.color,
         fontSize: 15,
         letterSpacing: -0.2,
     },
     titleDestructive: {
-        color: theme.colors.state.danger.foreground,
+        color: resolveSelectableRowPaint(theme, { destructive: true }).foreground.color,
     },
     subtitle: {
         ...Typography.default(),
         flexShrink: 1,
-        color: theme.colors.text.secondary,
+        color: paint.secondary.color,
         fontSize: HAPPIER_MENU_ROW_TEXT.subtitle.fontSize,
         lineHeight: HAPPIER_MENU_ROW_TEXT.subtitle.lineHeight,
     },
@@ -203,7 +186,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     subtitleSelectable: {
-        color: theme.colors.text.secondary,
+        color: paint.secondary.color,
         letterSpacing: -0.1,
     },
     right: {
@@ -221,7 +204,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
     },
-}));
+    };
+});
 
 export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>, SelectableRowProps>(function SelectableRow(props, ref) {
     const { theme } = useUnistyles();
@@ -295,26 +279,18 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
             }
         : (disabled ? ({ disabled: true } as const) : undefined);
     // Retain the native adapter's registered style binding and web-only paint.
-    const rowStyle = (pressed: boolean) => ([
+    const rowStyle = (pressed: boolean) => {
+        const paint = resolveSelectableRowPaint(theme, { selected, hovered: isHovered, pressed, disabled, menu: isMenu, selectable: variant === 'selectable' });
+        return [
         styles.row,
         rowVariantStyle,
         Platform.OS === 'web' && disabled ? ({ cursor: 'not-allowed' } satisfies React.CSSProperties) : null,
-        pressed && !disabled
-            ? (variant === 'selectable' ? styles.rowSelectablePressed : styles.rowPressed)
-            : null,
-        isHovered && !selected && !disabled
-            ? (variant === 'selectable' ? styles.rowSelectableHovered : styles.rowHovered)
-            : null,
-        selected
-            ? (isMenu ? styles.rowMenuSelected : styles.rowSelected)
-            : null,
-        selected ? { backgroundColor: paintColor(isMenu ? theme.colors.surface.selected : theme.colors.surface.pressedOverlay) }
-            : isHovered && !disabled ? { backgroundColor: paintColor(variant === 'selectable' ? (theme.dark ? theme.colors.surface.elevated : theme.colors.surface.inset) : theme.colors.surface.hover) }
-                : pressed && !disabled ? { backgroundColor: paintColor(theme.colors.surface.pressed) } : null,
+        { backgroundColor: paint.background.source.kind === 'fixed' ? paint.background.color : paintColor(paint.background.color), borderColor: paint.border.color },
         disabled ? styles.rowDisabled : null,
         isMenu ? styles.rowMenu : null,
         props.containerStyle,
-    ]) as HappierStyleProp;
+        ] as HappierStyleProp;
+    };
     const handleKeyDown = React.useCallback((event: unknown) => {
         props.onKeyDown?.(event);
     }, [props.onKeyDown]);

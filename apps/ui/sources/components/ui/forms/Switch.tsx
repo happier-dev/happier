@@ -6,6 +6,7 @@ import { HappierSwitchNative, type HappierSwitchProps } from '@happier-dev/plugi
 import { ITEM_ROW_SWITCH, useItemRowAccessibleName, useItemRowOwnsSwitch } from '@/components/ui/lists/ItemRowAccessibleName';
 
 import { Deferred } from './Deferred';
+import { resolveAppSwitchPaint } from './switchPaint';
 
 export type AppSwitchProps = SwitchProps & {
     compact?: boolean;
@@ -31,6 +32,7 @@ export const Switch = React.forwardRef<React.ElementRef<typeof ReactNativeSwitch
 ) {
     const controlRef = useForwardedControlRef(ref);
     const { theme } = useUnistyles();
+    const paint = resolveAppSwitchPaint(theme);
     const rowAccessibleName = useItemRowAccessibleName();
     const rowOwnsSwitch = useItemRowOwnsSwitch();
     const accessibleName = rest.accessibilityLabel ?? rest['aria-label'] ?? rowAccessibleName;
@@ -41,10 +43,10 @@ export const Switch = React.forwardRef<React.ElementRef<typeof ReactNativeSwitch
                 onValueChange={onValueChange ?? undefined}
                 disabled={disabled ?? undefined}
                 colors={{
-                    trackOn: theme.colors.switch.track.active,
-                    trackOff: theme.colors.switch.track.inactive,
-                    thumb: theme.colors.switch.thumb.active,
-                    focusRing: theme.colors.border.focus,
+                    trackOn: paint.trackOn.color,
+                    trackOff: paint.trackOff.color,
+                    thumb: paint.thumb.color,
+                    focusRing: paint.focusRing.color,
                 }}
                 accessibilityLabel={accessibleName}
                 accessibilityHint={rest.accessibilityHint}

@@ -16,6 +16,7 @@ import { BUNDLED_FONTS } from '@/constants/bundledFonts';
 import { PluginUiHostApiSurfaceThemeV1Schema } from '@happier-dev/protocol/plugins/ui/surfaceContext';
 
 import {
+    projectPluginUiControlPalette,
     PLUGIN_UI_THEME_COLOR_TOKEN_IDS,
     projectPluginUiHostPalette,
     projectPluginUiTheme,
@@ -35,6 +36,19 @@ function builtInProfile(index: number): ThemeProfileV1 {
 }
 
 describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
+    it('selects field and switch paints from the same inputs as their rendered host palette', () => {
+        const theme = themeFor(null, 'dark');
+        const paints = projectPluginUiControlPalette(theme.colors);
+        expect(paints).toMatchObject({
+            controlBorder: theme.colors.border.strong,
+            fieldBackground: theme.colors.edge.fill,
+            placeholder: theme.colors.input.placeholder,
+            switchTrackOn: theme.colors.switch.track.active,
+            switchTrackOff: theme.colors.switch.track.inactive,
+            switchThumb: theme.colors.switch.thumb.active,
+        });
+        expect(projectPluginUiHostPalette(theme)).toMatchObject(paints);
+    });
     it('carries the prepared native surface table through the strict host snapshot', () => {
         const theme = themeFor(null, 'dark');
         const surfaces = { composer: { root: { base: { paddingTop: 7, backgroundColor: 'rgb(1, 2, 3)' }, states: { disabled: { opacity: 0.4 } } } } };

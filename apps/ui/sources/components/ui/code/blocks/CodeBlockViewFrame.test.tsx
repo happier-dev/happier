@@ -60,6 +60,16 @@ function copyPlacementStyle(tree: renderer.ReactTestRenderer): Record<string, un
 }
 
 describe('CodeBlockViewFrame', () => {
+    it('keeps frame provenance paired with the actual inner material calculation', async () => {
+        mockPlatform('web');
+        const { lightTheme } = await import('@/theme');
+        const { resolveCodeBlockFramePaint } = await import('./codeBlockPaint');
+        const { glassContentFill } = await import('../../glass/glassSurfacePaint');
+        const paint = resolveCodeBlockFramePaint(lightTheme);
+        expect(paint.background.color).toBe(glassContentFill(lightTheme.colors.surface.inset, lightTheme.colors));
+        expect(paint.background.source).toEqual({ kind: 'derived', from: ['surface.inset', 'surface.selected'] });
+        expect(paint.border.source).toEqual({ kind: 'token', ref: 'border.default' });
+    });
     beforeEach(() => {
         vi.resetModules();
         vi.doMock('react-native-unistyles', async () => {

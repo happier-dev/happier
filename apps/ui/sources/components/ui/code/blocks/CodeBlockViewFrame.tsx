@@ -3,7 +3,7 @@ import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
+import { resolveCodeBlockFramePaint } from './codeBlockPaint';
 
 import { Text } from '@/components/ui/text/Text';
 import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
@@ -49,6 +49,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     children,
 }) => {
     const { theme } = useUnistyles();
+    const paint = resolveCodeBlockFramePaint(theme);
     const behavior = resolveHappierCodeBlockLayout({
         language,
         showHeaderRow,
@@ -81,7 +82,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                 {headerLeft ? (
                     headerLeft
                 ) : behavior.language ? (
-                    <Text selectable={selectable} style={[styles.headerText, { color: theme.colors.text.secondary }]}>
+                    <Text selectable={selectable} style={[styles.headerText, { color: paint.headerForeground.color }]}>
                         {behavior.language}
                     </Text>
                 ) : (
@@ -103,7 +104,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                 styles.container,
                 showCopyButton && shouldOverlayCopyButton ? styles.containerWithOverlaidCopy : null,
                 // Working content: solid it is its own fill; over glass content the material's inner translucent fill, never the cleared page plane.
-                { backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors), borderColor: theme.colors.border.default },
+                { backgroundColor: paint.background.color, borderColor: paint.border.color },
                 containerStyle,
                 themeSurfaceStyles.surface({ surface: 'code-block', part: 'root', state: 'default' }),
             ]}

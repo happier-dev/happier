@@ -5,6 +5,7 @@ import { HappierInlineCode, type HappierInlineCodeTextProps } from '@happier-dev
 
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
+import { resolveInlineCodePaint } from './inlineCodePaint';
 
 /** Core's text owner, so the chip follows the user's font scale. */
 function InlineCodeText(props: HappierInlineCodeTextProps) {
@@ -18,15 +19,16 @@ function InlineCodeText(props: HappierInlineCodeTextProps) {
  */
 export const InlineCode = React.memo((props: Readonly<{ children: React.ReactNode; style?: StyleProp<TextStyle>; testID?: string }>) => {
     const { theme } = useUnistyles();
+    const paint = resolveInlineCodePaint(theme);
     return (
         <HappierInlineCode
             Text={InlineCodeText}
             testID={props.testID}
             fontFamily={Typography.mono().fontFamily}
-            ink={theme.colors.text.primary}
+            ink={paint.foreground.color}
             // Ink, not a surface step: the dark raised card is `surface.elevated` itself, so a chip filled
             // with it vanished on every card. The same selection ink the transcript's Markdown code uses.
-            fill={theme.colors.surface.selected}
+            fill={paint.background.color}
             paddingHorizontalPx={theme.space.s4}
             {...(props.style === undefined ? {} : { style: props.style as HappierInlineCodeTextProps['style'] })}
         >

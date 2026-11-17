@@ -20,9 +20,20 @@ function FloatingButtonScene() {
     </HappierMaterialRoleProvider>;
 }
 
-const { RoundButton, RoundButtonSizeScope } = await import('./RoundButton');
+const buttonModule = await import('./RoundButton');
+const { RoundButton, RoundButtonSizeScope } = buttonModule;
 
 describe('RoundButton', () => {
+    it('reports the inputs actually blended into a disabled primary', () => {
+        const paint = buttonModule.resolveRoundButtonPaint(lightTheme, {
+            display: 'default', disabled: true,
+            secondaryFill: { color: 'transparent', source: { kind: 'fixed' } },
+        });
+        expect(paint.background.source).toEqual({ kind: 'derived', from: ['surface.base', 'control.button.primary.background'] });
+        expect(paint.foreground.source).toEqual({ kind: 'derived', from: ['surface.base', 'control.button.primary.foreground'] });
+        expect(paint.background.color).toBe(Color(lightTheme.colors.surface.base).mix(Color(lightTheme.colors.button.primary.background), 0.38).rgb().string());
+        expect(paint.border.source).toEqual({ kind: 'fixed' });
+    });
     it('keeps the primary and disabled primary solid inside floating material', async () => {
         const screen = await renderScreen(<FloatingButtonScene />);
         const fillOf = (id: string) => {

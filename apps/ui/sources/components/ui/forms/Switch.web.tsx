@@ -5,6 +5,7 @@ import { HappierSwitch, type HappierSwitchProps } from '@happier-dev/plugin-ui/p
 
 import { ITEM_ROW_SWITCH, useItemRowAccessibleName, useItemRowOwnsSwitch } from '@/components/ui/lists/ItemRowAccessibleName';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { resolveAppSwitchPaint } from './switchPaint';
 
 export type AppSwitchProps = SwitchProps & {
     compact?: boolean;
@@ -31,6 +32,7 @@ export const Switch = React.forwardRef<unknown, AppSwitchProps>(function Switch(
 ) {
     const controlRef = useForwardedControlRef(ref);
     const { theme } = useUnistyles();
+    const paint = resolveAppSwitchPaint(theme);
     const rowAccessibleName = useItemRowAccessibleName();
     const rowOwnsSwitch = useItemRowOwnsSwitch();
     const reducedMotion = useReducedMotionPreference();
@@ -43,10 +45,10 @@ export const Switch = React.forwardRef<unknown, AppSwitchProps>(function Switch(
             disabled={disabled ?? undefined}
             size={compact ? 'compact' : 'default'}
             colors={{
-                trackOn: theme.colors.switch.track.active,
-                trackOff: theme.colors.switch.track.inactive,
-                thumb: theme.colors.switch.thumb.active,
-                focusRing: theme.colors.border.focus,
+                trackOn: paint.trackOn.color,
+                trackOff: paint.trackOff.color,
+                thumb: paint.thumb.color,
+                focusRing: paint.focusRing.color,
             }}
             accessibilityLabel={accessibleName}
             accessibilityHint={rest.accessibilityHint}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 
@@ -62,10 +62,9 @@ describe('Switch.web', () => {
         if (!pressable) {
             throw new Error('Expected compact switch pressable to render');
         }
-        const style = typeof pressable.props.style === 'function'
-            ? pressable.props.style({ pressed: false })
-            : pressable.props.style;
-        const flattened = Object.assign({}, ...(Array.isArray(style) ? style : [style]).filter(Boolean));
+        const track = screen.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'switch' && node.props.dataSet?.part === 'track')[0];
+        expect(track).toBeDefined();
+        const flattened = flattenTestStyle(track!.props.style);
 
         expect(pressable.props.accessibilityLabel).toBe('Fast responses');
         expect(pressable.props.accessibilityState).toMatchObject({ checked: false, disabled: false });

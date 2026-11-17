@@ -10,7 +10,7 @@ import Animated from 'react-native-reanimated';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
-import { combinedWebGradientStyle, GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
+import { combinedWebGradientStyle, GradientSurface } from '@/components/ui/surfaces/GradientSurface';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { resolveAndroidTranslucentUnlift, resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
@@ -19,36 +19,12 @@ import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback'
 import { type HappierHitReach } from '@happier-dev/plugin-ui/environment';
 import { happierMaterialGradient, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
-import { parseThemeColor } from '@/theme/parseThemeColor';
+import { fixedThemePaint } from '@/theme/profiles/themePaint';
+import { resolveRoundButtonPaint, type RoundButtonDisplay } from './roundButtonPaint';
+export { resolveRoundButtonPaint, type RoundButtonDisplay } from './roundButtonPaint';
 import { GlassBackedInkContext, glassThemeInkWebStyle, useGlassOwnFillOnPicture } from '@/components/ui/glass/glassBackedInk';
 import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 
-
-/** How much of the primary shows while it cannot act (unified-work lab `.uwr-dis`, opacity .38). */
-const DISABLED_PRIMARY_PRESENCE = 0.38;
-const disabledPrimaryColors = new WeakMap<object, Readonly<{ backgroundColor: string; textColor: string }>>();
-
-/** The primary's fill and words at {@link DISABLED_PRIMARY_PRESENCE} over the page, as solid colours; memoized per theme. */
-function resolveDisabledPrimaryColors(theme: Readonly<{ colors: Readonly<{
-    surface: Readonly<{ base: string }>;
-    button: Readonly<{ primary: Readonly<{ background: string; tint: string; disabled: string }> }>;
-}> }>): Readonly<{ backgroundColor: string; textColor: string }> {
-    const existing = disabledPrimaryColors.get(theme);
-    if (existing) return existing;
-    const { surface, button } = theme.colors;
-    const page = parseThemeColor(surface.base);
-    const background = parseThemeColor(button.primary.background);
-    const tint = parseThemeColor(button.primary.tint);
-    const resolved = page && background && tint
-        ? {
-            backgroundColor: page.mix(background, DISABLED_PRIMARY_PRESENCE).rgb().string(),
-            textColor: page.mix(tint, DISABLED_PRIMARY_PRESENCE).rgb().string(),
-        }
-        // A custom theme value the parser cannot read keeps the theme's own disabled slab.
-        : { backgroundColor: button.primary.disabled, textColor: button.primary.tint };
-    disabledPrimaryColors.set(theme, resolved);
-    return resolved;
-}
 
 /**
  * Size says where a button stands; `display` says how much it matters. `normal` is the page control height: every
@@ -112,7 +88,6 @@ function resolveRoundButtonTextRole(role: HappierTypeRole, compactInline: boolea
  * action for an irreversible operation. `inverted` is a bare text button. `quietDestructive` is the bare
  * text button in the danger ink: a leave or remove action beside the view's primary one (Turn off · Done).
  */
-export type RoundButtonDisplay = 'default' | 'secondary' | 'destructive' | 'inverted' | 'quietDestructive';
 
 const stylesheet = StyleSheet.create((theme) => ({
     reasonAnchor: {
@@ -324,40 +299,6 @@ export const RoundButton = React.memo((props: {
     }, [props.onPress, props.action]);
     const paintColor = useHappierMaterialColorResolver();
     const secondaryFill = paintColor(theme.colors.edge.fill);
-    const displays: { [key in RoundButtonDisplay]: {
-        textColor: string,
-        backgroundColor: string,
-        borderColor: string,
-        gradient?: SurfaceGradient,
-    } } = {
-        default: {
-            backgroundColor: theme.colors.button.primary.background,
-            gradient: theme.colors.button.primary.gradient,
-            borderColor: 'transparent',
-            textColor: theme.colors.button.primary.tint
-        },
-        secondary: {
-            backgroundColor: secondaryFill,
-            borderColor: theme.colors.border.strong,
-            textColor: theme.colors.text.primary,
-        },
-        destructive: {
-            backgroundColor: secondaryFill,
-            borderColor: theme.colors.state.danger.border,
-            // The border keeps the state red; label text takes the deeper danger text role (AA at small sizes).
-            textColor: theme.colors.state.danger.textForeground,
-        },
-        inverted: {
-            backgroundColor: 'transparent',
-            borderColor: 'transparent',
-            textColor: theme.colors.text.primary,
-        },
-        quietDestructive: {
-            backgroundColor: 'transparent',
-            borderColor: 'transparent',
-            textColor: theme.colors.state.danger.textForeground,
-        },
-    }
 
     const pressFeedback = usePressFeedback();
     // A disabled button with a reason stays reachable: a pointer gets it on hover, the keyboard on focus, and a finger,
@@ -381,14 +322,20 @@ export const RoundButton = React.memo((props: {
     // The pill draws at its design size under every pointer. Under a finger the shared Pressable reaches
     // the touch target with its hit area (native hitSlop, the web's invisible frame), never by growing
     // the button (DESIGN.md → touch targets are hit areas).
-    const baseDisplay = displays[props.display || 'default'];
     // A disabled primary is still the primary: its own fill and words, receded into the page
     // (unified-work lab `.uwr-dis`), so the one action of a view stays recognisable while it waits
     // for its reason. Laid over the page as solid colours, it never shows floating material through.
     const disabledPrimary = props.disabled === true && (props.display ?? 'default') === 'default';
-    const display: (typeof displays)[RoundButtonDisplay] = disabledPrimary
-        ? { ...resolveDisabledPrimaryColors(theme), borderColor: 'transparent' }
-        : baseDisplay;
+    const displayPaint = resolveRoundButtonPaint(theme, {
+        display: props.display, disabled: props.disabled,
+        secondaryFill: fixedThemePaint(secondaryFill),
+    });
+    const display = {
+        backgroundColor: displayPaint.background.color,
+        textColor: displayPaint.foreground.color,
+        borderColor: displayPaint.border.color,
+        gradient: displayPaint.gradient,
+    };
     const textColor = (props.display ?? 'default') === 'default' && !disabledPrimary ? paintColor(display.textColor, theme.colors.text.primary, 'solidControl') : display.textColor;
     const pillBackgroundColor = callerBackgroundColor ?? display.backgroundColor;
     // A pill with its own fill on the Wallpaper picture keeps the theme's ink for its label and mark.

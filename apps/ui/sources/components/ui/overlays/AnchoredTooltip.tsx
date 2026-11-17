@@ -14,6 +14,7 @@ import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { Typography } from '@/constants/Typography';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { resolveTooltipPaint } from './tooltipPaint';
 
 const TOOLTIP_RADIUS_PX = 6;
 /** Keeps a tooltip off the window's edge when it is clamped there. */
@@ -71,15 +72,17 @@ export function AnchoredTooltipBubble(props: Readonly<{ label: string; content?:
 
 // A tooltip is the smallest floating surface: no hairline of its own, only the rim's top-left light (owner,
 // 2026-11-11), and the tooltip step of the elevation ladder.
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create((theme) => {
+    const paint = resolveTooltipPaint(theme);
+    return {
     bubble: {
         pointerEvents: 'none',
         paddingHorizontal: theme.space.s8,
         paddingVertical: theme.space.s4,
         borderRadius: TOOLTIP_RADIUS_PX,
-        backgroundColor: theme.colors.surface.elevated,
+        backgroundColor: paint.background.color,
         ...resolveThemeSurfaceChromeStyle({
-            borderColor: theme.colors.border.modal,
+            borderColor: paint.border.color,
             edge: resolveThemeRaisedEdge(theme, 'modal'),
             rim: surfaceUsesRim('floating', theme.dark),
             shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[2]),
@@ -89,6 +92,7 @@ const styles = StyleSheet.create((theme) => ({
 
         ...Typography.variant('meta'),
 
-        color: theme.colors.text.primary,
+        color: paint.foreground.color,
     },
-}));
+    };
+});

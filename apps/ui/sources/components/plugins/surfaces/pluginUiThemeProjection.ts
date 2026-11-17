@@ -20,6 +20,8 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import type { Theme } from '@/theme';
 import type { ThemeColorTokenId } from '@/theme/tokens/themeColorTokenDefinitions';
 import { getThemeStylesheetCss, subscribeThemeStylesheet } from '@/theme/css/themeStylesheet';
+import { projectPluginUiControlPalette } from './pluginUiControlPaint';
+export { projectPluginUiControlPalette } from './pluginUiControlPaint';
 
 /**
  * The semantic theme projection for executable plugin UI (§3.3, UI-D12).
@@ -311,6 +313,7 @@ export function usePluginUiHostPalette(theme: Theme): HappierUiPalette {
 export function projectPluginUiHostPalette(theme: Pick<Theme, 'colors' | 'dark'> & Readonly<{ borderRadius: Pick<Theme['borderRadius'], 'lg'> }>): HappierUiPalette {
     const colors = theme.colors;
     const palette: HappierUiPalette = Object.freeze({
+        ...projectPluginUiControlPalette(colors),
         page: colors.surface.base,
         // A page sheet is the app's in-flow card (W3 on light): its fill, and its lip and grounding below.
         sheet: colors.edge.cardFill,
@@ -319,15 +322,9 @@ export function projectPluginUiHostPalette(theme: Pick<Theme, 'colors' | 'dark'>
         rowDivider: colors.border.subtle,
         listRowRule: colors.border.divider,
         groupDivider: colors.border.faint,
-        controlBorder: colors.border.strong,
         controlEdge: resolveThemeControlEdge(theme, 'strong') ?? undefined,
-        fieldBackground: colors.edge.fill,
-        placeholder: colors.input.placeholder,
         accentGloss: resolveThemeGloss(theme) ?? undefined,
         selection: colors.button.primary.background,
-        switchTrackOn: colors.switch.track.active,
-        switchTrackOff: colors.switch.track.inactive,
-        switchThumb: colors.switch.thumb.active,
         segmentTrack: colors.segmentedControl.trackBackground,
         segmentThumb: colors.segmentedControl.activeBackground,
         segmentThumbLift: shadowLevelStyle(colors.shadowLevels[1]),

@@ -1719,3 +1719,4 @@ export { HappierPoliteAccessibilityStatus } from './feedback/PoliteAccessibility
 export { UsageMeterRow, UsageMeterStack, USAGE_METER_METRICS, type UsageMeterRowProps, type UsageMeterStackProps, type UsageMeterSize, type UsageMeterTone } from './data/UsageMeterRow.js';
 
 export { OfferedChoices, OfferedChoiceFeedbackInput, type OfferedChoice, type OfferedChoicesProps, type OfferedChoiceButtonProps, type OfferedChoiceFeedbackInputProps, type OfferedChoiceFeedbackInputHostProps } from './interaction/OfferedChoices.js';
+export { resolveHappierFieldTextColors } from './form/fieldColors.js';
