@@ -4,6 +4,7 @@ import { resolveMachineAgentState } from './resolveMachineAgentState';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServicesAccountGroupOptionsByServiceId } from '@happier-dev/agents';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { areTeamResourceConnectedServiceSelectionsEqual } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { formatConnectedAccountNameInline, presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
@@ -45,11 +46,12 @@ export function resolveMachineAgentSignIn(input: Readonly<{
     const selectedBindings = Object.entries(input.credentialBindings?.bindingsByServiceId ?? {})
         .filter(([serviceId, binding]) => binding.source !== 'native' && !input.suppressedServiceIds?.has(serviceId));
     const usesConnected = selectedBindings.length > 0;
-    // Absent profile rows mean the projection could not evaluate authentication,
+    // Absent profile rows or a Team catalog mean the projection could not evaluate authentication,
     // unlike an evaluated empty list or a known unhealthy selected profile.
     const unknown = selectedBindings.some(([serviceId, binding]) => {
         const service = input.connectedServices.find((service) => service.serviceId === serviceId);
-        return !service || (binding.source === 'connected' && service.profiles === undefined);
+        return !service || (binding.source === 'connected' && service.profiles === undefined)
+            || (binding.source === 'team_resource' && input.teamCredentialResources === undefined);
     });
     const status = input.credentialBindingsReady === false ? 'unknown'
         : connected ? 'signedIn' : usesConnected ? unknown ? 'unknown' : 'signedOut' : input.native.status;
@@ -75,6 +77,8 @@ export function resolveMachineAgentSignIn(input: Readonly<{
 
 export type MachineAgentCredentialSelection = Readonly<{
     credentialBindings: ConnectedServiceBindingsV2 | null;
+    /** Selected model intent; authentication stays unknown until its route has been evaluated. */
+    modelRef?: SessionModelRef | null;
     providerRoute?: Readonly<{
         ready: boolean;
         suppressedConnectedServiceIds: readonly string[];
@@ -86,6 +90,9 @@ export type MachineAgentCredentialSelection = Readonly<{
 /** Account-default inventory and explicit Session selection share the same credential decision. */
 export function projectMachineAgentForCredential(agent: MachineAgent | null | undefined, selection: MachineAgentCredentialSelection): MachineAgent | null {
     if (!agent) return null;
+    const modelRef = selection.modelRef;
+    const unreadRoute = selection.providerRoute == null && modelRef != null
+        && ('source' in modelRef ? modelRef.source !== 'native' : modelRef.providerConnectionId !== null);
     const suppressedServiceIds = new Set((selection.providerRoute?.ready ? selection.providerRoute.suppressedConnectedServiceIds : [])
         .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null));
     // The selected route's exact declaration owns accepted services. Inventory
@@ -109,7 +116,7 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
         // An unread default can make authentication unknown without withdrawing known installation facts.
         known: !agent.unavailableReason && ((agent.installed && agent.signIn.native !== undefined) || (agent.state !== 'unknown' && agent.state !== 'checking')),
         checking: agent.state === 'checking',
-        credentialRouteReady: selection.credentialBindingsReady === false ? false : selection.providerRoute?.ready,
+        credentialRouteReady: selection.credentialBindingsReady === false || unreadRoute ? false : selection.providerRoute?.ready,
         authenticationRequired }) };
 }
 

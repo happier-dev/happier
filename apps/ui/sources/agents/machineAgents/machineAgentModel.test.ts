@@ -1,9 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import { projectMachineAgent, projectMachineAgentForCredential, reconcileMachineAgents, resolveMachineAgentSignIn } from './machineAgentModel';
 import type { MachineAgent } from './machineAgentTypes';
+import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { resolveReviewWalkthroughPlan } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 
 describe('machine agent projection', () => {
+    it.each(['account_provider_connection', 'team_resource'] as const)('defers unread %s model authentication to route admission', source => {
+        const agent = projectMachineAgent({ agentId: 'codex', title: 'Codex', checking: false, stale: false, job: null,
+            connectedServices: [], facts: { agentId: 'codex', title: 'Codex', installed: true, version: '1', latestVersion: null,
+                update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+                platform: { supported: true }, install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] } });
+        const ref: SessionModelRef = source === 'account_provider_connection'
+            ? { source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a', providerConnectionId: 'pc_work' }
+            : { source, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a',
+                teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 0, deliveryMode: 'brokered' };
+        const native: SessionModelRef = {
+            source: 'native', agentTargetKey: ref.agentTargetKey, modelId: ref.modelId,
+        };
+        expect(projectMachineAgentForCredential({ ...agent, signIn: { ...agent.signIn,
+            native: { status: 'signedIn', loginSupport: 'login_terminal' } } }, { credentialBindings: null, modelRef: native })?.state).toBe('ready');
+        expect(projectMachineAgentForCredential(agent, { credentialBindings: null, modelRef: native })?.state).toBe('needsSignIn');
+        expect(projectMachineAgentForCredential(agent, { credentialBindings: null, modelRef: ref })?.state).toBe('unknown');
+        expect(projectMachineAgentForCredential({ ...agent, installed: false }, { credentialBindings: null, modelRef: ref })?.state).toBe('notInstalled');
+        expect(projectMachineAgentForCredential({ ...agent, platform: { supported: false, reason: 'arch' } },
+            { credentialBindings: null, modelRef: ref })?.state).toBe('unsupported');
+    });
+    it('distinguishes an unread Team credential catalog from a known missing selected resource', () => {
+        const serviceId = 'happier.agent.codex/openai-codex';
+        const agent = projectMachineAgent({ agentId: 'codex', title: 'Codex', checking: false, stale: false, job: null,
+            connectedServices: [{ serviceId, title: 'Codex', connected: false, healthy: false, profileLabel: null, profiles: [] }],
+            facts: { agentId: 'codex', title: 'Codex', installed: true, version: '1', latestVersion: null,
+                update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+                platform: { supported: true }, install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] } });
+        const credentialBindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
+            [serviceId]: { source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' },
+        } };
+        expect(projectMachineAgentForCredential(agent, { credentialBindings, teamCredentialResources: [] })?.state).toBe('needsSignIn');
+        expect(projectMachineAgentForCredential(agent, { credentialBindings })?.state).toBe('unknown');
+    });
     it('retains published installation without inventing probe or authentication readiness across credential projections', () => {
         const agent = projectMachineAgent({ agentId: 'claude', title: 'Claude', facts: null, installed: true,
             checking: false, stale: false, connectedServices: [], job: null });

@@ -647,10 +647,11 @@ export function useNewSessionConnectedServices(params: Readonly<{
 
   const selectedCredentialMachineAgent = React.useMemo(() => projectMachineAgentForCredential(params.machineAgent, {
     credentialBindings: connectedServicesBindingsPayload,
+    modelRef: params.modelSelection,
     providerRoute: selectedProviderRoute,
     groupOptionsByServiceId: connectedServiceAccountGroupOptionsByServiceId,
     teamCredentialResources: params.teamCredentialResources,
-  }), [params.machineAgent, connectedServicesBindingsPayload, selectedProviderRoute, connectedServiceAccountGroupOptionsByServiceId, params.teamCredentialResources]);
+  }), [params.machineAgent, params.modelSelection, connectedServicesBindingsPayload, selectedProviderRoute, connectedServiceAccountGroupOptionsByServiceId, params.teamCredentialResources]);
   const connectedServicesRecoveryAction = React.useMemo<SessionInstrumentStripLineAction | null>(() => {
     const failure = selectedCredentialMachineAgent?.signIn.connectedAccountFailure;
     if (connectedAccountDefaultsStatus === 'ready' && failure) return {
