@@ -19642,6 +19642,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         or: '或',
         in: '在',
         if: '如果',
+        otherwise: '否则 →',
+        leadsTo: '→',
         on: '在',
         then: '然后',
         reports: '→ 返回',

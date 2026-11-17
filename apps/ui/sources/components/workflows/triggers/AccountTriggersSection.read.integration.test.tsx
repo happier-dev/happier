@@ -68,6 +68,49 @@ afterEach(async () => {
 });
 
 describe('Account trigger HTTP read failure and recovery', () => {
+    it('keeps a conditional Builder editable through its branch selections and full-editor handoff', async () => {
+        await loadSyncSingletonForTests();
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://conditional-sentence-${crypto.randomUUID()}.test`, accountId: 'conditional-sentence',
+            request: homeRequest(async () => json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 })),
+        });
+        disposals.push(() => account.dispose());
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { WorkflowSentenceBuilder } = await import('../sentence/WorkflowSentenceBuilder');
+        const { WorkflowDefinitionV1Schema } = await import('@happier-dev/protocol/workflows/workflowV1');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const { router } = await import('expo-router');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (lifetime === null) throw new Error('Expected the Builder Account lifetime');
+        const command = (id: string) => ({ kind: 'action', id, actionId: 'machines.command.run', input: {
+            machineId: { kind: 'literal', value: 'machine-a' }, command: { kind: 'literal', value: `echo ${id}` },
+        } });
+        const definition = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{
+            kind: 'if', id: 'gate', when: { kind: 'exists', value: { kind: 'input', name: 'goal' } },
+            then: [command('deep')], otherwise: [command('quick')],
+        }], inputs: [{ name: 'goal', valueType: 'string', required: true }] });
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        disposals.unshift(async () => restorePopoverGlobals());
+        const screen = await renderScreen(<WorkflowSentenceBuilder anchorRef={React.createRef<View>()}
+            intent={{ name: 'Review changes', definition }} accountLifetime={lifetime} onRequestClose={() => {}} />);
+        disposals.push(() => screen.unmount());
+        await flushHookEffects();
+        expect(screen.findHostByTestId('workflow-builder')).not.toBeNull();
+        for (const id of ['deep', 'quick']) {
+            expect(screen.findHostByTestId(`workflow-builder-sentence-step:${id}`)).not.toBeNull();
+            await screen.pressByTestIdAsync(`workflow-builder-sentence-step:${id}`);
+            await flushHookEffects();
+            expect(screen.findHostByTestId(`workflow-builder-sentence-step:${id}`)?.props.accessibilityState?.selected).toBe(true);
+            const other = id === 'deep' ? 'quick' : 'deep';
+            expect(screen.findHostByTestId(`workflow-builder-sentence-step:${other}`)?.props.accessibilityState?.selected).toBe(false);
+        }
+        await screen.pressByTestIdAsync('workflow-builder-open-editor');
+        const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+        if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected the editor handoff');
+        expect(readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId), lifetime.scope)?.draft?.blocks)
+            .toEqual(definition.blocks);
+    });
+
     it('opens subject starters in place and retains their draft in the full editor without enrolling a trigger', async () => {
         await loadSyncSingletonForTests();
         let writes = 0;

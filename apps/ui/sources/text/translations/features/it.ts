@@ -19762,6 +19762,8 @@ const it = translated(workflowValueReferenceTranslations.it, {
         or: 'o',
         in: 'in',
         if: 'se',
+        otherwise: 'altrimenti →',
+        leadsTo: '→',
         on: 'su',
         then: 'poi',
         reports: '→ riporta',

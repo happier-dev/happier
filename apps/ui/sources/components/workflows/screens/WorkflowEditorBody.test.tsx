@@ -3943,6 +3943,37 @@ describe('the Sentence view (round 1116c)', () => {
         await screen.unmount();
     });
 
+    it('reads an If as its own clause with both branches, each opening its step inside the If card', async () => {
+        const harness = await loadHarness();
+        const base = buildDraft(harness);
+        const step = (id: string, name: string) => ({ kind: 'step' as const, id, name,
+            document: { text: name, references: [], attachments: [] }, input: [], result: { kind: 'text' as const } });
+        const initial = { ...base, blocks: [{
+            kind: 'if' as const, id: 'gate', when: { kind: 'exists' as const, value: { kind: 'input' as const, name: 'goal' } },
+            then: [step('ask', 'Ask me first'), step('deep', 'Review deeply')], otherwise: [step('quick', 'Review quickly')],
+        }, ...base.blocks] };
+        const selections: (string | null)[] = [];
+        const screen = await renderScreen(<Controlled harness={harness} initial={initial} onSelect={(id) => selections.push(id)} />);
+        await flushHookEffects();
+        for (const id of ['ask', 'deep', 'quick', 'analyze']) {
+            expect(screen.findHostByTestId(`workflow-editor-sentence-step:${id}`)).not.toBeNull();
+        }
+        expect(screen.findHostByTestId('workflow-editor-sentence-step:gate')).toBeNull();
+        // The If is shown first, its condition chip marked as the open card.
+        expect(screen.findHostByTestId('workflow-editor-sentence-if:gate')?.props.accessibilityState?.selected).toBe(true);
+        await screen.pressByTestIdAsync('workflow-editor-sentence-step:quick');
+        await flushHookEffects();
+        expect(selections.at(-1)).toBe('quick');
+        expect(screen.findHostByTestId('workflow-editor-sentence-step:quick')?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findHostByTestId('workflow-editor-sentence-if:gate')?.props.accessibilityState?.selected).toBe(false);
+        const region = screen.findHostByTestId('workflow-editor-sentence-selection')!;
+        expect(region.findAll(node => node.props.testID === 'workflow-editor-step-quick').length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('workflow-editor-sentence-if:gate');
+        await flushHookEffects();
+        expect(selections.at(-1)).toBe('gate');
+        await screen.unmount();
+    });
+
     it('keeps Step options attached to a live card after leaving Sentence', async () => {
         const harness = await loadHarness();
         const { Popover } = await import('@/components/ui/popover/Popover');

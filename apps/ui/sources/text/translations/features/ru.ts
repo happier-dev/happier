@@ -19789,6 +19789,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         or: 'или',
         in: 'в',
         if: 'если',
+        otherwise: 'иначе →',
+        leadsTo: '→',
         on: 'на',
         then: 'затем',
         reports: '→ возвращает',

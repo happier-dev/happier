@@ -118,6 +118,7 @@ function WorkflowSentenceBuilderBody(
   const blocks = useWorkflowEditorSelector(draftStore, readBlocks);
   const name = useWorkflowEditorSelector(draftStore, readName);
   const step = blocks[0] ?? null;
+  const [selectedBlockId, selectBlock] = React.useState<string | null>(null);
   const machine = useServerScopedMachine(serverId, project?.machineId ?? null);
   const machines = useMachineListForServer(serverId, true) ?? undefined;
   const machineName = machine ? getMachineDisplayName(machine) : null;
@@ -130,7 +131,7 @@ function WorkflowSentenceBuilderBody(
     scope: host.composerScope,
     editable: true,
     onChange,
-    onSelect: () => {},
+    onSelect: selectBlock,
     focusPrompt: () => {},
   });
   const actionFieldRequests = useWorkflowEditorSelector(
@@ -176,7 +177,7 @@ function WorkflowSentenceBuilderBody(
       list: { kind: 'root' },
       request,
       onChange,
-      onSelect: () => {},
+      onSelect: selectBlock,
     });
   };
   const verbClause = (
@@ -285,10 +286,10 @@ function WorkflowSentenceBuilderBody(
             draftStore={draftStore}
             onChange={onChange}
             documentEditable
-            selectedBlockId={step?.id ?? null}
-            onSelectBlock={() => {}}
+            selectedBlockId={selectedBlockId}
+            onSelectBlock={selectBlock}
             whenClause={whenClause}
-            verbClause={verbClause}
+            verbClause={blocks.length > 1 || step?.kind === 'if' ? undefined : verbClause}
             place={{
               target: project,
               machineName,
@@ -307,12 +308,12 @@ function WorkflowSentenceBuilderBody(
                 list={{ kind: 'root' }}
                 blocks={blocks}
                 depth={0}
-                selectedBlockId={blockId}
+                selectedBlockId={selectedBlockId ?? blockId}
                 validation={validation}
                 composerScope={host.composerScope}
                 composerCustody={composerCustody}
                 onChange={onChange}
-                onSelect={() => {}}
+                onSelect={selectBlock}
                 onCustomize={() => {}}
                 onlyBlockId={blockId}
                 // A new sentence is incomplete by design; Save stays disabled until it is not.

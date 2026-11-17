@@ -19697,6 +19697,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         or: 'または',
         in: 'の',
         if: '条件',
+        otherwise: 'それ以外 →',
+        leadsTo: '→',
         on: '上で',
         then: '次に',
         reports: '→ 結果',

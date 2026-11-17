@@ -19641,6 +19641,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         or: '或',
         in: '在',
         if: '如果',
+        otherwise: '否則 →',
+        leadsTo: '→',
         on: '在',
         then: '然後',
         reports: '→ 回傳',

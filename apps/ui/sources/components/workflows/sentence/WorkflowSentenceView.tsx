@@ -32,6 +32,7 @@ import {
 } from '../editor/workflowEditorDraftStore';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '../presentation/workflowBlockKindGlyph';
 import { formatWorkflowSummaryStepName } from '../presentation/workflowSummaryLine';
+import { formatWorkflowConditionSentence } from '../presentation/workflowConditionPresentation';
 import {
   WorkflowSentenceChip,
   WorkflowSentenceWord,
@@ -242,7 +243,11 @@ const WorkflowSentencePlace = React.memo(function WorkflowSentencePlace(
   );
 });
 
-/** "⟨step⟩ then ⟨step⟩ ⟨+ Add another step⟩": one chip per top-level block, named as the summary line names it. */
+/**
+ * "⟨step⟩ then ⟨step⟩ ⟨+ Add another step⟩": one chip per top-level block, named as the summary line names it.
+ * An `if` block is a clause of its own, "if ⟨condition⟩ → ⟨then steps⟩" and "otherwise → ⟨otherwise steps⟩":
+ * its condition chip opens the If block's own card (where its condition is edited once), each branch chip selects its step.
+ */
 function WorkflowSentenceSteps(
   props: WorkflowSentenceViewProps &
     Readonly<{
@@ -276,78 +281,141 @@ function WorkflowSentenceSteps(
     },
     [blocks, draftStore, onChange, onSelectBlock, requestPromptFocus],
   );
-  return (
-    <View
-      style={workflowSentenceStyles.line}
-      testID={`${props.testIDPrefix}-sentence-steps`}
-    >
-      {blocks.map((block, index) => {
-        const agentTarget =
-          block.kind === 'step'
-            ? (block.agentTarget ?? defaultAgent)
-            : undefined;
-        const mark =
-          agentTarget == null
-            ? null
-            : presentEngine(
-                { agentTargetKey: resolveBackendTargetKeyV2(agentTarget) },
-                ICON_SIZE.xs,
-              ).icon;
-        const chip = (
-          <WorkflowSentenceChip
-            kind="step"
-            label={formatWorkflowSummaryStepName(block)}
-            {...(mark === null
-              ? { icon: WORKFLOW_BLOCK_KIND_GLYPH[block.kind] }
-              : { mark })}
-            selected={block.id === props.shownBlockId}
-            onPress={() => props.onSelectStep(block.id)}
-            testID={`${props.testIDPrefix}-sentence-step:${block.id}`}
-          />
-        );
-        return index === 0 ? (
+  // A conditional reads as its own clause (Reviews lab prauto-sentence): "if ⟨condition⟩ → ⟨then…⟩", then
+  // "otherwise → ⟨otherwise…⟩" on the next line. Only a draft with an `if` reads the whole draft for its words.
+  const conditionalDraft = useWorkflowEditorSelector(props.draftStore, readConditionalDraft);
+  const stepChip = (block: WorkflowBlock, selected: boolean) => {
+    const agentTarget =
+      block.kind === 'step' ? (block.agentTarget ?? defaultAgent) : undefined;
+    const mark =
+      agentTarget == null
+        ? null
+        : presentEngine(
+            { agentTargetKey: resolveBackendTargetKeyV2(agentTarget) },
+            ICON_SIZE.xs,
+          ).icon;
+    return (
+      <WorkflowSentenceChip
+        kind="step"
+        label={formatWorkflowSummaryStepName(block)}
+        {...(mark === null
+          ? { icon: WORKFLOW_BLOCK_KIND_GLYPH[block.kind] }
+          : { mark })}
+        selected={selected}
+        onPress={() => props.onSelectStep(block.id)}
+        testID={`${props.testIDPrefix}-sentence-step:${block.id}`}
+      />
+    );
+  };
+  // A branch's own steps: the first follows its lead word, the rest read "then". The editor's one selection
+  // marks the step it names; the card under the sentence stays the containing step's own card.
+  const branch = (steps: readonly WorkflowBlock[], lead: string) =>
+    steps.map((step, index) => (
+      <WorkflowSentenceUnit
+        key={step.id}
+        word={index === 0 ? lead : t('workflows.sentence.then')}
+      >
+        {stepChip(step, props.shownBlockId !== null && props.selectedBlockId === step.id)}
+      </WorkflowSentenceUnit>
+    ));
+  const lines: React.ReactNode[][] = [[]];
+  blocks.forEach((block, index) => {
+    if (block.kind !== 'if' || conditionalDraft === null) {
+      const line = lines[lines.length - 1]!;
+      const chip = stepChip(block, block.id === props.shownBlockId);
+      line.push(
+        index === 0 ? (
           <React.Fragment key={block.id}>{chip}</React.Fragment>
         ) : (
-          <WorkflowSentenceUnit
-            key={block.id}
-            word={t('workflows.sentence.then')}
-          >
+          <WorkflowSentenceUnit key={block.id} word={t('workflows.sentence.then')}>
             {chip}
           </WorkflowSentenceUnit>
-        );
-      })}
-      {props.documentEditable ? (
-        <WorkflowAddBlockMenu
-          onAdd={add}
-          scopeLabel={t('workflows.a11y.blockList')}
-          {...(props.composerScope === undefined
-            ? {}
-            : { composerScope: props.composerScope })}
-          {...(props.currentWorkflowRef === undefined
-            ? {}
-            : { currentWorkflowRef: props.currentWorkflowRef })}
-          renderTrigger={({ open, toggle, anchorRef }) => (
-            <WorkflowSentenceChip
-              anchorRef={anchorRef}
-              kind="add"
-              icon="plus"
-              selected={open}
-              hasPopup="menu"
-              label={
-                blocks.length === 0
-                  ? t('workflows.sentence.addFirstStep')
-                  : t('workflows.sentence.addAnotherStep')
-              }
-              onPress={toggle}
-              testID={`${props.testIDPrefix}-sentence-add-step`}
-            />
-          )}
-          testID={`${props.testIDPrefix}-sentence-add-step-menu`}
+        ),
+      );
+      return;
+    }
+    if (lines[lines.length - 1]!.length > 0) lines.push([]);
+    const shown = block.id === props.shownBlockId;
+    lines[lines.length - 1]!.push(
+      <WorkflowSentenceUnit key={block.id} word={t('workflows.sentence.if')}>
+        <WorkflowSentenceChip
+          // It selects the If's own card, so it carries the step chips' selection.
+          kind="step"
+          icon={WORKFLOW_BLOCK_KIND_GLYPH.if}
+          title={t('workflows.editor.unnamedIf')}
+          label={formatWorkflowConditionSentence(conditionalDraft, block.when)}
+          selected={shown && (props.selectedBlockId === null || props.selectedBlockId === block.id)}
+          onPress={() => props.onSelectStep(block.id)}
+          testID={`${props.testIDPrefix}-sentence-if:${block.id}`}
         />
-      ) : null}
+      </WorkflowSentenceUnit>,
+      ...branch(block.then, t('workflows.sentence.leadsTo')),
+    );
+    if (block.otherwise.length > 0) {
+      lines.push(branch(block.otherwise, t('workflows.sentence.otherwise')));
+    }
+    // What follows the conditional starts its own line.
+    lines.push([]);
+  });
+  const addStep = props.documentEditable ? (
+    <WorkflowAddBlockMenu
+      key="add-step"
+      onAdd={add}
+      scopeLabel={t('workflows.a11y.blockList')}
+      {...(props.composerScope === undefined
+        ? {}
+        : { composerScope: props.composerScope })}
+      {...(props.currentWorkflowRef === undefined
+        ? {}
+        : { currentWorkflowRef: props.currentWorkflowRef })}
+      renderTrigger={({ open, toggle, anchorRef }) => (
+        <WorkflowSentenceChip
+          anchorRef={anchorRef}
+          kind="add"
+          icon="plus"
+          selected={open}
+          hasPopup="menu"
+          label={
+            blocks.length === 0
+              ? t('workflows.sentence.addFirstStep')
+              : t('workflows.sentence.addAnotherStep')
+          }
+          onPress={toggle}
+          testID={`${props.testIDPrefix}-sentence-add-step`}
+        />
+      )}
+      testID={`${props.testIDPrefix}-sentence-add-step-menu`}
+    />
+  ) : null;
+  // Add another step closes the last clause (lab: after the otherwise branch), never a line of its own.
+  if (lines.length > 1 && lines[lines.length - 1]!.length === 0) lines.pop();
+  if (addStep !== null) lines[lines.length - 1]!.push(addStep);
+  if (lines.length === 1) {
+    return (
+      <View
+        style={workflowSentenceStyles.line}
+        testID={`${props.testIDPrefix}-sentence-steps`}
+      >
+        {lines[0]}
+      </View>
+    );
+  }
+  return (
+    <View
+      style={workflowSentenceStyles.sentence}
+      testID={`${props.testIDPrefix}-sentence-steps`}
+    >
+      {lines.map((line, index) => (
+        <View key={index} style={workflowSentenceStyles.line}>
+          {line}
+        </View>
+      ))}
     </View>
   );
 }
+
+const readConditionalDraft = (draft: WorkflowEditorDraft) =>
+  draft.blocks.some((block) => block.kind === 'if') ? draft : null;
 
 /** "→ reports ⟨…⟩": the page-foot Result's owner, as a chip. */
 const WorkflowSentenceResult = React.memo(function WorkflowSentenceResult(

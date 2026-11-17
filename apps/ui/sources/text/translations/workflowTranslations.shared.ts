@@ -225,6 +225,8 @@ export const en = {
         or: 'or',
         in: 'in',
         if: 'if',
+        otherwise: 'otherwise →',
+        leadsTo: '→',
         on: 'on',
         then: 'then',
         reports: '→ reports',

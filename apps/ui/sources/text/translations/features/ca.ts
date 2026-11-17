@@ -19774,6 +19774,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         or: 'o',
         in: 'a',
         if: 'si',
+        otherwise: 'si no →',
+        leadsTo: '→',
         on: 'a',
         then: 'després',
         reports: '→ informa',

@@ -19252,6 +19252,8 @@ const de = translated(workflowValueReferenceTranslations.de, {
         or: 'oder',
         in: 'in',
         if: 'falls',
+        otherwise: 'sonst →',
+        leadsTo: '→',
         on: 'auf',
         then: 'dann',
         reports: '→ meldet',

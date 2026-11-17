@@ -19787,6 +19787,8 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         or: 'lub',
         in: 'w',
         if: 'jeśli',
+        otherwise: 'w przeciwnym razie →',
+        leadsTo: '→',
         on: 'na',
         then: 'potem',
         reports: '→ zwraca',

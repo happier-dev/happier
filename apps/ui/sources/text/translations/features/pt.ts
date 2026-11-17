@@ -19746,6 +19746,8 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         or: 'ou',
         in: 'em',
         if: 'se',
+        otherwise: 'senão →',
+        leadsTo: '→',
         on: 'em',
         then: 'depois',
         reports: '→ informa',

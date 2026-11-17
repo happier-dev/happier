@@ -19817,6 +19817,8 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         or: 'ou',
         in: 'dans',
         if: 'si',
+        otherwise: 'sinon →',
+        leadsTo: '→',
         on: 'sur',
         then: 'puis',
         reports: '→ renvoie',

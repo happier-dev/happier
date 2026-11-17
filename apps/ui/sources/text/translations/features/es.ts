@@ -19697,6 +19697,8 @@ const es = translated(workflowValueReferenceTranslations.es, {
         or: 'o',
         in: 'en',
         if: 'si',
+        otherwise: 'si no →',
+        leadsTo: '→',
         on: 'en',
         then: 'luego',
         reports: '→ informa',
