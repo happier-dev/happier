@@ -385,6 +385,36 @@ describe('Account Workflow Library and settings', () => {
         expect(home.requests.filter(request => request.path.includes('/access/grants'))).toEqual([]);
         await hook.unmount();
     });
+    it('borrows the physical resource Account lifetime and keeps explicit null unavailable', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const physicalAccount = captureActiveServerAccountScopeLifetime();
+        if (!physicalAccount) throw new Error('Expected the admitted physical Account');
+        const subject = AutomationSubjectV1Schema.parse({ kind: 'plugin', serverId, pluginId: 'acme.tickets',
+            subjectKindId: 'ticket', identity: { id: 'issue-1' } });
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+        }) });
+        const hook = await renderHook((props: { accountLifetime: import('@/sync/domains/scope/serverAccountScope').ServerAccountScopeLifetime | null }) =>
+            useResourceAutomationsSection({ subject, accountLifetime: props.accountLifetime }), {
+            initialProps: { accountLifetime: physicalAccount },
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        expect(hook.getCurrent().accountLifetime).toBe(physicalAccount);
+        const reads = listRequests().length;
+        await hook.rerender({ accountLifetime: null });
+        expect(hook.getCurrent().accountLifetime).toBeNull();
+        expect(hook.getCurrent().read.status).toBe('loading');
+        expect(hook.getCurrent().rows).toEqual([]);
+        expect(listRequests()).toHaveLength(reads);
+        await hook.rerender({ accountLifetime: physicalAccount });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        expect(listRequests()).toHaveLength(reads + 1);
+        await hook.unmount();
+    });
     it.each(['environment', 'machine'] as const)('keeps Resource Link declined read-only and awaits reviewed sharing before its one Workflow trigger write (%s)', async kind => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');

@@ -32,6 +32,8 @@ export type ResourceAutomationLinkResult =
 
 export type ResourceAutomationsSectionInput = Readonly<{
     subject: AutomationSubjectV1;
+    /** A mounted resource borrows its physical host's Account; explicit null never captures focus. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
     contextSubjects?: readonly AutomationSubjectV1[];
     /** Execution placement is independent of the selected resource's identity. */
     executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
@@ -71,8 +73,9 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const legacySubject = 'serverId' in props.subject ? null : props.subject;
     const serverId = 'serverId' in props.subject ? props.subject.serverId
         : props.serverId ?? props.deploymentEnvironment?.serverId ?? activeScope?.serverId;
-    const { binding } = useServerCredentialAccountScopeBinding(serverId);
-    const accountLifetime = serverId ? binding : undefined;
+    const { binding: capturedBinding } = useServerCredentialAccountScopeBinding(props.accountLifetime === undefined ? serverId : '');
+    const binding = props.accountLifetime === undefined ? capturedBinding : props.accountLifetime;
+    const accountLifetime = props.accountLifetime !== undefined ? props.accountLifetime : serverId ? binding : undefined;
     const demanded = useLayoutPresentationActive();
     // The retained service page is explicitly its Machine's view; service is not a canonical subject.
     const subject: AutomationSubjectV1 | null = 'serverId' in props.subject ? props.subject : !serverId ? null

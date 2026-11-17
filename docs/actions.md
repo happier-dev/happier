@@ -6310,6 +6310,9 @@ and `read.loadMore()` reads the next page while the producer's skipped count rem
 An empty or failed first read keeps Retry available; a failed refresh retains the last page.
 Canonical subjects can be read without execution placement; creation supplies its
 separate `executionContext`. The retained service host adapts to its Machine's canonical subject.
+Mounted resource hosts pass their physical Account as `accountLifetime`; explicit `null`
+keeps the section unavailable without capturing the focused Account. Omission retains
+the legacy host's credential binding.
 
 The read Action `workflow.subjects.list` accepts `kind: 'healthCheck'` and optional
 saved `{ automationId, triggerId }` source locators. It lists saved check identities
