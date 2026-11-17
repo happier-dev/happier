@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 
 import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1, type ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
@@ -89,6 +90,7 @@ export function createReviewRunCommentService(deps: Readonly<{
     async materialize(params: Readonly<{
       findings: readonly ReviewFinding[];
       reviewedFingerprint: string | null;
+      comparison?: ScmComparison;
       review?: ReviewRoundBindingV1;
       workflowRunId?: string;
       workflowScope?: NonNullable<ReviewCommentPrincipalHeaderV1['workflowScope']>;
@@ -110,10 +112,10 @@ export function createReviewRunCommentService(deps: Readonly<{
       const input = record(intentInput);
       const reviewerId = params.session?.reviewerId ?? (typeof input?.reviewReviewerId === 'string' ? input.reviewReviewerId : review ? null : engineId);
       const cwd = launchCwd ?? deps.cwd;
-      const comparison = typeof input?.comparisonId === 'string'
+      const comparison = params.comparison ?? (typeof input?.comparisonId === 'string'
         ? await readCapturedScmComparison({ cwd, comparisonId: input.comparisonId,
           ...(producingSessionId ? { sessionId: producingSessionId } : {}) }).then(captured => captured.comparison, () => null)
-        : undefined;
+        : undefined);
       for (const finding of params.findings) {
         try {
           if (!reviewerId) throw Object.assign(new Error('Review reviewer provenance is unavailable'), { code: 'review_comment_invalid_request' });

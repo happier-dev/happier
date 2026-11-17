@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { WorkflowStepProgress } from './stepProgress';
 
-import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WORKFLOW_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
@@ -31,6 +32,9 @@ import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/au
 import type { WorkflowRunEncryptionV1, WorkflowRunRecipientCensusResponseV1, WorkflowCheckpointEnvelopeV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1, WorkflowRunStepProgressV1, TriggerTargetV1, WorkflowDefinitionV1, MaterializeWorkflowAcceptedSnapshotV1Input } from '@happier-dev/protocol';
 import { normalizeStoredWorkflowTriggerConsent } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { ReviewRoundBindingV1Schema, type ReviewRunReferenceV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ReviewPreparedRoundV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
+import type { CliReviewServices } from '@/session/actions/createCliActionExecutor';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
@@ -63,6 +67,8 @@ import {
   type WorkflowStepExecutor,
 } from './coordinator';
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
+import { resolveWorkflowAuthorizedSession } from './invocationRecoveryObserver';
+import { materializeWorkflowSessionReview } from './reviewSessionStep';
 import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
 import { prepareWorkflowAcceptedWorkspaceTarget } from './resolveWorkflowWorkspace';
 import { bindAutomationWorkflowInputs, resolveAutomationWorkflowOccurrenceSeed, WorkflowInputResolutionError } from './input';
@@ -1357,7 +1363,11 @@ export type WorkflowProductionExecutionDeps = Readonly<{
   sessionInput?: Parameters<typeof createProductionWorkflowSessionStepExecutor>[0]['sessionInput'];
   postWorkflowMessage?: Parameters<typeof createDiscussionReplyReturnPublisher>[0]['postWorkflowMessage'];
   originSessionInput?: Parameters<typeof createWorkflowSessionStepExecutor>[0]['originSessionInput'];
-  detachedRun: Omit<WorkflowDetachedExecutionRunStepExecutorDeps, 'resolveSharedRunConversation' | 'resolveProducerConversation' | 'workDepth' | 'resolveRoleInstructions'>;
+  detachedRun: Omit<WorkflowDetachedExecutionRunStepExecutorDeps, 'resolveSharedRunConversation' | 'resolveProducerConversation' | 'workDepth' | 'resolveRoleInstructions'> & Readonly<{
+    actionExecutor: WorkflowDetachedExecutionRunStepExecutorDeps['actionExecutor'] & Readonly<{
+      resolveReviewServices?: (context?: ActionExecutorContext) => Promise<CliReviewServices>;
+    }>;
+  }>;
   action?: import('./coordinator').WorkflowActionExecutor;
 }>;
 
@@ -2213,6 +2223,19 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           credentials: params.execution.credentials,
           workDepth: accepted.workDepth,
           resolveRoleInstructions,
+          materializeReview: async input => {
+            const context = await detachedRunDeps.buildActionContext({ ...input.params, workDepth: accepted.workDepth });
+            const services = await params.execution.detachedRun.actionExecutor.resolveReviewServices?.(context);
+            if (!services?.comments) return { kind: 'failed', code: 'review_comment_persistence_unavailable' };
+            const owner = await resolveWorkflowAuthorizedSession({ credentials: params.execution.credentials,
+              sessionId: input.sessionId, machineId: input.params.workspace.machineId,
+              ...(context.signal ? { signal: context.signal } : {}) });
+            if (!owner) return { kind: 'failed', code: 'review_comment_session_unavailable' };
+            const agentId = resolveAgentIdFromSessionMetadata(owner.metadata);
+            if (!agentId) return { kind: 'failed', code: 'review_engine_unavailable' };
+            return await materializeWorkflowSessionReview({ ...input, context, comments: services.comments,
+              workspace: { machineId: owner.machineId, path: input.params.workspace.directory }, agentId });
+          },
           ...(params.execution.sessionInput ? { sessionInput: params.execution.sessionInput } : {}),
           ...(params.execution.originSessionInput ? { originSessionInput: params.execution.originSessionInput } : {}),
           prepareConversation: async (executionParams) => await conversations.prepare(executionParams),
@@ -2386,6 +2409,49 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         // The root closes in this transition. Independent accepted inputs and
         // review holds remain owned by the existing terminal recovery path.
         if (unsettled.some(row => row.recordId !== rootBeforeSettlement.id)) custodyState = undefined;
+      }
+      if (result.state === 'failed' || result.state === 'cancelled') {
+        const originalRound = ReviewRoundBindingV1Schema.safeParse(accepted.inputs.reviewRound);
+        const preparesRound = accepted.materializedLeaves.some(leaf => leaf.kind === 'action' && leaf.actionId === 'review.prepare_round');
+        if (originalRound.success || preparesRound) {
+          const invocations = await durableStore.listByLifecycle({ runId: claim.runId, lifecycles: WORKFLOW_INVOCATION_LIFECYCLES_V1 });
+          let binding = originalRound.success ? originalRound.data : undefined;
+          let preparedSequence = -1n;
+          const preparedRoundSchema = createStoredReadSchema(ReviewPreparedRoundV1Schema);
+          for (const invocation of invocations) {
+            if (invocation.lifecycle !== 'completed' || invocation.execution?.kind !== 'action'
+              || invocation.execution.actionId !== 'review.prepare_round') continue;
+            const prepared = preparedRoundSchema.safeParse(invocation.result);
+            const sequence = BigInt(invocation.sequence ?? '0');
+            if (prepared.success && sequence > preparedSequence) {
+              binding = prepared.data.reviewRound;
+              preparedSequence = sequence;
+            }
+          }
+          if (binding) {
+            const context = buildWorkflowActionContext({ ...accepted, runId: claim.runId }, params.requesterWorkAttributionV1);
+            const services = await params.execution.detachedRun.actionExecutor.resolveReviewServices?.(context);
+            if (!services?.records) throw Object.assign(new Error('review_record_unavailable'), { code: 'review_record_unavailable' });
+            const runs: ReviewRunReferenceV1[] = [{ kind: 'workflow', runId: claim.runId }];
+            const nativeRuns = new Set<string>();
+            for (const invocation of invocations) {
+              const execution = invocation.execution;
+              const machineId = invocation.workspace?.descriptor?.machineId;
+              if (!machineId || !execution) continue;
+              const actual = execution.kind === 'detached_run' ? [{ runId: execution.runId }]
+                : execution.kind === 'action' && execution.actionId === 'review.start' ? execution.awaitedRuns ?? [] : [];
+              for (const run of actual) {
+                if (nativeRuns.has(run.runId)) continue;
+                nativeRuns.add(run.runId);
+                runs.push({ kind: 'execution', runId: run.runId, machineId });
+              }
+            }
+            // Settle before releasing the Workflow's existing custody so an
+            // Artifact failure stays recoverable. A later Cancel can change
+            // the Workflow label; it cannot reopen the settled Review round.
+            await services.records.settle({ ...binding, outcome: result.state, finishedAt: Date.now(), runs });
+          }
+        }
       }
       const transition = {
         operation: 'transition', runId: claim.runId, parentAttempt: claim.attempt,

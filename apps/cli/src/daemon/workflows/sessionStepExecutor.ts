@@ -3,6 +3,9 @@ import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { parsePermissionIntentAlias, resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
 import { buildExecutionRunResultContractPrompt } from '@happier-dev/protocol/execution/runs/resultContract';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { ReviewModelOutputV1Schema } from '@happier-dev/protocol/reviews/reviewModelOutputV1';
+import { ReviewSessionInputV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
 import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { areSessionCapabilitySelectionsEquivalentV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
@@ -64,6 +67,7 @@ import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/
 import type { SessionSpawnNewSelectionV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
+import type { WorkflowSessionReviewInput } from './reviewSessionStep';
 import { DiscussionInviteResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import type { WorkflowAcceptedOriginV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -604,12 +608,16 @@ export function withWorkflowRoleInstructions(text: string, roleInstructions?: st
 }
 
 export function renderWorkflowSessionStepInput(params: Readonly<{
-  input: Pick<Parameters<WorkflowStepExecutor>[0]['input'], 'text' | 'renderedText'>;
+  input: Pick<Parameters<WorkflowStepExecutor>[0]['input'], 'text' | 'renderedText'> &
+    Partial<Pick<Parameters<WorkflowStepExecutor>[0]['input'], 'values'>>;
   result: Parameters<WorkflowStepExecutor>[0]['step']['result'];
   roleInstructions?: string;
 }>): string {
   if (params.input.renderedText !== undefined) return params.input.renderedText;
-  const instruction = buildExecutionRunResultContractPrompt(params.result);
+  const isReview = params.input.values?.some(value => ReviewSessionInputV1Schema.safeParse(value).success);
+  const instruction = buildExecutionRunResultContractPrompt(isReview
+    ? { kind: 'json', schema: zodSchemaToJsonSchemaObject(ReviewModelOutputV1Schema) }
+    : params.result);
   const text = withWorkflowRoleInstructions(params.input.text, params.roleInstructions);
   return instruction ? `${text}\n\n${instruction}` : text;
 }
@@ -620,6 +628,8 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
   /** Frozen role block rendered by ORC's canonical role renderer. */
   resolveRoleInstructions?: (params: Parameters<WorkflowStepExecutor>[0]) => string | undefined;
   workDepth?: number;
+  /** The host publishes correlated structured Review output before storing the step result. */
+  materializeReview?: (input: WorkflowSessionReviewInput) => Promise<WorkflowStepExecutionResult>;
   prepareConversation: (params: Parameters<WorkflowStepExecutor>[0]) => Promise<PreparedWorkflowSessionConversation>;
   materializeConversation: (
     prepared: PreparedWorkflowSessionConversation,
@@ -700,9 +710,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
           if (!settled.ok) return { kind: 'needs_attention' as const, code: 'workflow_origin_input_stop_pending' };
           const classified = classifyWorkflowSessionInputResult(settled.result);
           if (classified.kind === 'pending') return { kind: 'needs_attention' as const, code: 'workflow_origin_input_stop_pending' };
-          return classified.kind === 'cancelled'
-            ? { kind: 'cancelled' as const, code: 'session_input_cancelled', ...(classified.usage ? { usage: classified.usage } : {}) }
-            : classified;
+          return await settleObservedInput(sessionId, localId, settled.result, settled.replyOutcome);
         } catch (error) {
           return { kind: 'needs_attention' as const, code: error instanceof WorkflowSessionCompositionError
             ? error.code : 'workflow_origin_input_withdrawal_unavailable' };
@@ -731,7 +739,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
                 ? { deadlineMs: Date.parse(params.invocation.observationDeadline.expiresAt) }
                 : params.step.timeoutMs === undefined ? {} : { timeoutAfterInputMs: params.step.timeoutMs }),
             });
-            return settled.ok ? settleObservedInput(settled.result, settled.replyOutcome)
+            return settled.ok ? settleObservedInput(sessionId, localId, settled.result, settled.replyOutcome)
               : { kind: 'needs_attention' as const, code: settled.code };
           } catch {
             return { kind: 'needs_attention' as const, code: 'session_input_result_read_failed' };
@@ -751,13 +759,23 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (classifyWorkflowAbort(params.signal) === 'interrupted') throw new WorkflowRuntimeInterruption();
       return { kind: 'cancelled', code: 'session_input_cancelled' };
     };
-    const settleObservedInput = (
+    const settleObservedInput = async (
+      sessionId: string,
+      localInputId: string,
       result: Parameters<typeof classifyWorkflowSessionInputResult>[0],
       replyOutcome?: Parameters<typeof classifyWorkflowSessionInputResult>[1],
-    ): WorkflowStepExecutionResult => {
+    ): Promise<WorkflowStepExecutionResult> => {
       const observed = classifyWorkflowSessionInputResult(result, replyOutcome);
       switch (observed.kind) {
-        case 'completed':
+        case 'completed': {
+          if (!params.input.values.some(value => ReviewSessionInputV1Schema.safeParse(value).success)) return observed;
+          if (!deps.materializeReview) return { kind: 'failed', code: 'review_comment_persistence_unavailable',
+            ...(observed.usage ? { usage: observed.usage } : {}), ...(observed.replyOutcome ? { replyOutcome: observed.replyOutcome } : {}) };
+          const materialized = await deps.materializeReview({ params, sessionId, localInputId,
+            rawText: typeof observed.result === 'string' ? observed.result : '' });
+          return { ...materialized, ...(observed.usage ? { usage: observed.usage } : {}),
+            ...(observed.replyOutcome ? { replyOutcome: observed.replyOutcome } : {}) };
+        }
         case 'needs_attention':
         case 'failed': return observed;
         case 'pending': return { kind: 'needs_attention', code: 'workflow_step_timeout' };
@@ -797,7 +815,8 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (!observed.ok) return observed.code === 'cancelled'
         ? await settleAcceptedInputAfterAbort(params.invocation.execution.sessionId, params.invocation.execution.localInputId)
         : { kind: 'needs_attention', code: observed.code };
-      return settleObservedInput(observed.result, 'replyOutcome' in observed ? observed.replyOutcome : undefined);
+      return settleObservedInput(params.invocation.execution.sessionId, params.invocation.execution.localInputId,
+        observed.result, 'replyOutcome' in observed ? observed.replyOutcome : undefined);
     }
     if (!assertNonEscalatingPermissionMode({
       requestedMode: requestedPermissionCeiling ?? 'default',
@@ -914,7 +933,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (!observed.ok) return observed.code === 'cancelled'
         ? await settleAcceptedInputAfterAbort(prepared.existing.sessionId, localId)
         : { kind: 'needs_attention', code: observed.code };
-      return settleObservedInput(observed.result);
+      return settleObservedInput(prepared.existing.sessionId, localId, observed.result, observed.replyOutcome);
     }
     if (params.step.inputMode === 'none') {
       await params.onSessionReady!({ kind: 'session_ready', sessionId: conversation.sessionId });
@@ -960,7 +979,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (!observed.ok) return observed.code === 'cancelled'
         ? await settleAcceptedInputAfterAbort(conversation.sessionId, localId)
         : { kind: 'needs_attention', code: observed.code };
-      return settleObservedInput(observed.result, observed.replyOutcome);
+      return settleObservedInput(conversation.sessionId, localId, observed.result, observed.replyOutcome);
     }
     await params.beforeInputAdmission(text);
     assertWorkflowAdmissionSignal(params.signal);
@@ -1037,7 +1056,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
     if (!observed.ok) return observed.code === 'cancelled'
       ? await settleAcceptedInputAfterAbort(conversation.sessionId, admission.localId)
       : { kind: 'needs_attention', code: observed.code };
-    return settleObservedInput(observed.result, observed.replyOutcome);
+    return settleObservedInput(conversation.sessionId, admission.localId, observed.result, observed.replyOutcome);
   };
 }
 
@@ -1397,6 +1416,7 @@ export function createProductionWorkflowSessionStepExecutor(deps: Readonly<{
   resolveExistingSessionConversation: Parameters<typeof createProductionWorkflowConversationOwner>[0]['resolveExistingSessionConversation'];
   sessionInput?: Parameters<typeof createWorkflowSessionStepExecutor>[0]['sessionInput'];
   originSessionInput?: Parameters<typeof createWorkflowSessionStepExecutor>[0]['originSessionInput'];
+  materializeReview?: Parameters<typeof createWorkflowSessionStepExecutor>[0]['materializeReview'];
 }>): WorkflowStepExecutor {
   const conversations = createProductionWorkflowConversationOwner(deps);
   return createWorkflowSessionStepExecutor({
@@ -1405,6 +1425,7 @@ export function createProductionWorkflowSessionStepExecutor(deps: Readonly<{
     ...(deps.resolveRoleInstructions ? { resolveRoleInstructions: deps.resolveRoleInstructions } : {}),
     ...(deps.sessionInput ? { sessionInput: deps.sessionInput } : {}),
     ...(deps.originSessionInput ? { originSessionInput: deps.originSessionInput } : {}),
+    ...(deps.materializeReview ? { materializeReview: deps.materializeReview } : {}),
     prepareConversation: async (params) => await conversations.prepare(params),
     materializeConversation: async (prepared, params) => {
       const conversation = await conversations.materialize(prepared, params);

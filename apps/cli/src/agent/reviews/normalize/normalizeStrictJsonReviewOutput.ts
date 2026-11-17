@@ -5,6 +5,7 @@ import { ReviewQuestionSchema } from '@happier-dev/protocol/reviews/ReviewQuesti
 import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { firstMarkdownProse } from '@happier-dev/protocol/messages/markdownPlainText';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 
 import type {
@@ -14,16 +15,119 @@ import type {
 import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
 import { parseTrailingJsonObject } from '../../executionRuns/profiles/shared/parseTrailingJsonObject';
 
+function stripOptionalModelNulls(value: unknown, shape: Readonly<Record<string, {
+  safeParse(value: unknown): Readonly<{ success: boolean }>;
+}>>) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = { ...value } as Record<string, unknown>;
+  for (const [key, schema] of Object.entries(shape)) {
+    if (record[key] === null && schema.safeParse(undefined).success) delete record[key];
+  }
+  return record;
+}
+
 function parseModelFinding(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ReviewFindingSchema.safeParse(value);
   // Persisted references are attached only by the host ReviewComment owner.
-  const { comment: _modelComment, ...finding } = value as Record<string, unknown>;
+  const { comment: _modelComment, scopeAttribution: _modelScopeAttribution, ...finding } = value as Record<string, unknown>;
   // Models use an empty patch to report that no replacement was proposed.
   if (finding.patch === '') delete finding.patch;
-  for (const [key, schema] of Object.entries(ReviewFindingSchema.shape)) {
-    if (finding[key] === null && schema.safeParse(undefined).success) delete finding[key];
+  return ReviewFindingSchema.safeParse(stripOptionalModelNulls(finding, ReviewFindingSchema.shape));
+}
+
+function readAdmittedReviewComparison(input: Record<string, unknown>) {
+  const comparison = ScmComparisonSchema.safeParse(input.comparison);
+  return comparison.success && comparison.data.id === input.comparisonId ? comparison.data : undefined;
+}
+
+const ReviewFindingsContentV2Schema = z.extend(z.omit(ReviewFindingsV2Schema, { runRef: true }), {
+  reviewOutcome: z.nonoptional(ReviewFindingsV2Schema.shape.reviewOutcome),
+});
+export type ReviewFindingsContentV2 = z.infer<typeof ReviewFindingsContentV2Schema>;
+
+/** Normalize actual review content independently of the executing run or Session. */
+export function normalizeParsedReviewContent(params: Readonly<{
+  value: unknown;
+  intentInput?: unknown;
+  generatedAtMs: number;
+}>): ReviewFindingsContentV2 | null {
+  const parsedRecord = params.value && typeof params.value === 'object' && !Array.isArray(params.value)
+    ? params.value as Record<string, unknown> : null;
+  const summaryRaw = parsedRecord?.summary;
+  const overviewMarkdownRaw = parsedRecord?.overviewMarkdown;
+  const findingsRaw = parsedRecord?.findings;
+  const questionsRaw = parsedRecord?.questions;
+  const assumptionsRaw = parsedRecord?.assumptions;
+  const proposedCommentsRaw = parsedRecord?.proposedComments;
+  const input = params.intentInput && typeof params.intentInput === 'object' && !Array.isArray(params.intentInput)
+    ? params.intentInput as Record<string, unknown> : {};
+  const admittedComparison = readAdmittedReviewComparison(input);
+
+  if (!parsedRecord || typeof summaryRaw !== 'string' || summaryRaw.trim().length === 0 || !Array.isArray(findingsRaw)) {
+    return null;
   }
-  return ReviewFindingSchema.safeParse(finding);
+
+  const findings: ReviewFinding[] = [];
+  for (const item of findingsRaw) {
+    const parsedFinding = parseModelFinding(item);
+    if (!parsedFinding.success) {
+      return null;
+    }
+    findings.push(parsedFinding.data);
+  }
+
+  const questions = Array.isArray(questionsRaw)
+    ? questionsRaw.flatMap((item) => {
+      const parsedQuestion = ReviewQuestionSchema.safeParse(stripOptionalModelNulls(item, ReviewQuestionSchema.shape));
+      return parsedQuestion.success ? [parsedQuestion.data] : [];
+    })
+    : [];
+  const assumptions = Array.isArray(assumptionsRaw)
+    ? assumptionsRaw.flatMap((item) => {
+      const parsedAssumption = ReviewAssumptionSchema.safeParse(stripOptionalModelNulls(item, ReviewAssumptionSchema.shape));
+      return parsedAssumption.success ? [parsedAssumption.data] : [];
+    })
+    : [];
+  const proposedComments = typeof proposedCommentsRaw === 'undefined'
+    ? undefined
+    : ReviewCommentProposalsV1Schema.safeParse(proposedCommentsRaw);
+  if (proposedComments && !proposedComments.success) {
+    return null;
+  }
+
+  const comparison = input.comparison && typeof input.comparison === 'object'
+    ? input.comparison as Record<string, unknown> : {};
+  const inventory = comparison.inventory && typeof comparison.inventory === 'object'
+    ? comparison.inventory as Record<string, unknown> : {};
+  const limits = parsedRecord.limits && typeof parsedRecord.limits === 'object'
+    ? parsedRecord.limits as Record<string, unknown> : {};
+  // A findings array reports findings, not whether inspection succeeded.
+  const reviewOutcome = parsedRecord.status === 'failed' || parsedRecord.reviewOutcome === 'failed' ? 'failed'
+    : parsedRecord.status === 'partial' || parsedRecord.reviewOutcome !== 'complete' || limits.findingsTruncated === true
+      || (inventory.state !== undefined && inventory.state !== 'complete') ? 'partial' : 'complete';
+  const { triage: _triage, publication: _publication, commentIds: _commentIds,
+    materialization: _materialization, materializationFailures: _materializationFailures,
+    perEngineOutcome: _perEngineOutcome, reviewedFingerprint: _reviewedFingerprint,
+    engineId: _engineId, runRef: _runRef, updatedFindings: _updatedFindings, fileCount: _fileCount, ...modelContent } = parsedRecord;
+  const fileCount = admittedComparison?.inventory.files.length;
+  const content = ReviewFindingsContentV2Schema.safeParse({
+    ...modelContent,
+    reviewOutcome,
+    ...(fileCount !== undefined ? { fileCount } : {}),
+    // The comparison binding is captured by the host, never by model JSON.
+    comparisonId: params.intentInput && typeof params.intentInput === 'object'
+      && 'comparisonId' in params.intentInput && typeof params.intentInput.comparisonId === 'string'
+      ? params.intentInput.comparisonId : undefined,
+    summary: summaryRaw,
+    overviewMarkdown: typeof overviewMarkdownRaw === 'string' ? overviewMarkdownRaw : summaryRaw,
+    findings,
+    questions,
+    assumptions,
+    ...(proposedComments?.success ? { proposedComments: proposedComments.data } : {}),
+    generatedAtMs: params.generatedAtMs,
+  });
+
+  return content.success ? content.data : null;
 }
 
 export function normalizeStrictJsonReviewOutput(params: Readonly<{
@@ -46,15 +150,10 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
       ? (parsedJson as Record<string, unknown>)
       : null;
 
-  const summaryRaw = parsedRecord ? parsedRecord.summary : null;
   const answerMarkdownRaw = parsedRecord ? parsedRecord.answerMarkdown : null;
-  const overviewMarkdownRaw = parsedRecord ? parsedRecord.overviewMarkdown : null;
-  const findingsRaw = parsedRecord ? parsedRecord.findings : null;
   const updatedFindingsRaw = parsedRecord ? parsedRecord.updatedFindings : null;
   const questionsRaw = parsedRecord ? parsedRecord.questions : null;
   const assumptionsRaw = parsedRecord ? parsedRecord.assumptions : null;
-  const proposedCommentsRaw = parsedRecord ? parsedRecord.proposedComments : undefined;
-
   const followUpIntent = ReviewFollowUpIntentInputSchema.safeParse(params.intentInput);
   if (followUpIntent.success) {
     if (typeof answerMarkdownRaw !== 'string' || answerMarkdownRaw.trim().length === 0) {
@@ -85,13 +184,13 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
       : undefined;
     const questions = Array.isArray(questionsRaw)
       ? questionsRaw.flatMap((item) => {
-        const parsedQuestion = ReviewQuestionSchema.safeParse(item);
+        const parsedQuestion = ReviewQuestionSchema.safeParse(stripOptionalModelNulls(item, ReviewQuestionSchema.shape));
         return parsedQuestion.success ? [parsedQuestion.data] : [];
       })
       : undefined;
     const assumptions = Array.isArray(assumptionsRaw)
       ? assumptionsRaw.flatMap((item) => {
-        const parsedAssumption = ReviewAssumptionSchema.safeParse(item);
+        const parsedAssumption = ReviewAssumptionSchema.safeParse(stripOptionalModelNulls(item, ReviewAssumptionSchema.shape));
         return parsedAssumption.success ? [parsedAssumption.data] : [];
       })
       : undefined;
@@ -131,7 +230,10 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     };
   }
 
-  if (!parsedRecord || typeof summaryRaw !== 'string' || summaryRaw.trim().length === 0 || !Array.isArray(findingsRaw)) {
+  const content = normalizeParsedReviewContent({
+    value: parsedJson, intentInput: params.intentInput, generatedAtMs: params.finishedAtMs,
+  });
+  if (!content) {
     const summary = 'Invalid review output (expected strict JSON).';
     return {
       status: 'failed',
@@ -150,88 +252,8 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
       },
     };
   }
-
-  const findings: ReviewFinding[] = [];
-  for (const item of findingsRaw) {
-    const parsedFinding = parseModelFinding(item);
-    if (!parsedFinding.success) {
-      const summary = 'Invalid review output (expected strict JSON).';
-      return {
-        status: 'failed',
-        summary,
-        toolResultOutput: {
-          status: 'failed',
-          summary,
-          runId: params.runId,
-          callId: params.callId,
-          sidechainId: params.sidechainId,
-          backendId: params.backendId,
-          intent: 'review',
-          startedAtMs: params.startedAtMs,
-          finishedAtMs: params.finishedAtMs,
-          error: { code: 'invalid_output' },
-        },
-      };
-    }
-    findings.push(parsedFinding.data);
-  }
-
-  const questions = Array.isArray(questionsRaw)
-    ? questionsRaw.flatMap((item) => {
-      const parsedQuestion = ReviewQuestionSchema.safeParse(item);
-      return parsedQuestion.success ? [parsedQuestion.data] : [];
-    })
-    : [];
-  const assumptions = Array.isArray(assumptionsRaw)
-    ? assumptionsRaw.flatMap((item) => {
-      const parsedAssumption = ReviewAssumptionSchema.safeParse(item);
-      return parsedAssumption.success ? [parsedAssumption.data] : [];
-    })
-    : [];
-  const proposedComments = typeof proposedCommentsRaw === 'undefined'
-    ? undefined
-    : ReviewCommentProposalsV1Schema.safeParse(proposedCommentsRaw);
-  if (proposedComments && !proposedComments.success) {
-    const summary = 'Invalid review output (expected strict JSON).';
-    return {
-      status: 'failed',
-      summary,
-      toolResultOutput: {
-        status: 'failed', summary, runId: params.runId, callId: params.callId,
-        sidechainId: params.sidechainId, backendId: params.backendId, intent: 'review',
-        startedAtMs: params.startedAtMs, finishedAtMs: params.finishedAtMs,
-        error: { code: 'invalid_output' },
-      },
-    };
-  }
-
-  const input = params.intentInput && typeof params.intentInput === 'object' && !Array.isArray(params.intentInput)
-    ? params.intentInput as Record<string, unknown> : {};
-  const comparison = input.comparison && typeof input.comparison === 'object'
-    ? input.comparison as Record<string, unknown> : {};
-  const inventory = comparison.inventory && typeof comparison.inventory === 'object'
-    ? comparison.inventory as Record<string, unknown> : {};
-  const limits = parsedRecord.limits && typeof parsedRecord.limits === 'object'
-    ? parsedRecord.limits as Record<string, unknown> : {};
-  // A findings array reports findings, not whether inspection succeeded.
-  const reviewOutcome = parsedRecord.status === 'failed' || parsedRecord.reviewOutcome === 'failed' ? 'failed'
-    : parsedRecord.status === 'partial' || parsedRecord.reviewOutcome !== 'complete' || limits.findingsTruncated === true
-      || (inventory.state !== undefined && inventory.state !== 'complete') ? 'partial' : 'complete';
-  const { triage: _triage, publication: _publication, commentIds: _commentIds,
-    materialization: _materialization, materializationFailures: _materializationFailures,
-    perEngineOutcome: _perEngineOutcome, reviewedFingerprint: _reviewedFingerprint,
-    engineId: _engineId, updatedFindings: _updatedFindings, fileCount: _fileCount, ...modelContent } = parsedRecord;
-  const capturedComparison = ScmComparisonSchema.safeParse(input.comparison);
-  const fileCount = capturedComparison.success && capturedComparison.data.id === input.comparisonId
-    ? capturedComparison.data.inventory.files.length : undefined;
-  const findingsPayload = ReviewFindingsV2Schema.parse({
-    ...modelContent,
-    reviewOutcome,
-    ...(fileCount !== undefined ? { fileCount } : {}),
-    // The comparison binding is captured by the host, never by model JSON.
-    comparisonId: params.intentInput && typeof params.intentInput === 'object'
-      && 'comparisonId' in params.intentInput && typeof params.intentInput.comparisonId === 'string'
-      ? params.intentInput.comparisonId : undefined,
+  const findingsPayload = {
+    ...content,
     runRef: {
       runId: params.runId,
       callId: params.callId,
@@ -239,14 +261,8 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
       backendTarget: params.backendTarget,
       ...(params.retentionPolicy ? { retentionPolicy: params.retentionPolicy } : {}),
     },
-    summary: summaryRaw,
-    overviewMarkdown: typeof overviewMarkdownRaw === 'string' ? overviewMarkdownRaw : summaryRaw,
-    findings,
-    questions,
-    assumptions,
-    ...(proposedComments?.success ? { proposedComments: proposedComments.data } : {}),
-    generatedAtMs: params.finishedAtMs,
-  });
+  };
+  const reviewOutcome = findingsPayload.reviewOutcome;
 
   const summary = findingsPayload.summary || 'Review completed.';
   const payloadFindings = findingsPayload.findings;
@@ -262,7 +278,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
 
   const structuredMeta: ExecutionRunStructuredMeta = { kind: 'review_findings.v2', payload: findingsPayload };
   const failed = reviewOutcome === 'failed';
-  const errorRecord = parsedRecord.error
+  const errorRecord = parsedRecord?.error
     && typeof parsedRecord.error === 'object'
     && !Array.isArray(parsedRecord.error)
       ? parsedRecord.error as Record<string, unknown>
