@@ -26,6 +26,7 @@ import type { DiffViewerProps } from '../diffViewerTypes';
 import { ensureHappierPierreThemeRegistered, resolveHappierPierreThemeIds } from './pierreThemeRegistry.web';
 import { getPierreDiffWorkerPool, getPierreDiffWorkerPoolFailed, subscribePierreDiffWorkerPool } from './pierreWorkerPool.web';
 import { buildPierreDiffOptionsBase } from './buildPierreDiffOptionsBase.web';
+import { pierreTextDiffContents } from './pierreTextDiffContents';
 import { resolvePierreLanguageOverride } from './resolvePierreLanguageOverride.web';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { buildCodeLinesFromTextDiff } from '@/components/ui/code/model/buildCodeLinesFromTextDiff';
@@ -705,7 +706,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         try {
             if (props.mode === 'text') {
                 const name = props.filePath ?? 'diff';
-                return parseDiffFromFile({ name, contents: props.oldText }, { name, contents: props.newText }, { context: props.contextLines ?? 3 });
+                const { oldContents, newContents } = pierreTextDiffContents(props.oldText, props.newText);
+                return parseDiffFromFile({ name, contents: oldContents }, { name, contents: newContents }, { context: props.contextLines ?? 3 });
             }
             // `getSingularPatch` console.errors the parsed array before throwing for a patch that is not exactly one
             // file diff (a hunk-only ```diff fence parses to none), which Expo shows as a red "[]" toast.
