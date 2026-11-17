@@ -117,7 +117,6 @@ describe('core e2e: machine installation identity replacement', () => {
         expect(sent, `${phase}: ${JSON.stringify(sent)}`).toMatchObject({ ok: true });
         expect(await waitForFakeClaudeUserText(vendor.logPath, text => text.includes(message), { invocationId })).toContain(message);
       };
-      await assertSessionControl(enrolled.target.machineId, 'before rotation');
       // Inspect the real registration's recipient envelope, rather than a key
       // supplied by this fixture. Account material opens it but must not be it.
       const readPublishedKey = async (id: string) => {
@@ -138,6 +137,7 @@ describe('core e2e: machine installation identity replacement', () => {
         return { key, envelope: row.dataEncryptionKey };
       };
       const firstKey = await readPublishedKey(enrolled.target.machineId);
+      await assertSessionControl(enrolled.target.machineId, 'before rotation');
       await enrolled.restart();
       expect(await readPublishedKey(enrolled.target.machineId)).toEqual(firstKey);
       await assertSessionControl(enrolled.target.machineId, 'after same-identity restart');
