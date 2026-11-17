@@ -38,6 +38,8 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
             && current.origin.listing.itemId === itemId ? current : null;
     }, [owner, sourceId, itemId]);
     const matching = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
+    React.useLayoutEffect(() => presented && matching ? owner.present(matching.previewRef) : undefined,
+        [owner, presented, matching?.previewRef]);
     const selectInstalledEntries = React.useCallback((entries: readonly ThemeLibraryEntry[]) => groupInstalledStoreThemes(entries)
         .find(group => group.listing.sourceId === sourceId && group.listing.itemId === itemId)?.entries ?? noInstalledEntries, [sourceId, itemId]);
     const library = useThemeLibraryArtifactInventory(presented, selectInstalledEntries);

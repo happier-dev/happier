@@ -22,6 +22,9 @@ export interface ThemeTryOnOwner {
     begin(input: ThemeTryOnInput): ThemeTryOnSnapshot;
     replace(previewRef: PreviewRef, input: ThemeTryOnInput): ThemeTryOnSnapshot;
     read(previewRef?: PreviewRef): ThemeTryOnSnapshot | null;
+    /** Visible origin controls own this preview until their presentation ends. */
+    present(previewRef: PreviewRef): () => void;
+    readGlobalPresentation(): ThemeTryOnSnapshot | null;
     revert(previewRef: PreviewRef): void;
     keep(previewRef: PreviewRef): Promise<ThemeLibraryMutationResult>;
     subscribe(listener: () => void): () => void;
@@ -36,6 +39,7 @@ export function createThemeTryOnOwner(deps: Readonly<{
 }>): ThemeTryOnOwner {
     let current: { snapshot: ThemeTryOnSnapshot; scope: AccountSettingsScope | null; keeping?: Promise<ThemeLibraryMutationResult> } | null = null;
     const listeners = new Set<() => void>();
+    const presenters = new Map<PreviewRef, number>();
     const publish = () => { for (const listener of listeners) listener(); };
     const requireCurrent = (previewRef: PreviewRef) => {
         if (!current || current.snapshot.previewRef !== previewRef) {
@@ -62,11 +66,26 @@ export function createThemeTryOnOwner(deps: Readonly<{
         publish();
         return snapshot;
     };
+    const read = (previewRef?: PreviewRef) => previewRef !== undefined ? requireScopedCurrent(previewRef).preview.snapshot
+        : current && areAccountSettingsScopesEqual(current.scope, deps.captureScope()) ? current.snapshot : null;
     return {
         begin,
         replace(previewRef, input) { requireScopedCurrent(previewRef); return begin(input); },
-        read: previewRef => previewRef !== undefined ? requireScopedCurrent(previewRef).preview.snapshot
-            : current && areAccountSettingsScopesEqual(current.scope, deps.captureScope()) ? current.snapshot : null,
+        read,
+        present(previewRef) {
+            presenters.set(previewRef, (presenters.get(previewRef) ?? 0) + 1);
+            publish();
+            return () => {
+                const remaining = (presenters.get(previewRef) ?? 1) - 1;
+                if (remaining) presenters.set(previewRef, remaining);
+                else presenters.delete(previewRef);
+                publish();
+            };
+        },
+        readGlobalPresentation() {
+            const snapshot = read();
+            return snapshot && !presenters.has(snapshot.previewRef) ? snapshot : null;
+        },
         revert(previewRef) { requireCurrent(previewRef); current = null; publish(); },
         async keep(previewRef) {
             const { preview, scope } = requireScopedCurrent(previewRef);

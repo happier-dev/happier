@@ -56,6 +56,26 @@ function setup() {
 }
 
 describe('one-document theme try-on', () => {
+    it('hands controls back to the global host when the matching origin presenter leaves', () => {
+        const state = setup();
+        for (const kind of ['editor', 'agent', 'store'] as const) {
+            const origin = kind === 'store' ? { kind, listing: { sourceId: 'store', itemId: 'theme' } } : { kind };
+            const preview = state.owner.begin({ document: document(kind), mode: 'dark', origin });
+            expect(state.owner.readGlobalPresentation()).toBe(preview);
+            const leave = state.owner.present(preview.previewRef);
+            expect(state.owner.readGlobalPresentation()).toBeNull();
+            // An unrelated/stale card never hides a replacement preview.
+            const replacement = state.owner.begin({ document: document('replacement'), mode: 'dark', origin });
+            expect(state.owner.readGlobalPresentation()).toBe(replacement);
+            leave();
+            expect(state.owner.readGlobalPresentation()).toBe(replacement);
+            const stop = state.owner.present(replacement.previewRef);
+            expect(state.owner.readGlobalPresentation()).toBeNull();
+            stop();
+            expect(state.owner.readGlobalPresentation()).toBe(replacement);
+        }
+    });
+
     it('opens only the addressed retained preview for the editor', () => {
         const state = setup();
         const first = state.owner.begin({ document: document('first'), mode: 'dark', origin: { kind: 'agent' } });

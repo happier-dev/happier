@@ -50,7 +50,8 @@ describe('shared theme connected-device picker', () => {
         await hook.rerender({ ...props, enabled: true });
         await vi.waitFor(() => expect(hook.getCurrent().rows.map(row => row.id)).toEqual(['self', 'phone', 'gone']));
         expect(reads).toEqual(['list']);
-        await act(async () => { hook.getCurrent().onToggle('self'); hook.getCurrent().onToggle('phone'); hook.getCurrent().onToggle('gone'); });
+        expect(hook.getCurrent().rows.filter(row => row.checked).map(row => row.id)).toEqual(['phone', 'gone']);
+        await act(async () => { hook.getCurrent().onToggle('self'); });
         expect(hook.getCurrent().rows.find(row => row.current)?.checked).toBe(false);
         await act(async () => hook.getCurrent().onUse());
         await vi.waitFor(() => expect(hook.getCurrent().dispatching).toBe(false));

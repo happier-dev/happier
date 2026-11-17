@@ -30,7 +30,7 @@ export function useThemeDevicePicker(input: ThemeDevicePickerInput, execute: The
             if (!result.devices) { setState('error'); return; }
             setRows(result.devices.map(candidate => ({ id: candidate.id, label: candidate.deviceLabel,
                 computer: candidate.state?.computer ?? false, current: candidate.id === input.currentClientId,
-                checked: false, outcome: null })).sort((left, right) => Number(right.current) - Number(left.current)));
+                checked: candidate.id !== input.currentClientId, outcome: null })).sort((left, right) => Number(right.current) - Number(left.current)));
             setState('ready');
         }).catch(() => { if (!controller.signal.aborted) setState('error'); });
         return () => controller.abort();

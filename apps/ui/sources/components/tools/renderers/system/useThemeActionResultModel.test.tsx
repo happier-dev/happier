@@ -77,6 +77,7 @@ describe('theme proposal card controller', () => {
         });
         expect(vi.mocked(parse).mock.calls.length, 'the card consumes the preview owner table without parsing CSS').toBe(parsesBeforeCard);
         expect(hook.getCurrent()?.options?.map(option => option.miniature.mode)).toEqual(['dark', 'dark', 'dark']);
+        expect(state.owner.readGlobalPresentation()).toBeNull();
         expect(hook.getCurrent()?.reshapes).toContain('session list');
         expect(hook.getCurrent()?.hides).toContain('user messages');
         expect(hook.getCurrent()?.options?.map(option => option.description)).toEqual(Array(3).fill(t('settingsAppearance.themeProfiles.sourceYours')));
@@ -84,6 +85,7 @@ describe('theme proposal card controller', () => {
         expect(edit).toHaveBeenCalledWith({ kind: 'document', document: presentation.options.at(-1)!.call.input.document });
         presented = false;
         await hook.rerender();
+        expect(state.owner.readGlobalPresentation()).toBe(state.owner.read());
         renders = 0;
         for (let index = 0; index < 10; index++) await act(async () => {
             state.owner.begin({ document: themeActionDocument(`Hidden-${index}`), mode: 'dark', origin: { kind: 'agent' } });

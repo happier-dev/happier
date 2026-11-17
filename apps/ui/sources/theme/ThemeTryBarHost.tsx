@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useDestinationGlobalParamsSelector } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { readStoreOpenItem } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { ThemeTryBar } from '@/components/settings/appearance/themeProfiles/ThemeTryBar';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { getThemeTryOnOwner } from './profiles/themeTryOnRuntime';
@@ -10,21 +8,12 @@ import { projectThemeLibraryEntry } from './profiles/themeProfilePresentation';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
-const selectedStoreListing = (params: Readonly<Record<string, unknown>>) => readStoreOpenItem(params);
-
-/** One shell host follows the current preview and the navigation owner's focused listing. */
+/** The shared preview owner hands controls here when its origin has no visible presenter. */
 export function ThemeTryBarHost() {
     const scope = useAccountSettingsScope();
     const { execute, ready } = useMountedActionExecution(scope);
     const owner = getThemeTryOnOwner();
-    const selected = useDestinationGlobalParamsSelector(selectedStoreListing);
-    const readPreview = React.useCallback(() => {
-        const current = owner.read();
-        const inListing = current?.origin.kind === 'store' && selected?.type === 'registryItem' && selected.kind === 'theme'
-            && current.origin.listing.sourceId === selected.sourceId && current.origin.listing.itemId === selected.itemId;
-        return inListing ? null : current;
-    }, [owner, selected]);
-    const preview = React.useSyncExternalStore(owner.subscribe, readPreview, readPreview);
+    const preview = React.useSyncExternalStore(owner.subscribe, owner.readGlobalPresentation, owner.readGlobalPresentation);
     const [busy, setBusy] = React.useState<'install' | 'revert' | null>(null);
     const entry = React.useMemo(() => preview?.document ? projectThemeLibraryEntry(preview.document) : null, [preview?.document]);
     const settle = async (kind: 'install' | 'revert') => {

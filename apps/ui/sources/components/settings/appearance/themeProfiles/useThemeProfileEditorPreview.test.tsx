@@ -69,6 +69,7 @@ describe('useThemeProfileEditorPreview', () => {
         expect(state.owner.read()).toBeNull();
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         expect(state.owner.read()?.document).toBe(state.document);
+        expect(state.owner.readGlobalPresentation()).toBeNull();
         expect(state.previews()).toBe(1);
         await hook.unmount();
         expect(state.owner.read()).toBeNull();
@@ -102,6 +103,7 @@ describe('useThemeProfileEditorPreview', () => {
         expect(state.previews()).toBe(1);
         const changed = mergeThemeProfileDocumentEdit(state.document, { name: 'Changed draft' });
         await hook.rerender({ document: changed });
+        expect(state.owner.readGlobalPresentation()).toBeNull();
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         expect(state.previews()).toBe(2);
         expect(state.owner.read()?.document?.profile.name).toBe('Changed draft');

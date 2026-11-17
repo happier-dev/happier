@@ -20,6 +20,22 @@ export function useThemeProfileEditorPreview(input: Readonly<{
     const draft = input.draft?.draft;
     const mode = input.draft?.mode;
     const css = input.draft?.css;
+    React.useLayoutEffect(() => {
+        if (!presented || !input.draft) return;
+        let previewRef: string | null = null;
+        let leave: (() => void) | undefined;
+        const update = () => {
+            const current = input.owner.read();
+            const next = current?.origin.kind === 'editor' ? current.previewRef : null;
+            if (next === previewRef) return;
+            previewRef = next;
+            leave?.();
+            leave = next ? input.owner.present(next) : undefined;
+        };
+        const stop = input.owner.subscribe(update);
+        update();
+        return () => { stop(); leave?.(); };
+    }, [input.owner, presented, Boolean(input.draft)]);
     const revert = React.useCallback((previewRef: string) => {
         try { input.owner.revert(previewRef); }
         catch (error) {
