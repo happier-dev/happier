@@ -9,6 +9,32 @@ private declared-name dotenv values and assigned runtime defaults, with invocati
 selections winning. The requester secret-reference owner still supplies selected
 secrets; private dotenv values never enter review, consent or Action output.
 
+`projectDotenv.ts` reads the selected checkout's `.env`, `.env.development`,
+`.env.local` and `.env.development.local` in that order, only on demand. A
+preparation retains one private snapshot for declared-name projections; a later
+preparation reads fresh bytes. Same-family references never expand the daemon's
+ambient environment. These values stay out of review, consent, Action output and
+logs. Explicit `.env.example` import exposes optional variable names only.
+Declared secrets still require the requester's selected references.
+
+The admitted service launcher calls the SDK `serviceLaunchEnvironments`
+contributions once before final native authorization. Already-active contributions
+can read their declared names from the same original snapshot. After opt-in and
+eligibility, `requestListenerPorts(keys)` assigns contributor-scoped listener
+names through the same worktree-port owner and returns its typed result. It
+retains ordinary port slots; listener demand alone does not enable `PORT`
+defaults. Contributions bind those local listeners inside that call. Their defaults fill absent values; eligible
+replacements transform the original value, and conflicting replacement claims
+retain that original value. Secret-bound names are excluded. No contribution sees
+another's rewritten input. The service supervisor retains contribution cleanup
+until its owned process settles. Missing activation or failed preparation leaves
+the service usable and reports capture unavailability; launch does not wait for
+plugin activation or upstream connectivity.
+
+This development-source implementation has composed PostgreSQL,
+daemon and native-launch validation pending; it does not establish release
+availability.
+
 ## Unconfirmed SSH transitions (0.3 development)
 
 An unconfirmed SSH transition retains its native failure kind, reason, step and
@@ -1944,6 +1970,28 @@ environment finishes successfully. Changed bases
 and explicit teardown invalidate prior progress. A checkpoint write failure leaves
 the outcome uncertain and does not emit setup settlement. Consent is not completion.
 
+Development-source SCM removal, PR temporary-worktree disposal, Storage checkout deletion/retirement and committed
+Sync-copy retirement consume
+`projectCheckoutRemoval.ts` at their existing filesystem effect boundary. The
+owner captures the accepted Account workspace and Project association before
+bytes or references move, and runs `projects.prepare` with `phase:'teardown'`
+under the containing removal operation's review, Stop and output lifetime.
+Cleanup failure preserves the checkout; the removal's explicit `skipCleanup` choice
+removes it without executing cleanup. Storage's final Trash collection and
+restoration do not repeat teardown. Member-owned managed allocations reuse the Session
+native member preparation and read bridge for cleanup; the original Account and
+operation remain in the host, and Storage retains its existing native Trash move. Successful removal publishes the existing
+Machine Service observation after filesystem and reference effects settle,
+using the captured original root and identity; an unassociated folder has null
+workspace and Project fields. Private managed Session deletion carries its original
+requester and removal operation to the directory owner while the Session exists;
+cleanup and the exact native removal closure are prepared before Home deletion.
+After Home confirms deletion, that retained closure removes the directory and
+settles the fact. A Home refusal preserves the directory. The post-deletion listener
+supplies no executable authority. Remote Sync retirement carries the same live
+operation through its admitted target request, so target cleanup review, output
+and Stop remain part of the source retirement operation.
+
 Development `projects.inspect` readiness uses `projectSetupPreparation.ts#inspectProjectSetupReadiness`
 to compare target completion with the current passive `successBasis`, using the
 captured requester's private review context, never custodian settings. Retained
@@ -2806,6 +2854,14 @@ as `credential_scope_denied` before any Git. This is a consistency guard: clone
 writes a new directory with this Machine's hosting credentials, and Git cannot
 check ownership of a directory that does not yet exist. The refusal protects no
 other person and is not a credential or security boundary.
+Development-source member checkout removal calls the same host
+`projectCheckoutRemoval.ts` owner through the existing private child bridge.
+The original requester's Account projection and containing operation stay in
+the host; definition reads use member-side WorkspaceSource services, and native
+cleanup runs with the folder member's execution identity. The child performs
+the destructive Git effect only after cleanup allows it. The host publishes
+removal settlement once after the child reports success. No Account credentials
+or encryption material cross into the child.
 Other hosting work runs as it does elsewhere:
 methods on an existing repository are refused by the daemon Git's ownership
 check before any hosting call, and address resolution reads no folder.
@@ -9731,6 +9787,21 @@ retained conversation's workspace.
 Member-owned managed allocations reuse the Session native member preparation
 and read bridge for cleanup; the original Account and operation remain in the
 host, and Storage retains its existing native Trash move.
+
+Session deletion delegates the original `session.delete` to the Session's exact
+Machine while its Home row and requester custody still exist. One containing
+operation owns the existing Stop child and declared teardown, captures native
+removal while the Session exists, deletes the Home row, then removes the managed
+directory. It publishes the captured worktree-removal fact
+after both filesystem and Home effects succeed. A member's payload reads and
+removal run in the existing Workspace effect child; Account authority and
+teardown review stay in the host. A Home refusal retains the directory and its
+private ownership record. A physical removal failure after Home deletion retains
+the ownership record for explicit Storage recovery and publishes no removal fact.
+Legacy callers that issue Home DELETE directly remove Session metadata only.
+The deletion observer stops remaining runners and retains any managed checkout
+and its requester custody for explicit removal through Storage. Startup and
+visibility resets do not retry physical deletion without an admitted owner.
 
 These private folders are separate working directories, not OS or tenant
 isolation. Agents retain the daemon user's filesystem access, including access to

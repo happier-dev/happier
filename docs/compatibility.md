@@ -9257,6 +9257,15 @@ closed native result schema requires matching development Protocol, SDK and
 provider manifests when the measurement is emitted. No released wire epoch,
 new store, migration, mixed-development adapter or gate is introduced.
 
+Unreleased 0.3 service-launch environment contributions use the canonical
+`serviceLaunchEnvironments` manifest family and `activate(api)` registration.
+The declaration carries names, while private original values and service-lifetime
+cleanup stay in the in-daemon SDK callback. This new family requires matching
+development Protocol, SDK, CLI-common registration and daemon source; preceding
+strict development readers reject it. Existing declarations remain valid through
+the family owner's empty default. No released wire format, persisted Account
+record, ABI epoch or mixed-development adapter changes.
+
 Unreleased 0.3 daemon-database declarations accept optional
 `retention: [{ table, timeColumn }]` through the existing closed manifest family
 and `definePlugin` projection. Omitted retention preserves existing declarations.
@@ -12685,6 +12694,25 @@ socket. Its admission observes Docker publications and local TCP conflicts befor
 effects. Explicit remote Docker endpoints contribute publication evidence only;
 they cannot establish ownership of this process's local sockets. A port acquired
 after admission remains a visible native start failure recoverable by retry.
+
+## Shared Project setup (unreleased 0.3 source)
+
+The development Project organization format adds optional compact
+`setupSelection` and `setupContent` references. Accepted manifests and personal
+overrides live in protected `project_setup.v1` Artifact bodies, outside the
+default Project census. Existing rows with neither reference retain repository
+definitions. A selection without its matching protected detail is unavailable,
+never an empty setup or permission to run changed commands.
+
+Current `projects.inspect` exposes `effectiveDefinition` separately from the raw
+repository `definition` and its file basis. Execution/placement consumers use the
+effective declaration; repository editing still uses the original file basis.
+Explicit `reviewSharedSetup` demands add the typed `sharedSetupChange` comparison.
+`projects.setup.set` is the acknowledged organization-CAS writer for shared
+selection and personal overrides. Source-selected `artifact.get` adds the exact
+`projectSourceId` parent to its request. These are current-source contracts,
+requiring matching development components; no released skew fallback, alternate
+trust store or migration is introduced.
 
 ## Migration history
 

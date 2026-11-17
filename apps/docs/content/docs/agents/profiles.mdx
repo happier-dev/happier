@@ -33,6 +33,12 @@ A profile can include:
 Profiles are applied **only when starting a new session**.
 They are **fixed per session** after launch. If you want a different profile, start a new session.
 
+In the **unreleased 0.3 Project setup implementation**, a selected Profile's
+secret bindings override Project defaults; an explicit launch binding overrides
+both. A declared secret must use your selected secret reference, even if a local
+environment file contains the same name. Integrated validation of this flow is
+still in progress.
+
 In **unreleased 0.3 development source**, use **Preferred agent** to choose the
 Agent a profile supplies when a start has no explicit Agent choice. Select
 **Choose when starting** to clear it, including when only one compatible Agent is

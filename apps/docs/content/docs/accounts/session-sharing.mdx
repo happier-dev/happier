@@ -142,7 +142,7 @@ owner can assign **Admin**. The roster can be read without permission to edit it
 | Role | **Can use**: use it, with personal overrides in your own Settings | **Can edit**: change it for everyone it is shared with | Edit and manage document grants |
 | Launch Profile | **Can use**: start sessions with it | **Can edit**: change the shared original | Edit and manage document grants |
 | Saved Secret | **Can use**: use the referenced secret in supported launches | No edit level in the audience sheet | No Admin level in the audience sheet |
-| Project Source | **Can use**: read repository metadata | No edit level in the audience sheet | Creator or current Team administration manages the Source separately |
+| Project Source | **Can use**: read repository metadata and selected protected setup | No edit level in the audience sheet | Creator or current Team administration manages the Source separately |
 
 A workflow shared personally can be run on the recipient's machines or, in
 unreleased 0.3 development, a Machine they have **Can use** access to. Its runs
@@ -166,6 +166,20 @@ repository address, default revision and folder are readable by the Home and
 its admitted audience, including for E2EE Accounts. Each person opens the
 repository with their own Git credential and separately admitted Machine access.
 Source audience grants only **Can use**; it does not make a viewer a Source editor.
+
+A protected setup publication is separate from those readable Source fields.
+The Source stores its selected document and revision; executable declarations
+stay in protected content. Its admitted audience can read that selected setup
+through the Source, with encryption-key preparation handled when publishing or
+changing the audience. Ordinary context documents and dashboards retain the
+separate document-grant rules below.
+
+Accepting setup makes a private Project copy. Later publication changes, Source
+deletion or lost Source access do not replace or withdraw that accepted copy.
+Review and accept updates explicitly; see [shared setup](/organize/projects-and-worktrees#shared-setup-03-development).
+A setup link identifies the Source and its Home. It grants no access, carries no
+secret values and cannot approve execution. Open it with an Account signed in
+to that Home; Git credentials and Machine access are still separate.
 
 In the development Sources detail, an attached dashboard shows its readable name
 and owner, plus the audience and access levels when its grant roster is

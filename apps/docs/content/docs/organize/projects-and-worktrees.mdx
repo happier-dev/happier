@@ -48,6 +48,37 @@ Open returns to Projects when there is no previous route; Source detail falls
 back to Sources. This includes a Source detail that is still loading or has
 become unavailable.
 
+## Shared setup (0.3 development)
+
+The unreleased setup flow can accept a Source's protected setup publication into
+your private Project. The accepted copy stays usable when the publisher changes
+it or you lose Source access. Updates are explicit: review the before-and-after
+effective definition before replacing your accepted copy. Shared declarations
+override corresponding repository declarations; your personal overrides apply
+last. Detaching shared setup preserves your personal overrides and checkout files.
+
+Keeping the existing copy changes neither
+content nor consent. Approval covers setup, teardown and executable autostart
+effects together; a teardown-only change still needs review during acceptance.
+Setup approval does not run teardown. An Agent can request acceptance but cannot
+create remembered execution consent. Integrated validation is still in progress.
+
+## Setup environment inputs (0.3 development)
+
+The in-progress Project setup implementation can import variable names from
+`.env.example` without copying its values. New names start as optional config
+requirements so you can choose which need secrets or must be present. Existing
+requirements keep their classification, including requirements inherited from
+shared setup. Import into your personal setup draft keeps these declarations
+private; saving that draft does not change the repository or shared publication.
+
+At launch, the selected checkout's `.env`, `.env.development`, `.env.local` and
+`.env.development.local` supply private defaults in that order. Deliberate
+Project, Profile and launch choices take precedence. A declared secret uses your
+selected secret reference; a value in an environment file cannot satisfy it.
+These runtime values are excluded from shared setup and review. This flow is
+unreleased and its integrated validation is still in progress.
+
 ## Overview dashboards
 
 In the 0.3 development flow, Overview has a default dashboard and can hold named
@@ -267,8 +298,9 @@ If another editor changed it, keep your draft, read the current file and review 
 changes before saving again. This check is best effort: it does not lock out an
 external editor. Inspection and saving do not run setup or grant setup approval.
 
-Setup approval with **Until it changes** covers the setup commands and the current
-contents of the checkout files they run. For a plain command, that means a script
+Setup approval with **Until it changes** covers the reviewed lifecycle commands,
+selected toolchain and the current contents of the checkout files they run.
+For a plain command, that means a script
 named as the program, sourced, or passed to an interpreter, such as `./setup.sh`,
 `source scripts/env.sh`, `bash -e scripts/setup.sh` or
 `pwsh -File scripts/setup.ps1`, including after `env`, `sudo` or `cmd /c`. Editing,
@@ -317,6 +349,12 @@ List other files a command reads in `workspace.setupInputs`:
   }
 }
 ```
+
+In the 0.3 development removal flow, an accepted checkout's teardown runs inside
+the removal operation before its files are removed. A cleanup failure preserves
+the checkout. A person can explicitly skip cleanup; unattended removal uses only
+remembered consent and can skip cleanup when that consent is unavailable. Forgetting
+a Project relationship and deleting checkout files remain separate choices.
 
 ## Running commands on workers
 

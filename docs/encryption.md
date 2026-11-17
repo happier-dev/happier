@@ -2279,6 +2279,30 @@ schema-valid `ProjectSharedSetupV1` body; addressed reads use `artifact.get`.
 The kind stays hidden from ordinary browser discovery. Generic updates and
 accepted-copy authoring remain restricted to their specialized owners.
 
+Shared setup publications use protected `project_setup.v1` Artifact content.
+A Source carries only the selected Artifact reference and header/body revision.
+Opening that content names the exact Source parent; ordinary Artifact access
+remains a separate admission path. The publication and accepted-copy readers
+require the selected content revision and closed body grammar.
+
+`projects.setup.set` writes the recipient's accepted manifest and personal
+overrides to a private protected Artifact, then updates the existing Project
+organization row through CAS. That census row contains only `setupSelection`
+(`sourceId`, content revision, digest) and `setupContent` (Artifact id and revision),
+never executable declarations. An unchanged acceptance writes neither content
+nor a row. A losing row CAS leaves the previous selected copy intact; a newly
+created unselected detail may remain as an ordinary private Artifact. Replacing
+or detaching shared setup preserves personal overrides. Account mode and Artifact
+envelope owners govern these bodies; Plain Accounts require no E2EE material.
+
+Preparation reads the accepted private copy and does not require publisher
+access. Only explicit `projects.inspect` update review reads upstream content;
+`sharedSetupChange` supplies the before/after effective definition, selected
+publication, target-produced readiness (including `notRequired`) and proposed
+lifecycle review. Signed acceptance uses the captured requester Artifact store
+for both accepted-detail creation and replay reads. Missing upstream access leaves the
+accepted copy available. Content acceptance does not grant execution consent.
+
 Setup consent belongs to the approving Account and its Home-qualified Project,
 not the execution Machine or its custodian. The reserved Account-row adapter in
 `app/projects/trust/projectTrustRowService.ts` stores one current
@@ -2313,6 +2337,18 @@ a separate target-local fact outside the checkout and Workspace Sync, persisted
 only after every applicable setup step succeeds. The storage and consent ports are
 development source contracts; integrated preparation/launch and released availability
 require their own evidence.
+
+The reviewed digest covers the effective setup and teardown lifecycle together,
+including selected native/executable input bytes and relevant binding references.
+Setup review also includes teardown-only and executable autostart effects: an
+empty setup command list does not imply `notRequired`. A setup approval can
+remember that full lifecycle without executing teardown; teardown later consumes
+the same consent. `notRequired` during setup means the reviewed lifecycle has no
+executable effects and uses the host toolchain.
+Purpose and completion remain separate execution facts. Raw publication bytes,
+layer provenance and assigned worktree ports do not enter this digest; a change
+entirely overridden by personal configuration therefore does not change consent.
+Only the existing present-person Trust writer can remember the resulting effect.
 
 The development-source UI client, `sync/api/account/apiProjectTrust.ts`, captures
 the approving Home and Account for human Remember and shared purpose36 opening.

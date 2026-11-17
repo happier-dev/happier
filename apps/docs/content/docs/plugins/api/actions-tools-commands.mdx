@@ -797,6 +797,30 @@ the declared `outputSchema`.
 
 ## Calling host Actions
 
+### Review and accept Project setup (0.3 development source)
+
+The unreleased Project setup contract uses the same host Action service.
+`projects.inspect` with `reviewSharedSetup: { sourceId }` returns the proposed
+effective definition, target-produced readiness and lifecycle review. Use
+`projects.setup.set` to accept the exact reviewed selection, detach shared setup
+or save personal overrides. Content acceptance preserves the private accepted
+copy independently of later Source access and never grants execution consent.
+
+`projects.prepare` owns execution consent. A human's **This time** or **Until it
+changes** choice resumes the retained preparation operation with its reviewed
+effect digest; an automation or plugin cannot self-grant remembered Trust. The
+digest covers setup, teardown and executable autostart together, including teardown-only
+definitions. Use the target's readiness result rather than inferring no effect
+from an empty setup list or a missing review.
+
+For names-only environment import, request `projects.inspect` with
+`read: { kind: 'imports' }`. Its `environmentImport` contains requirements and
+diagnostics from `.env.example`, never the example values. Keep existing
+requirement classifications when adding missing names to a personal setup draft.
+See [Projects and worktrees](/organize/projects-and-worktrees#shared-setup-03-development)
+for the composition and lifecycle behavior, and [Host actions](/plugins/api/host-actions)
+for the generated Action reference. Integrated validation remains in progress.
+
 ### Share plugin documents with a Team (0.3 development source)
 
 Use `context.services.actions.execute('artifact.create', { header, body })` to
