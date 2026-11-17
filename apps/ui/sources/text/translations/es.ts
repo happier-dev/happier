@@ -12032,7 +12032,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         unavailable: 'Sin perfil',
       },
       storage: {
-        unavailable: 'Aún no hay datos de sitios',
+        unavailable: 'Información de almacenamiento no disponible',
         ephemeral: 'Lo olvida todo al cerrarse',
         session: 'Se conserva hasta que termina la sesión',
         persistent: 'Conserva inicios de sesión y datos de sitios',

@@ -61,7 +61,8 @@ function permissionLabel(input: Readonly<{
 }>): string {
     if (input.permissionState === 'denied') return t('browserShell.profile.permissions.denied');
     if (input.permissionState === 'prompt') return t('browserShell.profile.permissions.prompt');
-    const count = input.activePermissionGrantCount ?? 0;
+    const count = input.activePermissionGrantCount;
+    if (count === undefined) return t('common.unavailable');
     return count > 0 ? t('browserShell.profile.permissions.active', { count }) : t('browserShell.profile.permissions.none');
 }
 

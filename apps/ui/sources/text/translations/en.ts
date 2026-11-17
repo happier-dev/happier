@@ -13814,7 +13814,7 @@ const enBrowserShell = {
       unavailable: 'No profile',
     },
     storage: {
-      unavailable: 'No site data yet',
+      unavailable: 'Storage details unavailable',
       ephemeral: 'Forgets everything when closed',
       session: 'Kept until the session ends',
       persistent: 'Keeps sign-ins and site data',

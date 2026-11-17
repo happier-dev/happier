@@ -12149,7 +12149,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         unavailable: 'Sem perfil',
       },
       storage: {
-        unavailable: 'Ainda sem dados de sites',
+        unavailable: 'Detalhes de armazenamento indisponíveis',
         ephemeral: 'Esquece tudo ao fechar',
         session: 'Mantido até a sessão terminar',
         persistent: 'Mantém logins e dados de sites',

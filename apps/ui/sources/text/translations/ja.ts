@@ -12329,7 +12329,7 @@ localTailscale: {
         unavailable: 'プロファイルなし',
       },
       storage: {
-        unavailable: 'サイトデータはまだありません',
+        unavailable: 'ストレージの詳細は利用できません',
         ephemeral: '閉じるとすべて消去します',
         session: 'セッション終了まで保持します',
         persistent: 'ログイン情報とサイトデータを保持します',

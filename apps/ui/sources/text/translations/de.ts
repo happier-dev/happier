@@ -11905,7 +11905,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
               unavailable: 'Kein Profil',
             },
             storage: {
-              unavailable: 'Noch keine Websitedaten',
+              unavailable: 'Speicherdetails nicht verfügbar',
               ephemeral: 'Vergisst alles beim Schließen',
               session: 'Bleibt bis zum Ende der Sitzung',
               persistent: 'Behält Anmeldungen und Websitedaten',

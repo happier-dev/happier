@@ -9821,7 +9821,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 unavailable: '無設定檔',
             },
             storage: {
-                unavailable: '尚無網站資料',
+                unavailable: '儲存空間詳細資訊無法使用',
                 ephemeral: '關閉後清除所有內容',
                 session: '保留到工作階段結束',
                 persistent: '保留登入資訊和網站資料',

@@ -11870,7 +11870,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         unavailable: 'Aucun profil',
       },
       storage: {
-        unavailable: 'Aucune donnée de site pour l’instant',
+        unavailable: 'Informations de stockage indisponibles',
         ephemeral: 'Oublie tout à la fermeture',
         session: 'Conservé jusqu’à la fin de la session',
         persistent: 'Garde les connexions et les données des sites',

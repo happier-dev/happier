@@ -11666,7 +11666,7 @@ export const zhHans: TranslationStructure = {
         unavailable: '无配置文件',
       },
       storage: {
-        unavailable: '尚无网站数据',
+        unavailable: '存储详情不可用',
         ephemeral: '关闭后清除所有内容',
         session: '保留到会话结束',
         persistent: '保留登录信息和网站数据',

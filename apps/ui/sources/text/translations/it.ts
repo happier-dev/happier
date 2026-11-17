@@ -12253,7 +12253,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         unavailable: 'Nessun profilo',
       },
       storage: {
-        unavailable: 'Ancora nessun dato dei siti',
+        unavailable: 'Dettagli di archiviazione non disponibili',
         ephemeral: 'Dimentica tutto alla chiusura',
         session: 'Conservato fino alla fine della sessione',
         persistent: 'Conserva accessi e dati dei siti',

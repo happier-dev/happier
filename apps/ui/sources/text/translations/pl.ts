@@ -11861,7 +11861,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         unavailable: 'Brak profilu',
       },
       storage: {
-        unavailable: 'Brak danych witryn',
+        unavailable: 'Informacje o pamięci witryn są niedostępne',
         ephemeral: 'Zapomina wszystko po zamknięciu',
         session: 'Zachowany do końca sesji',
         persistent: 'Zachowuje logowania i dane witryn',

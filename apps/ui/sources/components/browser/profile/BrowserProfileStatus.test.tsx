@@ -50,4 +50,22 @@ describe('BrowserProfileStatus', () => {
         expect(text).toContain('browserShell.profile.name.session');
         expect(text).toContain('browserShell.profile.storage.unavailable');
     });
+
+    it.each([undefined, 'allowed'] as const)('keeps an unobserved permission count unavailable with state %s', async (permissionState) => {
+        const screen = await renderScreen(<BrowserProfileStatus model={{ profile, permissionState }} />);
+        const text = screen.getTextContent();
+        expect(text).toContain('common.unavailable');
+        expect(text).not.toContain('browserShell.profile.permissions.none');
+    });
+
+    it('shows no site permissions only for an observed zero count', async () => {
+        const screen = await renderScreen(<BrowserProfileStatus model={{ profile, storagePartition,
+            activePermissionGrantCount: 0 }} />);
+        expect(screen.getTextContent()).toContain('browserShell.profile.permissions.none');
+    });
+
+    it.each(['denied', 'prompt'] as const)('preserves an observed %s permission policy without a grant count', async (permissionState) => {
+        const screen = await renderScreen(<BrowserProfileStatus model={{ profile, permissionState }} />);
+        expect(screen.getTextContent()).toContain(`browserShell.profile.permissions.${permissionState}`);
+    });
 });

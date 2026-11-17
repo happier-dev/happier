@@ -11215,7 +11215,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
               unavailable: 'Sense perfil',
             },
             storage: {
-              unavailable: 'Encara no hi ha dades de llocs',
+              unavailable: 'Informació d’emmagatzematge no disponible',
               ephemeral: 'Ho oblida tot en tancar',
               session: 'Es conserva fins que acaba la sessió',
               persistent: 'Conserva els inicis de sessió i les dades dels llocs',
