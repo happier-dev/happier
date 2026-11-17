@@ -1963,6 +1963,22 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
     });
 
+    it('retains the original host baseline in the prepared finite launch when no explicit host snapshot is supplied', async () => {
+        const environment = createEnvKeyScope(['HAPPIER_PROJECT_BASELINE']);
+        environment.patch({ HAPPIER_PROJECT_BASELINE: 'captured-host-baseline' });
+        try {
+            const h = await harness({ version: 1,
+                environmentVariables: [{ name: 'HAPPIER_PROJECT_BASELINE', kind: 'config', required: true }] });
+            Object.assign(h.runtime, { hostEnvironment: undefined });
+            await h.invoke('projects.script.run', { workspace: h.address,
+                selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } });
+            await expect.poll(() => h.spawned.length).toBe(1);
+            expect(h.spawned[0]!.params.options.env?.HAPPIER_PROJECT_BASELINE).toBe('captured-host-baseline');
+            h.spawned[0]!.pty.exit(0);
+            await expect.poll(() => h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.state).toBe('succeeded');
+        } finally { environment.restore(); }
+    });
+
     it('keeps cancelled admission reserved until the actual process exit is observed', async () => {
         const h = await harness();
         await h.invoke('projects.script.run', { workspace: h.address, selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } });

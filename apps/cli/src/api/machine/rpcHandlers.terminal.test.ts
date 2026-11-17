@@ -81,6 +81,9 @@ import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/ag
 import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
+import { projectSharedSetupDigestV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 
 /** Held authenticated Home at this fixture's installed Machine boundary. */
 function registerMachineTerminalRpcHandlers(params: Parameters<typeof registerUnadmittedMachineTerminalRpcHandlers>[0]) {
@@ -1170,6 +1173,54 @@ describe('registerMachineTerminalRpcHandlers', () => {
       expect(h.provider.spawned[0]?.params.options.env).toMatchObject({ TOKEN: 'requester-shell-secret' });
       expect(JSON.stringify(result)).not.toContain('requester-shell-secret');
     } finally { await h.dispose(); }
+  });
+
+  it.each(['saved', 'plaintext'] as const)('admits shared-only Project shell requirements from %s inputs before native birth', async binding => {
+    const h = await finiteHarness({ observeInteractiveStop: true });
+    const manifest = { version: 1 as const, worktreePorts: { enabled: true as const, slots: 1 }, environmentVariables: [
+      { name: 'TOKEN', kind: 'secret' as const, required: true },
+      { name: 'PRIVATE_CONFIG', kind: 'config' as const, required: true },
+      { name: 'HAPPIER_WORKTREE_PORT', kind: 'config' as const, required: true },
+    ] };
+    const selection = { sourceId: 'published-source', contentRevision: { headerVersion: 1, bodyVersion: 1 },
+      digest: projectSharedSetupDigestV1(manifest) };
+    const key = { kind: 'project-organization', serverId: 'home', projectKey: 'project' };
+    const rows = await axios.post(`https://home.example${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {});
+    h.post.mockImplementation(async (url, body) => projectAccountRowsReadHttpResponse([
+      ...rows.data.rows,
+      { key, revision: 1, content: { t: 'plain', v: { key, value: {
+        setupSelection: selection, setupContent: { artifactId: 'accepted-setup', headerVersion: 1, bodyVersion: 1 },
+        ...(binding === 'saved' ? { environmentBindings: { v: 1, bindings: { TOKEN: { ref: 'project-token' } } } } : {}),
+      } } } },
+    ], String(url), body));
+    h.get.mockImplementation(async url => String(url).endsWith('/v1/artifacts/accepted-setup')
+      ? { status: 200, data: { id: 'accepted-setup', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind: 'project_setup.v1' }),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1', acceptedSharedSetup: { ...selection, manifest } }) }),
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } }
+      : { status: 200, data: { mode: 'plain', updatedAt: 1 } });
+    await writeFile(join(h.root, '.env.local'), 'PRIVATE_CONFIG=private-config-sentinel\nTOKEN=dotenv-plaintext-sentinel\n');
+    Object.assign(h.runtime, { hostEnvironment: { TOKEN: 'host-plaintext-sentinel' }, configEnvironment: { TOKEN: 'selected-plaintext-sentinel' },
+      ...(binding === 'saved' ? { secretEnvironment: withSavedSecretMaterializer({ accountSettings: { secrets: [
+        { id: 'project-token', name: 'Project token', encryptedValue: { _isSecretValue: true, value: 'bound-shared-secret-sentinel' } },
+      ] }, settingsSecretsReadKeys: [] }) } : {}),
+    });
+    try {
+      const result = await h.handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'shared-only-shell',
+        workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } }, h.ingress);
+      if (binding === 'saved') {
+        expect(result).toMatchObject({ ok: true, reused: false });
+        const environment = h.provider.spawned[0]?.params.options.env;
+        expect(environment).toMatchObject({ TOKEN: 'bound-shared-secret-sentinel', PRIVATE_CONFIG: 'private-config-sentinel' });
+        expect(Number(environment?.HAPPIER_WORKTREE_PORT)).toBeGreaterThan(0);
+        expect(environment?.PORT).toBe(environment?.HAPPIER_WORKTREE_PORT);
+      } else {
+        expect(result).toMatchObject({ ok: false, error: 'project_environment_binding_unavailable' });
+        expect(h.provider.spawned).toEqual([]);
+      }
+      expect(JSON.stringify(result)).not.toContain('sentinel');
+      expect(h.get.mock.calls.filter(([url]) => String(url).endsWith('/v1/artifacts/accepted-setup'))).toHaveLength(1);
+    } finally { await getHostWorktreePortsOwner().release({ rootPath: h.root }); await h.dispose(); }
   });
 
   it('launches a person Project shell with isolation enabled and the complete custodian native environment', async () => {
