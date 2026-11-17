@@ -21,6 +21,10 @@
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
-  "dependencies": { "@happier-dev/protocol": "0.0.0", "zod": "4.6.7" },
-  "devDependencies": { "typescript": "^5.9.2", "vitest": "^3.2.4" }
+  "dependencies": {
+    "@happier-dev/protocol": "0.0.0",
+    "zod": "4.6.7"
+  },
+  "peerDependencies": { "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0" },
+  "devDependencies": { "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0", "typescript": "^5.9.2", "vitest": "^3.2.4" }
 }

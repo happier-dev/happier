@@ -2257,6 +2257,9 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@happier-dev/plugin-sdk':
+        specifier: '>=0.0.0 <1.0.0'
+        version: link:../plugin-sdk
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
