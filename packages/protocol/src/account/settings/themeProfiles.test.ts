@@ -25,6 +25,12 @@ describe('Account theme profile library', () => {
         const source = { ...profile('theme_ocean'), overrides: { light: { 'groupped.background': '#111111', 'background.canvas': '#222222', 'future.token': '#abcdef' }, dark: {} } };
         expect(themes.ThemeProfileLibraryStoredSchema.parse([source])[0]?.overrides.light).toEqual({ 'background.canvas': '#222222', 'future.token': '#abcdef' });
     });
+    it('retains valid override collections beyond the former 300-token cutoff', () => {
+        const overrides = Object.fromEntries(Array.from({ length: 301 }, (_, index) => [`future.token${index}`, '#abcdef']));
+        const source = { ...profile('theme_many_tokens'), overrides: { light: overrides, dark: {} } };
+        expect(themes.ThemeProfileV1Schema.parse(source).overrides.light).toEqual(overrides);
+        expect(themes.ThemeProfileLibraryStoredSchema.parse([source])[0]?.overrides.light).toEqual(overrides);
+    });
     it('rejects malformed colors and closed mutation fields', () => {
         for (const source of [
             { ...profile('theme_ocean'), unknown: true },

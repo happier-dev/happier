@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { ArtifactCreateIdV1Schema } from '@happier-dev/protocol/artifacts/artifactIdV1';
 
-import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from './themeProfileConstants';
 import { createThemeProfileId, exportThemeProfileToJson, getSupportedThemeProfileImportFormats, importThemeProfileFromJson, migrateThemeProfileOverrideTokenIds } from './themeProfileImportExport';
 import { THEME_PROFILE_PUBLIC_TOKEN_IDS } from './themeProfileTokenRegistry';
 import type { ThemeProfileV1 } from './themeProfileTypes';
@@ -288,9 +287,9 @@ describe('theme profile import/export', () => {
     });
 
 
-    it('rejects imports with too many overrides in one mode', async () => {
+    it('imports and retains valid opaque overrides beyond the former 300-token cutoff', async () => {
         const overrides = Object.fromEntries(
-            Array.from({ length: THEME_PROFILE_MAX_OVERRIDES_PER_MODE + 1 }, (_, index) => [`unknown.${index}`, '#ffffff']),
+            Array.from({ length: 301 }, (_, index) => [`unknown.${index}`, '#ffffff']),
         );
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
@@ -303,7 +302,10 @@ describe('theme profile import/export', () => {
 
         const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
-        expect(result).toEqual({ ok: false, error: 'invalidProfile' });
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error('valid override collection rejected');
+        expect(result.document.profile.overrides.light).toEqual(overrides);
+        expect(result.document.raw.overrides).toEqual({ light: overrides, dark: {} });
     });
 
     it('migrates deprecated token ids on import and when parsing persisted profile overrides', () => {

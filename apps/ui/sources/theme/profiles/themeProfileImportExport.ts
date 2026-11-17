@@ -3,7 +3,6 @@ import { createThemeProfileFile, ThemeProfileFileEnvelopeSchema } from '@happier
 import { ThemeProfileIdSchema, ThemeProfileNameSchema, isReservedThemeProfileId, migrateThemeProfileOverrideTokenId, migrateThemeProfileOverrideTokenIds } from '@happier-dev/protocol/account/settings/themeProfiles';
 import {
     DEFAULT_IMPORTED_THEME_PROFILE_NAME,
-    THEME_PROFILE_MAX_OVERRIDES_PER_MODE,
     THEME_PROFILE_SCHEMA_VERSION,
 } from './themeProfileConstants';
 import { isValidThemeProfileColorValue } from './themeProfileColorValidation';
@@ -53,7 +52,6 @@ export { migrateThemeProfileOverrideTokenIds } from '@happier-dev/protocol/accou
 type SanitizeOverridesOptions = Readonly<{
     defaultBlankName?: boolean;
     rejectInvalidColors?: boolean;
-    rejectTooManyOverrides?: boolean;
 }>;
 
 type SanitizeOverridesResult = Readonly<{
@@ -97,10 +95,6 @@ const sanitizeOverrides = (
     options: SanitizeOverridesOptions = {},
 ): SanitizeOverridesResult => {
     if (!isRecord(sourceOverrides)) return { overrides: {}, invalid: false };
-
-    if (options.rejectTooManyOverrides && Object.keys(sourceOverrides).length > THEME_PROFILE_MAX_OVERRIDES_PER_MODE) {
-        return { overrides: {}, invalid: true };
-    }
 
     const migrated = migrateThemeProfileOverrideTokenIds(
         Object.fromEntries(Object.entries(sourceOverrides).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
@@ -254,7 +248,6 @@ export const importThemeProfileFromJson = (json: string, options: ImportOptions)
         const profile = sanitizeProfile(document.profile, options, warnings, {
             defaultBlankName: true,
             rejectInvalidColors: true,
-            rejectTooManyOverrides: true,
         });
         if (!profile) {
             return { ok: false, error: 'invalidProfile' };
@@ -292,7 +285,6 @@ export const sanitizeThemeProfileOverridesForV1TrustBoundary = (
     const sanitized = Object.fromEntries(MODES.map((mode) => {
         const result = sanitizeOverrides(overrides[mode], mode, warnings, {
             rejectInvalidColors: true,
-            rejectTooManyOverrides: true,
         });
         return [mode, result];
     })) as Record<ThemeProfileMode, SanitizeOverridesResult>;

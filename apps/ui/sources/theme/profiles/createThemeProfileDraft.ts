@@ -1,4 +1,4 @@
-import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE, THEME_PROFILE_SCHEMA_VERSION } from './themeProfileConstants';
+import { THEME_PROFILE_SCHEMA_VERSION } from './themeProfileConstants';
 import { resolveThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
 import type { ThemeProfileColorOverrides, ThemeProfileMode, ThemeProfileV1 } from './themeProfileTypes';
 
@@ -31,13 +31,14 @@ const updateModeOverrides = (
 });
 
 export const createThemeProfileDraft = ({ id, name, now, sourceProfile }: CreateThemeProfileDraftInput): ThemeProfileV1 => ({
+    ...sourceProfile,
     schemaVersion: THEME_PROFILE_SCHEMA_VERSION,
     id,
     name,
     createdAt: now,
     updatedAt: now,
     base: { light: 'light', dark: 'dark' },
-    ...(sourceProfile ? { assetAppearance: resolveThemeProfileAssetAppearance(sourceProfile) } : {}),
+    ...(sourceProfile ? { assetAppearance: resolveThemeProfileAssetAppearance(sourceProfile), source: { kind: 'yours' } as const } : {}),
     overrides: sourceProfile ? cloneOverrides(sourceProfile.overrides) : emptyOverrides(),
 });
 
@@ -49,9 +50,6 @@ export const updateThemeProfileDraftColor = (
     updatedAt: string,
 ): ThemeProfileV1 => {
     const modeOverrides = profile.overrides[mode];
-    if (!(tokenId in modeOverrides) && Object.keys(modeOverrides).length >= THEME_PROFILE_MAX_OVERRIDES_PER_MODE) {
-        return profile;
-    }
 
     return updateModeOverrides(profile, mode, { ...modeOverrides, [tokenId]: value }, updatedAt);
 };

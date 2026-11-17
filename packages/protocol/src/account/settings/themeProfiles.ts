@@ -11,7 +11,6 @@ import { isValidThemeProfileColorValue } from './themeProfileColors.js';
 
 export const THEME_PROFILE_ID_MAX_LENGTH = 96;
 export const THEME_PROFILE_NAME_MAX_LENGTH = 64;
-export const THEME_PROFILE_MAX_OVERRIDES_PER_MODE = 300;
 export const BUILT_IN_THEME_PROFILE_PRESET_IDS = [
     'premiumDark',
     'pitchDark',
@@ -48,7 +47,7 @@ export const ThemeProfileColorSchema = z.string().check(z.refine(isValidThemePro
 // Token ids are opaque persistence keys. The UI token registry decides which ones
 // this build can apply; retaining newer ids prevents unrelated edits losing them.
 export const ThemeProfileColorOverridesSchema = z.pipe(
-    z.record(ThemeProfileTokenIdSchema, ThemeProfileColorSchema).check(z.refine((overrides) => Object.keys(overrides).length <= THEME_PROFILE_MAX_OVERRIDES_PER_MODE)),
+    z.record(ThemeProfileTokenIdSchema, ThemeProfileColorSchema),
     z.transform((overrides) => migrateThemeProfileOverrideTokenIds(overrides).overrides),
 );
 

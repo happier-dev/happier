@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { createThemeProfileDraft, resetThemeProfileDraftMode, resetThemeProfileDraftToken, updateThemeProfileDraftColor } from './createThemeProfileDraft';
-import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from './themeProfileConstants';
 import type { ThemeProfileV1 } from './themeProfileTypes';
 
 const now = '2026-05-11T12:00:00.000Z';
@@ -37,13 +36,25 @@ describe('createThemeProfileDraft', () => {
         });
     });
 
-    it('clones an existing profile without retaining identity or timestamps', () => {
-        const draft = createThemeProfileDraft({ id: 'clone', name: 'Clone', now, sourceProfile: sourceProfileWithDarkAssets });
+    it('clones all presentation fields while replacing identity, timestamps and provenance', () => {
+        const richerSource = {
+            ...sourceProfileWithDarkAssets,
+            seeds: { canvas: '#101010', accent: '#fedcba' },
+            style: { radius: 'round' as const, fontFamily: 'system' },
+            css: '[data-happier-surface] { opacity: 0.9; }',
+            futurePresentation: { texture: 'paper' },
+            source: { kind: 'plugin' as const, pluginId: 'custom-theme', contributionId: 'midnight' },
+        };
+        const draft = createThemeProfileDraft({ id: 'clone', name: 'Clone', now, sourceProfile: richerSource });
 
         expect(draft.id).toBe('clone');
         expect(draft.name).toBe('Clone');
         expect(draft.createdAt).toBe(now);
         expect(draft.updatedAt).toBe(now);
+        expect(draft).toMatchObject({
+            seeds: richerSource.seeds, style: richerSource.style, css: richerSource.css,
+            futurePresentation: richerSource.futurePresentation, source: { kind: 'yours' },
+        });
         expect(draft.overrides).toEqual(sourceProfile.overrides);
         expect(draft.overrides).not.toBe(sourceProfile.overrides);
         expect((draft as ThemeProfileV1 & { assetAppearance?: string }).assetAppearance).toBe('dark');
@@ -62,9 +73,9 @@ describe('createThemeProfileDraft', () => {
         expect(resetMode.overrides.dark).toEqual({ 'background.canvas': '#0A0A0B' });
     });
 
-    it('does not add draft overrides beyond the per-mode limit', () => {
+    it('edits a visible token while retaining 300 opaque draft overrides', () => {
         const fullOverrides = Object.fromEntries(
-            Array.from({ length: THEME_PROFILE_MAX_OVERRIDES_PER_MODE }, (_, index) => [`legacy.${index}`, '#ffffff']),
+            Array.from({ length: 300 }, (_, index) => [`legacy.${index}`, '#ffffff']),
         );
         const draft: ThemeProfileV1 = {
             ...sourceProfile,
@@ -73,6 +84,7 @@ describe('createThemeProfileDraft', () => {
 
         const edited = updateThemeProfileDraftColor(draft, 'light', 'background.canvas', '#eeeeee', '2026-05-11T12:01:00.000Z');
 
-        expect(edited).toBe(draft);
+        expect(edited.overrides.light).toEqual({ ...fullOverrides, 'background.canvas': '#eeeeee' });
+        expect(draft.overrides.light).toEqual(fullOverrides);
     });
 });

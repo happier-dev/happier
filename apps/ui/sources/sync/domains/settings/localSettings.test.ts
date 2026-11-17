@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from '@/theme/profiles/themeProfileConstants';
 import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/localSettingDefinitions.activitySurfaces';
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
@@ -482,8 +481,9 @@ describe('localSettingsParse', () => {
         });
     });
 
-    it('drops persisted theme profiles with too many overrides in one mode', () => {
-        expect(localSettingsParse({
+    it('retains persisted theme profiles beyond the former 300-token cutoff for migration', () => {
+        const overrides = Object.fromEntries(Array.from({ length: 301 }, (_, index) => [`unknown.${index}`, '#ffffff']));
+        const parsed = localSettingsParse({
             themeProfiles: {
                 activeProfileId: 'oversized-profile',
                 profiles: [
@@ -495,21 +495,17 @@ describe('localSettingsParse', () => {
                         updatedAt: '2026-05-11T00:00:00.000Z',
                         base: { light: 'light', dark: 'dark' },
                         overrides: {
-                            light: Object.fromEntries(
-                                Array.from(
-                                    { length: THEME_PROFILE_MAX_OVERRIDES_PER_MODE + 1 },
-                                    (_, index) => [`unknown.${index}`, '#ffffff'],
-                                ),
-                            ),
+                            light: overrides,
                             dark: {},
                         },
                     },
                 ],
             },
-        })).toMatchObject({
+        });
+        expect(parsed).toMatchObject({
             themeProfiles: {
-                profiles: [],
-                activeProfileIds: { light: null, dark: null },
+                profiles: [{ id: 'oversized-profile', overrides: { light: overrides, dark: {} } }],
+                activeProfileIds: { light: 'oversized-profile', dark: 'oversized-profile' },
             },
         });
     });
