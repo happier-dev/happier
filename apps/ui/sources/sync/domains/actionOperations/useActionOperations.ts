@@ -43,20 +43,25 @@ export type AcceptedActionOperationRead = Readonly<{
     machineId: string;
     actionId: string;
     lifetime: ServerAccountScopeLifetime | null;
+    /** Follow this admitted invocation before its first operation snapshot arrives. */
+    requestId?: string;
 }>;
 
 export function useActionOperation(address: ActionOperationAddress | null, acceptedRead?: AcceptedActionOperationRead) {
     const operation = useActionOperationSelector(() => (
         address ? actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), address) : null
     ));
-    const serverId = address?.serverId;
+    const serverId = address?.serverId ?? acceptedRead?.lifetime?.scope.serverId;
     const operationId = address?.operationId;
     const machineId = acceptedRead?.machineId;
     const actionId = acceptedRead?.actionId;
     const lifetime = acceptedRead?.lifetime;
+    const requestId = acceptedRead?.requestId;
     const terminalComplete = operation?.snapshotComplete === true && isActionOperationTerminal(operation.snapshot.state);
     React.useEffect(() => {
-        if (!serverId || !operationId || !machineId || !actionId || !lifetime || terminalComplete || !lifetime.isCurrent()) return;
+        if (!serverId || !machineId || !actionId || !lifetime || terminalComplete || !lifetime.isCurrent()) return;
+        const identity = requestId ? { requestIdentity: { actionId, requestId } } : operationId ? { operationId, actionId } : null;
+        if (!identity) return;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
         const current = () => !controller.signal.aborted && lifetime.isCurrent();
@@ -70,12 +75,15 @@ export function useActionOperation(address: ActionOperationAddress | null, accep
                 const { observeActionOperation } = await import('./observeActionOperationByRequestId');
                 if (!current()) return;
                 await observeActionOperation({ serverId, machineId, accountId: lifetime.scope.accountId,
-                    operationId, actionId, signal: controller.signal, onUnavailable: unavailable });
+                    ...identity, signal: controller.signal, onUnavailable: unavailable,
+                    onUpdate: snapshot => {
+                        if (current()) actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+                    } });
             } catch { unavailable(); }
             finally { retirement.dispose(); }
         })();
         return () => { controller.abort(); retirement.dispose(); };
-    }, [serverId, operationId, machineId, actionId, lifetime, terminalComplete]);
+    }, [serverId, requestId ? undefined : operationId, requestId, machineId, actionId, lifetime, terminalComplete]);
     return operation;
 }
 

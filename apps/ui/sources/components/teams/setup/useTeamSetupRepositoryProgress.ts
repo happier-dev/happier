@@ -19,11 +19,13 @@ export function useTeamSetupRepositoryProgress(
     query: ActionOperationProjectSourceQuery,
     lifetime: ServerAccountScopeLifetime | null,
 ): TeamSetupRepositoryProgress {
-    const selected = useProjectOpenActionOperation({ ...query,
-        serverId: query.serverId ? resolveServerProfileScopeIdForIdentifier(query.serverId) : null });
+    const serverId = query.serverId ? resolveServerProfileScopeIdForIdentifier(query.serverId) : null;
+    const selected = useProjectOpenActionOperation({ ...query, serverId });
     const openOperation = useActionOperation(selected ? {
         serverId: selected.serverId, operationId: selected.snapshot.operationId,
-    } : null, selected && query.machineId ? { machineId: query.machineId, actionId: 'projects.open', lifetime } : undefined);
+    } : null, query.machineId && (selected || query.requestId) ? {
+        machineId: query.machineId, actionId: 'projects.open', lifetime, requestId: query.requestId,
+    } : undefined);
     const rawResult = openOperation?.snapshot.result;
     const result = React.useMemo(() => {
         const parsed = OpenProjectResultV1Schema.safeParse(rawResult);

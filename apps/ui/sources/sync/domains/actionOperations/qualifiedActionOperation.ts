@@ -13,6 +13,8 @@ export type ActionOperationProjectSourceQuery = Readonly<{
     accountId: string | null;
     machineId: string | null;
     sourceId: ProjectSourceIdentityV1['id'] | null;
+    /** A selected invocation, rather than any current or historical Open for this Source. */
+    requestId?: string;
 }>;
 
 

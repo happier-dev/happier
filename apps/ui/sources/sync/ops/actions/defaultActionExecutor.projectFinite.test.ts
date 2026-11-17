@@ -16,6 +16,7 @@ import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectA
 import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { createDeferred } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import tweetnacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -192,14 +193,14 @@ afterEach(async () => { restoreHttpReplyDecoder?.(); restoreHttpReplyDecoder = u
 
 describe('Project finite delivery through the default UI Action host', () => {
     it('composes Team setup through real Actions and opens an editable first task only on request', async () => {
-        const [{ prepareTeamSetupPlan, runTeamSetupPlan, openTeamSetupFirstTask },
+        const [{ runTeamSetupPlan, openTeamSetupFirstTask },
             { createFrontDoorActionExecute }, { OpenProjectResultV1Schema },
             { SessionAuthoringOpenResultV1Schema }, { readNewSessionDraftFromRepository }, { router }] = await Promise.all([
             import('@/components/teams/setup/teamSetupPlan'), import('./frontDoorRuntimeActionExecutor'),
             import('@happier-dev/protocol/projects/openProjectV1'), import('@happier-dev/protocol/plugins/ui'),
             import('@/components/sessions/composer/newSessionDraftRepositoryAdapter'), import('expo-router'),
         ]);
-        await import('@/components/teams/setup/useTeamSetupPlan');
+        const { useTeamSetupPlan } = await import('@/components/teams/setup/useTeamSetupPlan');
         const restoreActions = await installRealActionExecutorModuleLoader();
         try {
             const scope = { serverId, accountId: 'requester' };
@@ -218,10 +219,14 @@ describe('Project finite delivery through the default UI Action host', () => {
                     target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
                 } }) };
             } });
+            const firstResponse = createDeferred<void>();
+            const issuedRequestIds: string[] = [];
             homes.answer(requesterHomeId, '/v1/actions/projects.open', { select: body => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                issuedRequestIds.push(request.envelope.requestId);
                 return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.open',
-                    requestId: request.envelope.requestId, execution: { ok: true, result: response } }) };
+                    requestId: request.envelope.requestId, execution: { ok: true, result: response } }),
+                    ...(issuedRequestIds.length === 1 ? { respondAfter: firstResponse.promise } : {}) };
             } });
             const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
             const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
@@ -236,24 +241,52 @@ describe('Project finite delivery through the default UI Action host', () => {
             const executeAction = createFrontDoorActionExecute(createDefaultActionExecutor());
             const context = { serverId, expectedAccountId: scope.accountId,
                 surface: 'ui' as const, authority: 'present_user' as const };
-            const prepared = await prepareTeamSetupPlan({ executeAction, context,
+            const controller = await renderHook(() => useTeamSetupPlan(executeAction, context));
+            const prepared = await controller.getCurrent().prepare({
                 target: { serverId, homeId: 'srv_finite_requester', machineId: 'source' },
                 repositories: ['first', 'second', 'third'].map(id => ({ id, input: {
-                    source: { kind: 'folder' as const, path: '/team/repo' }, materialization: { kind: 'attach' as const },
+                    source: { kind: 'source' as const, id, revision: 2, selector: {
+                        provider: { id: 'happier.scm.forge.github/github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com' },
+                        repository: { nameWithOwner: `team/${id}` }, protocol: 'https' as const,
+                    } }, materialization: { kind: 'attach' as const },
                 } })), isCurrent: () => true });
             expect(prepared).toMatchObject({ ok: true });
             expect(calls).toEqual([]);
             expect(homes.requestsFor('/v1/actions/projects.open')).toHaveLength(0);
             if (!prepared?.ok) throw new Error('Team review did not prepare');
-            const setup = await runTeamSetupPlan({ executeAction, context, plan: prepared.plan,
+            let retire = () => {};
+            let current = true;
+            let setupPromise!: ReturnType<typeof runTeamSetupPlan>;
+            await act(async () => { setupPromise = controller.getCurrent().run({ plan: prepared.plan,
+                selection: { team: { serverId, teamId: 'joined-team' }, lifetime: { scope, isCurrent: () => current,
+                    onRetire: cancel => { retire = cancel; return { dispose() {} }; } },
+                    sources: ['first', 'second', 'third'].map(id => ({ id, revision: 2, name: `Team ${id}` })), },
                 onRepositoryOpened: id => { response = id === 'first' ? OpenProjectResultV1Schema.parse({
-                    kind: 'refused', code: 'project_setup_review_unavailable' }) : opened; } });
+                    kind: 'refused', code: 'project_setup_review_unavailable' }) : opened; } }); });
+            await vi.waitFor(() => expect(issuedRequestIds).toHaveLength(1));
+            const selected = controller.getCurrent().batch;
+            expect(selected).toMatchObject({ running: true, selection: { team: { serverId, teamId: 'joined-team' },
+                target: { serverId, machineId: 'source' }, repositories: [
+                    { source: { id: 'first', revision: 2, name: 'Team first' } },
+                    { source: { id: 'second', revision: 2, name: 'Team second' } },
+                    { source: { id: 'third', revision: 2, name: 'Team third' } },
+                ] } });
+            expect(selected?.dispatched).toEqual(new Set(['first']));
+            firstResponse.resolve();
+            let setup!: Awaited<ReturnType<typeof runTeamSetupPlan>>;
+            await act(async () => { setup = await setupPromise; });
             expect(setup).toMatchObject({ machine: null, machineSettlement: null, repositories: [
                 { id: 'first', result: { ok: true, result: opened } },
                 { id: 'second', result: { ok: true, result: { kind: 'refused', code: 'project_setup_review_unavailable' } } },
                 { id: 'third', result: { ok: true, result: opened } },
             ] });
             expect(homes.requestsFor('/v1/actions/projects.open')).toHaveLength(3);
+            expect(issuedRequestIds).toEqual(selected?.selection.repositories.map(repository => repository.requestId));
+            expect(controller.getCurrent().batch).toMatchObject({ running: false, settlement: setup });
+            current = false;
+            act(() => retire());
+            expect(controller.getCurrent().batch).toBeNull();
+            await controller.unmount();
             expect(vi.mocked(router.push)).not.toHaveBeenCalled();
             if (opened.kind !== 'opened') throw new Error('Transport fixture did not open');
             // The ordinary composer writes into its loaded Account repository.

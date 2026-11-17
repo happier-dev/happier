@@ -338,6 +338,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             const { snapshot } = operation;
             if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId
                 || snapshot.scope.machineId !== query.machineId || snapshot.actionId !== 'projects.open'
+                || (query.requestId !== undefined && snapshot.requestId !== query.requestId)
                 || snapshot.domainRef?.kind !== 'projectOpen' || snapshot.domainRef.sourceId !== query.sourceId) continue;
             const projection = readProjection(state, key, operation);
             const order = selected ? compareOperations(projection, selected) : -1;

@@ -87,6 +87,8 @@ export async function runTeamSetupPlan(params: Readonly<{
     plan: TeamSetupPlan;
     onMachineApplied?: (result: TeamSetupOwnerResult<MachineSetupApplyResultV1>) => void;
     onMachineSettled?: (failure: ActionExecuteFailure | null) => void;
+    repositoryRequestIds?: ReadonlyMap<string, string>;
+    onRepositoryOpening?: (id: string) => void;
     onRepositoryOpened?: (id: string, result: TeamSetupOwnerResult<OpenProjectResultV1>) => void;
 }>): Promise<TeamSetupRunResult> {
     let machine: TeamSetupRunResult['machine'] = null;
@@ -116,8 +118,10 @@ export async function runTeamSetupPlan(params: Readonly<{
     const repositories: TeamSetupRunResult['repositories'][number][] = [];
     for (const repository of params.plan.repositories) {
         if (params.context.signal?.aborted) break;
+        params.onRepositoryOpening?.(repository.id);
+        const requestId = params.repositoryRequestIds?.get(repository.id);
         const result = decodeOwnerResult(await params.executeAction.confirmed(
-            'projects.open', repository.input, params.context,
+            'projects.open', repository.input, requestId ? { ...params.context, actionRequestId: requestId } : params.context,
         ), value => OpenProjectResultV1Schema.parse(value));
         repositories.push({ id: repository.id, result });
         params.onRepositoryOpened?.(repository.id, result);
