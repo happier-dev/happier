@@ -1,5 +1,5 @@
 import type { SurfaceAddress } from '@happier-dev/plugin-ui';
-import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { useHappierThemeSurfaceOverridesEnabled, useThemeSurfaceInspectionBinding } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle, type ViewProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -152,6 +152,14 @@ export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibi
  * `backgroundColor` in `style` or the translucency tiers will be hidden.
  */
 export const GlassSurface = React.memo(function GlassSurface(props: GlassSurfaceProps) {
+    const inspection = useThemeSurfaceInspectionBinding(props.themeSurface);
+    const inspectionRef = React.useCallback((node: React.ComponentRef<typeof View> | null) => {
+        inspection?.ref(node);
+        if (typeof props.ref === 'function') {
+            const cleanup = props.ref(node);
+            if (typeof cleanup === 'function') return () => { inspection?.ref(null); cleanup(); };
+        } else if (props.ref) props.ref.current = node;
+    }, [inspection, props.ref]);
     const { theme } = useUnistyles();
     const liquidGlassAvailable = useLiquidGlassAvailable();
     const reduceTransparency = useReduceTransparency();
@@ -195,8 +203,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         ? group === 'floating' ? fixedThemePaint(theme.colors.edge.floatingFill) : pagePaint
         : fixedThemePaint(authoredSolid), pagePaint, shellHeld);
     const solidColor = solidPaint.color;
-    const viewProps = { ref: props.ref, testID: props.testID, accessibilityRole: props.accessibilityRole, accessibilityLabel: props.accessibilityLabel, role: props.role, 'aria-label': props['aria-label'], onLayout: props.onLayout,
-        collapsable: props.collapsable, onPointerEnter: props.onPointerEnter, onPointerLeave: props.onPointerLeave,
+    const viewProps = { ...inspection, ref: inspection ? inspectionRef : props.ref, testID: props.testID, accessibilityRole: props.accessibilityRole, accessibilityLabel: props.accessibilityLabel, role: props.role, 'aria-label': props['aria-label'], onLayout: props.onLayout,
+        collapsable: inspection ? false : props.collapsable, onPointerEnter: props.onPointerEnter, onPointerLeave: props.onPointerLeave,
         onFocus: props.onFocus, onBlur: props.onBlur,
         ...(props.themeSurface ? { dataSet: { ...props.themeSurface, state: props.themeSurface.state ?? 'default' } } : null) };
     const effectiveEnvironment = {

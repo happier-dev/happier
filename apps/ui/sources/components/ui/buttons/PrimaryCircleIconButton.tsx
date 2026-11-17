@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, StyleProp, View, ViewStyle } from 'react-native';
-import { HappierPressable, type HappierPressableProps, HappierSurfaceGradientLayer, happierMaterialGradient, useHappierMaterialColorResolver, resolveThemeSurfaceAddress, resolveHappierThemeSurfaceStyle, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, type HappierPressableProps, HappierSurfaceGradientLayer, happierMaterialGradient, useHappierMaterialColorResolver, resolveThemeSurfaceAddress, resolveHappierThemeSurfaceStyle, useHappierThemeSurfaceOverridesEnabled, useThemeSurfaceInspectionBinding } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceDataSet, type SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -88,6 +88,7 @@ export const PrimaryCircleIconButton = React.memo(
       selected: props.accessibilityState?.selected === true,
     });
     const surfaceStyle = surfaceOverridesEnabled ? themeSurfaceStyles.surface(surfaceAddress) : undefined;
+    const inspection = useThemeSurfaceInspectionBinding(surfaceAddress);
     const overrideBackgroundColor = surfaceOverridesEnabled
       ? resolveHappierThemeSurfaceStyle(theme, surfaceAddress, Platform.OS)?.backgroundColor
       : undefined;
@@ -131,6 +132,7 @@ export const PrimaryCircleIconButton = React.memo(
         >
           {({ pressed, focused }) => (
             <View
+              {...inspection}
               dataSet={{ surface: surfaceAddress.surface, part: surfaceAddress.part, state: surfaceAddress.state ?? 'default' }}
               style={[
                 styles.paint,

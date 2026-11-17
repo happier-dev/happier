@@ -22,8 +22,8 @@ vi.mock('expo-linear-gradient', () => ({ LinearGradient: (props: Record<string, 
 const restoreGlass = installExpoGlassEffectRequireStub({ isAvailable: () => true });
 afterAll(restoreGlass);
 const { renderScreen, flattenTestStyle, standardCleanup } = await import('@/dev/testkit');
-const { prepareThemeCss } = await import('./prepareThemeCss');
-const prepared = prepareThemeCss(`
+const { prepareThemeCssAsync } = await import('./prepareThemeCss');
+const prepared = await prepareThemeCssAsync(`
     [data-surface="composer"][data-part="root"] { background-color: #123456; border-radius: 18px; }
     [data-surface="composer"][data-part="root"][data-state="disabled"] { background-color: #654321; }
     [data-surface="composer"][data-part="toolbar"] { background-color: rgba(12, 34, 56, 0.4); }
@@ -39,6 +39,7 @@ const { glassPresetMaterials } = await import('@/components/ui/glass/glassMateri
 const { UserMessageBubble } = await import('@/components/sessions/transcript/UserMessageBubble');
 const { PrimaryCircleIconButton } = await import('@/components/ui/buttons/PrimaryCircleIconButton');
 const { HappierThemeSurfaceScope } = await import('@happier-dev/plugin-ui/presentation');
+const { useThemeColorInspector } = await import('./useThemeColorInspector');
 afterEach(standardCleanup);
 
 function hex(value: unknown) {
@@ -46,6 +47,44 @@ function hex(value: unknown) {
 }
 
 describe('compiled native surface styles at their painted owners', () => {
+    it('measures the real native send paint host and claims its gesture instead of activating Send', async () => {
+        const picked = vi.fn(); const sent = vi.fn();
+        let inspector!: ReturnType<typeof useThemeColorInspector>;
+        const measurement = { pending: null as ((x: number, y: number, width: number, height: number) => void) | null, deferred: false };
+        const host = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => {
+            if (measurement.deferred) measurement.pending = callback;
+            else callback(4, 8, 32, 32);
+        } };
+        function Harness() {
+            inspector = useThemeColorInspector({ paintMap: [{ address: { surface: 'composer', part: 'send' }, selector: '', label: 'Send',
+                paintRoles: [{ facet: 'background', source: { kind: 'fixed' } }] }], onPick: picked });
+            return <PrimaryCircleIconButton active testID="native-inspection-send" accessibilityLabel="Send" onPress={sent}
+                themeSurface={{ surface: 'composer', part: 'send' }}><></></PrimaryCircleIconButton>;
+        }
+        const screen = await renderScreen(<Harness />, {
+            createNodeMock: () => host,
+        });
+        const painted = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'composer'
+            && node.props.dataSet?.part === 'send')[0]!;
+        expect(painted.props.collapsable).toBe(false);
+        await React.act(async () => { inspector.activate(); });
+        await React.act(async () => {
+            // Native's responder boundary delivers release to the winning View;
+            // an enclosing Pressable receives it only when the View declines.
+            if (!painted.props.onStartShouldSetResponder()) {
+                screen.findHostByTestId('native-inspection-send')!.props.onPress();
+            }
+        });
+        expect(picked).toHaveBeenCalledTimes(1);
+        expect(picked.mock.calls[0]![0]).toMatchObject({ address: { surface: 'composer', part: 'send' }, rect: { x: 4, y: 8, width: 32, height: 32 }, host });
+        expect(sent).not.toHaveBeenCalled();
+        measurement.deferred = true;
+        await React.act(async () => { painted.props.onStartShouldSetResponder(); });
+        await React.act(async () => { inspector.cancel(); });
+        await React.act(async () => { measurement.pending?.(4, 8, 32, 32); });
+        expect(picked).toHaveBeenCalledTimes(1);
+        expect(painted.props.onStartShouldSetResponder()).toBe(false);
+    });
     it('retains ordinary native paint inside the existing recovery scope', async () => {
         const screen = await renderScreen(<HappierThemeSurfaceScope enabled={false}>
             <GlassSurface testID="recovery-surface" themeSurface={{ surface: 'composer', part: 'root' }} style={{ borderRadius: 40 }}><></></GlassSurface>

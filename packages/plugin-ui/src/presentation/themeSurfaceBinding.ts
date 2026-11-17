@@ -1,9 +1,10 @@
-import { createContext, createElement, useContext, type ReactNode } from 'react';
+import { createContext, createElement, useContext, useMemo, type ReactNode } from 'react';
 import { Platform } from 'react-native';
 import { THEME_SURFACE_REGISTRY, type SurfaceAddress, type SurfaceId, type ThemeSurfaceState } from '@happier-dev/plugin-sdk/ui';
 
 import { useOptionalHappierUiPlatform, useOptionalHappierUiTheme } from '../environment/context.js';
 import { resolveHappierThemeSurfaceStyle } from './themeSurface.js';
+import { createThemeSurfaceInspectionBinding } from './themeSurfaceInspection.js';
 
 export type ThemeSurfaceStateFacts = Readonly<{
   disabled?: boolean;
@@ -56,4 +57,10 @@ export function useThemeSurfaceBinder() {
 
 export function useThemeSurfaceBinding(address?: SurfaceAddress) {
   return useThemeSurfaceBinder()(address);
+}
+
+/** Attach to the existing painted host, never an extra inspection wrapper. */
+export function useThemeSurfaceInspectionBinding(address?: SurfaceAddress) {
+  return useMemo(() => address === undefined || Platform.OS === 'web' ? undefined : createThemeSurfaceInspectionBinding(address),
+    [address?.surface, address?.part, address?.state]);
 }
