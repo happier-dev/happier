@@ -169,6 +169,7 @@ export function createExternalMcpServer(params: Readonly<{
           ...(serverIdentityId ? { serverIdentityId } : {}),
           serverHttpBaseUrl,
           sessionId: 'cli-global',
+          resolveServerFeaturesSnapshot,
           ...(projectWorkerAccountAction ? { projectWorkerAccountAction } : {}),
         };
         const { executor: baseExecutor, deps, resolveContext } = createCliActionExecutorHarness(

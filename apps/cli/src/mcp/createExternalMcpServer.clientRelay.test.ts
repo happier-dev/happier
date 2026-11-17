@@ -40,6 +40,50 @@ const workspace = { ok: true, tabs: [], groups: [], splits: [], rootNodeId: 'mai
 describe('standalone MCP client Action admission', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
+  it('reads Workflow triggers through the authenticated exact-Home feature resolver', async () => {
+    const features = FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } }, capabilities: {} });
+    const requests: string[] = [];
+    // HTTP is the boundary; MCP dispatch, feature decisions, Account-mode
+    // resolution and the Workflow trigger reader remain real.
+    const home = createServer((request, response) => {
+      request.resume();
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      requests.push(path);
+      response.setHeader('content-type', 'application/json');
+      if (path === '/v1/features/authenticated') response.end(JSON.stringify(features));
+      else if (path === '/v1/account/encryption/currentness') response.end(JSON.stringify({
+        mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }));
+      else if (path === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      else if (path === '/v2/account/settings') response.end(JSON.stringify({ version: 1,
+        content: { t: 'plain', v: {} } }));
+      else if (path === '/v3/automations/query') response.end(JSON.stringify({ automations: [], nextCursor: null }));
+      else { response.statusCode = 404; response.end(JSON.stringify({ error: 'unexpected_route' })); }
+    });
+    home.listen(0, '127.0.0.1'); await once(home, 'listening');
+    const address = home.address();
+    if (!address || typeof address === 'string') throw new Error('Missing Home address');
+    const { mcp } = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => createExternalMcpServer({
+      credentials, serverFeaturesSnapshot: { status: 'ready', provenance: 'authenticated', features },
+      daemonControlTarget: null,
+    }));
+    const client = new Client({ name: 'standalone-workflow-features', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await mcp.connect(serverTransport); await client.connect(clientTransport);
+      const result = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+        arguments: { actionId: 'workflow.trigger.list', input: { scope: 'account_all' } } }));
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      const content = result.content.find(item => item.type === 'text');
+      const payload: unknown = content?.type === 'text' ? JSON.parse(content.text) : null;
+      expect(payload).toMatchObject({ sets: [] });
+      expect(requests).toContain('/v1/features/authenticated');
+      expect(requests).toContain('/v3/automations/query');
+    } finally {
+      await client.close(); await mcp.close();
+      home.closeAllConnections(); await new Promise<void>(resolve => home.close(() => resolve()));
+    }
+  });
+
   it('keeps waived public-link opening material out of the standalone MCP result', async () => {
     const accountId = 'mcp-link-owner';
     const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
