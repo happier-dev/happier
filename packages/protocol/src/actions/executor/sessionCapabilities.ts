@@ -7,6 +7,7 @@ import {
 import type { SessionCapabilitiesGetOutputV1, SessionCapabilitiesSetInputV1, SessionCapabilitiesSetOutputV1 } from '../specs/sessionCapabilities.js';
 import { isMachineRpcTimeoutError, readRpcErrorCode } from '../../rpc/errors.js';
 import type { ActionExecutorContext } from './types.js';
+import { withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 import { areSessionCapabilitySelectionsEquivalentV1, readSessionCapabilityOverrideV1, setSessionCapabilitySelectionItemV1 } from '../../reach/sessionCapabilitySelectionV1.js';
 import { createActionRefusalDetailsV1 } from '../actionRefusalDiagnostic.js';
 
@@ -43,14 +44,20 @@ export async function setSessionCapabilityV1(input: Readonly<{
   const address = { sessionId: request.sessionId, ...(context.serverId ? { serverId: context.serverId } : {}) };
   let snapshot: SessionCapabilitiesActionSnapshotV1 | null;
   try { snapshot = await port.readSession(address, context); }
-  catch { context.signal?.throwIfAborted(); return { ok: false, code: 'session_unavailable' }; }
+  catch (error) {
+    context.signal?.throwIfAborted();
+    return withActionFailureCauseDiagnostic({ ok: false as const, code: 'session_unavailable' as const }, error, 'session.capabilities.read');
+  }
   if (!snapshot) return { ok: false, ...createActionRefusalDetailsV1('not_found', 'session_absent') };
   const applyTiming = resolveCapabilityApplyTimingV1({ kind: request.kind, sessionRunning: snapshot.sessionRunning,
     agent: snapshot.agent, launchRestart: snapshot.launchRestart });
   if (applyTiming.t === 'new_sessions_only') return { ok: false, code: 'applies_to_new_sessions_only' };
   let id: string | null;
   try { id = await port.resolveItem({ ...address, kind: request.kind, id: request.id }, context); }
-  catch { context.signal?.throwIfAborted(); return { ok: false, code: 'session_unavailable' }; }
+  catch (error) {
+    context.signal?.throwIfAborted();
+    return withActionFailureCauseDiagnostic({ ok: false as const, code: 'session_unavailable' as const }, error, 'session.capabilities.resolve');
+  }
   if (!id) return { ok: false, ...createActionRefusalDetailsV1('not_found', 'capability_identity_unresolved') };
   const current = readSessionCapabilitySelectionFromMetadataV1(snapshot.metadata);
   const previous = readSessionCapabilityOverrideV1(current, request.kind, id);

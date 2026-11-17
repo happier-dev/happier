@@ -3101,8 +3101,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
-      } catch {
-        return { ok: false, errorCode: ctx.signal?.aborted ? 'cancelled' : 'machine_offline', error: ctx.signal?.aborted ? 'cancelled' : 'machine_offline' };
+      } catch (error) {
+        const errorCode = ctx.signal?.aborted ? 'cancelled' : 'machine_offline';
+        return withActionFailureCauseDiagnostic({ ok: false as const, errorCode, error: errorCode }, error, 'action.target_preflight');
       }
       if (targetPreflight.type === 'error') return targetPreflight.result;
       if (targetPreflight.type === 'approval_required') {
