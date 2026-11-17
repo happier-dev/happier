@@ -95,6 +95,8 @@ interface BaseModalProps {
     focusReturnRef?: FocusReturnRef;
     /** On web, retain the opening control when the provided geometry anchor cannot receive focus. */
     focusReturnFallback?: 'activation-time';
+    /** Hears the modal leave the screen once its exit has played (see `useOverlayPresence`). */
+    onExited?: () => void;
 }
 
 function ModalContentFrame({ motion, ...props }: React.ComponentProps<typeof OverlayMotionFrame> & Readonly<{ motion?: 'none' }>) {
@@ -119,6 +121,7 @@ export function BaseModal({
     webPortalTarget = null,
     focusReturnRef,
     focusReturnFallback,
+    onExited,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
     // A bottom sheet that closes on its scrim also closes by dragging it down (its frame draws the grabber).
@@ -162,6 +165,7 @@ export function BaseModal({
     const modalPresence = useOverlayPresence(
         visible,
         modalMotion.exitMs,
+        onExited,
     );
     const scrimOpacity = modalMotion.progress.interpolate({
         inputRange: [0, 1],

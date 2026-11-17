@@ -8,7 +8,6 @@ import { CustomModal } from './components/CustomModal';
 import { resolveCustomModalPresentation } from './components/customModalChrome';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
 import { MODAL_Z_INDEX, MODAL_Z_INDEX_STEP, SCREEN_OVERLAY_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -91,21 +90,13 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         else next.delete(host);
         return next;
     }), []);
-    const removalTimersRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
     useEffect(() => {
         stateRef.current = state;
     }, [state]);
 
-    const clearRemovalTimer = useCallback((id: string) => {
-        const timer = removalTimersRef.current.get(id);
-        if (timer == null) return;
-        clearTimeout(timer);
-        removalTimersRef.current.delete(id);
-    }, []);
-
+    // A hidden dialog stays in the stack through its exit; its own overlay says when it has left (`onExited`).
     const removeModalNow = useCallback((id: string) => {
-        clearRemovalTimer(id);
         setState(prev => {
             const nextState = {
                 modals: prev.modals.filter(modal => modal.id !== id)
@@ -113,7 +104,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
             stateRef.current = nextState;
             return nextState;
         });
-    }, [clearRemovalTimer]);
+    }, []);
 
     const generateId = useCallback(() => {
         return Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -135,7 +126,6 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         // A card hung from a control belongs to the dialog that control sits in (the topmost open one).
         const hostId = anchor ? [...stateRef.current.modals].reverse().find(modal => modal.visible)?.id : undefined;
         const modalConfig = { ...config, focusReturnRef, id, visible: true, ...(hostId ? { hostId } : {}) } as ModalHostEntry;
-        clearRemovalTimer(id);
         setState(prev => {
             const nextState = {
                 modals: [...prev.modals, modalConfig]
@@ -145,14 +135,10 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         });
 
         return id;
-    }, [clearRemovalTimer, generateId]);
+    }, [generateId]);
 
     const hideModal = useCallback(function hide(id: string) {
-        const target = stateRef.current.modals.find(modal => modal.id === id);
         const hungCards = stateRef.current.modals.filter(modal => modal.visible && modal.hostId === id);
-        // Every dialog kind leaves through the same exit as a custom modal; the host removes it once that has played.
-        const shouldDelayRemoval = target?.visible === true;
-
         setState(prev => {
             const currentTarget = prev.modals.find(modal => modal.id === id);
             if (!currentTarget) return prev;
@@ -177,19 +163,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
             hide(card.id);
         }
 
-        if (!shouldDelayRemoval) return;
-        clearRemovalTimer(id);
-        const timer = setTimeout(() => {
-            removeModalNow(id);
-        }, motionTokens.overlay.modal.exitMs);
-        removalTimersRef.current.set(id, timer);
-    }, [clearRemovalTimer, removeModalNow]);
+    }, []);
 
     const hideAllModals = useCallback(() => {
-        for (const timer of removalTimersRef.current.values()) {
-            clearTimeout(timer);
-        }
-        removalTimersRef.current.clear();
         const nextState = { modals: [] };
         stateRef.current = nextState;
         setState(nextState);
@@ -254,15 +230,6 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         };
     }, [active, showModal, hideModal, hideAllModals, updateCustomModalProps]);
 
-    useEffect(() => {
-        return () => {
-            for (const timer of removalTimersRef.current.values()) {
-                clearTimeout(timer);
-            }
-            removalTimersRef.current.clear();
-        };
-    }, []);
-
     const contextValue: ModalContextValue = {
         // Derived here rather than at each consumer so "a modal owns the keyboard" has one owner. Only a modal that
         // is showing owns it: one that is leaving stays in the stack for its exit (seconds on a busy JS thread), and
@@ -323,6 +290,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                                     }}
                                     showBackdrop={showBackdrop}
                                     visible={modal.visible}
+                                    onExited={() => removeModalNow(modal.id)}
                                     zIndexBase={modalZIndexBase}
                                 />
                             );
@@ -343,6 +311,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                                     }}
                                     showBackdrop={showBackdrop}
                                     visible={modal.visible}
+                                    onExited={() => removeModalNow(modal.id)}
                                     zIndexBase={modalZIndexBase}
                                 />
                             );
@@ -363,6 +332,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                                     }}
                                     showBackdrop={showBackdrop}
                                     visible={modal.visible}
+                                    onExited={() => removeModalNow(modal.id)}
                                     zIndexBase={modalZIndexBase}
                                 />
                             );
@@ -381,6 +351,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                                     hideModal={hideModal}
                                     showBackdrop={showBackdrop}
                                     visible={modal.visible}
+                                    onExited={() => removeModalNow(modal.id)}
                                     zIndexBase={modalZIndexBase}
                                 />
                                 </PluginSurfaceFocusEligibilityProvider>

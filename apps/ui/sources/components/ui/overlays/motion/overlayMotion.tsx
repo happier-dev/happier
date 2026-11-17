@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Animated, Dimensions, Platform, type StyleProp, type ViewStyle } from 'react-native';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { resolveOverlayPointerEvents } from '../resolveOverlayPointerEvents';
 
@@ -118,11 +119,19 @@ export function resolveOverlayMotionPreset(params: Readonly<{
     };
 }
 
-export function useOverlayPresence(visible: boolean, exitMs: number): Readonly<{
+/**
+ * Whether an overlay is on screen: while shown, and through its exit. `onExited` hears the moment it has left, so
+ * an owner that keeps the overlay's record (the dialog stack) drops it then, never on a clock of its own.
+ */
+export function useOverlayPresence(visible: boolean, exitMs: number, onExited?: () => void): Readonly<{
     present: boolean;
     exiting: boolean;
 }> {
     const [presentState, setPresentState] = React.useState(visible);
+    const leave = useEventCallback(() => {
+        setPresentState(false);
+        onExited?.();
+    });
     const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
     React.useEffect(() => {
@@ -148,15 +157,15 @@ export function useOverlayPresence(visible: boolean, exitMs: number): Readonly<{
         if (!presentState) return;
 
         if (exitMs <= 0) {
-            setPresentState(false);
+            leave();
             return;
         }
 
         timeoutRef.current = setTimeout(() => {
             timeoutRef.current = null;
-            setPresentState(false);
+            leave();
         }, exitMs);
-    }, [exitMs, presentState, visible]);
+    }, [exitMs, leave, presentState, visible]);
 
     const present = visible || presentState;
     return {
@@ -258,16 +267,16 @@ function webOverlayMotionTargets(element: HTMLElement): WebMotionTarget[] {
 }
 
 /**
- * What a leaving material frame fades: every glass paint layer itself and every subtree beside the paint
+ * What a leaving material frame fades: every blurring paint itself and every subtree beside one
  * (content, the directional rim, a card's tinted ring), never an ancestor of a paint. The surface thins
  * out as it travels, while each paint keeps sampling the page through its own blur.
  */
-function webMaterialFadeLayers(frame: HTMLElement): Element[] {
-    if (frame.matches(GLASS_BACKDROP_SELECTOR)) return [frame];
+function webMaterialFadeLayers(frame: HTMLElement, paints: readonly Element[]): Element[] {
+    if (paints.includes(frame)) return [frame];
     const layers: Element[] = [];
     const visit = (parent: Element) => {
         for (const child of Array.from(parent.children)) {
-            if (child.matches(GLASS_BACKDROP_SELECTOR) || child.querySelector(GLASS_BACKDROP_SELECTOR) === null) layers.push(child);
+            if (paints.includes(child) || !paints.some(paint => child.contains(paint))) layers.push(child);
             else visit(child);
         }
     };
@@ -276,14 +285,30 @@ function webMaterialFadeLayers(frame: HTMLElement): Element[] {
 }
 
 /**
+ * The paints a leaving frame must not put opacity above: those that sample the page through a blur. A glass
+ * surface drawn solid (a card on a sheet) samples nothing, so it fades whole with its content, edge and all, on
+ * the compositor; faded by its border colour on the main thread, its outline stood alone while a busy close held
+ * that thread (MACH-SANDBOX r10 add-close).
+ */
+function webBlurringPaints(frame: HTMLElement): Element[] {
+    return [frame, ...Array.from(frame.querySelectorAll(GLASS_BACKDROP_SELECTOR))].filter(element => {
+        if (!element.matches(GLASS_BACKDROP_SELECTOR)) return false;
+        const style = getComputedStyle(element);
+        // A browser that computes no backdrop-filter at all still reports the authored one inline.
+        const filter = style.backdropFilter || style.getPropertyValue('-webkit-backdrop-filter') || (element as HTMLElement).style?.backdropFilter || '';
+        return filter !== '' && filter !== 'none';
+    });
+}
+
+/**
  * The elevation and edge a leaving material frame drops: a card's shadow and its clipping border are drawn on
  * ancestors of its paint (the paint clips, so neither can move onto it). They fade by the shadow and the
  * border colour themselves, never by opacity, so no shadow or empty rim is left standing where the card was
  * while the blur keeps its backdrop (MACH-SANDBOX-DESIGN-ACCEPT r2 `add-close-ghost-rim`).
  */
-function webMaterialEdgeLayers(frame: HTMLElement): [Element, MaterialFadeProperty[]][] {
+function webMaterialEdgeLayers(frame: HTMLElement, paints: readonly Element[]): [Element, MaterialFadeProperty[]][] {
     const ancestors = new Set<Element>();
-    for (const paint of Array.from(frame.querySelectorAll(GLASS_BACKDROP_SELECTOR))) {
+    for (const paint of paints) {
         for (let node = paint.parentElement; node; node = node.parentElement) {
             if (!node.matches(GLASS_BACKDROP_SELECTOR)) ancestors.add(node);
             if (node === frame) break;
@@ -387,10 +412,13 @@ function useWebOverlayContentMotion(params: Readonly<{
 function fadeMaterialLayers(frame: HTMLElement, fades: Map<Element, MaterialFade>, visible: boolean, duration: number): void {
     const layers: [Element, readonly MaterialFadeProperty[]][] = visible
         ? Array.from(fades, ([layer, fade]) => [layer, fade.properties])
-        : [
-            ...webMaterialFadeLayers(frame).map(layer => [layer, ['opacity']] as [Element, MaterialFadeProperty[]]),
-            ...webMaterialEdgeLayers(frame),
-        ];
+        : (() => {
+            const paints = webBlurringPaints(frame);
+            return [
+                ...webMaterialFadeLayers(frame, paints).map(layer => [layer, ['opacity']] as [Element, MaterialFadeProperty[]]),
+                ...webMaterialEdgeLayers(frame, paints),
+            ];
+        })();
     for (const [layer, properties] of layers) {
         const previous = fades.get(layer);
         const computed = previous?.animation.playState === 'running' ? getComputedStyle(layer) : null;

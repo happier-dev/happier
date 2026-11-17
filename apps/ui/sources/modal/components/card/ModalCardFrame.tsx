@@ -81,10 +81,25 @@ const stylesheet = StyleSheet.create((theme) => ({
     shadowFrame: (sheet: boolean) => ({
         backgroundColor: 'transparent',
         borderRadius: theme.borderRadius.modalCard,
-        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+        // Web draws the elevation on its own plate (`elevationPlate`).
+        ...(Platform.OS === 'web' ? null : shadowLevelStyle(theme.colors.shadowLevels[4])),
         alignSelf: 'center',
         minHeight: 0,
         ...(sheet ? sheetFrameGeometry : null),
+    }),
+    // On web the card's elevation is a layer beside its glass, never on an ancestor of it: a leaving card then drops
+    // its shadow by opacity on the compositor with its paint and content. Drawn on the frame, the shadow could only
+    // fade on the main thread, and a busy close left it standing as an empty outline (MACH-SANDBOX r10 add-close).
+    elevationPlate: (sheet: boolean) => ({
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        pointerEvents: 'none',
+        borderRadius: theme.borderRadius.modalCard,
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+        ...(sheet ? { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } : null),
     }),
     clipSurface: {
         borderRadius: theme.borderRadius.modalCard,
@@ -189,6 +204,19 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         const height = latestHeight.current;
         setShownHeight(previous => (height > previous ? height : previous));
     }, []);
+    // On the web a press or key anywhere in the card is heard in the capture phase, before a control moves the flow on.
+    // react-native-web drops capture-phase pointer props, so the frame listens on its own element.
+    const frameRef = React.useRef<unknown>(null);
+    React.useEffect(() => {
+        const element = frameRef.current;
+        if (!bounded || Platform.OS !== 'web' || typeof HTMLElement === 'undefined' || !(element instanceof HTMLElement)) return;
+        element.addEventListener('pointerdown', keepActedHeight, true);
+        element.addEventListener('keydown', keepActedHeight, true);
+        return () => {
+            element.removeEventListener('pointerdown', keepActedHeight, true);
+            element.removeEventListener('keydown', keepActedHeight, true);
+        };
+    }, [bounded, keepActedHeight]);
     const [shownScreen, setShownScreen] = React.useState(props.screenKey);
     if (shownScreen !== props.screenKey) {
         setShownScreen(props.screenKey);
@@ -232,14 +260,13 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
 
     return (
         <Animated.View
+            ref={frameRef as React.Ref<View>}
             testID={props.testID}
             {...(framed && Platform.OS === 'web'
                 ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
                 : null)}
             {...(dismiss || bounded ? { onLayout: onFrameLayout } : {})}
-            {...(bounded ? Platform.OS === 'web'
-                ? ({ onPointerDownCapture: keepActedHeight, onKeyDownCapture: keepActedHeight } as unknown as Record<string, unknown>)
-                : { onTouchStart: keepActedHeight } : {})}
+            {...(bounded && Platform.OS !== 'web' ? { onTouchStart: keepActedHeight } : {})}
             style={[
                 dismiss ? { transform: [{ translateY: drag.offset }] } : null,
                 // Native Animated flattens this array; one registered frame keeps its complete Unistyles link.
@@ -265,6 +292,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 props.style,
             ]}
         >
+            {framed && !fullscreen && Platform.OS === 'web' ? <View style={styles.elevationPlate(sheet)} /> : null}
             <GlassLivePictureBackdropContext.Provider value={overLivePicture || props.material === 'overContent'}>
             <GlassSurface themeSurface={{ surface: 'dialog', part: 'root' }} surfaceGroup="floating" floatingRole="panel" enabled={framed && !fullscreen && props.material !== 'solid'}
                 finishRole={framed ? undefined : null}

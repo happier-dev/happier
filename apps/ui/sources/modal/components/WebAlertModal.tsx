@@ -20,6 +20,8 @@ interface WebAlertModalProps {
     /** False while the dialog leaves; the host unmounts it once the exit has played. */
     visible?: boolean;
     zIndexBase?: number;
+    /** Hears the dialog leave the screen, so its host drops it then. */
+    onExited?: () => void;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -50,7 +52,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true, visible = true, zIndexBase }: WebAlertModalProps) {
+export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true, visible = true, zIndexBase, onExited }: WebAlertModalProps) {
     useUnistyles();
     const styles = stylesheet;
     const isConfirm = config.type === 'confirm';
@@ -100,6 +102,7 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
     ]}>{invoke => (
         <BaseModal
             visible={visible}
+            onExited={onExited}
             onClose={() => { void invoke('dismiss'); }}
             accessibilityLabel={config.accessibilityLabel ?? config.title}
             closeOnBackdrop={false}

@@ -22,6 +22,8 @@ interface WebPromptModalProps {
     /** False while the dialog leaves; the host unmounts it once the exit has played. */
     visible?: boolean;
     zIndexBase?: number;
+    /** Hears the dialog leave the screen, so its host drops it then. */
+    onExited?: () => void;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -48,7 +50,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true, visible = true, zIndexBase }: WebPromptModalProps) {
+export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true, visible = true, zIndexBase, onExited }: WebPromptModalProps) {
     useUnistyles();
     const styles = stylesheet;
     const [inputValue, setInputValue] = useState(config.defaultValue || '');
@@ -104,6 +106,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
         return (
             <BaseModal
                 visible={visible}
+                onExited={onExited}
                 onClose={handleCancel}
                 accessibilityLabel={config.accessibilityLabel ?? config.title}
                 focusReturnRef={config.focusReturnRef}

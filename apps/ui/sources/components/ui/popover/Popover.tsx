@@ -320,6 +320,11 @@ type PopoverCommonProps = Readonly<{
      * stale placement when the keyboard was already visible before the popover opened.
      */
     keyboardBottomInset?: number;
+    /**
+     * Hears the popover leave the screen once its exit has played (an anchored popover or a phone sheet), so an owner
+     * keeping its record drops it then. A view pushed into another surface has no exit of its own.
+     */
+    onExited?: () => void;
     children: (render: PopoverRenderProps) => React.ReactNode;
 }>;
 
@@ -509,6 +514,7 @@ function PhonePopoverSheet(props: PopoverShellProps) {
     const pushed = React.useSyncExternalStore(pushStack.subscribe, pushStack.getChrome, pushStack.getChrome);
     const content = <BaseModal
         visible={props.open}
+        onExited={props.onExited}
         onClose={closeSheet}
         onBack={pushed ? pushStack.back : undefined}
         placement="bottom"
@@ -575,7 +581,7 @@ function AnchoredPopoverPresence(props: PopoverShellProps) {
         () => resolveOverlayMotionPreset({ kind: 'popover' }),
         [],
     );
-    const overlayPresence = useOverlayPresence(props.open, reducedMotion ? 0 : popoverMotionPreset.exitMs);
+    const overlayPresence = useOverlayPresence(props.open, reducedMotion ? 0 : popoverMotionPreset.exitMs, props.onExited);
     // Keep the existing exit lifetime, but acquire placement, portals and focus only while present.
     return overlayPresence.present ? <AnchoredPopover {...props} overlayPresence={overlayPresence} /> : null;
 }

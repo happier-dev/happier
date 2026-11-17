@@ -50,7 +50,8 @@ describe('web overlay material composition', () => {
                         <GlassSurface testID="material" finishRole={null} style={{ padding: 12, gap: 8, alignItems: 'stretch' }}>
                             <input data-testid="draft" defaultValue="keep this draft" />
                             <button>Continue</button>
-                            <GlassSurface finishRole={null}><button>Nested action</button></GlassSurface>
+                            {/* A card drawn solid on the material (an item group on a sheet): its paint samples no backdrop. */}
+                            <GlassSurface testID="nested" finishRole={null} style={{ borderWidth: 1, borderColor: 'rgba(0, 0, 0, 0.08)' }}><button>Nested action</button></GlassSurface>
                         </GlassSurface>
                         </div>
                     </div>
@@ -109,10 +110,14 @@ describe('web overlay material composition', () => {
             expect(frame.style.pointerEvents).toBe('none');
             expect(frame.style.opacity).toBe('');
             // Leaving, the paint itself and everything beside it fade out and hold until unmount, so the
-            // surface does not end in a cut; no ancestor of a paint fades, so every blur keeps its backdrop.
-            const paints = Array.from(frame.querySelectorAll<HTMLElement>('[data-happy-glass-backdrop]'));
+            // surface does not end in a cut; no ancestor of a blurring paint fades, so every blur keeps its backdrop.
+            const paints = Array.from(frame.querySelectorAll<HTMLElement>('[data-happy-glass-backdrop]'))
+                .filter(layer => (layer.style.backdropFilter ?? '').includes('blur'));
             const faded = fades.map(run => run.target);
             for (const layer of paints) expect(faded).toContain(layer);
+            // A card drawn solid on it fades whole, edge and all, by opacity: an edge faded by its colour runs on the main
+            // thread and stood as an empty outline while a busy close held that thread (MACH-SANDBOX r10 add-close).
+            expect(faded).toContain(container.querySelector('[data-testid="nested"]'));
             expect(faded).toContain(input);
             expect(faded).toContain(Array.from(material.children).find(child => child.textContent === 'Continue'));
             for (const target of faded) expect(paints.some(layer => layer !== target && target.contains(layer))).toBe(false);

@@ -40,11 +40,11 @@ vi.mock('./components/WebPromptModal', () => ({
 vi.mock('./components/CustomModal', () => {
     const React = require('react');
     return {
-        CustomModal: ({ config, onClose, showBackdrop, visible, zIndexBase }: any) =>
+        CustomModal: ({ config, onClose, showBackdrop, visible, zIndexBase, onExited }: any) =>
             React.createElement(
                 React.Fragment,
                 null,
-                React.createElement('Backdrop', { showBackdrop, visible, zIndexBase }),
+                React.createElement('Backdrop', { showBackdrop, visible, zIndexBase, onExited }),
                 React.createElement(config.component, { ...(config.props ?? {}), onClose, visible }),
             ),
     };
@@ -202,7 +202,7 @@ describe('ModalProvider', () => {
         expect(screenPortalHost.props.style[1].zIndex).toBeLessThan(modalBackdrop.props.zIndexBase);
     });
 
-    it('keeps a hidden custom modal mounted until the shared modal exit animation can complete', async () => {
+    it('keeps a hidden custom modal mounted until its own exit has played, never dropping it on a clock of the stack', async () => {
         vi.useFakeTimers();
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
@@ -218,14 +218,15 @@ describe('ModalProvider', () => {
         expect(screen.findAllByType(DummyModalA).length).toBe(1);
         expect(screen.findByType(DummyModalA)?.props.visible).toBe(false);
 
+        // The exit's nominal time passing is not the exit ending: the dialog's own overlay says when it has left.
         act(() => {
-            vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs - 1);
+            vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs * 4);
         });
 
         expect(screen.findAllByType(DummyModalA).length).toBe(1);
 
         act(() => {
-            vi.advanceTimersByTime(1);
+            screen.findByType('Backdrop' as any)?.props.onExited();
         });
 
         expect(screen.findAllByType(DummyModalA).length).toBe(0);
@@ -274,7 +275,7 @@ describe('ModalProvider', () => {
         expect(screen.findByType(DummyModalB)?.props.visible).toBe(false);
 
         act(() => {
-            vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs);
+            screen.findAllByType('Backdrop' as any).find(backdrop => backdrop.props.visible === false)?.props.onExited();
         });
 
         expect(screen.findAllByType(DummyModalA).length).toBe(1);
@@ -588,8 +589,8 @@ describe('ModalProvider', () => {
         expect(result).toBe(false);
         // The answer settles at the choice; the dialog then leaves through the shared exit before it unmounts.
         expect(screen.findByType('WebAlertModal' as any).props.visible).toBe(false);
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, motionTokens.overlay.modal.exitMs + 50));
+        act(() => {
+            screen.findByType('WebAlertModal' as any).props.onExited();
         });
         expect(screen.findAllByType('WebAlertModal' as any)).toHaveLength(0);
     });
@@ -619,8 +620,8 @@ describe('ModalProvider', () => {
         expect(result).toBeNull();
         // The answer settles at the choice; the dialog then leaves through the shared exit before it unmounts.
         expect(screen.findByType('WebPromptModal' as any).props.visible).toBe(false);
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, motionTokens.overlay.modal.exitMs + 50));
+        act(() => {
+            screen.findByType('WebPromptModal' as any).props.onExited();
         });
         expect(screen.findAllByType('WebPromptModal' as any)).toHaveLength(0);
     });

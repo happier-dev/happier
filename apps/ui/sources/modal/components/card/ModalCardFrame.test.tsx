@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import Color from 'color';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
@@ -115,6 +115,7 @@ describe('ModalCardFrame', () => {
     // F-U5-UI live (U4 finding): pushing a short child (a folder browser) into a bounded sheet shrank it
     // ~690 → ~350 px under the person's finger. A container keeps its height while its content changes.
     it('keeps a bounded card at the tallest height it has shown while its content changes', async () => {
+        await pressesThroughTouch();
         windowState.width = 390;
         windowState.height = 844;
         try {
@@ -139,6 +140,7 @@ describe('ModalCardFrame', () => {
     // AUTO-U1 live: Describe your app settled from its tall progress list to a short notice and kept ~120 px of
     // empty card under it. A new screen (a wizard's next step, a settled run) fits its own content.
     it('lets a bounded card fit a new screen while keeping its height within one', async () => {
+        await pressesThroughTouch();
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const frame = (screenKey: string) => <ModalCardFrame testID="bounded-card" scrollHost="bounded" screenKey={screenKey}
             title="Describe your app" dimensions={{ size: 'md', maxHeightRatio: 0.88 }}>{React.createElement('Body')}</ModalCardFrame>;
@@ -159,6 +161,7 @@ describe('ModalCardFrame', () => {
     // PFC-BUILD-1113-B1 live: Deploy an app's Where step laid out at 426 px while its tiles measured their width, then
     // settled at 310 px; the card kept 116 px of empty space. Only a height the person acted on is kept.
     it('lets a new screen settle before it keeps a height: layouts before the person acts are not a floor', async () => {
+        await pressesThroughTouch();
         const { ModalCardFrame } = await import('./ModalCardFrame');
         const frame = (screenKey: string) => <ModalCardFrame testID="bounded-card" scrollHost="bounded" screenKey={screenKey}
             title="Deploy an app" dimensions={{ size: 'lg', maxHeightRatio: 0.88 }}>{React.createElement('Body')}</ModalCardFrame>;
@@ -332,17 +335,24 @@ describe('ModalCardFrame', () => {
             throw new Error('expected modal card frame to exist');
         }
         const frameStyle = flattenStyle(frame.props.style);
-        expect(hasShadow(frameStyle)).toBe(true);
         expect(frameStyle.overflow).not.toBe('hidden');
 
         const clippedSurface = screen.findAllByType('View').find((node) => {
             const style = flattenStyle(node.props.style);
-            // The clipped surface rounds exactly like the shadow frame around it.
+            // The clipped surface rounds exactly like the frame around it.
             return style.borderRadius === frameStyle.borderRadius && style.overflow === 'hidden';
         });
         expect(clippedSurface).toBeTruthy();
         const clippedSurfaceStyle = flattenStyle(clippedSurface?.props.style);
         expect(hasShadow(clippedSurfaceStyle)).toBe(false);
+        // The elevation is drawn outside the clip: on web by a plate beside the glass (so a leaving card fades it on
+        // the compositor), never by the clipped surface or anything inside it.
+        const elevation = screen.findAllByType('View').filter(node => hasShadow(flattenStyle(node.props.style)));
+        expect(elevation.length).toBeGreaterThan(0);
+        for (const node of elevation) {
+            expect(clippedSurface?.findAll(inner => inner === node)).toHaveLength(0);
+            expect(flattenStyle(node.props.style).borderRadius).toBe(frameStyle.borderRadius);
+        }
     });
 
     it.each([['card', true], ['sheet', true], ['fullscreen', false]] as const)('draws a freshness line in a %s plain on its sheet: %s', async (presentation, plain) => {
@@ -685,9 +695,20 @@ describe('ModalCardFrame', () => {
     });
 });
 
+/**
+ * The keep-height policy is the same on every platform; these tests drive it through the native touch path.
+ * The web capture listener on the real DOM is covered by `ModalCardFrame.actedHeight.dom.test.tsx`.
+ */
+async function pressesThroughTouch() {
+    const { Platform } = await import('react-native');
+    const previousOS = Platform.OS;
+    Platform.OS = 'android';
+    onTestFinished(() => { Platform.OS = previousOS; });
+}
+
 /** A press or key inside the card: the moment its current height becomes the floor. */
 function personActs(host: { props: Record<string, unknown> } | null | undefined) {
-    const handler = (host?.props.onPointerDownCapture ?? host?.props.onTouchStart) as (() => void) | undefined;
+    const handler = host?.props.onTouchStart as (() => void) | undefined;
     if (!handler) throw new Error('the card does not observe the person acting');
     handler();
 }

@@ -27,6 +27,8 @@ interface CustomModalProps {
     showBackdrop?: boolean;
     visible: boolean;
     zIndexBase?: number;
+    /** Hears the modal leave the screen once its exit has played, so its host drops it then. */
+    onExited?: () => void;
 }
 
 function isPromiseLikeDismissDecision(value: unknown): value is PromiseLike<boolean | void> {
@@ -37,7 +39,7 @@ function isPromiseLikeDismissDecision(value: unknown): value is PromiseLike<bool
 }
 
 
-export function CustomModal({ config, onClose, showBackdrop = true, visible, zIndexBase }: CustomModalProps) {
+export function CustomModal({ config, onClose, showBackdrop = true, visible, zIndexBase, onExited }: CustomModalProps) {
     const Component = config.component;
     const dismissible = config.dismissible !== false;
     const dismissalPendingRef = React.useRef(false);
@@ -179,12 +181,13 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
         </ModalCardFrame>;
         return <RetainedModalFrame frame={frame}>{retainedFrame => {
             if (presentation.anchor) {
-                return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
+                return <AnchoredModalCard anchor={presentation.anchor} visible={visible} onExited={onExited} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
                     dimensions={chrome?.dimensions} picker={presentation.card?.anchorRole === 'picker'} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={retainedFrame} />;
             }
             return (
                 <BaseModal
                     visible={visible}
+                    onExited={onExited}
                     onClose={sharedDismiss}
                     accessibilityLabel={accessibilityLabel}
                     testID={effectiveChrome?.kind === 'stage' ? effectiveChrome.testID : undefined}
@@ -223,6 +226,7 @@ const ANCHORED_CARD_EDGE_PADDING_PX = 8;
 function AnchoredModalCard(props: Readonly<{
     anchor: PopoverAnchor;
     visible: boolean;
+    onExited: (() => void) | undefined;
     accessibilityLabel: string | undefined;
     dimensions: CustomModalChromeCardConfig['dimensions'];
     /** A value picker (`anchorRole: 'picker'`): it takes the room on its field's side instead of sliding over it. */
@@ -255,6 +259,7 @@ function AnchoredModalCard(props: Readonly<{
         // host: there its layer is the dialog stack's, so a card opened from inside another dialog stacks above it.
         portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'auto' }}
         onRequestClose={props.onRequestClose}
+        onExited={props.onExited}
     >
         {({ maxHeight, maxWidth }) => (
             // What the card opens (a dropdown, a menu) stacks above the card itself.
