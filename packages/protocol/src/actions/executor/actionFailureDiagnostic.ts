@@ -1,5 +1,4 @@
-import type { core } from 'zod/mini';
-import { projectActionInputIssues } from './actionInputValidation.js';
+import { core } from 'zod/mini';
 import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 
@@ -43,10 +42,22 @@ export function withActionFailureDiagnostic<T extends object>(value: T, input: A
   return result;
 }
 
+/** Output diagnostics retain only reported schema paths/codes, including union branches. */
+function projectOutputIssues(error: core.$ZodError): ActionOutputDiagnostic['issues'] {
+  const project = (issue: core.$ZodIssue, parent: readonly (string | number)[]): ActionOutputDiagnostic['issues'] => {
+    const path = [...parent, ...issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number')];
+    return [{ path, code: issue.code }, ...(issue.code === 'invalid_union'
+      ? issue.errors.flatMap(branch => branch.flatMap(child => project(child, path))) : [])];
+  };
+  return error.issues.flatMap(issue => project(issue, []));
+}
+
 /** Terminal boundary failures retain closed cause facts without exception prose. */
 export function withActionFailureCauseDiagnostic<T extends object>(value: T, error: unknown, phase: string): T {
   return attachDiagnostic(value, readActionOutputDiagnostic(error) ?? readActionOutputDiagnostic(value)
-    ?? { source: phase, phase, issues: [], failureCause: projectActionFailureCauseV1(error, phase) });
+    ?? (error instanceof core.$ZodError
+      ? { source: phase, phase, issues: projectOutputIssues(error) }
+      : { source: phase, phase, issues: [], failureCause: projectActionFailureCauseV1(error, phase) }));
 }
 
 /** Parsing public fields must not erase the already-projected in-process diagnosis. */
@@ -74,15 +85,17 @@ export function readActionOutputDiagnostic(value: unknown): ActionOutputDiagnost
   } catch { return undefined; }
 }
 
-/** One output-failure owner; the input issue projector alone interprets schema issues. */
+/** One output-failure owner, sharing the hidden schema cause carrier. */
 export function invalidActionOutputFailure(error?: core.$ZodError, source = 'action.output', thrown?: unknown,
   options?: Readonly<{ issuePaths: 'omit' }>,
 ): DiagnosticFailure {
-  // External record keys are response content; their caller can retain repair facts without paths.
-  const issues = error ? projectActionInputIssues(error).map(({ path, code, expected }) => ({
-    path: options?.issuePaths === 'omit' ? [] : path, code,
-    ...(code === 'invalid_type' && expected ? { expected } : {}) })) : [];
-  return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output',
-    [outputDiagnostic]: { source, issues,
-      ...(thrown === undefined ? {} : { failureCause: projectActionFailureCauseV1(thrown, source) }) } };
+  const failure = withActionFailureCauseDiagnostic({ ok: false as const,
+    errorCode: 'invalid_action_output', error: 'invalid_action_output' }, error, source);
+  const diagnostic = readActionOutputDiagnostic(failure)!;
+  // External record keys are response content; those readers deliberately omit paths.
+  const issues = error ? diagnostic.issues.map(({ path, code }) => ({
+    path: options?.issuePaths === 'omit' ? [] : path, code })) : [];
+  // Preserve the existing public failure and enumerable-symbol propagation through native adapters.
+  return attachDiagnostic(failure, { source, issues,
+    ...(thrown === undefined ? {} : { failureCause: projectActionFailureCauseV1(thrown, source) }) }, true);
 }
