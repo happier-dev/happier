@@ -135,7 +135,7 @@ export const resolveThemeRuntimeThemes = (themeProfiles: ThemeProfilesLocalState
 
 export const resolveThemeRuntimeVisualTheme = (
     themePreference: ThemePreference,
-    systemTheme: AppThemeName | null | undefined,
+    systemTheme: ReturnType<typeof Appearance.getColorScheme> | undefined,
 ): AppThemeName => {
     if (themePreference === 'adaptive') {
         return systemTheme === 'dark' ? 'dark' : 'light';

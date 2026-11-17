@@ -66,7 +66,7 @@ describe('Artifact-backed theme runtime synchronization', () => {
         await act(async () => { receipt = owner.begin({ document: parsed.document, mode: 'light', origin: { kind: 'editor' } }); });
         expect(shared.themes!.light.colors.background.canvas).toBe('#123456');
         expect(shared.update).toHaveBeenCalledTimes(1);
-        expect(storage.getState().localSettings.themeProfileSelection.light).toEqual({ kind: 'artifact', id: 'selected' });
+        expect(storage.getState().localSettings.themeProfileSelection?.light).toEqual({ kind: 'artifact', id: 'selected' });
         shared.update.mockClear();
         await act(async () => { storage.getState().updateArtifact(fixture.row('selected', '#ddeeff', 2)); });
         expect(shared.themes!.light.colors.background.canvas).toBe('#123456');
