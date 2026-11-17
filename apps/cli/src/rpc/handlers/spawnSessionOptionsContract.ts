@@ -27,7 +27,6 @@ import { SessionIdentityAdditionsV1Schema } from '@happier-dev/protocol/sessions
 import { SessionPromptStackV1Schema } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { SessionInitialGoalRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
-import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SessionManagedTargetPlacementV1Schema, SessionSpawnNewInputV2BaseSchema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
