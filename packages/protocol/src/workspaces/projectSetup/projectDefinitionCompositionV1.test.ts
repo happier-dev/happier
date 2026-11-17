@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveProjectDefinitionV1 } from './projectDefinitionCompositionV1.js';
-import type { ProjectManifestV1 } from './projectManifestV1.js';
+import { ProjectManifestV1Schema, type ProjectManifestV1 } from './projectManifestV1.js';
 
 const command = (command: string) => ({ kind: 'command' as const, command });
 const sharedBasis = { sourceId: 'source', contentRevision: { headerVersion: 1, bodyVersion: 2 }, digest: 'a'.repeat(64) };
@@ -38,5 +38,20 @@ describe('effective Project definition', () => {
       setupOverrides: { version: 1, scripts: {}, environmentVariables: [] } }).effectiveManifest)
       .toEqual({ version: 1, scripts: {}, environmentVariables: [] });
     expect(resolveProjectDefinitionV1({ repositoryManifest: null }).effectiveManifest).toBeNull();
+  });
+
+  it('refuses colliding effective service slots after all authored layers have composed', () => {
+    const repositoryManifest = ProjectManifestV1Schema.parse({ version: 1, worktreePorts: { enabled: true, slots: 2 },
+      services: { web: { source: command('web'), runtime: { primary: true } } } });
+    const acceptedSharedSetup = { ...sharedBasis, manifest: ProjectManifestV1Schema.parse({ version: 1,
+      services: { api: { source: command('api'), runtime: { portSlot: 0 } } } }) };
+    const setupOverrides = ProjectManifestV1Schema.parse({ version: 1,
+      services: { web: { source: command('web'), runtime: { portSlot: 1 } } } });
+    const repaired = resolveProjectDefinitionV1({ repositoryManifest, acceptedSharedSetup, setupOverrides });
+    expect(repaired.effectiveManifest?.services).toEqual({
+      web: setupOverrides.services!.web, api: acceptedSharedSetup.manifest.services!.api,
+    });
+    expect(() => resolveProjectDefinitionV1({ repositoryManifest, acceptedSharedSetup }))
+      .toThrow(expect.objectContaining({ code: 'invalid_manifest' }));
   });
 });

@@ -66,6 +66,10 @@ export function resolveProjectDefinitionV1(input: Readonly<{
       } else record([field], layer);
     }
   }
+  // Individually valid layers can conflict after keyed entries and port policy merge.
+  if (effectiveManifest && !ProjectManifestV1Schema.safeParse(effectiveManifest).success) {
+    throw Object.assign(new Error('invalid_manifest'), { code: 'invalid_manifest' });
+  }
   if (!input.acceptedSharedSetup) return { effectiveManifest, origins };
   const { manifest: _sharedManifest, ...sharedBasis } = input.acceptedSharedSetup;
   return { effectiveManifest, origins, sharedBasis };
