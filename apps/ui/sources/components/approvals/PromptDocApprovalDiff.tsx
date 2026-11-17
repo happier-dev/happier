@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { readPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
@@ -42,6 +43,7 @@ export const PromptDocApprovalDiff = React.memo(function PromptDocApprovalDiff(
   const [current, setCurrent] = React.useState<CurrentDocument>({
     status: 'loading',
   });
+  const [readAttempt, setReadAttempt] = React.useState(0);
   React.useEffect(() => {
     const controller = new AbortController();
     setCurrent({ status: 'loading' });
@@ -78,7 +80,7 @@ export const PromptDocApprovalDiff = React.memo(function PromptDocApprovalDiff(
       }
     })();
     return () => controller.abort();
-  }, [artifactId, props.serverId]);
+  }, [artifactId, props.serverId, readAttempt]);
   const testID = props.testID ?? 'prompt-doc-approval-diff';
   const reviewed = props.request.expectedRevision;
   // A decided edit reads as its outcome. Only a still-pending review can be stale against a newer body:
@@ -110,13 +112,13 @@ export const PromptDocApprovalDiff = React.memo(function PromptDocApprovalDiff(
       ) : current.status === 'loading' ? (
         <Text style={styles.quiet}>{t('sessionInstructions.loading')}</Text>
       ) : (
-        <DiffViewer
-          mode="text"
-          face="prose"
-          prose={PROSE_INLINE}
-          testID={`${testID}.lines`}
-          oldText=""
-          newText={props.request.markdown}
+        <SurfaceStateCard
+          testID={`${testID}.unavailable`}
+          kind="error"
+          size="line"
+          title={t('artifacts.browser.loadFailedTitle')}
+          reason={t('artifacts.browser.loadFailedBody')}
+          action={{ label: t('common.retry'), onPress: () => setReadAttempt(attempt => attempt + 1) }}
         />
       )}
       {settled ? (

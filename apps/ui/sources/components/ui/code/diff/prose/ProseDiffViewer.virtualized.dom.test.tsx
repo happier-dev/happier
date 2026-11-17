@@ -9,16 +9,7 @@ vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
-// The Home's document reader is the system boundary: the original is unavailable, so the whole proposal is the diff.
-vi.mock('@/sync/ops/promptLibrary/promptLibraryArtifactStore', () => ({
-  withUiPromptLibraryArtifactReader: async () => {
-    throw new Error('original unavailable');
-  },
-}));
-
 const { DiffViewer } = await import('../DiffViewer');
-const { PromptDocApprovalDiff } =
-  await import('@/components/approvals/PromptDocApprovalDiff');
 
 const ROW_HEIGHT = 28;
 const LINES = 900;
@@ -152,20 +143,16 @@ describe('prose diff face: large comparisons stay a bounded viewport', () => {
     ).length;
   }
 
-  it('mounts only the rows near the viewport for a 900-line Instructions approval', async () => {
+  it('mounts only the rows near the viewport for 900 lines added to an empty document', async () => {
     await act(async () => {
       root.render(
-        <PromptDocApprovalDiff
-          serverId={null}
-          testID="diff"
-          request={
-            {
-              artifactId: 'doc-1',
-              markdown: lines('proposed'),
-              expectedRevision: null,
-              outcome: null,
-            } as never
-          }
+        <DiffViewer
+          mode="text"
+          face="prose"
+          prose={{ inline: true }}
+          testID="diff.lines"
+          oldText=""
+          newText={lines('proposed')}
         />,
       );
     });
