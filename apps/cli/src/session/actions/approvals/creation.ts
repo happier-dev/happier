@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { ActionExecutorDeps, ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createApprovalRequestArtifact, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from '@happier-dev/protocol/approvals/approvalRequestTransition';
@@ -57,8 +58,8 @@ function pluginInstallSubjectMismatch(
 }
 
 function pluginInstallSubjectMismatchError(mismatches: readonly PluginInstallApprovalSubjectMismatch[]) {
-  return Object.assign(new Error('approval_request_subject_mismatch'), {
-    code: 'subject_mismatch' as const, details: { mismatches },
+  return createActionExecuteFailureError({
+    ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch', details: { mismatches },
   });
 }
 
@@ -120,7 +121,7 @@ function readDiscussionReplyApprovalSubject(request: ApprovalRequest) {
       || input.data.localId !== localId || origin.requestId !== localId
       || input.data.discussionId !== returned.origin.discussion.discussionId
       || input.data.replyTarget.kind !== 'message' || input.data.replyTarget.messageId !== returned.origin.messageId) {
-      throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
+      throw createActionExecuteFailureError({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
     }
     return { identity: workflowDiscussionReplyApprovalIdentity({ serverIdentityId: origin.serverIdentityId,
       accountId: origin.accountId, machineId: origin.machineId, producer: returned.producer }),
@@ -130,7 +131,7 @@ function readDiscussionReplyApprovalSubject(request: ApprovalRequest) {
   }
   if (!origin.accountId || !origin.machineId || !origin.sessionId
     || (origin.caller.kind !== 'host' && origin.caller.kind !== 'session' && origin.caller.kind !== 'workflowRun') || !input.success) {
-    throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
   }
   const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: origin.sessionId,
     localId: returned.requestLocalId, ...(returned.acceptedTurnId ? { acceptedTurnId: returned.acceptedTurnId } : {}) });
@@ -138,7 +139,7 @@ function readDiscussionReplyApprovalSubject(request: ApprovalRequest) {
   if (input.data.localId !== localId || origin.requestId !== localId || input.data.replyTarget.kind !== 'message'
     || addressing && (addressing.discussionId !== input.data.discussionId
       || addressing.messageId !== input.data.replyTarget.messageId || addressing.participantSessionId !== origin.sessionId)) {
-    throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
   }
   return {
     identity: [origin.serverIdentityId ?? origin.serverId, origin.accountId, origin.machineId, origin.sessionId,
@@ -217,7 +218,7 @@ export function createCliApprovalCreation(params: Readonly<{
         || !sameStrictJsonValue(subject.producer, expected.producer)
         || !sameStrictJsonValue(subject.origin, expected.origin)
         || !sameStrictJsonValue(subject.workflowAuthorization, expected.authorization)) {
-        throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
       }
       return { artifactId };
     },
@@ -228,7 +229,7 @@ export function createCliApprovalCreation(params: Readonly<{
       // private Artifact custody. Its own Account owner must create that Ask.
       if (root && root.accountId !== root.custodianAccountId
         && (origin?.accountId !== root.accountId || getAccountId() !== root.accountId)) {
-        throw Object.assign(new Error('credential_scope_denied'), { code: 'credential_scope_denied' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
       }
       const pendingReview = request.v === 2 && request.actionId === 'plugins.install'
         ? readPluginInstallApprovalPendingReview(request.preview) : null;
@@ -260,7 +261,7 @@ export function createCliApprovalCreation(params: Readonly<{
           const subject = existing ? readDiscussionReplyApprovalSubject(existing) : null;
           if (artifact.access !== 'owner' || existing?.v !== 2 || existing.actionId !== 'discussion.reply'
             || !subject || !sameStrictJsonValue(subject, discussionReply)) {
-            throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
           }
           if (existing?.v === 2 && request.v === 2
             && existing.executionOriginV1.requestId === request.executionOriginV1.requestId) {

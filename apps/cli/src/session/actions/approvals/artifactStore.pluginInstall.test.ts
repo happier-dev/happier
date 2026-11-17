@@ -994,7 +994,9 @@ describe('plugin install approval Artifact rejoin', () => {
         () => null,
         (error: unknown) => settleActionOutput('plugins.install', { ok: false, ...normalizeActionExecutorThrownError(error) }),
       );
-      expect(failure).toMatchObject({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
+      expect(failure, JSON.stringify(failure && !failure.ok
+        ? { ok: false, errorCode: failure.errorCode } : { ok: failure?.ok }))
+        .toMatchObject({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
       const field = { review: 'pendingReview', machine: 'origin.machineId',
         'machine-absent-stored': 'origin.machineId', 'machine-absent-incoming': 'origin.machineId',
         home: 'origin.serverIdentityId', 'local-profile': 'origin.serverId', account: 'origin.accountId',

@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/protocol';
 import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { Credentials } from '@/persistence';
 
 import { createCliApprovalsArtifactStore } from './artifactStore';
@@ -273,8 +274,11 @@ describe('approval Artifact cross-device decision', () => {
     expect(artifacts.size).toBe(1);
     const differentQuestion = ApprovalRequestV2Schema.parse({ ...retry, actionArgs: { ...request.actionArgs as object,
       discussionId: 'another-discussion' } });
-    await expect(createStore().approvalsCreate({ request: differentQuestion, serverId: 'profile-b' }))
-      .rejects.toMatchObject({ code: 'subject_mismatch' });
+    const mismatchedSubject = createStore().approvalsCreate({ request: differentQuestion, serverId: 'profile-b' });
+    await expect(mismatchedSubject).rejects.toMatchObject({ code: 'subject_mismatch' });
+    const publicFailure = await mismatchedSubject.then(() => null, (error: unknown) =>
+      settleActionOutput('discussion.reply', { ok: false, ...normalizeActionExecutorThrownError(error) }));
+    expect(publicFailure && !publicFailure.ok ? publicFailure.errorCode : null).toBe('subject_mismatch');
     expect(await store.approvalsGet(first)).toEqual(executed);
     await expect(store.approvalsCreate({ request: ApprovalRequestV2Schema.parse({ ...request,
       actionArgs: { ...request.actionArgs as object, localId: 'unbound-tool-call' } }), serverId: 'profile-a' }))
