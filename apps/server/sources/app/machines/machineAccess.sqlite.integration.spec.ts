@@ -32,6 +32,7 @@ import { FEATURE_ENV_KEYS } from '@/app/features/catalog/featureEnvSchema';
 import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/actions/npmRegistryProfileActionFamily';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 describe('Machine current access (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -853,6 +854,44 @@ describe('Machine current access (real SQLite)', () => {
         const refused = await read();
         expect(refused.get(owned.machine.id)).toEqual({ kind: 'denied', code: 'access_denied' });
         expect(refused.get(shared.machine.id)).toEqual({ kind: 'denied', code: 'access_denied' });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('admits a signed Session message carrier for Can use without opening custodian RPC (%s)', async mode => {
+        const f = await fixture(mode);
+        const requester = await account(mode);
+        const unrelated = await account(mode);
+        await grant(f.owner.id, f.machine.id, requester.id);
+        const admit = (actorAccountId: string) => inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+            actorAccountId, machineId: f.machine.id, actionId: SESSION_MESSAGE_SEND_ACTION_ID_V1,
+            authentication: { authenticationAuthority: 'present_user' },
+        }));
+        expect(await admit(f.owner.id)).toMatchObject({ kind: 'admitted', role: 'manage', actorAccountId: f.owner.id });
+        expect(await admit(unrelated.id)).toEqual({ kind: 'denied', code: 'access_denied' });
+        if (mode === 'e2ee') {
+            expect(await admit(requester.id)).toEqual({ kind: 'denied', code: 'recipient_key_pending' });
+            const census = await inTx(tx => access.readMachineRecipientCensusInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id }));
+            if ('kind' in census) throw new Error(census.code);
+            expect(await inTx(tx => access.commitMachineRecipientKeyEnvelopesInTx(tx, {
+                actorAccountId: f.owner.id, machineId: f.machine.id,
+                expectedMachineOwnerEnvelopeFingerprint: census.machineOwnerEnvelopeFingerprint!,
+                expectedCallerDataEncryptionKey: census.callerDataEncryptionKey!,
+                expectedMetadataVersion: census.content.metadataVersion, expectedDaemonStateVersion: census.content.daemonStateVersion,
+                recipientKeyEnvelopes: [{ recipientAccountId: requester.id,
+                    encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: f.key,
+                        recipientPublicKey: requester.keys.publicKey, randomBytes: tweetnacl.randomBytes })),
+                    recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(requester.keys.publicKey) }],
+            }))).toMatchObject({ appliedRecipientAccountIds: [requester.id] });
+        }
+        expect(await admit(requester.id)).toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id,
+            custodianAccountId: f.owner.id, machineId: f.machine.id });
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
+            rpcMethod: RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE }))
+            .toEqual({ kind: 'denied', code: 'custodian_only' });
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id, actionId: 'plugins.install' }))
+            .toEqual({ kind: 'denied', code: 'unsupported_operation' });
+        await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,
+            principal: { kind: 'account', accountId: requester.id } }));
+        expect(await admit(requester.id)).toEqual({ kind: 'denied', code: 'access_denied' });
     });
 
     it('admits Workflow Start through external Action ingress with Can use while retaining custodian-only neighbors', async () => {
