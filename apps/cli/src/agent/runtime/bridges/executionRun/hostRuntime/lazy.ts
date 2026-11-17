@@ -149,7 +149,7 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
     }
   };
 
-  const respondToPermission = async (requestId: string, approved: boolean) => {
+  const respondToPermission = async (...args: Parameters<NonNullable<ExecutionRunHostRuntime['respondToPermission']>>) => {
     if (!activeRuntimeId) {
       if (!runtimeProvisionPromise) {
         return { delivered: false as const, reason: 'no_active_session' as const };
@@ -163,7 +163,7 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
     if (!runtimeResponder) {
       return { delivered: false as const, reason: 'no_active_session' as const };
     }
-    return await runtimeResponder(requestId, approved);
+    return await runtimeResponder(...args);
   };
 
   return wrapExecutionRunHostRuntime({

@@ -205,7 +205,8 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
       .approveReviewedEffect({ project: reviewed.outcome.plan.project, expectedRevision: 'absent', authority: 'present_user',
         reviewedEffectDigest: reviewed.outcome.plan.reviewedEffectDigest, currentEffectDigest: reviewed.outcome.plan.reviewedEffectDigest, approvedAtMs: 1 });
   }
-  return { f, cwd, machine, finite, signal, admission, installedCredentials: accountActionCredentials, actionsSettingsProvider,
+  return { f, cwd, machine, rpc: machine.getMachineRoleRpcHandlerManager(), finite, signal, admission,
+    installedCredentials: accountActionCredentials, actionsSettingsProvider,
     nativeEffects: () => nativeEffects, accountReads: () => [...accountReads],
     trustWrites: () => trustWrites,
     async requireSetup(command = 'printf setup') {

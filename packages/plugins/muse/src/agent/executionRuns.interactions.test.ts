@@ -1,10 +1,17 @@
-import { expect, it, onTestFailed, vi } from 'vitest';
+import { expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/installedProjectAgentLaunchFixture';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
+import type { AgentState } from '@/api/types';
+import { createServer } from 'node:http';
+import { writeDaemonState } from '@/persistence';
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { hasExplicitlyEmptyManagedMcpSelection } from '@/mcp/servers/resolveSessionCapabilitiesForDirectory';
 import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
 import { withAdmittedSessionRun } from '@/agent/runtime/bridges/executionRun/testkit/admittedSessionRun';
@@ -190,5 +197,107 @@ ${MUSE_MSP_PLAYBACK_SCRIPT}
   } finally {
     lifetime.abort();
     await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  { lifetime: 'retained', answer: 'allow_once', scenario: 'approval-allow-once' },
+  { lifetime: 'retained', answer: 'question', scenario: 'question-single-choice' },
+] as const)('settles the offered $lifetime detached native $answer through the Machine owner', async ({ lifetime, answer, scenario }) => {
+  const scratch = await mkdtemp(join(tmpdir(), 'happier-detached-approval-'));
+  onTestFinished(() => rm(scratch, { recursive: true, force: true }));
+  const bin = join(scratch, 'bin');
+  await mkdir(bin);
+  const auditPath = join(scratch, 'audit.json');
+  const native = await createMuseMspProcessFixture({ scenario, auditPath });
+  const executable = await native.resolveExecutable();
+  await writeFile(join(bin, 'muse'), `#!${process.execPath}
+if (process.argv.includes('--version')) { console.log('muse 1.4.14'); } else {
+${MUSE_MSP_PLAYBACK_SCRIPT}
+}
+`, { mode: 0o755 });
+  for (const [key, value] of Object.entries({ ...executable.env, PATH: bin, MUSE_INSTALL_DIR: bin })) vi.stubEnv(key, value);
+  vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
+  const installed = await createInstalledProjectAgentLaunchFixture({ prepareProject: false, preserveLaunchEnvironment: true,
+    accountActionCredentials: { token: `header.${Buffer.from(JSON.stringify({ sub: 'requester', session: 'native-approval' })).toString('base64url')}.signature`, encryption: null },
+    agentIsolationEnabled: false, agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) } });
+  const h = installed.f;
+  const admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: h.directory, controller: pluginReloadController,
+    runtimeOptions: { pluginIds: ['happier.agent.muse'] } });
+  onTestFinished(() => admitted.dispose());
+  const daemonHttp = createServer((request, response) => {
+    if (request.url !== '/execution-run/admission') { response.writeHead(404).end(); return; }
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ admitted: true }));
+  });
+  await new Promise<void>(resolve => daemonHttp.listen(0, '127.0.0.1', resolve));
+  onTestFinished(() => new Promise<void>((resolve, reject) => daemonHttp.close(error => error ? reject(error) : resolve())));
+  const address = daemonHttp.address();
+  if (!address || typeof address === 'string') throw new Error('Missing fixture daemon');
+  writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(),
+    startedWithCliVersion: 'fixture', controlToken: 'fixture-control-token' });
+  const rpc = installed.rpc;
+  let state: AgentState = {};
+  let notifyRequest!: () => void;
+  const published = new Promise<void>(resolve => { notifyRequest = resolve; });
+  const store = new AgentStateRequestStore({ logPrefix: '[detached-muse-approval]', target: {
+    scopeId: 'detached-muse-approval', readState: () => state,
+    updateState: async update => {
+      state = update(state);
+      if (Object.keys(state.requests ?? {}).length > 0) notifyRequest();
+    },
+  } });
+  const context = { callerAuthority: 'present_user' as const, signal: h.signal, requesterSessionBootstrap: h.bootstrap,
+    machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'machine',
+      installationId: h.installation.installationId, role: 'manage' as const, encryptionMode: 'plain' as const },
+    verifyMachineAdmissionCurrent: h.bootstrap.isCurrent };
+  const started = await rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+    sessionId: null, backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } },
+    intent: 'agent', instructions: 'Run the captured approval operation.', permissionMode: 'default', localInputId: 'approval-input',
+    cwd: h.directory, retentionPolicy: lifetime === 'retained' ? 'resumable' : 'ephemeral',
+    runClass: lifetime === 'retained' ? 'long_lived' : 'bounded', ioMode: 'streaming',
+    capabilitySelection: { mcp: { managedServersEnabled: false, happierToolsEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] } },
+  }, { signal: h.signal, rpcContext: context, localActionContext: { executionRunPermissionRequestStore: store } });
+  expect(started, JSON.stringify(started)).toMatchObject({ runId: expect.any(String) });
+  const { runId } = ExecutionRunStartResponseSchema.parse(started);
+  const read = async () => ExecutionRunGetResponseSchema.parse(await rpc.invokeLocal(
+    SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId }, { rpcContext: context }));
+  onTestFailed(async () => {
+    const observed = await read().catch(() => null);
+    console.error('Detached native approval boundary', { status: observed?.run.status, error: observed?.run.error,
+      inputTurns: observed?.run.inputTurns, requestIds: Object.keys(state.requests ?? {}),
+      audit: await readMuseMspProcessAudit(auditPath).catch(() => null) });
+  });
+  try {
+    const observation = new AbortController();
+    try {
+      await Promise.race([published, rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
+        { runId, condition: 'terminal' }, { rpcContext: context, signal: observation.signal }).then(async result => {
+          throw new Error(`Native Run ended before publishing its request: ${JSON.stringify(result)}`);
+        })]);
+    } finally { observation.abort(); }
+    const observed = await read();
+    expect(observed.run.status, JSON.stringify(observed.run.error)).toBe('running');
+    const pending = Object.entries(state.requests ?? {})[0];
+    if (!pending) throw new Error('Missing published native request');
+    const [requestId, metadata] = pending;
+    if (answer === 'allow_once') {
+      const request = observed.run.attention?.requests?.[0];
+      expect(request).toMatchObject({ requestId, nativeChoices: { choices: expect.arrayContaining([
+        expect.objectContaining({ id: 'allow_once' }),
+      ]) } });
+      expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND, { runId,
+        requestId: request!.requestId,
+        nativeChoice: { requirementId: request!.nativeChoices!.requirementId, choiceId: 'allow_once' },
+      }, { rpcContext: context })).toEqual({ ok: true });
+    } else {
+      expect(metadata).toMatchObject({ kind: 'user_action', arguments: { questions: [expect.objectContaining({ id: 'color' })] } });
+      expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
+        { runId, requestId, answers: { color: ['Blue'] } }, { rpcContext: context })).toEqual({ ok: true });
+    }
+    expect(state.requests?.[requestId]).toBeUndefined();
+    expect(await readMuseMspProcessAudit(auditPath)).toMatchObject({ decisionCount: 1, released: true });
+    expect((await read()).run.attention).toBeUndefined();
+  } finally {
+    await rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId }, { rpcContext: context });
   }
 });
