@@ -168,6 +168,7 @@ export function SessionCapabilitiesContent(
             testID={`${props.testID}:error`}
             kind="error"
             size="line"
+            lineDensity={embedded ? 'menu' : undefined}
             title={t('capabilities.session.sheet.checkFailed')}
             {...(props.onRetry
               ? {
@@ -185,6 +186,7 @@ export function SessionCapabilitiesContent(
             testID={`${props.testID}:offline`}
             kind="unavailable"
             size="line"
+            lineDensity={embedded ? 'menu' : undefined}
             title={t('capabilities.session.sheet.offline', {
               machine: props.machineName ?? '',
             })}
@@ -284,6 +286,7 @@ export function SessionCapabilitiesContent(
                       testID={`${props.testID}:empty:${group.kind}`}
                       kind="empty"
                       size="line"
+                      lineDensity={embedded ? 'menu' : undefined}
                       title={
                         group.kind === 'skills'
                           ? t('capabilities.session.sheet.noSkills')
@@ -339,6 +342,7 @@ export function SessionCapabilitiesContent(
         testID={`${props.testID}:undo`}
         kind="success"
         size="line"
+        lineDensity={embedded ? 'menu' : undefined}
         accessibilitySemantics="status"
         title={
           props.undo.change === 'added'
@@ -712,14 +716,12 @@ const styles = StyleSheet.create((theme) => ({
   embeddedColumn: {
     paddingHorizontal: EMBEDDED_COLUMN_INSET_PX,
   },
-  // Among a page section's rows the state line already stands on their text edge and value column (its own
-  // page-row inset and glyph column), so hosted in a page row it leaves the menu column and adds no correction.
+  // Hosted in a page row, a state line takes the menu rows' anatomy (`lineDensity="menu"`) inside the column, so its
+  // sentence starts on the content rows' text edge and its recovery ends on the host value column.
   stateLineEmbedded: {
-    marginHorizontal: -EMBEDDED_COLUMN_INSET_PX,
     paddingVertical: theme.space.s8,
   },
   undoLineEmbedded: {
-    marginHorizontal: -EMBEDDED_COLUMN_INSET_PX,
     paddingVertical: theme.space.s4,
   },
   trailing: { color: theme.colors.text.tertiary },

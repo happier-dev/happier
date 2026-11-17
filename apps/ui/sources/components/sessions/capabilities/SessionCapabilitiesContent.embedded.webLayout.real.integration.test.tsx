@@ -47,6 +47,7 @@ const { buildSessionCapabilitiesModel } =
   await import('./sessionCapabilitiesModel');
 const { SessionCapabilitiesContent } =
   await import('./SessionCapabilitiesContent');
+const { t } = await import('@/text');
 
 /**
  * Session Info at 1440: the Skills row is 380 wide (live 1008–1388), which this page sheet gives in a 414 pane.
@@ -56,7 +57,7 @@ it.each([
   { paneWidth: 414, liveRowWidth: 380 },
   { paneWidth: 390, liveRowWidth: null },
 ])(
-  "ends an embedded state line's recovery on the host rows' value column (owner 11-16 F1, pane $paneWidth)",
+  "lays an embedded state line on the host value column and the content rows' text edge (owner 11-16 F1, pane $paneWidth)",
   async ({ paneWidth, liveRowWidth }) => {
     const model = buildSessionCapabilitiesModel({
       view: null,
@@ -127,15 +128,23 @@ it.each([
           </ListPresentationProvider>,
         ),
       );
+      const offlineSentence = t('capabilities.session.sheet.offline', { machine: 'qa-dev-000' });
+      const addLabel = t('capabilities.session.sheet.add');
       const layout = await measureWebLayout(host, {
         viewport: { width: 1440, height: 900 },
-        texts: ['Try again'],
+        texts: ['Try again', offlineSentence, addLabel],
       });
       if (liveRowWidth !== null) expect(Math.round(layout.rect('session-setup-skills:row').width)).toBe(liveRowWidth);
       const valueColumnEnd = layout.rect('sibling-value').right;
       const [tryAgain] = layout.textRects('Try again');
       expect(tryAgain).toBeDefined();
       expect(Math.round(tryAgain!.right)).toBe(Math.round(valueColumnEnd));
+      // The line's sentence starts on the same edge as the content's rows (the add row's title).
+      const [sentence] = layout.textRects(offlineSentence);
+      const [add] = layout.textRects(addLabel);
+      expect(sentence).toBeDefined();
+      expect(add).toBeDefined();
+      expect(Math.round(sentence!.left)).toBe(Math.round(add!.left));
     } finally {
       await act(async () => root.unmount());
       host.remove();
