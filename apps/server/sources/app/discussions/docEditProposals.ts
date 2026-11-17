@@ -3,6 +3,7 @@ import { DocEditProposalDispositionV1Schema, type DocEditProposalDispositionV1, 
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { readDiscussionMessageInTx } from './queries';
 import { resolveDiscussionDocSourcesInTx, resolveDiscussionDocTargetInTx, type DiscussionDocSource } from './docPassages';
 import { markDiscussionReadersChangedInTx, scheduleDiscussionBadgeRefreshInTx } from './changes';
@@ -27,7 +28,7 @@ export async function discoverDocEditProposalSourceInTx(tx: Tx, proposalRef: Dis
 
 /** Lock the existing immutable message row; SQLite's containing writer transaction owns serialization. */
 async function lockProposalMessageInTx(tx: Tx, proposalRef: DiscussionMessageRefV1): Promise<void> {
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     if (provider === 'sqlite') return;
     if (provider === 'postgres') {
         await tx.$queryRawUnsafe('SELECT "id" FROM "DiscussionMessage" WHERE "id" = $1 AND "discussionId" = $2 FOR UPDATE',

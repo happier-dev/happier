@@ -19,6 +19,7 @@ import { projectResourceRecipientEnvelope, resourceGrantRelationsSelect, resolve
 import type { Tx } from "@/storage/inTx";
 import { inReadSnapshot, TransactionReplayRequiredError } from '@/storage/inTx';
 import { getDbProviderFromEnv, prismaRuntime as sql } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { discussionSqlName as name } from './readSql';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES, ENCRYPTED_DATA_KEY_ENVELOPE_V1_VERSION_BYTE } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { DISCUSSION_DEFAULT_PAGE_SIZE_V1 } from '@happier-dev/protocol/discussions/api';
@@ -106,7 +107,7 @@ async function fenceDiscussionMutationAudienceInTx(tx: Tx, input: DiscussionMuta
     for (const artifactId of artifactIds) {
         await acquireArtifactPublicationLocksInTx(tx, artifactId, audience.accountIds, { intent: 'content' });
     }
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
     // Grants, lifecycle and append retry/sequence decisions share this parent.
     // SQLite already reserves its single writer before entering domain work.
     if (provider === 'postgres') {
@@ -306,7 +307,7 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
         tx.account.findUnique({ where: { id: params.accountId }, select: RECIPIENT_READINESS_SELECT }),
     ]);
     if (!account) return contexts;
-    if (params.lockMembershipAuthority && getDbProviderFromEnv(process.env, 'postgres') === 'postgres'
+    if (params.lockMembershipAuthority && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres'
         && rows.some(row => row.teamGrants.length > 0 || row.groupGrants.length > 0)) {
         const teamIds = teamsFromFacts(rows).map(team => team.id).sort();
         const lockedMembers = teamIds.length ? await tx.$queryRawUnsafe<Array<{ id: string }>>(
