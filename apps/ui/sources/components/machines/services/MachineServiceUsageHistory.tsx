@@ -43,6 +43,7 @@ export const MachineServiceUsageHistory = React.memo(function MachineServiceUsag
   const lastDrawn = React.useRef<MachineVitalsTimeline | null>(null);
   if (read) lastDrawn.current = read;
   const timeline = read ?? (usage.status === 'loading' ? lastDrawn.current : null);
+  const freshness = usage.status === 'error' ? 'stale' : 'live';
   const axis = React.useMemo(() => resolveVitalsAxis(range, timeline, false), [range, timeline, language]);
   const accent = usageSignatureAccent(theme);
   const charts = React.useMemo(() => timeline ? serviceCharts(timeline, accent, theme.dark) : null, [timeline, accent, theme.dark, language]);
@@ -60,21 +61,22 @@ export const MachineServiceUsageHistory = React.memo(function MachineServiceUsag
             value={null}>
             <VitalsHistoryChart testID="machine-service-usage-history-cpu-chart" label={t('machineServices.usage.cpu')}
               timeline={timeline} series={charts.cpu.series} variant="area" domain={charts.cpu.domain}
-              scaleTicks={charts.cpu.ticks} axis={axis} format={formatPercentLabel} freshness="live" live={false} />
+              scaleTicks={charts.cpu.ticks} axis={axis} format={formatPercentLabel} freshness={freshness} live={false} />
           </VitalsTile>
           <VitalsTile testID="machine-service-usage-history-memory" label={t('machineServices.facts.memory')}
             value={null}>
             <VitalsHistoryChart testID="machine-service-usage-history-memory-chart" label={t('machineServices.facts.memory')}
               timeline={timeline} series={charts.memory.series} variant="area" domain={charts.memory.domain}
-              scaleTicks={charts.memory.ticks} axis={axis} format={formatMemoryLabel} freshness="live" live={false} />
+              scaleTicks={charts.memory.ticks} axis={axis} format={formatMemoryLabel} freshness={freshness} live={false} />
           </VitalsTile>
         </VitalsSheet>
-      ) : usage.status === 'error' ? (
+      ) : null}
+      {usage.status === 'error' ? (
         <ItemGroup header="none" surface="none">
           <SurfaceStateCard testID="machine-service-usage-history-error" size="line" kind="error"
             title={t('common.requestFailed')} action={{ label: t('common.retry'), onPress: usage.retry }} />
         </ItemGroup>
-      ) : usage.status === 'loading' ? null : (
+      ) : timeline && charts || usage.status === 'loading' ? null : (
         // An older Machine, or one that kept no minute for this service in the range: said, never drawn empty.
         <ItemGroup header="none" surface="none">
           <SurfaceStateCard testID="machine-service-usage-history-none" size="line" kind="unavailable"

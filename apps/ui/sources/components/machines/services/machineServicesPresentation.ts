@@ -2,8 +2,23 @@ import { machineServiceNativeIdentityKeyV1 } from '@happier-dev/protocol/machine
 import { type DeploymentReviewServiceV1, type MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 import { type MachineServiceDiscoveryCandidateV1, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import type { IconName } from '@/components/ui/icons/Icon';
-import { isMachineUnreachableFailureCode, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { describeActionExecutionPrerequisite, isMachineUnreachableFailureCode, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
+import type { MachineServicesReadError } from './useMachineServices';
+
+/** The list and its open detail retain the same answer and disclose the same failed refresh. */
+export function machineServiceReadFreshness(input: Readonly<{
+  online: boolean | null;
+  error: MachineServicesReadError | null | undefined;
+  offlineReason: string;
+}>): Readonly<{ reason: string; retryable: boolean }> | null {
+  if (input.online === false) return { reason: input.offlineReason, retryable: false };
+  if (!input.error) return null;
+  return {
+    reason: resolveActionExecutionErrorMessage(input.error, t('machineDetailPage.security.staleFailed'), { safeToRetry: true }),
+    retryable: !describeActionExecutionPrerequisite(input.error.code),
+  };
+}
 
 /**
  * Machine → Services (plan 30 §3.7–§3.8, lab `machine/services/list`): the admitted service rows grouped by who keeps

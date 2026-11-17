@@ -46,6 +46,7 @@ import {
   machineServiceGroupOf,
   machineServiceStateSpeaks,
   machineServiceExpectedStop,
+  machineServiceReadFreshness,
 } from './machineServicesPresentation';
 import { useMachineDeploymentRoles, useMachineServiceEnvironments, useMachineServiceSourceName } from './useMachineServiceEnvironments';
 import { MachineDeploymentRolesSection, machineDeploymentRoleRows } from './MachineDeploymentRolesSection';
@@ -291,17 +292,16 @@ function MachineServicesList(
   const description = t('machineServices.lede', { machine: machineName });
   // Retained rows outlive a failed read. Only the Machine page's presence says it stopped answering;
   // a refused read keeps its own reason and recovery.
-  const prerequisite = describeActionExecutionPrerequisite(list.error?.code);
-  const stale = list.rows && (list.error || props.online === false) ? (
+  const freshness = machineServiceReadFreshness({ online: props.online, error: list.error,
+    offlineReason: t('machineServices.stale', { machine: machineName }) });
+  const stale = list.rows && freshness ? (
     <SurfaceFreshnessLine
       testID="machine-services-stale"
       asOf={list.readAt}
       tone="warning"
-      reason={props.online === false ? t('machineServices.stale', { machine: machineName })
-        : resolveActionExecutionErrorMessage(list.error, t('machineDetailPage.security.staleFailed'), { safeToRetry: true })}
+      reason={freshness.reason}
       busy={list.pending}
-      action={props.online === false || prerequisite ? undefined
-        : { label: t('common.retry'), onPress: () => { void list.refresh(); } }}
+      action={freshness.retryable ? { label: t('common.retry'), onPress: () => { void list.refresh(); } } : undefined}
     />
   ) : null;
 

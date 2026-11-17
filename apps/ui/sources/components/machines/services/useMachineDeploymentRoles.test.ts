@@ -247,8 +247,12 @@ it('keeps equal census refreshes quiet, retains a good value on failure, and pub
             await flushHookEffects();
             expect(credentials).toHaveBeenCalled();
         } finally { credentials.mockRestore(); }
-        expect(hook.getCurrent(), 'transient failure retains the last good census').toBe(good);
-        expect(renders).toBe(settledRenders);
+        expect(hook.getCurrent().environments, 'transient failure retains the last good census').toBe(good.environments);
+        expect(hook.getCurrent().status, 'a retained census is unavailable after its refresh fails').toBe('unavailable');
+        expect(renders).toBe(settledRenders + 1);
+        await refresh();
+        expect(hook.getCurrent().status).toBe('ready');
+        expect(hook.getCurrent().environments).toBe(good.environments);
         coverage = 'partial';
         await refresh();
         expect(hook.getCurrent().status).toBe('unavailable');

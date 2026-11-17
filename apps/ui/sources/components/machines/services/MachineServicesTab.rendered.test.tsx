@@ -959,6 +959,63 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(list.reads).toBeGreaterThan(1);
     });
 
+    it('keeps a service history visible with its failed-refresh state and recovers on Retry', async () => {
+        const row = service('History');
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        let failed = false;
+        machineTransport.rpc.mockImplementation(async ({ method }: { method: string }) => {
+            if (method !== RPC_METHODS.MACHINES_VITALS_HISTORY_GET) return { kind: 'service', service: row };
+            if (failed) throw new Error('History temporarily unavailable');
+            return { range: '1h', bucketMs: 60_000, points: [],
+                today: { rxBytes: 0, txBytes: 0 }, service: { serviceId: row.serviceId,
+                    points: [{ t: Date.now() - 60_000, cpuPercent: 4, cpuMaxPercent: 9,
+                        memoryBytes: 200, memoryMaxBytes: 210 }] } };
+        });
+        const { machineResourceStore } = await import('@/sync/domains/machines/resources/machineResourceStore');
+        const { machineVitalsRangeState, MACHINE_VITALS_RANGE_UI_KEY } = await import('@/sync/domains/state/navigationUiState');
+        machineVitalsRangeState.set(MACHINE_VITALS_RANGE_UI_KEY, '1h');
+        const range = '1h' as const;
+        const { resolveMachineResourceKey } = await import('@/sync/domains/machines/resources/machineRpc');
+        const target = await resolveMachineResourceKey({ serverId, machineId });
+        if (!target) throw new Error('Expected the history Account target');
+        const key = { ...target, serviceId: row.serviceId, range };
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(machineResourceStore.getHistory(key).status).toBe('ready'));
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-usage-history')).not.toBeNull());
+        failed = true;
+        await act(async () => machineResourceStore.retryHistory(key));
+        await vi.waitFor(() => expect(machineResourceStore.getHistory(key).status).toBe('error'));
+        expect(screen.findHostByTestId('machine-service-usage-history')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-usage-history-error')).not.toBeNull());
+        failed = false;
+        const failure = screen.findHostByTestId('machine-service-usage-history-error');
+        if (!failure) throw new Error('Expected retained history failure');
+        const retry = failure.findAll(node => typeof node.props.onPress === 'function')[0];
+        if (!retry) throw new Error('Expected history Retry');
+        await act(async () => retry.props.onPress());
+        await vi.waitFor(() => expect(machineResourceStore.getHistory(key).status).toBe('ready'));
+        expect(screen.findHostByTestId('machine-service-usage-history')).not.toBeNull();
+        expect(screen.findHostByTestId('machine-service-usage-history-error')).toBeNull();
+    });
+
+    it('qualifies a retained service detail when its pushed list refresh fails', async () => {
+        await shareWith('use');
+        const row = service('Retained');
+        const value = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] });
+        const list = answerResource(value);
+        machineTransport.rpc.mockImplementation(async () => ({ kind: 'service', service: row }));
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-page')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Retained'));
+        list.fail();
+        await list.publish(value);
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-stale')).not.toBeNull());
+        expect(screen.findHostByTestId('machine-service-page')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Retained');
+        expect(screen.getTextContent()).toContain(t('machineDetailPage.security.staleFailed'));
+        expect(screen.getTextContent()).not.toContain(t('machineServices.staleService', { machine: machineName }));
+    });
+
     it.each([false, true])('presents a refused online grantee read without a false offline warning (retained=%s)', async retained => {
         await shareWith('use');
         const value = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Retained')] });

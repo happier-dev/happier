@@ -22,7 +22,7 @@ export type MachineDeploymentRoleEnvironment = MachineServiceEnvironmentHeader &
   environmentId: string; roles: NonNullable<MachineReferenceV1['deploymentRoles']>;
 }>;
 
-type CensusRead = Readonly<{ value: MachineDeploymentReferencesPageV1 | null }>;
+type CensusRead = Readonly<{ value: MachineDeploymentReferencesPageV1 | null; unavailable: boolean }>;
 type CensusEntry = { read: CensusRead | null; listeners: Set<() => void>; load: () => void; start: () => void; stop: (() => void) | null };
 
 /**
@@ -43,8 +43,9 @@ function censusEntry(lifetime: ServerAccountScopeLifetime, serverId: string, mac
   const entry: CensusEntry = { read: null, listeners: new Set(), stop: null, load: () => {}, start: () => {} };
   const publish = (value: MachineDeploymentReferencesPageV1 | null) => {
     const next = retainDeep(entry.read?.value, value ?? entry.read?.value ?? null);
-    if (entry.read?.value === next) return;
-    entry.read = { value: next };
+    const unavailable = value === null;
+    if (entry.read?.value === next && entry.read.unavailable === unavailable) return;
+    entry.read = { value: next, unavailable };
     entry.listeners.forEach(listener => listener());
   };
   entry.load = () => {
@@ -122,7 +123,7 @@ export function useMachineDeploymentRoles(input: Readonly<{ serverId: string; ma
     return header ? [{ ...header, environmentId: reference.id, roles: reference.deploymentRoles ?? [] }] : [];
   }), [value, headers]);
   const status = currentRead === null || environmentIds.length > 0 && !settled ? 'loading' as const
-    : !value || value.coverage === 'partial' || headerStatus === 'unavailable' ? 'unavailable' as const : 'ready' as const;
+    : currentRead.unavailable || !value || value.coverage === 'partial' || headerStatus === 'unavailable' ? 'unavailable' as const : 'ready' as const;
   return React.useMemo(() => ({ environments, status, refresh }), [environments, status, refresh]);
 }
 

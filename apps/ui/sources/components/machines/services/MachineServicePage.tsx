@@ -51,6 +51,7 @@ import {
   machineServiceStateTone,
   machineServiceRunFacts,
   machineServiceExpectedStop,
+  machineServiceReadFreshness,
   isMachineServiceRestart,
 } from './machineServicesPresentation';
 import {
@@ -88,6 +89,8 @@ export function MachineServicePage(
   }>,
 ) {
   const { service, machineName } = props;
+  const freshness = machineServiceReadFreshness({ online: props.online, error: props.listError,
+    offlineReason: t('machineServices.staleService', { machine: machineName }) });
   const back = {
     label: t('machineServices.back'),
     onPress: props.onBack,
@@ -132,14 +135,14 @@ export function MachineServicePage(
       active={props.active}
       back={back}
       offline={props.online === false}
-      stale={props.online === false ? (
+      stale={freshness ? (
         <SurfaceFreshnessLine
           testID="machine-service-stale"
           asOf={props.readAt}
           tone="warning"
-          reason={t('machineServices.staleService', { machine: machineName })}
+          reason={freshness.reason}
           busy={props.refreshing}
-          action={{ label: t('common.retry'), onPress: props.onRetry }}
+          action={freshness.retryable ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
         />
       ) : null}
     />
