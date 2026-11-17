@@ -608,9 +608,11 @@ it.each(['typed', 'Saved Secret'] as const)('retries a restored manual attempt r
             const lifetime = captureActiveServerAccountScopeLifetime();
             if (!lifetime) throw new Error('Expected active recovery fixture Account');
             await act(async () => { await refreshSavedSecretCatalog(lifetime.scope, { includeMaterial: false }); });
+            await screen.pressByTestIdAsync('connected-account-manual:mode:saved');
             await screen.pressByTestIdAsync('connected-account-manual:token:choose');
-            await vi.waitFor(() => expect(screen.findHostByTestId(`saved-secret:${ref}`)).not.toBeNull());
-            await screen.pressByTestIdAsync(`saved-secret:${ref}`);
+            await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret-picker:saved:${ref}`)
+                .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
+            await screen.pressByTestIdAsync(`saved-secret-picker:saved:${ref}`);
         } else {
             await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'synthetic-recovery-input'));
         }

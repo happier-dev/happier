@@ -884,6 +884,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             await vi.waitFor(() => expect(machineDemand.mock.lastCall?.[0]).toBe(true));
         }
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
+        await screen.pressByTestIdAsync('connected-account-manual:mode:saved');
         await vi.waitFor(() => expect(screen.findAllByTestId('connected-account-manual:token:choose')
             .find(node => typeof node.props.accessibilityLabel === 'string')?.props.disabled, screen.getTextContent()).toBe(false));
         await screen.pressByTestIdAsync('connected-account-manual:token:choose');
