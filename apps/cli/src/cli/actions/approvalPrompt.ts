@@ -24,6 +24,10 @@ export function createCliActionApprovalPresenter(options: Readonly<{
         approve = await promptConfirmYesNo('Approve this Action?', { default: 'no', signal });
       } catch (error) {
         if (signal.aborted) throw error;
+        // Terminal Ctrl+C retires this wait without deciding the durable Ask.
+        if (error instanceof Error && error.name === 'AbortError') {
+          return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        }
         return;
       }
     }
