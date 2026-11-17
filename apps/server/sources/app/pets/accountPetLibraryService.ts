@@ -328,20 +328,8 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             };
 
             return await withCreateLock(params.accountId, async () => {
-                const existingRecords = await persistence.listAccountPets(params.accountId);
                 const maxImportedPetsPerAccount = options.maxImportedPetsPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount;
-                if (existingRecords.length >= maxImportedPetsPerAccount) {
-                    return quotaExceededResponse();
-                }
-
                 const maxImportedPetBytesPerAccount = options.maxImportedPetBytesPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount;
-                const existingBytes = existingRecords.reduce(
-                    (sum, record) => sum + (record.entry?.sizeBytes ?? 0),
-                    0,
-                );
-                if (existingBytes + entry.sizeBytes > maxImportedPetBytesPerAccount) {
-                    return quotaExceededResponse();
-                }
 
                 await options.privateFiles.writePrivateFile(objectKey, validated.spritesheetBytes);
                 try {
@@ -454,16 +442,16 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             if (!existingRecord) {
                 return notFoundDeleteResponse();
             }
+            const deleted = await persistence.deleteAccountPet(params.accountId, params.petId);
+            if (!deleted.ok) {
+                return deleted.error === "not-found" ? notFoundDeleteResponse() : internalDeleteResponse();
+            }
             if (existingRecord.asset) {
                 try {
                     await deletePrivateFileOrThrow(options.privateFiles, existingRecord.asset.objectKey);
                 } catch {
                     return internalDeleteResponse();
                 }
-            }
-            const deleted = await persistence.deleteAccountPet(params.accountId, params.petId);
-            if (!deleted.ok) {
-                return deleted.error === "not-found" ? notFoundDeleteResponse() : internalDeleteResponse();
             }
             return {
                 ok: true,

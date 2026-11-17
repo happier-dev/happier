@@ -127,15 +127,12 @@ function createPrismaQuotaReadPauseHooks(): {
 function createPersistenceThatPausesFirstPersist(): {
     persistence: AccountPetLibraryPersistence;
     waitForFirstPersistStart: Promise<void>;
-    waitForSecondListCall: Promise<void>;
     releaseFirstPersist(): void;
 } {
     const recordsByPetId = new Map<string, PersistedAccountPet>();
     const firstPersistStarted = createDeferred<void>();
-    const secondListCalled = createDeferred<void>();
     const releaseFirstPersist = createDeferred<void>();
     let shouldPauseFirstPersist = true;
-    let listCallCount = 0;
 
     function listAccountPets(accountId: string): PersistedAccountPet[] {
         return Array.from(recordsByPetId.values()).filter((record) => record.accountId === accountId);
@@ -143,7 +140,6 @@ function createPersistenceThatPausesFirstPersist(): {
 
     return {
         waitForFirstPersistStart: firstPersistStarted.promise,
-        waitForSecondListCall: secondListCalled.promise,
         releaseFirstPersist() {
             releaseFirstPersist.resolve();
         },
@@ -181,10 +177,6 @@ function createPersistenceThatPausesFirstPersist(): {
                 return { ok: true };
             },
             async listAccountPets(accountId) {
-                listCallCount += 1;
-                if (listCallCount === 2) {
-                    secondListCalled.resolve();
-                }
                 return listAccountPets(accountId);
             },
             async readAccountPet(accountId, petId) {
@@ -208,15 +200,6 @@ function createPersistenceThatPausesFirstPersist(): {
             },
         },
     };
-}
-
-async function waitForSecondQuotaReadOrTimeout(waitForSecondListCall: Promise<void>, timeoutMs = 50): Promise<void> {
-    await Promise.race([
-        waitForSecondListCall,
-        new Promise<void>((resolve) => {
-            setTimeout(resolve, timeoutMs);
-        }),
-    ]);
 }
 
 function createInMemoryPrivateFilesThatCanFailDelete(): {
@@ -489,12 +472,14 @@ describe("account pet library services", () => {
     });
 
     it("removes deleted account pet metadata and private asset bytes", async () => {
+        await createAccount("account-1");
         const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
         tempDirs.push(rootDir);
         const privateFiles = createLocalPrivateFilesBackend({ rootDir });
         await privateFiles.init();
         const services = createAccountPetLibraryServices({
             privateFiles,
+            persistence: createPrismaAccountPetLibraryPersistence(),
             inspectAtlas: async () => ({
                 width: 1536,
                 height: 1872,
@@ -508,6 +493,7 @@ describe("account pet library services", () => {
         });
         expect(created.ok).toBe(true);
         if (!created.ok) throw new Error("expected account pet creation to succeed");
+        const assetRow = await db.accountPetAsset.findFirstOrThrow({ where: { petPackageId: created.pet.accountPetId } });
 
         const deleted = await services.deleteAccountPetForAccount({
             accountId: "account-1",
@@ -529,6 +515,8 @@ describe("account pet library services", () => {
             petId: created.pet.accountPetId,
             assetId: created.pet.spritesheetAssetRef.assetId,
         })).resolves.toBeNull();
+        await expect(privateFiles.readPrivateFile(assetRow.objectKey)).rejects.toMatchObject({ code: "ENOENT" });
+        expect((await db.accountPetPackage.findUniqueOrThrow({ where: { id: created.pet.accountPetId } })).deletedAt).not.toBeNull();
     });
 
     it("returns an internal error when create cleanup cannot delete the written private file", async () => {
@@ -570,11 +558,15 @@ describe("account pet library services", () => {
         });
     });
 
-    it("keeps delete retriable when private file cleanup fails", async () => {
-        const privateFiles = createInMemoryPrivateFilesThatCanFailDelete();
-        await privateFiles.privateFiles.init();
+    it("keeps the pet tombstoned when private file cleanup fails", async () => {
+        await createAccount("account-1");
+        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
+        tempDirs.push(rootDir);
+        const privateFiles = createLocalPrivateFilesBackend({ rootDir });
+        await privateFiles.init();
         const services = createAccountPetLibraryServices({
-            privateFiles: privateFiles.privateFiles,
+            privateFiles,
+            persistence: createPrismaAccountPetLibraryPersistence(),
             inspectAtlas: async () => ({
                 width: 1536,
                 height: 1872,
@@ -591,7 +583,11 @@ describe("account pet library services", () => {
             throw new Error("expected account pet creation to succeed");
         }
 
-        privateFiles.failNextDelete();
+        const assetRow = await db.accountPetAsset.findFirstOrThrow({ where: { petPackageId: created.pet.accountPetId } });
+        // Inject the unavailable filesystem boundary; metadata and private bytes are real.
+        const removeBytes = privateFiles.deletePrivateFile;
+        if (!removeBytes) throw new Error("expected local private-file deletion support");
+        privateFiles.deletePrivateFile = vi.fn(removeBytes).mockRejectedValueOnce(new Error("private storage unavailable"));
         const firstDelete = await services.deleteAccountPetForAccount({
             accountId: "account-1",
             petId: created.pet.accountPetId,
@@ -605,18 +601,16 @@ describe("account pet library services", () => {
         await expect(services.listAccountPetsForAccount({
             accountId: "account-1",
             accountEncryptionMode: "plain",
-        })).resolves.toEqual({ ok: true, pets: [created.pet] });
+        })).resolves.toEqual({ ok: true, pets: [] });
         await expect(services.readAccountPetAssetForAccount({
             accountId: "account-1",
             accountEncryptionMode: "plain",
             petId: created.pet.accountPetId,
             assetId: created.pet.spritesheetAssetRef.assetId,
-        })).resolves.toEqual({
-            ok: true,
-            mediaType: "image/webp",
-            bytes: WEBP_BYTES,
-            digest: digest(WEBP_BYTES),
-        });
+        })).resolves.toBeNull();
+        expect((await db.accountPetPackage.findUniqueOrThrow({ where: { id: created.pet.accountPetId } })).deletedAt).not.toBeNull();
+        await expect(privateFiles.readPrivateFile(assetRow.objectKey)).resolves.toEqual(WEBP_BYTES);
+        privateFiles.deletePrivateFile = removeBytes;
 
         const secondDelete = await services.deleteAccountPetForAccount({
             accountId: "account-1",
@@ -624,14 +618,45 @@ describe("account pet library services", () => {
         });
 
         expect(secondDelete).toEqual({
-            ok: true,
-            accountPetId: created.pet.accountPetId,
-            deletedAt: expect.any(Number),
+            ok: false,
+            errorCode: "not_found",
+            error: "not_found",
         });
         await expect(services.listAccountPetsForAccount({
             accountId: "account-1",
             accountEncryptionMode: "plain",
         })).resolves.toEqual({ ok: true, pets: [] });
+    });
+
+    it("preserves private bytes and live metadata when the database rejects the tombstone", async () => {
+        await createAccount("account-1");
+        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
+        tempDirs.push(rootDir);
+        const privateFiles = createLocalPrivateFilesBackend({ rootDir });
+        await privateFiles.init();
+        const services = createAccountPetLibraryServices({
+            privateFiles,
+            persistence: createPrismaAccountPetLibraryPersistence(),
+            inspectAtlas: async () => ({ width: 1536, height: 1872, hasAlpha: true }),
+        });
+        const created = await services.createAccountPetForAccount({ accountId: "account-1", request: requestFor(WEBP_BYTES) });
+        if (!created.ok) throw new Error("expected account pet creation to succeed");
+        // The disposable SQLite database itself refuses the update, exercising real rollback.
+        await db.$executeRawUnsafe(`CREATE TRIGGER refuse_pet_tombstone BEFORE UPDATE OF "deletedAt" ON "AccountPetPackage"
+            WHEN NEW."deletedAt" IS NOT NULL BEGIN SELECT RAISE(ABORT, 'pet tombstone unavailable'); END`);
+        try {
+            await expect(services.deleteAccountPetForAccount({ accountId: "account-1", petId: created.pet.accountPetId }))
+                .resolves.toMatchObject({ ok: false, errorCode: "internal_error" });
+            await expect(services.listAccountPetsForAccount({ accountId: "account-1", accountEncryptionMode: "plain" }))
+                .resolves.toEqual({ ok: true, pets: [created.pet] });
+            await expect(services.readAccountPetAssetForAccount({
+                accountId: "account-1", accountEncryptionMode: "plain", petId: created.pet.accountPetId, assetId: null,
+            })).resolves.toMatchObject({ ok: true, bytes: WEBP_BYTES });
+        } finally {
+            await db.$executeRawUnsafe('DROP TRIGGER refuse_pet_tombstone');
+        }
+        await expect(services.deleteAccountPetForAccount({ accountId: "account-1", petId: created.pet.accountPetId }))
+            .resolves.toMatchObject({ ok: true });
     });
 
     it("persists account pet metadata across service recreation", async () => {
@@ -688,6 +713,46 @@ describe("account pet library services", () => {
                 accountPetId: created.pet.accountPetId,
             }),
         });
+    });
+
+    it("enforces persisted quotas without reading the full library during creation", async () => {
+        await createAccount("account-1");
+        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
+        tempDirs.push(rootDir);
+        const privateFiles = createLocalPrivateFilesBackend({ rootDir });
+        await privateFiles.init();
+        const persistence = createPrismaAccountPetLibraryPersistence();
+        // Observe the real database boundary without replacing its reads or quota admission.
+        const libraryReads = vi.spyOn(persistence, "listAccountPets");
+        const privateWrites = vi.spyOn(privateFiles, "writePrivateFile");
+        const ids = ["pet-1", "asset-1", "pet-2", "asset-2", "pet-3", "asset-3"];
+        const services = createAccountPetLibraryServices({
+            privateFiles,
+            persistence,
+            maxImportedPetsPerAccount: 2,
+            createId: () => ids.shift() ?? "unexpected-id",
+            inspectAtlas: async () => ({ width: 1536, height: 1872, hasAlpha: true }),
+        });
+        const create = () => services.createAccountPetForAccount({
+            accountId: "account-1",
+            request: requestFor(WEBP_BYTES),
+        });
+
+        expect((await create()).ok).toBe(true);
+        libraryReads.mockClear();
+
+        expect((await create()).ok).toBe(true);
+        expect(await create()).toMatchObject({ ok: false, errorCode: "quota_exceeded" });
+        expect(libraryReads).not.toHaveBeenCalled();
+        const refusedObjectKey = privateWrites.mock.calls.at(-1)?.[0];
+        if (!refusedObjectKey) throw new Error("expected the quota-refused private file write");
+        await expect(privateFiles.readPrivateFile(refusedObjectKey)).rejects.toMatchObject({ code: "ENOENT" });
+
+        const listed = await services.listAccountPetsForAccount({
+            accountId: "account-1",
+            accountEncryptionMode: "plain",
+        });
+        expect(listed.ok && listed.pets.map((pet) => pet.accountPetId).sort()).toEqual(["pet-1", "pet-2"]);
     });
 
     it("rejects account pet creation after the configured per-account count limit", async () => {
@@ -756,7 +821,6 @@ describe("account pet library services", () => {
             accountId: "account-1",
             request: requestFor(WEBP_BYTES),
         });
-        await waitForSecondQuotaReadOrTimeout(pausedPersistence.waitForSecondListCall);
         pausedPersistence.releaseFirstPersist();
 
         const [first, second] = await Promise.all([firstCreate, secondCreate]);
@@ -768,62 +832,6 @@ describe("account pet library services", () => {
             error: "quota_exceeded",
         });
         await expect(services.listAccountPetsForAccount({
-            accountId: "account-1",
-            accountEncryptionMode: "plain",
-        })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
-    });
-
-    it("enforces the per-account count quota at the persistence boundary across service instances", async () => {
-        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
-        tempDirs.push(rootDir);
-        const privateFiles = createLocalPrivateFilesBackend({ rootDir });
-        await privateFiles.init();
-        const pausedPersistence = createPersistenceThatPausesFirstPersist();
-        const firstIds = ["pet-1", "asset-1"];
-        const secondIds = ["pet-2", "asset-2"];
-        const firstServices = createAccountPetLibraryServices({
-            privateFiles,
-            persistence: pausedPersistence.persistence,
-            maxImportedPetsPerAccount: 1,
-            createId: () => firstIds.shift() ?? "unexpected-first-id",
-            inspectAtlas: async () => ({
-                width: 1536,
-                height: 1872,
-                hasAlpha: true,
-            }),
-        });
-        const secondServices = createAccountPetLibraryServices({
-            privateFiles,
-            persistence: pausedPersistence.persistence,
-            maxImportedPetsPerAccount: 1,
-            createId: () => secondIds.shift() ?? "unexpected-second-id",
-            inspectAtlas: async () => ({
-                width: 1536,
-                height: 1872,
-                hasAlpha: true,
-            }),
-        });
-
-        const firstCreate = firstServices.createAccountPetForAccount({
-            accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
-        });
-        await pausedPersistence.waitForFirstPersistStart;
-        const secondCreate = secondServices.createAccountPetForAccount({
-            accountId: "account-1",
-            request: requestFor(WEBP_BYTES),
-        });
-        await waitForSecondQuotaReadOrTimeout(pausedPersistence.waitForSecondListCall);
-        pausedPersistence.releaseFirstPersist();
-
-        const [first, second] = await Promise.all([firstCreate, secondCreate]);
-        const results = [first, second];
-        const successCount = results.filter((result) => result.ok).length;
-        const quotaFailures = results.filter((result) => !result.ok && result.errorCode === "quota_exceeded");
-
-        expect(successCount).toBe(1);
-        expect(quotaFailures).toHaveLength(1);
-        await expect(firstServices.listAccountPetsForAccount({
             accountId: "account-1",
             accountEncryptionMode: "plain",
         })).resolves.toEqual({ ok: true, pets: [expect.any(Object)] });
@@ -1035,7 +1043,6 @@ describe("account pet library services", () => {
             accountId: "account-1",
             request: requestFor(WEBP_BYTES),
         });
-        await waitForSecondQuotaReadOrTimeout(pausedPersistence.waitForSecondListCall);
         pausedPersistence.releaseFirstPersist();
 
         const [first, second] = await Promise.all([firstCreate, secondCreate]);
