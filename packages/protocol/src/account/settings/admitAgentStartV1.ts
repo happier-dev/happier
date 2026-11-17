@@ -1,3 +1,5 @@
+import { AGENT_START_REFUSAL_CODES_V1 } from './agentStartRefusalCodesV1.js';
+export { AGENT_START_REFUSAL_CODES_V1 } from './agentStartRefusalCodesV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
@@ -141,11 +143,6 @@ export type StampedStartV1 = Readonly<{
   roleId?: string;
   workspaceWrites?: 'allow' | 'deny';
 }>;
-export const AGENT_START_REFUSAL_CODES_V1 = [
-  'subtree_denied', 'role_target_unavailable', 'role_runs_as_mismatch', 'policy_denied_field',
-  'permission_exceeds_ceiling', 'work_depth_exceeded', 'definition_exceeds_authority',
-  'run_access_denied', 'target_unavailable',
-] as const;
 export type AgentStartRefusalV1 = Readonly<{
   code: (typeof AGENT_START_REFUSAL_CODES_V1)[number];
   reason?: 'selection_unavailable' | 'profile_unavailable' | 'engine_unavailable'

@@ -8,7 +8,7 @@ import {
   WorkflowInvocationRecordIdSchema,
   WorkflowRunIdV1Schema,
 } from '../../workflows/workflowIdsV1.js';
-import { WorkflowRunStateV1Schema } from '../../workflows/workflowProgressV1.js';
+import { WorkflowRunStateV1Schema } from '../../workflows/workflowRunStateV1.js';
 import { ExecutionRunIdSchema, SessionIdSchema } from '../idsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import type { FollowEventKindV1 } from '../follow/sessionFollowPolicyV1.js';

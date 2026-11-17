@@ -8,7 +8,8 @@ import { SessionMessageReplyOutcomeV1Schema } from '../sessions/messages/session
 import { z } from '../zodRuntimePolicy.js';
 import { ActionCompletionStateV1Schema } from '../actions/actionCompletion.js';
 import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
-import { AGENT_START_REFUSAL_CODES_V1, AgentStartRefusalV1Schema } from '../account/settings/admitAgentStartV1.js';
+import { AgentStartRefusalV1Schema } from '../account/settings/admitAgentStartV1.js';
+import { AGENT_START_REFUSAL_CODES_V1 } from '../account/settings/agentStartRefusalCodesV1.js';
 import { LegacyAutomationWorkflowConversionReasonV1Schema } from '../automations/automationLegacyWorkflowConversionReasonV1.js';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
