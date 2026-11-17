@@ -1173,6 +1173,12 @@ describe('WorkflowEditorHostScreen composition', () => {
         const editedSection = readBodyProps()!.triggersSection;
         if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(editedSection)) throw new Error('Missing trigger editor');
         expect(editedSection.props.incomplete?.state.pending).toEqual([]);
+        // The Live events companion hands unconfigured intent through the same mounted editor intake.
+        await act(async () => readBodyProps()!.onAddTriggerWhen?.({ kind: 'pluginEvent', value: null,
+            eventRef: eventSeed.eventRef }, eventSeed));
+        const liveSection = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(liveSection)) throw new Error('Missing live trigger editor');
+        expect(liveSection.props.incomplete?.state.pending).toMatchObject([{ eventSeed }]);
         const replacementSeed = { ...eventSeed, setupInput: { subject: { kind: 'environment', environmentId: 'staging' } } };
         const replacement = prepareWorkflowSentenceEditorEntry({ name: 'Staging', project, eventSeed: replacementSeed }, lifetime);
         if (!replacement) throw new Error('Expected the next sentence source');

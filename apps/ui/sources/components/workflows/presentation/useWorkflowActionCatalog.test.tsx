@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
+import { act, isValidElement } from 'react';
+import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { settingsParse } from '@/sync/domains/settings/settings';
@@ -27,6 +28,8 @@ const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { useWorkflowActionCatalog } = await import('./useWorkflowActionCatalog');
 const { useWorkflowTriggerEventOptions } = await import('../triggers/useWorkflowTriggerEventOptions');
+const { useWorkflowEventDraftSeed } = await import('../events/useWorkflowEventDraftSeed');
+const { useWorkflowEventAutomate } = await import('../events/WorkflowEventDetail');
 afterAll(async () => { await network.dispose(); });
 
 const projection = {
@@ -39,13 +42,15 @@ const projection = {
     familiesById: {},
 };
 
-function releaseEventProjection() {
+function releaseEventProjection(nativePresence = false) {
     const pluginId = 'acme.deploy';
     return buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
         protocolVersion: 1, projection, projectionDigest: 'c'.repeat(64), automationEligibleEvents: [{
             event: { id: `${pluginId}/released`, identity: { pluginId, localId: 'released' }, occurrenceId: 'occurrence-a',
                 sourceCustody: { kind: 'development', registeredRootId: 'catalog-root' }, title: 'A release ships', description: null,
+                ...(nativePresence ? { payloadSchema: { type: 'object', properties: { machineId: { type: 'string' } } } } : {}),
                 automation: { v: 1, eligible: true, subjectKinds: ['environment'], source: { sourceContractVersion: 1,
+                    ...(nativePresence ? { nativeActivity: { kind: 'machinePresence', transition: 'offline' } } : {}),
                     supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema: { type: 'object' },
                     setupActionRef: { pluginId, localId: 'setup' } } } },
             setupAction: { id: `${pluginId}/setup`, identity: { pluginId, localId: 'setup' }, occurrenceId: 'occurrence-a',
@@ -134,6 +139,50 @@ describe('useWorkflowActionCatalog', () => {
                 ?.workflowActionCatalog.current?.readers).toBe(1);
             await hook.rerender(false);
             expect(hook.getCurrent().choices).toEqual([]);
+        } finally { await hook.unmount(); }
+    });
+
+    it('demands the selected native fact catalog only while shown and keeps setup bound to the observed Machine', async () => {
+        deferred = releaseEventProjection(true);
+        storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsParse({}), 2);
+        const fact = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
+            sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
+        const hook = await renderHook((active: boolean) => useWorkflowEventDraftSeed(fact, active, 'editor-controller'),
+            { initialProps: false });
+        try {
+            expect(hook.getCurrent()).toBeNull();
+            expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toEqual([]);
+            await hook.rerender(true);
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ setupRequired: true,
+                eventSeed: { eventRef: { pluginId: 'acme.deploy', localId: 'released' },
+                    setupInput: { v: 1, serverId, machineId: 'offline-machine' } },
+                payloadSchema: { type: 'object', properties: { machineId: { type: 'string' } } },
+            }));
+            const seed = hook.getCurrent();
+            if (!seed?.setupRequired) throw new Error('Expected pending setup');
+            expect(seed.eventSeed).not.toHaveProperty('sourceInstanceId');
+            expect(seed.eventSeed).not.toHaveProperty('monitoringMachineId');
+            expect(network.requests.some(request => request.targetId === 'offline-machine')).toBe(false);
+        } finally { await hook.unmount(); }
+    });
+
+    it('opens the main Event detail as a setup-required sentence draft', async () => {
+        deferred = releaseEventProjection(true);
+        storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsParse({}), 2);
+        const fact = { key: 'presence', kind: 'machine', machineId: 'machine-1', event: 'offline',
+            sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
+        const hook = await renderHook(() => useWorkflowEventAutomate({ fact, title: 'Machine went offline',
+            subtitle: null, glyph: 'desktop', needsYou: false, lines: [], open: null, runsStarted: [] }, true));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().open).not.toBeNull());
+            await act(async () => hook.getCurrent().open?.());
+            const builder = hook.getCurrent().builder;
+            if (!isValidElement<{ intent: WorkflowSentenceEditorIntent }>(builder)) throw new Error('Expected the sentence builder');
+            expect(builder.props.intent).toMatchObject({ eventSeed: {
+                eventRef: { pluginId: 'acme.deploy', localId: 'released' },
+                setupInput: { v: 1, serverId, machineId: 'machine-1' },
+            }, payloadSchema: { type: 'object' } });
+            expect(builder.props.intent.trigger).toBeUndefined();
         } finally { await hook.unmount(); }
     });
 

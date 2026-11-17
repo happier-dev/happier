@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { InputPredicate, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
+import type { InputPredicate, PluginEventAutomationDeclarationV1, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type WorkflowEventCatalogActionInputById = {
     readonly "workflow.events.list": {
@@ -48,47 +48,7 @@ export type WorkflowEventCatalogActionResultById = {
                 };
                 title: string;
                 description: null | string;
-                automation: {
-                    v: 1;
-                    eligible: true;
-                    source: {
-                        sourceContractVersion: number;
-                        supportedObservationTransports: ('checkpointedPull' | 'durablePush' | 'socket')[];
-                        sourceConfigSchema: PluginJsonSchemaV2;
-                        setupActionRef: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        scmPullRequestLifecycle?: undefined | {
-                            providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
-                            previewStatusActionRef?: undefined | {
-                                pluginId: string;
-                                localId: string;
-                            };
-                        };
-                        webhookContributionRef?: undefined | {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        observationOnly?: undefined | {
-                            kind: 'observationOnly';
-                        };
-                        setupSurface?: undefined | {
-                            renderer: string;
-                            fallbackRenderers?: string[] | undefined;
-                        };
-                        historyGapResetActionRef?: undefined | {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        connectedAccountPurposeBindings?: undefined | {
-                            path: string;
-                            purpose: string;
-                            alternativePaths?: string[] | undefined;
-                            nativeServicePath?: string | undefined;
-                        }[];
-                    };
-                };
+                automation: PluginEventAutomationDeclarationV1;
                 localizedPresentation?: undefined | {
                     title: string | {
                         key: string;
@@ -251,6 +211,52 @@ export type WorkflowEventCatalogActionResultById = {
                     title?: string | undefined;
                     description?: string | undefined;
                     submitLabel?: string | undefined;
+                };
+            };
+            observationBinding?: undefined | {
+                executionOrigin: {
+                    serverIdentityId: string;
+                    materializationRef: {
+                        machineId: string;
+                        materializationId: string;
+                        pluginId: string;
+                    };
+                } | {
+                    serverIdentityId: string;
+                    sourceRef: {
+                        machineId: string;
+                        pluginId: string;
+                        sourceCustody: {
+                            kind: 'account_release';
+                            pluginId: string;
+                            version: string;
+                            archiveDigestSha256: string;
+                        } | {
+                            kind: 'bundled_first_party';
+                            packagedRuntime: {
+                                kind: 'cli_version_root';
+                                versionRootId: string;
+                            } | {
+                                kind: 'pinned_runner_snapshot';
+                                snapshotId: string;
+                            } | {
+                                kind: 'source_declaration';
+                                packageName: string;
+                            };
+                        } | {
+                            kind: 'development';
+                            registeredRootId: string;
+                        } | {
+                            kind: 'managed';
+                            immutableGenerationId: string;
+                            installSource: 'archive' | 'localPath' | 'npm';
+                        };
+                    };
+                };
+                materializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
                 };
             };
         }[];

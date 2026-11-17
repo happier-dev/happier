@@ -14,6 +14,7 @@ describe('Machine presence producer availability', () => {
             expect(manifest.contributes?.events?.find(event => event.id === id)).toMatchObject({
                 kind: 'event', automation: { eligible: true, source: {
                     setupActionRef: { pluginId: manifest.id, localId: `${id}/setup` },
+                    nativeActivity: { kind: 'machinePresence', transition: id === 'machine-offline' ? 'offline' : 'online' },
                 } },
             });
         }

@@ -45,6 +45,7 @@ export const machinePresenceEvents = Object.fromEntries(descriptors.map(event =>
     kind: 'event' as const, title: { key: `machineServices.events.${event.key}.title`, fallback: event.title },
     description: { key: `machineServices.events.${event.key}.description`, fallback: event.description },
     payloadSchema: payload(event.transition).jsonSchema, automation: { v: 1 as const, eligible: true as const, source: {
+        nativeActivity: { kind: 'machinePresence' as const, transition: event.transition },
         sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull' as const], sourceConfigSchema: source.jsonSchema,
         setupActionRef: { pluginId: 'happier.machine.services', localId: `${event.id}/setup` },
     } },

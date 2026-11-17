@@ -3,6 +3,7 @@ import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/Sess
 // Load the canonical read projection before a cold editor publishes a delete acknowledgement.
 import { affectsSelectedWorkflowDefinition } from '../library/workflowLibraryReads';
 import * as React from 'react';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { readWorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -2061,7 +2062,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         incomplete: { state: triggers.incomplete, onChange: triggers.updateIncomplete },
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
-                        onAddTriggerWhen: (when: TriggerWhenValue) => addWorkflowTriggerWhen({ draft: triggers.draft, when,
+                        onAddTriggerWhen: (when: TriggerWhenValue, eventSeed?: PluginUiOpenAutomationEventRequestV1) => addWorkflowTriggerWhen({ draft: triggers.draft, when, eventSeed,
                             onChangeDraft: section.onChangeDraft, updateIncomplete: triggers.updateIncomplete }),
                         resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,

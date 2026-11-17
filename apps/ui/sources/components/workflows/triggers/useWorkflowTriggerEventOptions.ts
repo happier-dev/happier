@@ -77,6 +77,7 @@ export function useWorkflowTriggerEventOptions(
       },
       title: readEligibleEventPresentation(entry, localize).title,
       automation: entry.event.automation,
+      payloadSchema: entry.event.payloadSchema,
       pluginName: readEligibleEventPluginName(
         ready,
         entry.event.identity.pluginId,

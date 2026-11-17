@@ -4,6 +4,7 @@ import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
 import type { AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
@@ -44,6 +45,8 @@ export type WorkflowTriggerEventOption = Readonly<{
     pluginName: string;
     /** The public Event declaration owns which resource kinds it can observe. */
     automation?: PluginEventAutomationDeclarationV1;
+    /** Retain the declaration for Event setup and Insert value authoring. */
+    payloadSchema?: PluginJsonSchemaV2;
 }>;
 
 /** A resource Link chooses an ordinary trigger start; Event setup stays with the Event editor. */
@@ -283,13 +286,15 @@ export function createWorkflowTriggerClientId(): string {
 export function addWorkflowTriggerWhen(params: Readonly<{
     draft: WorkflowTriggerDraft;
     when: TriggerWhenValue;
+    eventSeed?: PluginUiOpenAutomationEventRequestV1;
     onChangeDraft: (next: WorkflowTriggerDraft) => void;
     updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
 }>): void {
     const clientId = createWorkflowTriggerClientId();
     const next = commitWorkflowTriggerWhen({ draft: params.draft, row: { kind: 'new', clientId }, when: params.when, enabled: true });
     if (next !== null) params.onChangeDraft(next);
-    else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, { clientId, when: params.when }] }));
+    else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, { clientId, when: params.when,
+        ...(params.eventSeed ? { eventSeed: params.eventSeed } : {}) }] }));
 }
 
 export function removeWorkflowTriggerRow(draft: WorkflowTriggerDraft, row: WorkflowTriggerRowRef): WorkflowTriggerDraft {

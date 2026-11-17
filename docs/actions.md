@@ -6390,6 +6390,16 @@ configured-sources list. Missing eligibility support is unavailable; an explicit
 supported empty catalog is valid. This development read neither configures a
 source nor admits an event occurrence.
 
+In 0.3 development, a Machine presence declaration may bind its native transition
+through `automation.source.nativeActivity`. Both Events hosts consume that binding
+from the demanded catalog to open an ordinary, unconfigured Event draft with its
+qualified reference, payload schema and `{ v, serverId, machineId }` setup input.
+The Event setup Action owns the retained cursor, source identity and observation
+transport; the live fact's timestamp is not a presence revision. The shortcut is
+unavailable without a reachable catalog or when several declarations match. The
+editor companion reuses its Runs-on Machine for catalog access; the main detail
+uses the observed Machine, so a cold offline Machine can require reconnection.
+
 In 0.3 development source, `workflow.activity.list` reads Account-visible retained
 Run membership through the existing Run list owner. It returns `{ retained, live }`;
 `live` is `{ kind: 'unavailable', reason: 'ui_local_only' }` for Action callers.
@@ -6417,7 +6427,7 @@ the adapter does not add a second retry policy or a persisted Event history.
 In unreleased 0.3 source, a Run fact seeds the existing `runLifecycle` trigger
 with its exact Run source and observed condition. Events detail's **Automate
 this…** and the editor companion's Add path share this seed owner;
-Machine facts remain unsupported until declaration-owned setup is available.
+Machine presence facts seed the declaration-owned Event setup described above.
 The selected-detail presentation also exposes `runsStarted` from the already
 demanded retained Run page. It compares immutable trigger occurrence keys
 through the canonical occurrence owner, never event proximity. These are known

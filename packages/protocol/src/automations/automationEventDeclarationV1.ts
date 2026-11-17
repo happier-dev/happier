@@ -34,6 +34,7 @@ import { PluginUiRendererChainBindingV1Schema, type PluginUiRendererChainBinding
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
 import { PluginSubjectProjectionV1Schema, type PluginSubjectProjectionV1 } from '../plugins/actions/v2.js';
 import { ScmHostingProviderKindSchema, type ScmHostingProviderKind } from '../scm/pullRequests.js';
+import { MachinePresenceTransitionKindV1Schema, type MachinePresenceTransitionKindV1 } from '../machines/machinePresenceTransitionsV1.js';
 
 export const AutomationQualifiedPluginContributionRefV1Schema =
   PluginContributionIdentityV1Schema;
@@ -70,6 +71,11 @@ return z.strictObject({
   subjectKinds: z.optional(z.array(AutomationSubjectKindV1Schema.check(z.refine(kind => kind !== 'plugin')))),
   source: z.strictObject({
     sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
+    /** Binds an already synced native fact to this Event's ordinary setup Action. */
+    nativeActivity: z.optional(z.strictObject({
+      kind: z.literal('machinePresence'),
+      transition: MachinePresenceTransitionKindV1Schema,
+    })),
     /** Neutral lifecycle role consumed by deployment preview enrollment. */
     scmPullRequestLifecycle: z.optional(z.strictObject({
       providerKind: ScmHostingProviderKindSchema,
@@ -149,6 +155,10 @@ export type PluginEventAutomationDeclarationV1 = {
   subjectKinds?: AutomationSubjectKindV1[];
   source: {
     sourceContractVersion: number;
+    nativeActivity?: {
+      kind: 'machinePresence';
+      transition: MachinePresenceTransitionKindV1;
+    };
     scmPullRequestLifecycle?: {
       providerKind: ScmHostingProviderKind;
       previewStatusActionRef?: AutomationQualifiedPluginContributionRefV1;

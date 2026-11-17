@@ -3,6 +3,8 @@ import { deriveAutomationOccurrenceKeyV1, type AutomationTriggerOccurrenceEviden
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import type { WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import type { WorkflowTriggerEventOption } from '@/components/workflows/triggers/workflowTriggerStarts';
 import {
   buildTriggerDefinition,
   createDefaultWhen,
@@ -53,6 +55,29 @@ export function readWorkflowEventTrigger(
   return when === null
     ? null
     : buildTriggerDefinition({ when, enabled: true, sessionId: null });
+}
+
+/** Authoring intent only: the ordinary Event setup Action acquires source identity and cursor. */
+export function readWorkflowEventDraftSeed(
+  fact: Parameters<typeof readWorkflowEventTrigger>[0],
+  catalog: Readonly<{ serverId: string | null; events: readonly WorkflowTriggerEventOption[] }>,
+): Readonly<{ setupRequired: true; trigger: null;
+    eventSeed: NonNullable<WorkflowDefinitionDraftSeed['eventSeed']>; payloadSchema?: WorkflowDefinitionDraftSeed['payloadSchema'] }>
+  | Readonly<{ setupRequired: false; trigger: AutomationTriggerDefinitionInput }>
+  | null {
+  if (fact.kind !== 'machine') {
+    const trigger = readWorkflowEventTrigger(fact);
+    return trigger === null ? null : { setupRequired: false, trigger };
+  }
+  if (catalog.serverId === null) return null;
+  const matching = catalog.events.filter(event => event.automation?.source.nativeActivity?.kind === 'machinePresence'
+    && event.automation.source.nativeActivity.transition === fact.event);
+  // A shortcut cannot choose between independently declared Events on the person's behalf.
+  if (matching.length !== 1) return null;
+  const event = matching[0];
+  return { setupRequired: true, trigger: null, payloadSchema: event.payloadSchema,
+    eventSeed: { eventRef: event.eventRef,
+      setupInput: { v: 1, serverId: catalog.serverId, machineId: fact.machineId } } };
 }
 
 /** The occurrence owner decides identity; timestamps are never proximity joins. */

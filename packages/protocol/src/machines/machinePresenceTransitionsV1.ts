@@ -1,6 +1,9 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
+export const MachinePresenceTransitionKindV1Schema = lazyZodSchema(() => z.enum(['offline', 'online']));
+export type MachinePresenceTransitionKindV1 = z.infer<typeof MachinePresenceTransitionKindV1Schema>;
+
 const occurrence = lazyZodSchema(() => z.strictObject({
   revision: z.number().check(z.int(), z.minimum(1)),
   occurredAt: z.number().check(z.int(), z.minimum(0)),

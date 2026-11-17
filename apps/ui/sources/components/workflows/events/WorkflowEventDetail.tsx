@@ -18,7 +18,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { t } from '@/text';
 
-import { readWorkflowEventTrigger } from './workflowEventFacts';
+import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
+import { useWorkflowEventDraftSeed } from './useWorkflowEventDraftSeed';
 import {
   useWorkflowEventFact,
   useWorkflowEventPresentation,
@@ -34,16 +35,15 @@ import { WorkflowEventStartedRuns } from './WorkflowEventStartedRuns';
 export const WorkflowEventCarries = React.memo(function WorkflowEventCarries(
   props: Readonly<{
     presentation: WorkflowEventPresentation;
+    automatable: boolean;
     testID: string;
   }>,
 ) {
-  const automatable =
-    readWorkflowEventTrigger(props.presentation.fact) !== null;
   return (
     <ItemGroup
       testID={`${props.testID}:carries`}
       title={t('workflows.events.carries')}
-      {...(automatable ? {} : { description: t('workflows.events.noTrigger') })}
+      {...(props.automatable ? {} : { description: t('workflows.events.noTrigger') })}
     >
       {props.presentation.lines.map((line) => (
         <Item
@@ -61,6 +61,7 @@ export const WorkflowEventCarries = React.memo(function WorkflowEventCarries(
 /** "Automate this…": the sentence builder with the fact's trigger already chosen (S3), anchored to the button. */
 export function useWorkflowEventAutomate(
   presentation: WorkflowEventPresentation | null,
+  active: boolean,
 ): Readonly<{
   anchorRef: React.RefObject<View | null>;
   open: (() => void) | null;
@@ -70,30 +71,31 @@ export function useWorkflowEventAutomate(
   const [opening, setOpening] = React.useState<Readonly<{
     lifetime: ServerAccountScopeLifetime;
     key: number;
-    name: string;
-    trigger: NonNullable<ReturnType<typeof readWorkflowEventTrigger>>;
+    intent: WorkflowSentenceEditorIntent;
   }> | null>(null);
   const keyRef = React.useRef(0);
-  const trigger =
-    presentation === null ? null : readWorkflowEventTrigger(presentation.fact);
+  const seed = useWorkflowEventDraftSeed(presentation?.fact ?? null, active);
   const title = presentation?.title ?? '';
   const open = React.useCallback(() => {
     const lifetime = captureActiveServerAccountScopeLifetime();
-    if (lifetime === null || trigger === null) return;
+    if (lifetime === null || seed === null) return;
     keyRef.current += 1;
-    setOpening({ lifetime, key: keyRef.current, name: title, trigger });
-  }, [trigger, title]);
+    const intent: WorkflowSentenceEditorIntent = seed.setupRequired
+      ? { name: title, eventSeed: seed.eventSeed, payloadSchema: seed.payloadSchema }
+      : { name: title, trigger: seed.trigger };
+    setOpening({ lifetime, key: keyRef.current, intent });
+  }, [seed, title]);
   const builder =
     opening === null ? null : (
       <WorkflowSentenceBuilder
         key={opening.key}
         anchorRef={anchorRef}
         accountLifetime={opening.lifetime}
-        intent={{ name: opening.name, trigger: opening.trigger }}
+        intent={opening.intent}
         onRequestClose={() => setOpening(null)}
       />
     );
-  return { anchorRef, open: trigger === null ? null : open, builder };
+  return { anchorRef, open: seed === null ? null : open, builder };
 }
 
 /**
@@ -109,7 +111,7 @@ export const WorkflowEventDetailPage = React.memo(
     const fact = useWorkflowEventFact(feed.projection, props.eventKey);
     const presentation = useWorkflowEventPresentation(fact, scope, feed.retained?.runs);
     const router = useRouter();
-    const automate = useWorkflowEventAutomate(presentation);
+    const automate = useWorkflowEventAutomate(presentation, presented);
     if (presentation === null) {
       return (
         <View style={styles.pick} testID="workflow-events:pick">
@@ -166,6 +168,7 @@ export const WorkflowEventDetailPage = React.memo(
         />
         <WorkflowEventCarries
           presentation={presentation}
+          automatable={automate.open !== null}
           testID="workflow-events:detail"
         />
         <WorkflowEventStartedRuns

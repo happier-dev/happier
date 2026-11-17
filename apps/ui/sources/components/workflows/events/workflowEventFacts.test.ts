@@ -3,6 +3,9 @@ import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/auto
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import type { AutomationTriggerOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { WorkflowRunOriginV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { PluginEventAutomationDeclarationV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import { machinePresenceEvents, machinePresenceEventActions } from '../../../../../../packages/plugins/machine-services/src/machinePresenceEvents';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -14,6 +17,7 @@ const {
   readWorkflowEventTrigger,
   readWorkflowEventWhen,
   readWorkflowEventStartedRuns,
+  readWorkflowEventDraftSeed,
 } = await import('./workflowEventFacts');
 const { readWorkflowTriggerStartId } =
   await import('../triggers/workflowTriggerStarts');
@@ -84,6 +88,40 @@ describe('workflowEventFacts', () => {
 
   it('offers no configured trigger when a Machine fact lacks its declaration-owned setup seed', () => {
     expect(readWorkflowEventTrigger(machine)).toBeNull();
+  });
+
+  it('seeds observed presence from its real declaration and leaves retained revision and source identity to setup', async () => {
+    const events = Object.entries(machinePresenceEvents).map(([localId, entry]) => ({
+      eventRef: { pluginId: 'happier.machine.services', localId }, title: localId, pluginName: 'Machine services',
+      payloadSchema: entry.declaration.payloadSchema,
+      automation: PluginEventAutomationDeclarationV1Schema.parse(entry.declaration.automation),
+    }));
+    for (const event of ['offline', 'online'] as const) {
+      const fact = { ...machine, event, sourceRevision: 999_999 };
+      const seed = readWorkflowEventDraftSeed(fact, { serverId: 'home', events });
+      expect(seed).toMatchObject({ setupRequired: true, trigger: null,
+        eventSeed: { eventRef: { pluginId: 'happier.machine.services', localId: `machine-${event}` },
+          setupInput: { v: 1, serverId: 'home', machineId: 'm1' } },
+        payloadSchema: events.find(row => row.eventRef.localId === `machine-${event}`)?.payloadSchema,
+      });
+      if (!seed?.setupRequired) throw new Error('Expected a declaration-owned setup seed');
+      expect(seed.eventSeed).not.toHaveProperty('sourceInstanceId');
+      expect(seed.eventSeed).not.toHaveProperty('monitoringMachineId');
+      const action = machinePresenceEventActions[`${event === 'offline' ? 'machine-offline' : 'machine-online'}/setup`];
+      // Action transport is the real system boundary; setup parsing and source identity remain production code.
+      const context = { invokedAtMs: 100, signal: new AbortController().signal,
+        services: { actions: { execute: async () => ({ kind: 'present', machineId: 'm1', transitions: { revision: 7 } }) } },
+      } as unknown as PluginInvocationContext;
+      const setup = await action.run(seed.eventSeed.setupInput, context);
+      expect(setup.sourceConfig).toEqual({ v: 1, serverId: 'home', machineId: 'm1', afterRevision: 7 });
+      expect(setup.sourceInstanceId).toMatch(/^presence:/);
+    }
+    expect(readWorkflowEventDraftSeed(machine, { serverId: 'home', events: [] })).toBeNull();
+    expect(readWorkflowEventDraftSeed(machine, { serverId: null, events })).toBeNull();
+    // A second declaration must not silently change which plugin's setup is invoked.
+    expect(readWorkflowEventDraftSeed(machine, { serverId: 'home', events: [...events, {
+      ...events[0], eventRef: { pluginId: 'another.plugin', localId: 'own-offline-event' },
+    }] })).toBeNull();
   });
 
   it('links retained Runs by canonical occurrence identity, excluding neighboring turns, revisions and sources', () => {
