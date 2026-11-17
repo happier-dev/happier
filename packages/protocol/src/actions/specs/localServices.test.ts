@@ -23,6 +23,14 @@ const LOCAL_SERVICE_ACTION_BINDINGS = [
 ] as const;
 
 describe('local-services runtime Action specs', () => {
+  it('exposes finite Restart to agents and MCP with its dangerous default approval', () => {
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(getActionDefinitionForCatalogSurface({ id: 'localServices.actions.restartManaged', surface })).not.toBeNull();
+    }
+    const restart = getActionSpec('localServices.actions.restartManaged');
+    expect(restart.safety).toBe('danger');
+    expect(restart.approval?.result).toBe('required');
+  });
   it('advertises managed-service private preview operands while preserving the inventory target alias', () => {
     const request = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse({
       machineId: 'machine_1', serviceTarget: {

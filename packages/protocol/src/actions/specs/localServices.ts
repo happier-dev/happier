@@ -323,7 +323,7 @@ function describeLocalServiceControlApprovalSummary(verb: 'Stop' | 'Restart') {
 export const LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
   originalExecution: {
     'localServices.actions.stopManaged': { requesterCredentials: 'none' },
-    'localServices.actions.restartManaged': { daemonIngressSurfaces: ['ui'] },
+    'localServices.actions.restartManaged': { daemonIngressSurfaces: ['cli', 'ui'] },
   },
   confirmationFacts: {
     'localServices.publicPreview.revoke': { irreversible: true },
