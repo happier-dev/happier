@@ -570,6 +570,9 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 observationTransport,
                 storedDefinitionEnvelope: envelope.envelope,
                 payloadSchema: contribution.payloadSchema,
+                subjectServerId: serverIdentityId,
+                subjectProjections: contribution.automation.subjects,
+                subjectKinds: contribution.subjectKinds,
             });
         });
         const finalRow = pageRows.at(-1);

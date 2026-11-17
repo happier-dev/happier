@@ -1,3 +1,4 @@
+import type { PluginSubjectKindContributionV1 } from '@happier-dev/protocol/plugins/contributions/subjectKinds';
 import { type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { type AutomationEventDeclarationReleaseV1 } from '@happier-dev/protocol/automations/event';
 import { type ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
@@ -32,7 +33,9 @@ function fail(code: AutomationEventCurrentnessError["code"]): never {
     throw new AutomationEventCurrentnessError(code);
 }
 
-export type CurrentAutomationEventContributionV1 = AutomationEligibleEventContributionV1;
+export type CurrentAutomationEventContributionV1 = AutomationEligibleEventContributionV1 & Readonly<{
+    subjectKinds?: readonly PluginSubjectKindContributionV1[];
+}>;
 
 /**
  * The current Event declaration is the one source of truth for whether a
@@ -108,7 +111,7 @@ export function resolveCurrentAutomationEventContributionFromManifest(params: Re
     const event = readAutomationEligibleEventContributionV1({ events: params.manifest.contributes.events,
         eventLocalId: params.eventLocalId, sourceContractVersion: params.sourceContractVersion });
     if (!event) fail("event_contribution_not_current");
-    return event;
+    return { ...event, subjectKinds: params.manifest.contributes.subjectKinds };
 }
 
 /**

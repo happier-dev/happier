@@ -1,4 +1,7 @@
 import * as zMini from '../zodRuntimePolicy.js';
+import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
+import { PluginSubjectKindContributionV1Schema } from '../plugins/contributions/subjectKinds.js';
+import { PluginSubjectProjectionV1Schema } from '../plugins/actions/v2.js';
 import { AutomationSubjectV1Schema } from './automationSubjectV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -791,6 +794,9 @@ export const AutomationEventStoredDefinitionProjectionV1Schema = lazyZodSchema((
   observationTransport: AutomationEventSourceObservationTransportV1Schema,
   storedDefinitionEnvelope: AutomationStoredContentEnvelopeV1Schema,
   payloadSchema: PluginJsonSchemaV2Schema,
+  subjectServerId: z.optional(MachineTargetV1Schema.shape.serverId),
+  subjectProjections: z.optional(z.array(PluginSubjectProjectionV1Schema)),
+  subjectKinds: z.optional(z.array(PluginSubjectKindContributionV1Schema)),
 }));
 export type AutomationEventStoredDefinitionProjectionV1 = z.infer<
   typeof AutomationEventStoredDefinitionProjectionV1Schema

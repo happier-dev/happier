@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { projectPluginAutomationSubjectsV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { automationSubjectMatchesV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
 import { AutomationEventAdmitHttpRequestV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, evaluateAutomationEventFilterV1, isAutomationEventObservationFreshV1, isSameAutomationEventDeclarationReleaseV1 } from '@happier-dev/protocol/automations/event';
@@ -44,6 +45,7 @@ export type AutomationEventAdoptedDefinitionV1 = AutomationEventSourceDefinition
 export type AutomationEventAdoptedDefinitionForAdmissionV1 = Readonly<{
   definition: AutomationEventAdoptedDefinitionV1;
   payloadValidator: PluginJsonSchemaValidator;
+  subjectDeclaration?: Pick<AutomationEventStoredDefinitionProjectionV1, 'subjectServerId' | 'subjectProjections' | 'subjectKinds'>;
   /** Immutable release that supplied this compiled Event payload validator. */
   eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
 }>;
@@ -51,6 +53,7 @@ export type AutomationEventAdoptedDefinitionForAdmissionV1 = Readonly<{
 type AutomationEventAdoptedDefinitionSnapshotRecordV1 = Readonly<{
   definition: AutomationEventAdoptedDefinitionV1;
   payloadValidator: PluginJsonSchemaValidator | null;
+  subjectDeclaration?: AutomationEventAdoptedDefinitionForAdmissionV1['subjectDeclaration'];
   eventDeclarationRelease: AutomationEventDeclarationReleaseV1 | null;
 }>;
 
@@ -564,6 +567,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         payloadValidator: isDefinitionPreparedForAdmission(privateDefinition)
           ? privateDefinition.payloadValidator
           : null,
+        ...(isDefinitionPreparedForAdmission(privateDefinition) ? { subjectDeclaration: privateDefinition.subjectDeclaration } : {}),
         eventDeclarationRelease: declarationRelease,
       });
       const sourceKey = observationSourceKey(definition);
@@ -754,6 +758,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           ? {
             definition,
             payloadValidator: projected.payloadValidator,
+            subjectDeclaration: projected.subjectDeclaration,
             eventDeclarationRelease: projected.eventDeclarationRelease,
           }
           : definition);
@@ -1307,6 +1312,16 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       }
       if (!isAvailableE2eeAutomationAccountEncryptionV1(accountEncryption)) return null;
       const accountMaterial = accountEncryption.material.material;
+      const subjectDeclaration = selected[0]?.subjectDeclaration;
+      const projectedSubjects = projectPluginAutomationSubjectsV1({
+        serverId: subjectDeclaration?.subjectServerId ?? '', pluginId: admissionInput.eventRef.pluginId,
+        value: admissionInput.payload, projections: subjectDeclaration?.subjectProjections ?? [],
+        subjectKinds: (subjectDeclaration?.subjectKinds ?? []).map(definition => ({ pluginId: admissionInput.eventRef.pluginId, definition })),
+      });
+      const subjectContexts = [
+        ...(admissionInput.subjectContexts ?? []).filter(context => context.subject.kind !== 'plugin'),
+        ...(projectedSubjects.ok ? projectedSubjects.subjects : []),
+      ];
 
       try {
         const accountCurrentness = accountEncryption.witness;
@@ -1371,10 +1386,10 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           })) {
             return { ...base, outcome: { kind: 'skipped', reason: 'outsideFreshness' } };
           }
-          if (!isValidPluginJsonSchemaValue(selectedDefinition.payloadValidator!, admissionInput.payload)) {
+          if (!isValidPluginJsonSchemaValue(selectedDefinition.payloadValidator!, admissionInput.payload) || !projectedSubjects.ok) {
             return { ...base, outcome: { kind: 'skipped', reason: 'occurrenceRejected' } };
           }
-          if (!automationSubjectMatchesV1(definition.subject, admissionInput.subjectContexts ?? [])
+          if (!automationSubjectMatchesV1(definition.subject, subjectContexts)
             || !evaluateAutomationEventFilterV1(definition.filter, admissionInput.payload)) {
             return { ...base, outcome: { kind: 'skipped', reason: 'filtered' } };
           }
@@ -1384,7 +1399,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             randomBytes: request.randomBytes,
             evidence: {
               ...evidence,
-              ...(admissionInput.subjectContexts === undefined ? {} : { subjectContexts: admissionInput.subjectContexts }),
+              ...(subjectContexts.length ? { subjectContexts } : {}),
               sourceInstanceId: definition.sourceInstanceId,
               sourceContractVersion: definition.sourceContractVersion,
               observationReceivedAt: admissionInput.observationReceivedAt,

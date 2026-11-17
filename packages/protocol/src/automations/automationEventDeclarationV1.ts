@@ -138,5 +138,6 @@ export type PluginEventAutomationDeclarationV1 = z.infer<
 export function readAutomationEventSubjectKindsV1(
   declaration: PluginEventAutomationDeclarationV1 | undefined,
 ): readonly AutomationSubjectKindV1[] {
-  return declaration?.subjectKinds ?? [];
+  const nativeKinds = declaration?.subjectKinds ?? [];
+  return declaration?.subjects?.length ? [...nativeKinds, 'plugin'] : nativeKinds;
 }

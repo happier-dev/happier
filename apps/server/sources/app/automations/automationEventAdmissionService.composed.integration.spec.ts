@@ -416,6 +416,7 @@ function createSignedPublisherHeader(params: Readonly<{
 function releaseFacts(params: Readonly<{
     archiveDigestSha256?: string;
     healthObservation?: boolean;
+    pluginSubject?: boolean;
     payloadSchema?: PluginJsonSchemaV2;
     sourceContractVersion?: number;
     supportedObservationTransports?: readonly ("checkpointedPull" | "durablePush")[];
@@ -444,6 +445,8 @@ function releaseFacts(params: Readonly<{
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: "./dist/index.js" },
             contributes: {
+                ...(params.pluginSubject ? { subjectKinds: [{ id: "repository", label: "Repository",
+                    identitySchema: { type: "string" as const }, listAction: "list-repositories" }] } : {}),
                 actions: [{
                     id: SETUP_ACTION_LOCAL_ID,
                     title: "Set up repository source",
@@ -456,7 +459,9 @@ function releaseFacts(params: Readonly<{
                         sourceContractVersion,
                         sourceConfigSchema,
                     ),
-                }, ...(supportsDurablePush ? [{
+                }, ...(params.pluginSubject ? [{ id: "list-repositories", title: "List repositories",
+                    scopes: ["global"], surfaces: ["plugin"], dangerLevel: "safe", readOnly: true,
+                    execution: { target: "daemon" } }] : []), ...(supportsDurablePush ? [{
                     id: "receive-repository-events",
                     title: "Receive repository events",
                     scopes: ["global"],
@@ -474,6 +479,7 @@ function releaseFacts(params: Readonly<{
                     automation: {
                         v: 1,
                         eligible: true,
+                        ...(params.pluginSubject ? { subjects: [{ kind: "plugin", subjectKindId: "repository", identityField: "action" }] } : {}),
                         source: {
                             sourceContractVersion,
                             ...(params.healthObservation ? { observationOnly: { kind: "observationOnly" } } : {}),
@@ -1114,11 +1120,13 @@ describe("Automation Event admission", () => {
     async function seed(params: Readonly<{
         filter?: PluginJsonValueV2;
         healthObservation?: boolean;
+        pluginSubject?: boolean;
         maximumObservationAgeMs?: number | null;
         supportedObservationTransports?: readonly ("checkpointedPull" | "durablePush")[];
     }> = {}): Promise<void> {
         const release = releaseFacts({
             healthObservation: params.healthObservation,
+            pluginSubject: params.pluginSubject,
             supportedObservationTransports: params.supportedObservationTransports,
         });
         const eventRef = params.healthObservation
@@ -1668,6 +1676,34 @@ describe("Automation Event admission", () => {
             expect(frozen.recipe.triggerEvidence)
                 .toMatchObject({ t: 'plain', v: { subjectContexts } });
         }
+    });
+
+    it("derives declared plugin Event subjects from payload rather than caller contexts", async () => {
+        await seed({ pluginSubject: true });
+        const selectedSubject = { kind: "plugin" as const, serverId: SERVER_IDENTITY_ID,
+            pluginId: PLUGIN_ID, subjectKindId: "repository", identity: "opened" };
+        await db.automationTrigger.update({ where: { id: TRIGGER_ID }, data: {
+            definitionEnvelope: triggerDefinitionEnvelope({ subject: selectedSubject }),
+        } });
+        const spoofed = await admitAutomationEventV1({ accountId: ACCOUNT_ID, caller,
+            input: { ...input(), payload: { action: "closed" },
+                subjectContexts: [{ role: "operand", subject: selectedSubject }] },
+            hostEvidence: await plainHostEvidence() });
+        expect(spoofed.results).toMatchObject([{ kind: "skipped", reason: "filtered" }]);
+        expect(await db.automationRun.count({ where: { automationId: AUTOMATION_ID } })).toBe(0);
+
+        const admitted = await admitAutomationEventV1({ accountId: ACCOUNT_ID, caller,
+            input: { ...input(), subjectContexts: [{ role: "operand", subject: {
+                ...selectedSubject, identity: "closed",
+            } }] }, hostEvidence: await plainHostEvidence() });
+        expect(admitted.results).toMatchObject([{ kind: "admitted" }]);
+        const run = await db.automationRun.findFirstOrThrow({ where: { automationId: AUTOMATION_ID },
+            select: { executionInputEnvelope: true } });
+        const frozen = parseAutomationRunExecutionRecipeV1(run.executionInputEnvelope);
+        if (frozen.kind !== "available") throw new Error("Expected the admitted Run recipe");
+        expect(frozen.recipe.triggerEvidence).toMatchObject({ t: "plain", v: {
+            subjectContexts: [{ role: "operand", subject: selectedSubject }],
+        } });
     });
 
     it.each(["checkpointedPull", "durablePush"] as const)("admits %s Event delivery to a contributed Action with frozen payload", async transport => {

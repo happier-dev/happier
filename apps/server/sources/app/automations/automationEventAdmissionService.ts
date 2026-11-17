@@ -1,6 +1,7 @@
 import { AutomationEventAdmitHttpRequestV1Schema, AutomationEventTriggerDefinitionStoredPayloadV1Schema, evaluateAutomationEventFilterV1, isAutomationEventObservationFreshV1, isSameAutomationEventDeclarationReleaseV1, type AutomationEventAdmitHostEvidenceV1 } from '@happier-dev/protocol/automations/event';
 import { AutomationEventAdmitHttpResultV1Schema, type AutomationEventAdmitContinuationV1, type AutomationEventAdmitHttpInputV1, type AutomationEventAdmitItemResultV1, type AutomationEventAdmitHttpResultV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { AutomationStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
+import { projectPluginAutomationSubjectsV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { automationSubjectMatchesV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { AutomationTriggerIdSchema, type AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -972,6 +973,16 @@ export async function admitAutomationEventV1(params: Readonly<{
             });
         }
 
+        const projectedSubjects = projectPluginAutomationSubjectsV1({
+            serverId: serverIdentityId, pluginId: params.caller.pluginId,
+            value: input.payload, projections: event.automation.subjects ?? [],
+            subjectKinds: (event.subjectKinds ?? []).map(definition => ({ pluginId: params.caller.pluginId, definition })),
+        });
+        const subjectContexts = [
+            ...(input.subjectContexts ?? []).filter(context => context.subject.kind !== 'plugin'),
+            ...(projectedSubjects.ok ? projectedSubjects.subjects : []),
+        ];
+        if (!projectedSubjects.ok) payloadValid = false;
         const currentTriggers = await loadCurrentEventAdmissionTriggersTx({
             tx,
             accountId: params.accountId,
@@ -1162,7 +1173,7 @@ export async function admitAutomationEventV1(params: Readonly<{
                 assignGroupResult(results, group, skipped("outsideFreshness"));
                 continue;
             }
-            if (!automationSubjectMatchesV1(triggerDefinition.data.subject, input.subjectContexts ?? [])
+            if (!automationSubjectMatchesV1(triggerDefinition.data.subject, subjectContexts)
                 || !evaluateAutomationEventFilterV1(triggerDefinition.data.filter, input.payload)) {
                 assignGroupResult(results, group, skipped("filtered"));
                 continue;
@@ -1170,7 +1181,7 @@ export async function admitAutomationEventV1(params: Readonly<{
 
             const frozenTriggerEvidence = {
                 ...evidence,
-                ...(input.subjectContexts === undefined ? {} : { subjectContexts: input.subjectContexts }),
+                ...(subjectContexts.length ? { subjectContexts } : {}),
                 sourceInstanceId: triggerDefinition.data.sourceInstanceId,
                 sourceContractVersion,
                 observationReceivedAt: input.observationReceivedAt,
