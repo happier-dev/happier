@@ -117,7 +117,7 @@ test('the rolling HEAD typecheck coalesces commits, bisects only when red, and a
   const compiled = [];
   const posts = [];
   const board = join(state, 'board.md');
-  const options = { repo, env, compile: fakeCompiler(compiled), bootstrap: () => {}, post: entry => posts.push(entry), boardPaths: [board], log: () => {} };
+  const options = { repo, env, compile: fakeCompiler(compiled), bootstrap: () => {}, remote: null, post: entry => posts.push(entry), boardPaths: [board], log: () => {} };
   // First pass: no recorded HEAD yet, so it checks the latest commit against its parent and records it.
   const first = await rollingHeadTypecheckPass(options);
   assert.equal(first.head, c0);
@@ -180,7 +180,7 @@ test('a red rolling pass bisects only the packages that carry a new error', asyn
     compiled.push(`${label}:${dir}`);
     return record(worktree, dir, compileEnv);
   };
-  const options = { repo, env, compile, bootstrap: () => {}, post: () => {}, boardPaths: [], log: () => {} };
+  const options = { repo, env, compile, bootstrap: () => {}, remote: null, post: () => {}, boardPaths: [], log: () => {} };
   await step('c0', { 'packages/protocol/src/index.ts': 'export const value = 0;\n' });
   await rollingHeadTypecheckPass(options);
   await step('c1', { 'packages/protocol/src/index.ts': 'export const value = 1;\n' });
@@ -214,7 +214,7 @@ test('a red range records its verdict before attribution compiles any intermedia
   };
   const compiled = [];
   const posts = [];
-  const options = { repo, env, compile: fakeCompiler(compiled), bootstrap: () => {}, post: entry => posts.push(entry), boardPaths: [], log: () => {} };
+  const options = { repo, env, compile: fakeCompiler(compiled), bootstrap: () => {}, remote: null, post: entry => posts.push(entry), boardPaths: [], log: () => {} };
   await step('c0', { 'packages/leaf/src/index.ts': 'export const value = 0;\n' });
   await rollingHeadTypecheckPass({ ...options, attribute: false });
   await step('c1', { 'packages/leaf/src/index.ts': 'export const value = 1;\n' });
@@ -247,7 +247,7 @@ test('a scope without a recorded baseline compiles its whole scope instead of re
   const record = fakeCompiler([]);
   const compile = (worktree, dir, compileEnv) => { compiled.push(dir); return record(worktree, dir, compileEnv); };
   const result = await rollingHeadTypecheckPass({ repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state }, scope: 'apps/cli',
-    compile, bootstrap: () => {}, post: () => {}, boardPaths: [], log: () => {} });
+    compile, bootstrap: () => {}, remote: null, post: () => {}, boardPaths: [], log: () => {} });
   assert.deepEqual(result.packages, ['apps/cli']);
   // The baseline is HEAD itself: with nothing recorded, comparing against HEAD^ costs a second full
   // compile (apps/cli 66 min on 2026-11-17) and can't attribute anything older anyway.
@@ -285,7 +285,7 @@ test('an app scope keeps a per-file, per-code baseline: only a count increase is
   const c0 = await step('c0b', { 'apps/cli/src/index.ts': 'export const a = 10;\n' });
   const compiled = [];
   const posts = [];
-  const options = { repo, env, scope: 'apps/cli', compile: fakeCompiler(compiled), bootstrap: () => {}, post: entry => posts.push(entry), boardPaths: [], log: () => {} };
+  const options = { repo, env, scope: 'apps/cli', compile: fakeCompiler(compiled), bootstrap: () => {}, remote: null, post: entry => posts.push(entry), boardPaths: [], log: () => {} };
   await rollingHeadTypecheckPass(options);
   assert.equal(posts.length, 0, 'existing app errors are the baseline');
   // c1 only shifts every line (an edit above them): the per-file, per-code counts are unchanged.
@@ -304,6 +304,36 @@ test('an app scope keeps a per-file, per-code baseline: only a count increase is
   assert.equal(existsSync(join(state, 'rolling-head')), false);
 });
 
+// P03-INFRA-SWEEP 2026-11-17: the rolling packages compile held ~16.4 GiB and a core for 38 min on the controller
+// (the agent host) while it was at load 1,500. The rolling owner gets its rows from a worker; it never compiles locally.
+test('the rolling pass takes its rows from a worker and never compiles on the controller; an unreachable worker is INCOMPLETE', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-remote-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const local = [];
+  const requests = [];
+  let reachable = true;
+  // The worker boundary (SSH transport + the worker's own compile) returns rows per package, or null when it could not.
+  const remote = (treeId, dirs) => {
+    requests.push({ treeId, dirs });
+    return new Map(dirs.map(dir => [dir, reachable ? [{ file: `${dir}/src/index.ts`, line: 1, column: 1, code: 2322, text: 'worker row' }] : null]));
+  };
+  const options = { repo, env, compile: fakeCompiler(local), bootstrap: () => {}, remote, post: () => {}, boardPaths: [], log: () => {} };
+  await commit('packages/leaf/src/index.ts', 'export const value = 2;\n');
+  const baseline = await rollingHeadTypecheckPass(options);
+  assert.deepEqual(local, [], 'zero controller compiles');
+  assert.ok(requests.length >= 1, 'the worker supplied the rows');
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-BASELINE scope=packages/u);
+  assert.equal(existsSync(join(state, 'worktree')), false, 'no controller worktree for a rolling pass');
+  void baseline;
+  reachable = false;
+  await commit('packages/leaf/src/index.ts', 'export const value = 3;\n');
+  await rollingHeadTypecheckPass(options);
+  assert.deepEqual(local, [], 'an unreachable worker never falls back to a controller compile');
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8').trim().split('\n').at(-1), /ROLLING-INCOMPLETE scope=packages .*incomplete=packages\/leaf/u);
+});
+
 test('a git index lock left in the warm worktree by a killed check does not stop later passes', async t => {
   const { repo } = await workspace(t);
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
@@ -317,7 +347,7 @@ test('a git index lock left in the warm worktree by a killed check does not stop
     git('commit', '--quiet', '-m', label);
     return git('rev-parse', 'HEAD');
   };
-  const options = { repo, env, compile: fakeCompiler([]), bootstrap: () => {}, post: () => {}, boardPaths: [], log: () => {} };
+  const options = { repo, env, compile: fakeCompiler([]), bootstrap: () => {}, remote: null, post: () => {}, boardPaths: [], log: () => {} };
   await step('c0', 'packages/leaf/src/index.ts');
   await rollingHeadTypecheckPass(options);
   // 2026-11-16 ~12:59Z: a check killed inside `git read-tree` left the worktree's index.lock behind, and
