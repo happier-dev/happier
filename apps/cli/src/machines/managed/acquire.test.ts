@@ -2897,6 +2897,7 @@ describe('managed acquisition durable custody', () => {
         });
         const acquisition = createManagedMachineAcquisitionDriver({ token, serverUrl: 'https://home.example', homeId, controller,
             credentials: { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, managedProviderOperationAuthority: authority,
+            guestCliFetch: accountInputs.guestCliFetch,
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
                 canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
         const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
