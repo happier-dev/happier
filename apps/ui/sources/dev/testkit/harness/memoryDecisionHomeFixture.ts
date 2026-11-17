@@ -7,7 +7,10 @@ import { createPlainArtifactHomeFixture } from './artifactStoreBoundary';
 import { createSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
 
-export async function createMemoryDecisionHomeFixture(options: Readonly<{ sessionProject?: boolean }> = {}) {
+export async function createMemoryDecisionHomeFixture(options: Readonly<{
+  sessionProject?: boolean;
+  handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>;
+}> = {}) {
   let serverId = '';
   let sessionProjectAccess: 'writable' | 'readonly' | 'unavailable' = 'writable';
   const session = createSessionFixture({ id: 'source-session', metadata: { path: '/work/payments', host: 'qa', machineId: 'offline',
@@ -29,6 +32,10 @@ export async function createMemoryDecisionHomeFixture(options: Readonly<{ sessio
     admitMemoryDecisionSource: ref => ref.messageId === 'committed-source'
       && (ref.kind === 'session' ? ref.session.serverId : ref.discussion.serverId) === serverId,
     handleRequest: async (path, init) => {
+    if (options.handleRequest) {
+      const response = await options.handleRequest(path, init);
+      if (response) return response;
+    }
     if (path.includes('/memory-decision') && decisionRefusal) return Response.json({ error: decisionRefusal },
       { status: decisionRefusal === 'memory_decision_disclosure_denied' ? 403 : 404 });
     if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {

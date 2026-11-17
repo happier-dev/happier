@@ -174,6 +174,59 @@ describe('Save as decision from a Discussion message', () => {
     } finally { await f.home.dispose(); }
   });
 
+  it('distinguishes a failed saved-fact read from a successfully read fact that left the comparison', async () => {
+    let readUnavailable = false;
+    let rejectedArtifactRead = false;
+    let savedArtifactId = '';
+    const f = await createMemoryDecisionHomeFixture({
+      // HTTP is the boundary: the real memory Action, document reader and status publication stay active.
+      handleRequest: async (path, init) => {
+        if (!readUnavailable || path !== `/v1/artifacts/${savedArtifactId}` || (init?.method ?? 'GET') !== 'GET') return null;
+        rejectedArtifactRead = true;
+        return Response.json({ error: 'offline' }, { status: 503 });
+      },
+    });
+    const first = await mount(f);
+    try {
+      await save(first.screen);
+      const saved = f.home.boundary.list()[0];
+      if (!saved || saved.bodyVersion === undefined) throw new Error('Missing saved decision');
+      savedArtifactId = saved.id;
+      const before = MemoryDocBodyV1Schema.parse(JSON.parse(f.home.boundary.readPlainBody(saved.id)!));
+      const existing = before.index[0]!;
+      await first.screen.unmount();
+      const { screen } = await mount(f);
+      try {
+        await save(screen);
+        const openFact = () => screen.pressByTestIdAsync(`save-memory-decision.duplicate.candidate.${existing.id}.view`);
+        // Control: the same comparison opens its actual persisted fact before the transport fails.
+        await openFact();
+        await vi.waitFor(() => expect(screen.findByTestId('save-memory-decision.savedFact.saved')).toBeTruthy());
+        await screen.pressByTestIdAsync('save-memory-decision.savedFact.back');
+
+        readUnavailable = true;
+        await openFact();
+        await vi.waitFor(() => expect(rejectedArtifactRead).toBe(true));
+        // Let the real artifact transport exhaust its existing retry sequence before judging the settled read.
+        await vi.waitFor(() => expect(screen.findByTestId('save-memory-decision.savedFact.loading')).toBeNull(), { timeout: 10_000 });
+        expect(screen.findByTestId('save-memory-decision.savedFact.missing')).toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('save-memory-decision.savedFact.unavailable')).toBeTruthy());
+        readUnavailable = false;
+        await screen.pressByTestIdAsync('save-memory-decision.savedFact.unavailable-action');
+        await vi.waitFor(() => expect(screen.findByTestId('save-memory-decision.savedFact.saved')).toBeTruthy());
+        expect(screen.findByTestId('save-memory-decision.savedFact.unavailable')).toBeNull();
+        await screen.pressByTestIdAsync('save-memory-decision.savedFact.back');
+
+        expect(await memoryDocumentActions.forget({ ref: { kind: 'doc', serverId: f.serverId, artifactId: saved.id },
+          serverId: f.serverId, accountId: saved.ownerAccountId, isCurrent: () => true,
+          expectedRevision: { headerVersion: saved.headerVersion, bodyVersion: saved.bodyVersion } }, existing.id)).toMatchObject({ ok: true });
+        await openFact();
+        await vi.waitFor(() => expect(screen.findByTestId('save-memory-decision.savedFact.missing')).toBeTruthy());
+        expect(screen.findByTestId('save-memory-decision.savedFact.unavailable')).toBeNull();
+      } finally { await screen.unmount(); }
+    } finally { await f.home.dispose(); }
+  });
+
   async function flush(screen: Awaited<ReturnType<typeof renderScreen>>) {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
     return screen;

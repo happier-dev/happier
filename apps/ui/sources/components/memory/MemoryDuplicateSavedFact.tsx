@@ -14,6 +14,7 @@ import { t } from '@/text';
 
 import type { DuplicateReview } from './MemoryDocumentBody';
 import { MemoryFactDetailSections } from './MemoryFactDetail';
+import { MemoryDocumentNotices } from './MemoryDocumentNotices';
 import { useMemoryDocument } from './useMemoryDocument';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
@@ -83,7 +84,7 @@ export function MemoryDuplicateSavedFact(
           onOpenSession={props.onOpenSession}
           onOpenDiscussion={props.onOpenDiscussion}
         />
-      ) : document.status === 'loading' ? (
+      ) : document.status === 'loading' || document.status === 'refreshing' ? (
         <ItemLoadStateRows
           testID={`${props.testID}.loading`}
           state={{ kind: 'loading' }}
@@ -91,7 +92,22 @@ export function MemoryDuplicateSavedFact(
           lines={1}
           accessibilityLabel={t('common.loading')}
         />
-      ) : (
+      ) : document.status === 'unavailable' ? (
+        <MemoryDocumentNotices
+          testID={props.testID}
+          offline={false}
+          since={null}
+          source={document}
+          notice={null}
+        />
+      ) : document.status === 'locked' || document.status === 'invalid' ? (
+        <SurfaceStateCard
+          testID={`${props.testID}.${document.status}`}
+          size="line"
+          kind="error"
+          title={t(document.status === 'locked' ? 'memoryContext.memory.locked' : 'memoryContext.memory.invalid')}
+        />
+      ) : document.status === 'ready' || document.status === 'not_found' ? (
         // The fact changed or left since the review: say so; Back and saving still decide against the review.
         <SurfaceStateCard
           testID={`${props.testID}.missing`}
@@ -99,7 +115,7 @@ export function MemoryDuplicateSavedFact(
           kind="error"
           title={t('memoryContext.memory.duplicateSavedFactGone')}
         />
-      )}
+      ) : null}
     </View>
     </ListPresentationProvider>
   );
