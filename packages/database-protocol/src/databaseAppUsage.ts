@@ -1,9 +1,10 @@
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse, UsageAnalyticsSeriesBucket, UsageAnalyticsTotals } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasuredTokens, aggregateUsageCosts, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
-import type { UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
+import { resolveUsageCostBasis, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import type { DatabaseCaptureCostsReadResultV1 } from './databaseCaptureCosts.js';
+import type { DatabaseTelemetryMetricIntervalV1 } from './databaseTelemetryMetricSeries.js';
 
 type AppCostRead = Extract<DatabaseCaptureCostsReadResultV1, { ok: true }>;
 export type DatabaseAppUsageV1 = Readonly<{
@@ -24,7 +25,7 @@ function totals(rows: readonly UsageAnalyticsContribution[]): UsageAnalyticsTota
  * chooses this subject exclusively; no Agent history is read or written here.
  * Request the same granularity from costs/read so each operand stays in one bucket.
  */
-export function projectDatabaseCaptureUsageV1(read: AppCostRead, catalog: UsageModelPriceCatalog,
+export function projectDatabaseCaptureUsageV1(read: Pick<AppCostRead, 'items' | 'since' | 'until' | 'coverage'>, catalog: UsageModelPriceCatalog,
     viewerOverrides: UsageModelPriceOverridesV1,
     options: Readonly<{ granularity: 'hour' | 'day'; costMode?: UsageCostMode }>): DatabaseAppUsageV1 {
     const contributions: UsageAnalyticsContribution[] = read.items.map((item, index) => ({
@@ -63,4 +64,13 @@ export function projectDatabaseCaptureUsageV1(read: AppCostRead, catalog: UsageM
     return { subject: 'app_calls', coverage: read.coverage,
         accounting: repriceUsageAnalyticsResponse(raw, catalog, viewerOverrides, options.costMode ?? 'api_equivalent',
             { breakdowns: ['model', 'source'], includeLeaders: false, topLimit: contributions.length }) };
+}
+
+/** D36: the Metric widget consumes the same viewer-priced buckets as Usage. */
+export function projectDatabaseAppCostMetricSeriesV1(usage: DatabaseAppUsageV1): readonly DatabaseTelemetryMetricIntervalV1[] {
+    return (usage.accounting.series ?? []).map(bucket => {
+        const cost = resolveUsageCostBasis(bucket.cost, 'api_equivalent');
+        return { since: bucket.bucketStartMs, until: bucket.bucketEndMs, unit: 'USD', count: bucket.eventCount,
+            ...(cost ? { value: cost.amountUsd } : {}) };
+    });
 }

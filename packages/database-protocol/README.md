@@ -60,9 +60,13 @@ the existing Usage cost, daily and breakdown renderers. Pass the catalog read
 through `usage.prices.get`, the invoking viewer's `usageModelPriceOverridesV1`,
 and the same hour/day granularity requested from the collector. The result's
 `app_calls` subject must be selected exclusively from Agent usage by the host;
-the projection never reads or writes Agent history. Pricing, currency facts, unknown prices and
-catalog revision come from the shared Usage owner. Collector coverage remains
+the projection never reads or writes Agent history. Pricing, currency facts,
+unknown prices and catalog revision come from the shared Usage owner. Collector coverage remains
 alongside the accounting response, so lost observations are not zero spend.
+`projectDatabaseAppCostMetricSeriesV1` projects those same priced buckets for the
+Telemetry Metric widget's LLM cost option. Its `DatabaseTelemetryMetricIntervalV1`
+shape is shared with metric analysis and health-check trends. Missing cost has
+no value; consumers preserve the associated Usage coverage.
 
 ## Evolving the ABI
 

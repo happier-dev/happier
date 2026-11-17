@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { projectDatabaseCaptureUsageV1 as project, type DatabaseCaptureCostsReadResultV1 } from './index.js';
+import { projectDatabaseCaptureUsageV1 as project, projectDatabaseAppCostMetricSeriesV1 as toSeries,
+    type DatabaseCaptureCostsReadResultV1 } from './index.js';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 
@@ -15,6 +16,13 @@ const raw = { ok: true, source: { kind: 'environment', serverId: 'home', environ
         reportedCostCallCount: 0, lostObservations: 0, reason: null } } satisfies Extract<DatabaseCaptureCostsReadResultV1, { ok: true }>;
 
 describe('App calls Usage projection', () => {
+    it('exposes viewer-priced cost in the shared Metric interval shape and leaves unpriced values absent', () => {
+        expect(toSeries(project(raw, catalog, {}, { granularity: 'hour' }))).toEqual([
+            { since: 1000, until: 3_600_000, value: 6, unit: 'USD', count: 2 },
+        ]);
+        expect(toSeries(project({ ...raw, items: [{ ...row, modelId: 'unlisted' }] }, catalog, {}, { granularity: 'hour' })))
+            .toEqual([{ since: 1000, until: 3_600_000, unit: 'USD', count: 2 }]);
+    });
     it('prices the same aggregate with each viewer prices and retains catalog provenance across existing chart data', () => {
         const original = structuredClone(raw);
         const standard = project(raw, catalog, {}, { granularity: 'hour' });
