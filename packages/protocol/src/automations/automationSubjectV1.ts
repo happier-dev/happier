@@ -6,6 +6,7 @@ import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import { DeploymentBackupRestoreDatabaseDestinationV1Schema } from '../deployments/deploymentBackupRestoreV1.js';
+import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
 import { SavedHealthCheckSelectorV1Schema } from '../deployments/healthCheckSourceV1.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfileIdV1.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
@@ -20,12 +21,12 @@ export const AutomationDatabaseSubjectV1Schema = lazyZodSchema(() => {
     return z.strictObject({
         kind: z.literal('database'),
         serverId: MachineTargetV1Schema.shape.serverId,
-        target: z.strictObject({
+        target: z.discriminatedUnion('kind', [z.strictObject({
             kind: z.literal('environment'),
             environmentId: DeploymentEnvironmentRefV1Schema.shape.environmentId,
             service: destination.service,
             database: destination.database,
-        }),
+        }), DatabaseWorktreeTargetV1Schema, DatabaseManualTargetV1Schema]),
     });
 });
 export type AutomationDatabaseSubjectV1 = z.infer<typeof AutomationDatabaseSubjectV1Schema>;

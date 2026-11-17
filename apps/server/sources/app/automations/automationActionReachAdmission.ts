@@ -32,6 +32,8 @@ export async function resolveAutomationActionReachInTx(tx: Tx, input: Readonly<{
         case 'environment':
         case 'backup':
         case 'database': {
+            // Private worktree/manual bindings do not establish a shared grant.
+            if (subject.kind === 'database' && subject.target.kind !== 'environment') return false;
             const environmentId = subject.kind === 'database' ? subject.target.environmentId : subject.environmentId;
             const loaded = await loadDeploymentEnvironmentInTx(tx, input.accountId, subject.serverId,
                 environmentId, input.authentication);

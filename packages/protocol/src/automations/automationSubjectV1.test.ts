@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readPluginAutomationSubjectV1, projectPluginAutomationSubjectsV1 } from './automationPluginSubjectV1.js';
-import { automationSubjectKeyV1, automationSubjectSharedKeyV1, automationSubjectKeyMatchesV1, automationSubjectMatchesV1, type AutomationSubjectV1 } from './automationSubjectV1.js';
+import { AutomationDatabaseSubjectV1Schema, AutomationSubjectV1Schema, projectAutomationDatabaseSubjectV1,
+    projectAutomationSubjectStructuralV1, automationSubjectKeyV1, automationSubjectSharedKeyV1,
+    automationSubjectKeyMatchesV1, automationSubjectMatchesV1, type AutomationSubjectV1 } from './automationSubjectV1.js';
+import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
 
 // Canonical serialization order and framing cannot be controlled through UI authoring.
 // These pure identity rules complement, and do not replace, P01.F1–F7.
@@ -38,6 +41,48 @@ describe('automation subject identity', () => {
         expect(automationSubjectKeyMatchesV1(key, context, 'workflow-a', 'machine')).toBe(false);
         expect(automationSubjectKeyMatchesV1(key, [{ role: 'operand', subject: profile }], 'workflow-a')).toBe(false);
         expect(automationSubjectKeyMatchesV1(key, [{ role: 'context', subject: { ...profile, serverId: 'other' } }], 'workflow-a')).toBe(false);
+    });
+
+    it('matches sanitized Database bindings across worktrees, manual targets and Homes without execution values', () => {
+        const workspace = { serverId: 'home', machineId: 'machine', workspaceId: 'checkout-one', rootPath: '/private/one' };
+        const context = { accountId: 'owner', workspace, installationId: 'installation', projectKey: 'project' };
+        const worktreeTarget = DatabaseWorktreeTargetV1Schema.parse({ kind: 'worktree', ...context,
+            source: { kind: 'env_file', path: '.env.local', variable: 'DATABASE_URL' } });
+        const manualTarget = DatabaseManualTargetV1Schema.parse({ kind: 'manual', ...context, savedSecretId: 'saved-connection' });
+        const environmentInput = { kind: 'database' as const, serverId: 'home',
+            target: { kind: 'environment' as const, environmentId: 'environment',
+                service: 'postgres', database: 'app' } };
+        const environment = projectAutomationDatabaseSubjectV1(AutomationDatabaseSubjectV1Schema.parse(environmentInput));
+        expect(environment).toEqual(environmentInput);
+        expect(automationSubjectKeyV1(environment)).toBe(automationSubjectKeyV1(environmentInput));
+        const worktree = projectAutomationDatabaseSubjectV1(AutomationDatabaseSubjectV1Schema.parse({
+            kind: 'database', serverId: 'home', target: worktreeTarget }));
+        const manual = projectAutomationDatabaseSubjectV1(AutomationDatabaseSubjectV1Schema.parse({
+            kind: 'database', serverId: 'home', target: manualTarget }));
+        expect(AutomationSubjectV1Schema.parse(worktree)).toEqual(worktree);
+        expect(automationSubjectMatchesV1(worktree, [{ role: 'operand', subject: worktree }])).toBe(true);
+        const otherCheckout = AutomationDatabaseSubjectV1Schema.parse({ ...worktree, target: { ...worktreeTarget,
+            workspace: { ...workspace, workspaceId: 'checkout-two', rootPath: '/private/two' } } });
+        for (const other of [otherCheckout, manual, environment,
+            AutomationDatabaseSubjectV1Schema.parse({ ...worktree, serverId: 'other-home' })]) {
+            expect(automationSubjectMatchesV1(worktree, [{ role: 'operand', subject: other }])).toBe(false);
+        }
+        expect(automationSubjectMatchesV1(manual, [{ role: 'operand', subject: environment }])).toBe(false);
+        // Endpoint rotation belongs to execution; the admitted owner binding stays the identity.
+        const executions = ['postgres://first/private', 'postgres://rotated/private'].map(connectionUrl => ({
+            target: worktreeTarget, connectionUrl,
+        }));
+        expect(executions.map(execution => automationSubjectKeyV1(projectAutomationDatabaseSubjectV1(
+            AutomationDatabaseSubjectV1Schema.parse({ kind: 'database', serverId: 'home', target: execution.target })))))
+            .toEqual([automationSubjectKeyV1(worktree), automationSubjectKeyV1(worktree)]);
+        expect(AutomationDatabaseSubjectV1Schema.safeParse({ ...worktree,
+            target: { ...worktreeTarget, connectionUrl: executions[0]!.connectionUrl } }).success).toBe(false);
+        expect(AutomationDatabaseSubjectV1Schema.safeParse({ ...manual,
+            target: { ...manualTarget, credential: 'secret-value' } }).success).toBe(false);
+        const selector = projectAutomationSubjectStructuralV1(worktree);
+        expect(selector).toEqual({ subjectKind: 'database', subjectKey: automationSubjectKeyV1(worktree) });
+        expect(JSON.stringify(selector)).not.toContain('private');
+        expect(JSON.stringify(selector)).not.toContain('DATABASE_URL');
     });
 });
 

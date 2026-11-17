@@ -6035,6 +6035,12 @@ unproved positive reach claim returns the existing typed
 stored-content refusal; own-only authoring remains available. These remaining
 bindings are not covered by the six-kind router validation.
 
+Database subjects also accept the canonical worktree and manual target bindings
+in unreleased 0.3 development. These private bindings remain own-only; their
+Machine or Project references do not establish a shared Database grant. Private
+paths and Saved Secret references stay in protected authored intent, while the
+structural selector contains only the canonical subject digest.
+
 Trigger admission seals only referenced leaves in the private accepted snapshot.
 Other Events, Run now, schedules and Session lifecycle admissions leave the value
 absent. Text substitutes an empty string, conditions treat it as unset, and a

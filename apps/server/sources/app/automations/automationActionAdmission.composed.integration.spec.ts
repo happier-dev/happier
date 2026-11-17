@@ -8,6 +8,7 @@ import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationH
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { automationSubjectKeyV1 } from "@happier-dev/protocol/automations/automationSubjectV1";
+import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from "@happier-dev/protocol/databases/databaseTargetIdentityV1";
 import { AutomationTriggerIdSchema, sealAutomationTriggerDefinitionStoredEnvelopeV1,
     createAccountScopedCryptoMaterialSnapshotV1 } from "@happier-dev/protocol";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -143,6 +144,40 @@ describe("Action occurrence admission through the real router", () => {
                 headers: { "x-test-user-id": viewerId }, payload: { triggerId, expectedRevision: 0, enabled: false } });
             expect(changed.statusCode, changed.body).toBe(200);
             expect(changed.json().triggers[0]).toMatchObject({ enabled: false, reachesOthers: false });
+        } finally { await app.close(); }
+    });
+
+    it("keeps private Database bindings own-only at public trigger writes", async () => {
+        const accountId = randomUUID();
+        const automationId = randomUUID();
+        const serverId = await getOrCreateServerIdentityId();
+        const context = { accountId, workspace: { serverId, machineId: randomUUID(),
+            workspaceId: randomUUID(), rootPath: "/private/database-worktree" },
+            installationId: randomUUID(), projectKey: "database-project" };
+        const targets = [
+            DatabaseWorktreeTargetV1Schema.parse({ kind: "worktree", ...context,
+                source: { kind: "env_file", path: ".env.local", variable: "DATABASE_URL" } }),
+            DatabaseManualTargetV1Schema.parse({ kind: "manual", ...context, savedSecretId: randomUUID() }),
+        ];
+        await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        await db.automation.create({ data: { id: automationId, accountId, name: "Private database checks", enabled: false,
+            templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: "/tmp/database-check", prompt: "Check database" })), templateVersion: 1 } });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            for (const target of targets) {
+                const triggerId = randomUUID();
+                const authored = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                    headers: { "x-test-user-id": accountId }, payload: { triggerId, trigger: {
+                        kind: "action", phase: "after", actionIds: ["scm.commit.create"], enabled: true,
+                        subject: { kind: "database", serverId, target },
+                    } } });
+                expect(authored.statusCode, authored.body).toBe(200);
+                expect(authored.json().triggers[0]).toMatchObject({ reachesOthers: false });
+                expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } }))
+                    .toMatchObject({ reachesOthers: false });
+            }
         } finally { await app.close(); }
     });
 
