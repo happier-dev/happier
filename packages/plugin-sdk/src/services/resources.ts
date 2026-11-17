@@ -1,3 +1,4 @@
+import type { DatabaseEnginesServiceV1 } from '../databaseEngines.js';
 /** @moduleRealm daemon */
 import type { InputTypeOptionsQueryV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import type {
@@ -78,6 +79,7 @@ export type PluginDynamicResourceInvocationOptionsV1 = Readonly<{
     /** Existing plugin-scoped daemon KV, captured with own-Account custody. */
     daemonStorage?: Pick<StorageScopeService, 'get' | 'set' | 'delete' | 'list'>;
     /** Existing deployment-role attachment captured for this admitted own-Account demand. */
+    databaseEngines?: DatabaseEnginesServiceV1;
     deploymentDatabases?: DeploymentDatabasesServiceV1;
     /** Explicit read operands only, through the canonical Action executor as this Resource's plugin. */
     readAction(ref: PluginContributionRef, input: JsonValue, options?: PluginCancellationOptions): Promise<ActionExecuteResult>;
@@ -115,7 +117,7 @@ export type PluginDynamicResourceRuntime = Readonly<{
      */
     createProducer?(options: Pick<PluginDynamicResourceInvocationOptionsV1,
         'signal' | 'context' | 'readAction' | 'observeAction' | 'requesterAccount' | 'secrets'
-        | 'chosenMachine' | 'agentCaller' | 'authority' | 'daemonStorage' | 'deploymentDatabases'>): PluginDynamicResourceProducer | Promise<PluginDynamicResourceProducer>;
+        | 'chosenMachine' | 'agentCaller' | 'authority' | 'daemonStorage' | 'deploymentDatabases' | 'databaseEngines'>): PluginDynamicResourceProducer | Promise<PluginDynamicResourceProducer>;
 }>;
 
 export type PluginMcpContributionRef = PluginContributionRef;

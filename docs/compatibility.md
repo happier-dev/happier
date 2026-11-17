@@ -9347,6 +9347,17 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 engine-only plugins use the closed `databaseEngines` contribution
+family, with closed capability entries and the existing daemon activation ABI.
+The platform owns the structural capability grammar; database-protocol supplies
+the workbench operation vocabulary. Unknown operation names are omitted from
+that workbench projection. Optional invocation and dynamic-Resource services
+expose the enabled catalogue and in-process open/execute/close path. Matching
+development Protocol, SDK, CLI-common, plugins, and daemon readers reload together;
+preceding strict development manifest readers reject the new family. Existing
+declarations retain the empty-family default. No released wire epoch, persisted
+Account record, or mixed-development adapter changes.
+
 Unreleased 0.3 receipt metadata accepts optional `restoreBackupId`, retaining the
 opaque backup selected at rollback admission. Existing receipts without it remain
 valid; the additive nullable Deployment column leaves historical rows unset.

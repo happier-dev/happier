@@ -58,6 +58,8 @@ const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
     'machineProvisioners',
     // Managed database attachment demands the exact linked data-role runtime.
     'deploymentTargets',
+    // The engine service demands the selected enabled descriptor before opening.
+    'databaseEngines',
 ]);
 
 /**

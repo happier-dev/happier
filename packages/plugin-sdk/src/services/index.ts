@@ -1,3 +1,4 @@
+import type { DatabaseEnginesServiceV1 } from '../databaseEngines.js';
 /** @moduleRealm daemon */
 export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1, DeploymentTelemetryAssignmentV1, DeploymentTelemetryServiceV1 } from './deployments.js';
 import type { DeploymentSourceMaterializationPortV1, DeploymentTelemetryServiceV1 } from './deployments.js';
@@ -354,6 +355,7 @@ export type PluginServiceId =
     | 'deploymentExecEnv'
     | 'deploymentDatabases'
     | 'deploymentTelemetry'
+    | 'databaseEngines'
     | 'sessions'
     | 'resources'
     | 'mcp'
@@ -383,6 +385,7 @@ export interface PluginServices {
     readonly machineProvisioners: MachineProvisionersService;
     readonly deploymentSource: DeploymentSourceMaterializationPortV1;
     readonly deploymentExecEnv: DeploymentExecEnvPortV1;
+    readonly databaseEngines?: DatabaseEnginesServiceV1;
     readonly deploymentDatabases?: DeploymentDatabasesServiceV1;
     readonly deploymentTelemetry: DeploymentTelemetryServiceV1;
     readonly sessions: SessionsService;

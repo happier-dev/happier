@@ -1,3 +1,4 @@
+import { createDatabaseEnginesService } from './lifecycle/contributions/databaseEngines';
 import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { prepareServiceLaunchEnvironments } from './lifecycle/contributions/targetServiceLaunchEnvironments';
 import { deploymentUnavailableDiagnostic } from '@/deployments/deploymentFailure';
@@ -1406,6 +1407,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     ...(machineId && identity ? { chosenMachine: Object.freeze({ machineId, installationId: identity.installationId }) } : {}),
                     ...(services.availability('storage').status === 'available' ? { daemonStorage: services.storage.daemon } : {}),
                     ...(services.availability('deploymentDatabases').status === 'available' ? { deploymentDatabases: services.deploymentDatabases } : {}),
+                    ...(services.databaseEngines ? { databaseEngines: services.databaseEngines } : {}),
                 });
             },
             invokeDemand: input => uiResourceWatches.invokeDemand(input),
@@ -4504,6 +4506,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             connectedAccountRuntimeRegistry: params?.connectedAccountRuntimeRegistry ?? runtimeRegistryController,
         });
     };
+    const databaseEngines = createDatabaseEnginesService({ targets: authoritativeContributes.activationTargets, registry: activatedRegistry });
     const createCapturedPluginInvocationServices = createDeploymentDatabasesInvocationServicesForHost({
         contributes: authoritativeContributes, targetRegistrations: activatedRegistry.targetRegistrations,
         readHost: readDeploymentTargetRoleAdmissionHost,
@@ -4512,7 +4515,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         readCurrentOccurrenceId: readCurrentPluginOccurrenceId,
         readCurrentSourceCustody: readCurrentPluginSourceCustody,
-        createServices: invocationServiceOwners.createServices,
+        createServices: (seed, ...args) => invocationServiceOwners.createServices({ ...seed, databaseEngines }, ...args),
         resolveInvocationHostPolicy: invocationServiceOwners.resolveInvocationHostPolicy,
         beginDiagnosticScope: invocationServiceOwners.beginDiagnosticScope,
         completeDiagnosticScope: invocationServiceOwners.completeDiagnosticScope,

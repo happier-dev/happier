@@ -7,6 +7,7 @@ export const PluginContributionFamilyV2Schema = z.enum([
   'machineProvisioners',
   'accessProviders',
   'deploymentTargets',
+  'databaseEngines',
   'healthCheckKinds',
   'storeKinds',
   'machineRecipes',

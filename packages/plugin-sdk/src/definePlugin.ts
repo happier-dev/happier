@@ -1,3 +1,4 @@
+import type { PluginDatabaseEngineDefinitionV1 } from './databaseEngines.js';
 import type { PluginServiceLaunchEnvironmentDefinitionV1 } from './serviceLaunchEnvironments.js';
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 import { declaresHostSynthesizedAgentResumeOnlyExternalSources, findAgentResumeOnlyExternalSourceContractIssue } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
@@ -808,6 +809,7 @@ type PluginStructuredContributionDefinitions<
     backgroundServices?: readonly BackgroundServiceDefinition[];
     captureSources?: Readonly<Record<PluginContributionLocalId, PluginCaptureSourceDefinition>>;
     secretSources?: Readonly<Record<PluginContributionLocalId, PluginSecretSourceDefinitionV1>>;
+    databaseEngines?: Readonly<Record<PluginContributionLocalId, PluginDatabaseEngineDefinitionV1>>;
     serviceLaunchEnvironments?: Readonly<Record<PluginContributionLocalId, PluginServiceLaunchEnvironmentDefinitionV1>>;
     projectNativeAdapters?: Readonly<Record<PluginContributionLocalId, PluginProjectNativeAdapterDefinitionV1>>;
     hooks?: Readonly<Record<PluginContributionLocalId, PluginHookDefinition>>;
@@ -1075,6 +1077,7 @@ export type DefinePluginInput<
         backgroundServices?: readonly BackgroundServiceDefinition[];
         captureSources?: Readonly<Record<PluginContributionLocalId, PluginCaptureSourceDefinition>>;
         secretSources?: Readonly<Record<PluginContributionLocalId, PluginSecretSourceDefinitionV1>>;
+        databaseEngines?: Readonly<Record<PluginContributionLocalId, PluginDatabaseEngineDefinitionV1>>;
         serviceLaunchEnvironments?: Readonly<Record<PluginContributionLocalId, PluginServiceLaunchEnvironmentDefinitionV1>>;
         projectNativeAdapters?: Readonly<Record<PluginContributionLocalId, PluginProjectNativeAdapterDefinitionV1>>;
         hooks?: Readonly<Record<PluginContributionLocalId, Readonly<{
@@ -1901,6 +1904,20 @@ const SECRET_SOURCES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     },
 });
 
+const DATABASE_ENGINES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
+    authorKey: 'databaseEngines', runtimeReceiverPaths: [['*', 'runtime']],
+    project(input) {
+        const definitions = input.databaseEngines as Readonly<Record<string, PluginDatabaseEngineDefinitionV1>> | undefined;
+        return { databaseEngines: Object.entries(definitions ?? {}).map(([id, definition]) => ({ id, ...definition.declaration,
+            capabilities: definition.declaration.capabilities.map(capability => ({ ...capability })),
+        })) };
+    },
+    activate(input, api) {
+        const definitions = input.databaseEngines as Readonly<Record<string, PluginDatabaseEngineDefinitionV1>> | undefined;
+        for (const [id, definition] of Object.entries(definitions ?? {})) api.databaseEngines.register(id, definition.runtime);
+    },
+});
+
 const SERVICE_LAUNCH_ENVIRONMENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     authorKey: 'serviceLaunchEnvironments', runtimeReceiverPaths: [['*', 'runtime']],
     project(input) {
@@ -2531,6 +2548,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     backgroundServices: { classification: 'adapter', authorKey: 'backgroundServices', inputShape: 'structured', adapter: BACKGROUND_SERVICES_ADAPTER },
     captureSources: { classification: 'adapter', authorKey: 'captureSources', inputShape: 'structured', adapter: CAPTURE_SOURCES_ADAPTER },
     secretSources: { classification: 'adapter', authorKey: 'secretSources', inputShape: 'structured', adapter: SECRET_SOURCES_ADAPTER },
+    databaseEngines: { classification: 'adapter', authorKey: 'databaseEngines', inputShape: 'structured', adapter: DATABASE_ENGINES_ADAPTER },
     serviceLaunchEnvironments: { classification: 'adapter', authorKey: 'serviceLaunchEnvironments', inputShape: 'structured', adapter: SERVICE_LAUNCH_ENVIRONMENTS_ADAPTER },
     projectNativeAdapters: { classification: 'adapter', authorKey: 'projectNativeAdapters', inputShape: 'structured', adapter: PROJECT_NATIVE_ADAPTERS_ADAPTER },
     hooks: { classification: 'adapter', authorKey: 'hooks', inputShape: 'structured', adapter: HOOKS_ADAPTER },

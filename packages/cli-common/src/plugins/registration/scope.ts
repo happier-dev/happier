@@ -71,6 +71,7 @@ const REGISTRATION_FAMILY = Object.freeze({
     secretSources: 'secretSources',
     projectNativeAdapters: 'projectNativeAdapters',
     deploymentTargets: 'deploymentTargets',
+    databaseEngines: 'databaseEngines',
     serviceLaunchEnvironments: 'serviceLaunchEnvironments',
     dragSources: 'dragSources',
     workItems: 'workItems',
@@ -493,6 +494,9 @@ export function createPluginRegistrationScope(
         }),
         secretSources: Object.freeze({
             register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.secretSources, id, runtime),
+        }),
+        databaseEngines: Object.freeze({
+            register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.databaseEngines, id, runtime),
         }),
         serviceLaunchEnvironments: Object.freeze({
             register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.serviceLaunchEnvironments, id, runtime),

@@ -1,3 +1,4 @@
+import { createDatabaseEngineCapabilityV1Schema } from '@happier-dev/protocol/plugins/contributions/databaseEngines';
 import { z } from 'zod/mini';
 import { DeploymentEnvironmentRefV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { AutomationDatabaseSubjectReadV1Schema } from '@happier-dev/protocol/automations/automationSubjectV1';
@@ -76,10 +77,7 @@ export const DatabaseOperationNameV1Schema = z.enum([
     'cell.read', 'statement.run', 'statement.explain', 'edits.apply', 'stats.read',
 ]);
 export type DatabaseOperationNameV1 = z.infer<typeof DatabaseOperationNameV1Schema>;
-export const DatabaseCapabilityV1Schema = z.discriminatedUnion('available', [
-    z.strictObject({ operation: DatabaseOperationNameV1Schema, available: z.literal(true) }),
-    z.strictObject({ operation: DatabaseOperationNameV1Schema, available: z.literal(false), code: name, reason: z.string() }),
-]);
+export const DatabaseCapabilityV1Schema = createDatabaseEngineCapabilityV1Schema(DatabaseOperationNameV1Schema);
 export type DatabaseCapabilityV1 = z.infer<typeof DatabaseCapabilityV1Schema>;
 
 export const DatabaseDescribeInputV1Schema = z.strictObject({ operation: z.literal('describe'), ...operationContext });

@@ -75,6 +75,7 @@ export type PluginInvocationServicesSeed = Readonly<{
     /** Exact host-admitted managed data role; no role, link, or ref reaches plugin input. */
     readDataRole?: NonNullable<PluginServices['secrets']['readDataRole']>;
     /** Captured deployment-owner attachment; no public context or credential operand. */
+    databaseEngines?: PluginServices['databaseEngines'];
     deploymentDatabases?: PluginServices['deploymentDatabases'];
     /** Exact resource admission, captured by the host before the handler starts. */
     managedWorkloads?: PluginServices['managedServices']['observeWorkload'];

@@ -1,3 +1,4 @@
+import { PluginDatabaseEngineContributionV1Schema } from './databaseEngines.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { MachineRoleDeclarationV1Schema } from '../../machines/roles/machineRolesV1.js';
 import { HealthCheckKindContributionV1Schema, validateHealthCheckKindContributionsV1 } from './healthCheckKinds.js';
@@ -960,6 +961,7 @@ export type PluginCoreContributionFamiliesV2 = readonly [
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.captureSources, typeof PluginCaptureSourceContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.secretSources, typeof PluginSecretSourceContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.serviceLaunchEnvironments, typeof PluginServiceLaunchEnvironmentContributionV1Schema>,
+  import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.databaseEngines, typeof PluginDatabaseEngineContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.projectNativeAdapters, typeof PluginProjectNativeAdapterContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.daemonDatabases, typeof PluginDaemonDatabaseContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.composerReferences, typeof PluginComposerReferenceProviderContributionV1Schema>,
@@ -1026,6 +1028,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2: PluginCoreContributionFamilie
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.captureSources, schema: PluginCaptureSourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.secretSources, schema: PluginSecretSourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.serviceLaunchEnvironments, schema: PluginServiceLaunchEnvironmentContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.databaseEngines, schema: PluginDatabaseEngineContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.projectNativeAdapters, schema: PluginProjectNativeAdapterContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.daemonDatabases, schema: PluginDaemonDatabaseContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.composerReferences, schema: PluginComposerReferenceProviderContributionV1Schema }),

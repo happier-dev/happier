@@ -12986,6 +12986,21 @@ semantic `database.*` Actions. Operands and results derive from
 introduced. Matching unpublished SDK and host source reload together; the
 portable descriptor grammar and wire epoch are unchanged.
 
+In unreleased 0.3 source, engine-only plugins declare `databaseEngines` through
+`definePlugin`: each entry names an `engineId`, URL `scheme`, and operation
+`capabilities`, with its `open`, `execute`, and `close` runtime callbacks kept
+in-process. The same `activate(api)` scope registers the callbacks through
+`api.databaseEngines.register`; the generic contribution catalogue and activation
+owner supply discovery and withdrawal. `context.services.databaseEngines` exposes
+enabled descriptors without loading drivers and demands only the selected engine
+when opening a connection. Dynamic Resources receive the same captured service.
+The workbench selects contributed schemes through its shared connection owner
+and invokes them behind the semantic `database.*` Actions, preserving the admitted
+access class, cancellation signal, and existing connection lifetime. Missing or
+ambiguous engines settle as `plugin_service_unavailable`; built-in connections
+retain their existing adapters. Matching development Protocol, SDK, CLI-common,
+and daemon source must reload together under the direct-cut contract.
+
 Protocol's `deploymentTargetRolesV1` source owns the strict runtime and qualified
 data-role inputs and normalized runtime results. Data
 project preparation does not fabricate a resource id; selected branch and secret

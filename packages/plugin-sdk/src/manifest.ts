@@ -1,3 +1,4 @@
+import type { PluginDatabaseEngineContributionV1 } from './databaseEngines.js';
 import type { PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 import type { PluginServiceLaunchEnvironmentContributionV1 } from '@happier-dev/protocol/plugins/contributions/serviceLaunchEnvironments';
 // Portable declarative grammar is projected by the single Action DTO producer.
@@ -596,6 +597,7 @@ export interface PluginManifest {
     storeKinds?: readonly StoreKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
     machineSetupPresets?: readonly MachineSetupPresetContributionV1[];
+    databaseEngines?: readonly PluginDatabaseEngineContributionV1[];
     serviceLaunchEnvironments?: readonly Readonly<PluginServiceLaunchEnvironmentContributionV1>[];
     projectNativeAdapters?: readonly Readonly<PluginProjectNativeAdapterContributionV1>[];
     secretSources?: readonly Readonly<PluginSecretSourceContributionV1>[];
@@ -753,6 +755,7 @@ export type PluginContributes = Readonly<{
   storeKinds: readonly StoreKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];
   machineSetupPresets: readonly MachineSetupPresetContributionV1[];
+  databaseEngines: NonNullable<NonNullable<PluginManifest['contributes']>['databaseEngines']>;
   serviceLaunchEnvironments: NonNullable<NonNullable<PluginManifest['contributes']>['serviceLaunchEnvironments']>;
   projectNativeAdapters: NonNullable<NonNullable<PluginManifest['contributes']>['projectNativeAdapters']>;
   agents: NonNullable<NonNullable<PluginManifest['contributes']>['agents']>;
