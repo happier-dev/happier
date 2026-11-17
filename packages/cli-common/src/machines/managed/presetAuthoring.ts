@@ -30,8 +30,8 @@ export async function prepareManagedMachinePresetAuthoringV1(
   if (request.approvalReplay === true) return null;
   const value = 'patch' in input ? input.patch : input;
   if (!value.content) {
-    if ('patch' in input && (input.patch.configurationRevision !== undefined || input.patch.setupRevision !== undefined)) {
-      const { configurationRevision: _configurationRevision, setupRevision: _setupRevision, ...patch } = input.patch;
+    if ('patch' in input && input.patch.configurationRevision !== undefined) {
+      const { configurationRevision: _configurationRevision, ...patch } = input.patch;
       return { children: [], input: { ...input, patch } };
     }
     return null;

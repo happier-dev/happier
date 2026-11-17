@@ -180,7 +180,7 @@ describe('preset authored configuration counter', () => {
       let reads = 0;
       const prepared = await managed.prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.update',
         input: { id: 'preset', homeId: 'home', expectedRevision: 9,
-          patch: { ...write, contentEncryptionMode: mode, configurationRevision: 88 } }, context: { runtimeAccountId: 'author' },
+          patch: { ...write, contentEncryptionMode: mode, configurationRevision: 88, setupRevision: 88 } }, context: { runtimeAccountId: 'author' },
         invokeChild: async child => {
           if (child.action === 'machines.presets.get') { reads += 1; return { ok: true, result: { kind: 'found', preset } }; }
           return { ok: true, result: { base: { launch: { source: 'file' }, effectReview },
@@ -249,6 +249,34 @@ describe('preset authored configuration counter', () => {
           result: { kind: 'found', preset: { ...create, revision: 7 } } }) }, deps))
         .toMatchObject({ input: { patch: { configurationRevision: expected } } });
     }
+  });
+
+  it('preserves explicit setup counters through ordinary Update admission', async () => {
+    const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: {
+      v: 1, name: 'Setup', setup: { scripts: [{ body: 'echo setup', affects: 'none' }] },
+    } });
+    const deps = { custody: { accountId: 'author', open: params =>
+      openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }), withE2eeAccountKey: () => null },
+      readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
+    } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
+    // Network persistence is the boundary: authoring and Action admission remain real.
+    let persistedPatch: unknown;
+    const executor = createActionExecutor({
+      prepareHostReviewedChildren: request => managed.prepareManagedMachinePresetAuthoringV1(request, deps),
+      machinePresetAction: async ({ input }) => {
+        const update = ManagedMachinePresetUpdateInputV1Schema.parse(input);
+        persistedPatch = update.patch;
+        return { kind: 'saved', preset: { id: 'preset', homeId: 'home', revision: 2,
+          owner: { kind: 'account', accountId: 'author' }, contentEncryptionMode: 'plain',
+          ...sealed, setupRevision: update.patch.setupRevision } };
+      },
+    });
+    const result = await executor.execute('machines.presets.update', {
+      id: 'preset', homeId: 'home', expectedRevision: 1, patch: { setupRevision: 3 },
+    }, { surface: 'cli', authority: 'present_user', runtimeAccountId: 'author', serverId: 'home',
+      actionCaller: { kind: 'host' }, presentUserConfirmation: { actionId: 'machines.presets.update' } });
+    expect(persistedPatch).toEqual({ setupRevision: 3 });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'saved', preset: { setupRevision: 3 } } });
   });
 
   it('fails closed when the incumbent is unavailable and strips counter edits from Keep-only patches', async () => {
