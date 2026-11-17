@@ -128,7 +128,6 @@ import {
 import {
     SPAWN_SESSION_ERROR_CODES,
     buildBackendTargetKey,
-    isConnectedServiceCredentialHealthStatusUsable,
     isConnectedServiceResumeUnreachableSpawnErrorDetail,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
     type ComposerAgentContinuationIntentV1,
@@ -243,26 +242,21 @@ import { useSessionMachineReachability } from '@/components/sessions/model/useSe
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import {
     computeConnectedServiceQuotaGaugeViewModel,
-    deriveConnectedServiceQuotaSnapshotFromRuntimeIssue,
-    selectConnectedServiceSessionProviderUsageGaugeSource,
     type ConnectedServiceQuotaGaugeLabelFormatter,
     type ConnectedServiceQuotaGaugeWindowMode,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useConnectedServiceAuthGroupsQuery } from '@/hooks/server/connectedServices/useConnectedServiceAuthGroupsQuery';
-import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
 import {
-    selectProviderUsageDisplaySnapshot,
     type ProviderUsageDisplaySnapshotSource,
 } from '@/sync/domains/connectedServices/accountUsage/selectors';
 import {
     connectedServiceProfileKey,
     resolveConnectedServiceProfileLabel,
 } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { resolveConnectedServiceCredentialHealthStatus } from '@/sync/domains/connectedServices/resolveConnectedServiceCredentialHealthStatus';
 import { resolveConnectedServiceProjectionSignature } from '@/sync/domains/connectedServices/resolveConnectedServiceProjectionSignature';
-import { useLatestProviderUsageRuntimeIssueForAgent } from '@/sync/store/hooks';
+import { useProviderUsageSources } from '@/hooks/server/connectedServices/useProviderUsageSources';
 import { resolveConnectedServiceQuotaProfileRefForSession } from './resolveConnectedServiceQuotaProfileRefForSession';
 import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
@@ -3803,35 +3797,10 @@ function SessionViewLoaded({
         resolveConnectedServiceQuotaProfileRefForSession({
             metadata: session.metadata,
             agentId: liveComposerState.agentId,
+            runtimeIssue: session.lastRuntimeIssue,
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata]);
-    const latestProviderUsageIssue = useLatestProviderUsageRuntimeIssueForAgent(liveComposerState.agentId);
-    const providerRuntimeIssue = latestProviderUsageIssue.isDataReady
-        ? latestProviderUsageIssue.issue
-        : session.lastRuntimeIssue ?? null;
-    const providerRuntimeIssueSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(providerRuntimeIssue);
-    const sessionProviderRuntimeIssue = resolveAgentIdFromFlavor(session.lastRuntimeIssue?.provider) === liveComposerState.agentId
-        ? session.lastRuntimeIssue ?? null
-        : null;
-    const sessionProviderRuntimeIssueSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(sessionProviderRuntimeIssue);
-    const providerRuntimeIssueMatchesProfile = Boolean(
-        providerRuntimeIssueSnapshot
-        && connectedServiceQuotaProfileRef
-        && connectedServiceProfileKey(providerRuntimeIssueSnapshot) === connectedServiceProfileKey(connectedServiceQuotaProfileRef),
-    );
-    const sessionRuntimeIssueDescribesAccountSwitch = Boolean(
-        sessionProviderRuntimeIssueSnapshot
-        && connectedServiceQuotaProfileRef
-        && connectedServiceProfileKey(sessionProviderRuntimeIssueSnapshot) !== connectedServiceProfileKey(connectedServiceQuotaProfileRef),
-    );
-    const scopedProviderRuntimeIssue = connectedServiceQuotaProfileRef
-        ? sessionRuntimeIssueDescribesAccountSwitch
-            ? sessionProviderRuntimeIssue
-            : providerRuntimeIssueMatchesProfile
-                ? providerRuntimeIssue
-                : sessionProviderRuntimeIssue
-        : providerRuntimeIssue;
+    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata, session.lastRuntimeIssue]);
     const connectedServiceQuotaGroupService = React.useMemo(() => (
         connectedServiceQuotaProfileRef?.groupId
             ? accountProfile?.connectedServicesV2.find((service) => (
@@ -4048,27 +4017,23 @@ function SessionViewLoaded({
         sessionId,
     ]);
 
-    const connectedServiceQuotaProfileCredentialUsable = React.useMemo(() => {
-        if (connectedServiceQuotaProfileRef?.credentialHealthStatus === undefined) return true;
-        return isConnectedServiceCredentialHealthStatusUsable(
-            resolveConnectedServiceCredentialHealthStatus(connectedServiceQuotaProfileRef.credentialHealthStatus),
-        );
-    }, [connectedServiceQuotaProfileRef?.credentialHealthStatus]);
-    const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
-        connectedServiceQuotaProfileRef ? [connectedServiceQuotaProfileRef] : [],
-    );
-    const connectedServiceQuotaProfileKey = connectedServiceQuotaProfileRef
-        ? connectedServiceProfileKey(connectedServiceQuotaProfileRef)
-        : null;
-    const connectedServiceQuotaSnapshot = connectedServiceQuotaProfileKey
-        ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
-        : null;
-    const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
     const providerAccountUsageRecordIds = React.useMemo(
-        () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
-        [session.metadata],
+        () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata), [session.metadata],
     );
-    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(providerAccountUsageRecordIds);
+    const usageRequests = React.useMemo(() => [{
+        providerId: liveComposerState.agentId,
+        sessionId,
+        profileRef: connectedServiceQuotaProfileRef,
+        metadataRecordIds: providerAccountUsageRecordIds,
+        nativeAccount: usageLimitRecovery?.selectedAuth?.kind === 'native',
+        sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
+        recoveryCredits: usageLimitRecoveryCredits,
+    }], [sessionId, liveComposerState.agentId, connectedServiceQuotaProfileRef, providerAccountUsageRecordIds,
+        usageLimitRecovery?.selectedAuth?.kind, usageLimitRecoveryCheckNowSupported, usageLimitRecoveryCredits]);
+    const [usageSource] = useProviderUsageSources({ requests: usageRequests,
+        connectedServices: accountProfile?.connectedServicesV2 ?? [], fetchEnabled: true });
+    const connectedServiceQuotaProfileKey = usageSource.profileKey;
+    const connectedServiceQuotaDisplaySnapshot = usageSource.quotaDisplaySnapshot;
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
         if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
         return resolveConnectedServiceProfileLabel({
@@ -4081,42 +4046,9 @@ function SessionViewLoaded({
         connectedServiceQuotaDisplaySnapshot?.accountLabel,
         settings.connectedServicesProfileLabelByKey,
     ]);
-    const providerUsageDisplaySnapshotSource = React.useMemo(() => (
-        selectProviderUsageDisplaySnapshot({
-            providerId: liveComposerState.agentId,
-            metadataRecordIds: providerAccountUsageRecordIds,
-            accountUsageSnapshotsByRecordId: providerAccountUsageSnapshotsByRecordId,
-            connectedServiceProfileRef: connectedServiceQuotaProfileRef,
-            connectedServiceQuotaView: connectedServiceQuotaDisplaySnapshot,
-        })
-    ), [
-        connectedServiceQuotaProfileRef,
-        connectedServiceQuotaDisplaySnapshot,
-        liveComposerState.agentId,
-        providerAccountUsageRecordIds,
-        providerAccountUsageSnapshotsByRecordId,
-    ]);
-    const providerUsageGaugeSource = React.useMemo(() => {
-        if (!connectedServiceQuotasEnabled || sessionProviderUsageGaugeMode === 'hidden') return null;
-        if (!connectedServiceQuotaProfileCredentialUsable) return null;
-        return selectConnectedServiceSessionProviderUsageGaugeSource({
-            providerId: liveComposerState.agentId,
-            connectedServiceSnapshot: providerUsageDisplaySnapshotSource?.snapshot ?? null,
-            connectedServiceRefProvenance: providerUsageDisplaySnapshotSource?.connectedServiceRefProvenance ?? null,
-            sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
-            recoveryCredits: usageLimitRecoveryCredits,
-            runtimeIssue: scopedProviderRuntimeIssue,
-        });
-    }, [
-        connectedServiceQuotasEnabled,
-        connectedServiceQuotaProfileCredentialUsable,
-        liveComposerState.agentId,
-        providerUsageDisplaySnapshotSource,
-        scopedProviderRuntimeIssue,
-        sessionProviderUsageGaugeMode,
-        usageLimitRecoveryCredits,
-        usageLimitRecoveryCheckNowSupported,
-    ]);
+    const providerUsageDisplaySnapshotSource = usageSource.displaySnapshotSource;
+    const providerUsageGaugeSource = connectedServiceQuotasEnabled && sessionProviderUsageGaugeMode !== 'hidden'
+        ? usageSource.gaugeSource : null;
     const providerUsageGauge = React.useMemo(() => {
         const gaugeSource = providerUsageGaugeSource;
         if (!gaugeSource) return null;

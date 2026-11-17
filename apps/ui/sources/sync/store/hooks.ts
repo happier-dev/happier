@@ -68,7 +68,8 @@ import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forked
 import type { SessionForkSupportSource } from '../domains/sessionFork/forkUiSupport';
 import { getPermissionsInUiWhileLocal } from '../domains/state/agentStateCapabilities';
 import { getSessionLocalControlState, type SessionLocalControlState } from '../domains/session/control/sessionLocalControl';
-import { resolveAgentIdFromFlavor, type AgentId } from '@happier-dev/agents';
+import { resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { readProviderAccountUsageRecordIdsFromMetadata } from '@happier-dev/protocol';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
 import { isMachineVisibleForLaunchSelection } from '../domains/machines/identity/filterVisibleMachines';
@@ -1706,28 +1707,110 @@ export function useAllSessions(): Session[] {
   );
 }
 
-/** Latest usage-limit evidence for one provider, shared by every session composer using it. */
-export function useLatestProviderUsageRuntimeIssueForAgent(agentId: AgentId | null): Readonly<{
-  isDataReady: boolean;
-  issue: SessionRuntimeIssueV1 | null;
-}> {
-  return getStorage()(useShallow((state) => {
-    if (!state.isDataReady || !agentId) return { isDataReady: state.isDataReady, issue: null };
-    let latest: SessionRuntimeIssueV1 | null = null;
-    let latestSessionUpdatedAt = -1;
-    for (const session of Object.values(state.sessions)) {
-      const issue = session.lastRuntimeIssue;
-      if (!issue?.usageLimit || resolveAgentIdFromFlavor(issue.provider) !== agentId) continue;
-      if (
-        latest
-        && (issue.occurredAt < latest.occurredAt
-          || (issue.occurredAt === latest.occurredAt && session.updatedAt <= latestSessionUpdatedAt))
-      ) continue;
-      latest = issue;
-      latestSessionUpdatedAt = session.updatedAt;
+// Both selectors run inside store subscriptions, so they are cached per sessions record: store
+// updates that leave `sessions` untouched (transcripts, settings, presence) never rescan it.
+const providerUsageRecordIdsCache = new WeakMap<Record<string, Session>, readonly string[]>();
+const providerUsageRuntimeIssueCache = new WeakMap<Record<string, Session>, Map<string, SessionRuntimeIssueV1 | null>>();
+
+/** Native record discovery retains the most recent account refs for each provider. */
+export function selectProviderUsageRecordIds(sessions: Record<string, Session>): readonly string[] {
+  const cached = providerUsageRecordIdsCache.get(sessions);
+  if (cached) return cached;
+  const seen = new Set<string>();
+  const ids = new Set<string>();
+  for (const session of sortValuesByUpdatedAtDescending(sessions)) {
+    const providerId = resolveAgentIdFromSessionMetadata(session.metadata);
+    if (!providerId || seen.has(providerId)) continue;
+    const recordIds = readProviderAccountUsageRecordIdsFromMetadata(session.metadata);
+    if (recordIds.length === 0) continue;
+    seen.add(providerId);
+    for (const recordId of recordIds) ids.add(recordId);
+  }
+  const result = [...ids].sort();
+  providerUsageRecordIdsCache.set(sessions, result);
+  return result;
+}
+
+function shouldReplaceLatestProviderUsageRuntimeIssue(
+  current: SessionRuntimeIssueV1 | null,
+  currentSessionUpdatedAt: number,
+  candidate: SessionRuntimeIssueV1,
+  candidateSessionUpdatedAt: number,
+): boolean {
+  return !current
+    || candidate.occurredAt > current.occurredAt
+    || (candidate.occurredAt === current.occurredAt && candidateSessionUpdatedAt > currentSessionUpdatedAt);
+}
+
+export type ProviderUsageRuntimeIssueTarget = Readonly<{
+  providerId: string | null;
+  /** A connected login: only evidence published for this exact profile counts. */
+  profileRef?: Readonly<{ serviceId: string; profileId: string }> | null;
+  /** A native login, identified by its account usage records: only sessions of the same login count. */
+  metadataRecordIds?: readonly string[];
+  /** When the account is unknown, evidence stays with the session that observed it. */
+  sessionId?: string | null;
+}>;
+
+function providerUsageRuntimeIssueTargetKey(target: ProviderUsageRuntimeIssueTarget): string {
+  return [
+    target.providerId ?? '',
+    target.profileRef ? `${target.profileRef.serviceId}/${target.profileRef.profileId}` : '',
+    [...(target.metadataRecordIds ?? [])].sort().join(','),
+    target.sessionId ?? '',
+  ].join('|');
+}
+
+function selectProviderUsageRuntimeIssueForAccount(
+  sessions: Record<string, Session>,
+  target: ProviderUsageRuntimeIssueTarget,
+): SessionRuntimeIssueV1 | null {
+  if (!target.providerId) return null;
+  const nativeRecordIds = target.profileRef ? null : new Set(target.metadataRecordIds ?? []);
+  let latest: SessionRuntimeIssueV1 | null = null;
+  let updatedAt = -1;
+  for (const session of Object.values(sessions)) {
+    const issue = session.lastRuntimeIssue;
+    if (!issue?.usageLimit) continue;
+    // The asking session's own evidence always counts (including an account switch it observed);
+    // another session's evidence must be for the same provider and the same account.
+    if (session.id !== target.sessionId) {
+      if (resolveAgentIdFromFlavor(issue.provider) !== target.providerId) continue;
+      if (target.profileRef) {
+        const ref = issue.usageLimit.quotaSnapshotRef;
+        if (!ref || ref.serviceId !== target.profileRef.serviceId || ref.profileId !== target.profileRef.profileId) continue;
+      } else if (nativeRecordIds && nativeRecordIds.size > 0) {
+        const sessionRecordIds = readProviderAccountUsageRecordIdsFromMetadata(session.metadata);
+        if (!sessionRecordIds.some((recordId) => nativeRecordIds.has(recordId))) continue;
+      } else {
+        continue;
+      }
     }
-    return { isDataReady: true, issue: latest };
-  }));
+    if (!shouldReplaceLatestProviderUsageRuntimeIssue(latest, updatedAt, issue, session.updatedAt)) continue;
+    latest = issue;
+    updatedAt = session.updatedAt;
+  }
+  return latest;
+}
+
+/** Match account identity before comparing freshness; another login cannot erase its evidence. */
+export function selectProviderUsageRuntimeIssuesForAccounts(
+  sessions: Record<string, Session>,
+  targets: readonly ProviderUsageRuntimeIssueTarget[],
+): readonly (SessionRuntimeIssueV1 | null)[] {
+  let cache = providerUsageRuntimeIssueCache.get(sessions);
+  if (!cache) {
+    cache = new Map();
+    providerUsageRuntimeIssueCache.set(sessions, cache);
+  }
+  const byKey = cache;
+  return targets.map((target) => {
+    const key = providerUsageRuntimeIssueTargetKey(target);
+    if (byKey.has(key)) return byKey.get(key) ?? null;
+    const issue = selectProviderUsageRuntimeIssueForAccount(sessions, target);
+    byKey.set(key, issue);
+    return issue;
+  });
 }
 
 export function useAllSessionsForAttention(): Session[] {

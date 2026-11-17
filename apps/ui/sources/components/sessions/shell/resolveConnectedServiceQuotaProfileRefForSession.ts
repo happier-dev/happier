@@ -1,9 +1,11 @@
-import type { AccountProfile } from '@happier-dev/protocol';
+import type { AccountProfile, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import {
     buildBackendTargetKey,
     isConnectedServiceCredentialHealthStatusUsable,
     type ConnectedServiceCredentialHealthStatusV1,
 } from '@happier-dev/protocol';
+
+import { resolveAgentIdFromFlavor } from '@happier-dev/agents';
 
 import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
 import type { ConnectedServiceQuotaProfileRefProvenance } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
@@ -115,6 +117,7 @@ export type ConnectedServiceQuotaProfileRefForSession = Readonly<{
 export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonly<{
     metadata: Metadata | null | undefined;
     agentId: string;
+    runtimeIssue?: SessionRuntimeIssueV1 | null;
     accountProfileConnectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
 }>): ConnectedServiceQuotaProfileRefForSession | null {
     if (!isAgentId(params.agentId)) return null;
@@ -151,6 +154,13 @@ export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonl
             serviceId,
         });
         if (!binding) continue;
+        // Runtime auth can move to another member; choose identity here, never usage values.
+        const ref = params.runtimeIssue?.usageLimit?.quotaSnapshotRef;
+        if (resolveAgentIdFromFlavor(params.runtimeIssue?.provider) === params.agentId
+            && ref?.profileId && supportedServiceIds.some(id => id === ref.serviceId)) {
+            return { serviceId: ref.serviceId, profileId: ref.profileId,
+                ...(binding.groupId ? { groupId: binding.groupId } : {}), provenance: 'published_quota_ref' };
+        }
         const credentialHealthStatus = resolveProfileCredentialHealthStatus({
             services: params.accountProfileConnectedServicesV2,
             serviceId,
