@@ -5,9 +5,11 @@ import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { sealSessionStoredContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionStoredContentCodec';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import type { DiscussionProducerV1 } from '@happier-dev/protocol/discussions/content';
-import type { WorkflowCoordinatorInvocation } from './coordinator';
+import { createWorkflowCoordinator, WorkflowRuntimeInterruption, workflowInvocationKey, type WorkflowCoordinatorInvocation } from './coordinator';
+import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { readWorkflowDiscussionContextV1 } from '@happier-dev/protocol/workflows/workflowDiscussionContextV1';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import { createProductionWorkflowDiscussionContextReader, resolveWorkflowDiscussionOrigin } from './workflowDiscussion';
 
 vi.mock('axios', async importOriginal => {
@@ -70,6 +72,33 @@ async function fixture(mode: 'plain' | 'e2ee') {
     revokeAfterFirstPage: () => { revokeAfterFirstPage = true; } };
 }
 
+async function contextCoordinatorFixture(sessionContext: Parameters<typeof createWorkflowCoordinator>[0]['sessionContext']) {
+  const store = createInMemoryWorkflowCoordinatorStore();
+  const runId = 'discussion-read-recovery';
+  await store.ensureIntent({ key: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
+    recordId: 'root', runId, blockId: '$root', blockKind: 'root', path: { blockId: '$root', scope: [] },
+    attempt: 0, acceptedAtMs: 0, lifecycle: 'running' });
+  // Native execution is the boundary; input resolution and coordination stay real.
+  const executeStep = vi.fn<Parameters<typeof createWorkflowCoordinator>[0]['executeStep']>(async params => {
+    await params.beforeInputAdmission();
+    return { kind: 'completed', result: 'answer' };
+  });
+  const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: 'root', sessionContext,
+    executeStep, resolveWorkspace: async () => ({ ok: true,
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } }) });
+  const executionTarget = { kind: 'session' } as const;
+  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'answer',
+    document: { text: 'Answer the question', references: [], attachments: [] },
+    input: [{ kind: 'discussion_context', scope: 'addressing_message' }], result: { kind: 'text' } }] };
+  const run: Parameters<typeof coordinator.run>[0] = { runId, inputs: {}, executionTarget,
+    authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } } as const,
+    definition, authoredDefinition: definition, frozenChildren: {}, workDepth: 0,
+    materializedLeaves: [{ sourceKey: '$root', blockId: 'answer', kind: 'step',
+      selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+        conversation: { kind: 'fresh' } }, executionTarget, authoredWorkspace: { kind: 'inherit' } }] };
+  return { store, coordinator, executeStep, run };
+}
+
 describe('Workflow production Discussion context', () => {
   beforeEach(() => {
     vi.mocked(axios.request).mockReset();
@@ -90,6 +119,50 @@ describe('Workflow production Discussion context', () => {
     await expect(createProductionWorkflowDiscussionContextReader({ credentials: state.credentials,
       serverId: discussion.serverId, serverHttpBaseUrl, origin }).resolveDiscussionContext('addressing_message'))
       .rejects.toMatchObject({ ok: false, errorCode: code });
+  });
+
+  it('parks an unavailable Discussion input with its typed cause and resumes the same intent after recovery', async () => {
+    const state = await fixture('plain');
+    const test = await contextCoordinatorFixture(createProductionWorkflowDiscussionContextReader({
+      credentials: state.credentials, serverId: discussion.serverId, serverHttpBaseUrl, origin }));
+    vi.mocked(axios.request).mockResolvedValueOnce({ status: 503,
+      data: { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' } });
+    expect(await test.coordinator.run(test.run)).toEqual({ state: 'interrupted', reason: 'database_transaction_timeout' });
+    expect(test.store.readByLogicalInvocation('root')).toMatchObject({ lifecycle: 'needs_attention',
+      reason: 'database_transaction_timeout', failureCause: { errorCode: 'database_transaction_timeout', httpStatus: null } });
+    expect(test.executeStep).not.toHaveBeenCalled();
+    const intent = test.store.list().find(row => row.blockId === 'answer');
+    expect(intent).toMatchObject({ lifecycle: 'pending' });
+    expect(await test.coordinator.run(test.run)).toMatchObject({ state: 'succeeded' });
+    expect(test.store.list().filter(row => row.blockId === 'answer')).toMatchObject([
+      { recordId: intent!.recordId, lifecycle: 'completed', result: 'answer', input: { input: [
+        { messages: [{ id: 'message-1' }, { id: 'question' }] },
+      ] } },
+    ]);
+  });
+
+  it('leaves a raw storage failure to the existing reclaim owner', async () => {
+    const state = await fixture('plain');
+    const test = await contextCoordinatorFixture(createProductionWorkflowDiscussionContextReader({
+      credentials: state.credentials, serverId: discussion.serverId, serverHttpBaseUrl, origin }));
+    const failure = new Error('storage transport failed');
+    vi.spyOn(test.store, 'readFrontier').mockRejectedValue(failure);
+    await expect(test.coordinator.run(test.run)).rejects.toBe(failure);
+    expect(test.store.readByLogicalInvocation('root')).toMatchObject({ lifecycle: 'running' });
+  });
+
+  it('does not turn an aborted Discussion read into recoverable attention', async () => {
+    const state = await fixture('plain');
+    const controller = new AbortController();
+    const test = await contextCoordinatorFixture(createProductionWorkflowDiscussionContextReader({
+      credentials: state.credentials, serverId: discussion.serverId, serverHttpBaseUrl, origin, signal: controller.signal }));
+    vi.mocked(axios.request).mockImplementationOnce(async () => {
+      controller.abort(new DOMException('Stopped', 'AbortError'));
+      return { status: 503, data: { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' } };
+    });
+    await expect(test.coordinator.run({ ...test.run, signal: controller.signal })).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
+    expect(test.store.readByLogicalInvocation('root')).toMatchObject({ lifecycle: 'running' });
+    expect(test.executeStep).not.toHaveBeenCalled();
   });
 
   it.each(['plain', 'e2ee'] as const)('opens %s round context through the executing profile and its portable Home', async mode => {

@@ -12,7 +12,7 @@ import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows/workflow
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { prepareActionCompletionV1, resumeActionCompletionV1, type ActionCompletionResult } from '@happier-dev/protocol/actions/actionCompletion';
-import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ActionCompletionRun, ActionCompletionOperation, ActionCompletionStateV1, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
@@ -1030,6 +1030,19 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
         if (error instanceof WorkflowLeafFailure) return { state: error.state, reason: error.code };
         if (error instanceof WorkflowInputResolutionError) return { state: 'failed', reason: error.code };
         if (error instanceof WorkflowStepSelectionErrorV1) return { state: 'failed', reason: error.code };
+        if (!signal?.aborted) {
+          const failure = parseActionExecuteFailure(error);
+          if (failure) {
+            // Unavailable input reads retain their admitted intent for Resume.
+            // If recording attention also fails, lease reclaim still owns recovery.
+            const owner = await trackedStore.readByLogicalInvocation(root.conversationOwnerKey);
+            if (!owner) throw error;
+            await trackedStore.commitFact({ key: owner.key, lifecycle: 'needs_attention',
+              reason: failure.errorCode, reasonMessage: failure.error,
+              failureCause: projectActionFailureCauseV1(error) });
+            return { state: 'interrupted', reason: failure.errorCode };
+          }
+        }
         throw error;
       } finally {
         holds.close();
