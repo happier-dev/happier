@@ -1407,6 +1407,9 @@ marks this format without disclosing those clocks. The daemon requests
 `requireClockBounds: true` to upgrade legacy days through the same writer.
 The normal saved-account startup/due pass invokes this key-holding maintainer
 even without a new observation; accepted observation publication also invokes it.
+Provider credential reauthentication does not block maintenance of retained
+history: the Happier Account's existing keys open and seal those summaries.
+Provider acquisition remains gated by credential health.
 Completed current-format days need no raw-history scan. Retention cannot recover
 deleted observations: an upgraded compacted day proves only its retained operands.
 The pace owner uses these bounds to include accepted days whose provider clocks

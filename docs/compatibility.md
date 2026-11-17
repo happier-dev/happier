@@ -9653,7 +9653,10 @@ The same unreleased contract adds optional sealed day-summary `observedAtRange`
 (half-open provider-clock extrema), outer `clockBoundsVersion: 1`, and daemon
 request `requireClockBounds: true`. The existing daemon upgrades legacy summaries
 on the normal saved-account startup/due pass, even without a new observation,
-and after accepted observation publication. It uses complete remaining-day reads
+and after accepted observation publication. Saved provider credentials needing
+reauthentication still permit retained-summary maintenance through the Happier
+Account's existing keys; provider acquisition remains gated by credential health.
+The maintainer uses complete remaining-day reads
 plus retained endpoints; it does not recover
 expired detail or change pace verdict semantics. The one pace owner derives
 coalesced accepted-history ranges for the actual current meter windows, including

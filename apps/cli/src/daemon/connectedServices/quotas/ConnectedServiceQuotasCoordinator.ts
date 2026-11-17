@@ -4360,10 +4360,6 @@ export class ConnectedServiceQuotasCoordinator {
         const deadline = health?.nextDeadline();
         if (deadline !== null && deadline !== undefined) input.scheduleAt(deadline);
       };
-      if (!isConnectedServiceCredentialHealthStatusUsable(profile.status)) {
-        await settleHealth();
-        continue;
-      }
       const key =
         `qualified:${qualifiedAccountQuotaKey(profile.ref)}`;
       // Ruling 2026-11-04 (5): staleness re-reads only while a pool Session runs on this Machine.
@@ -4410,8 +4406,11 @@ export class ConnectedServiceQuotasCoordinator {
         }
         const canProbe = this.shouldRunQualifiedQuotaOperation(profile, 'quota_poll');
         const { response: existing, snapshot: existingSnapshot, localSnapshot } = await this.readQualifiedAccountQuota(profile, input.signal);
+        recordId = existing?.sourceResolution.recordId ?? recordId;
         // A reload must upgrade retained days even when no new observation is
-        // needed or this Account's plugin has no quota acquisition capability.
+        // needed, provider credentials need reauthentication, or this Account's
+        // plugin has no quota acquisition capability. Account keys own history;
+        // provider credential health only gates acquiring another observation.
         if (existing && existingSnapshot) {
           await maintainProviderAccountUsageDaySummariesForRecord({
             token: this.credentials.token, recordId: existing.sourceResolution.recordId,
@@ -4420,12 +4419,12 @@ export class ConnectedServiceQuotasCoordinator {
             ...(input.accountMode === 'e2ee' ? { material: requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial()) } : {}),
           });
         }
+        if (!isConnectedServiceCredentialHealthStatusUsable(profile.status)) continue;
         // Register saved Accounts as well as newly settled ones. Home Refresh is
         // source-addressed, so this must not depend on provider acquisition succeeding.
         const initializedSource = !existingSnapshot
           ? await this.initializeQualifiedAccountQuotaSourceForProfile({ profile, accountMode: input.accountMode, signal: input.signal })
           : null;
-        recordId = existing?.sourceResolution.recordId ?? recordId;
         const refreshRequestedAt = existing?.metadata.refreshRequestedAt;
         const pendingRefresh = refreshRequestedAt !== undefined && refreshRequestedAt > (existing?.metadata.fetchedAt ?? 0);
         if (failureState && input.now < failureState.nextAllowedAt && !pendingRefresh) {

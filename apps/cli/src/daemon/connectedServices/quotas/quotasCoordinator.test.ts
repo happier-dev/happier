@@ -2225,7 +2225,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
     let now = 1_000_000;
     const service = recoveryMode === 'manual_codex_alias'
       ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
@@ -2268,7 +2268,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         service,
         accountId: recoveryMode === 'quota_profile_separator' ? 'account:a' : 'account-a',
       },
-      status: 'connected',
+      // Captured r202 profile: saved OAuth account, needs_reauth, retained history.
+      status: recoveryMode === 'deadline_no_quota_needs_reauth' ? 'needs_reauth' : 'connected',
       authenticationModeId: unconfiguredRegistration ? 'native-import' : 'manual',
       revisionSemantics: 'revisioned',
       credentialRevision: 'csr_abcdefghijklmnopqrstuv',
@@ -2369,7 +2370,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             return { status: 'consumed' };
           }
         },
-        ${recoveryMode === 'settlement_init_no_quota' || recoveryMode === 'completion_observation_no_quota' || recoveryMode.startsWith('deadline_no_quota') ? '' : `async quota(context, options) {
+        ${recoveryMode === 'settlement_init_no_quota' || recoveryMode === 'completion_observation_no_quota' || (recoveryMode.startsWith('deadline_no_quota') && recoveryMode !== 'deadline_no_quota_needs_reauth') ? '' : `async quota(context, options) {
           ${inventoryRegistration ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked');` : ''}
           ${settlementInitialization ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked');
           throw new Error('Connection settlement must not invoke provider quota');` : ''}
@@ -2985,23 +2986,26 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         }
         return;
       }
-      if (recoveryMode === 'deadline_no_quota') {
-        // A saved account with no quota leaf cannot produce another observation.
-        // Its ordinary startup pass must still upgrade retained legacy evidence.
+      if (recoveryMode === 'deadline_no_quota' || recoveryMode === 'deadline_no_quota_needs_reauth') {
+        // Saved history must settle without another observation: either no quota
+        // leaf exists, or provider credentials need reauthentication. The latter
+        // keeps a real quota leaf so accidental provider admission is observable.
         const complete = buildProviderAccountUsageDaySummaryV1({ recordId: previous.recordId,
           dayStartAtMs: 0, snapshots: [previous], completeDayHistory: true });
         const { observedAtRange: _clockBounds, ...legacy } = complete;
-        let stored: ReturnType<typeof ProviderAccountUsageDaySummaryWriteV1Schema.parse>['payload'] = {
-          v: 1, coverage: { observationCount: 1, frontier: { id: 'saved', observedAtMs: previous.fetchedAtMs } },
-          content: { t: 'plain', v: legacy },
-        };
+        const coverage = { observationCount: 1, frontier: { id: 'saved', observedAtMs: previous.fetchedAtMs } };
+        // r202 had zero summaries; missing-day coverage still admitted its retained rows.
+        let stored: ReturnType<typeof ProviderAccountUsageDaySummaryWriteV1Schema.parse>['payload'] | undefined =
+          recoveryMode === 'deadline_no_quota_needs_reauth' ? undefined : {
+            v: 1, coverage, content: { t: 'plain', v: legacy },
+          };
         let historyReads = 0;
         const get = vi.spyOn(credentialAxios, 'get').mockImplementation(async url => {
           const query = JSON.parse(new URL(String(url)).searchParams.get('query')!);
           if (String(url).includes('/day-summaries')) {
             expect(query).toMatchObject({ recordId: previous.recordId, includeMissingDays: true, requireClockBounds: true });
-            return { status: 200, data: { summaries: [{ dayStartAtMs: 0, payload: stored }],
-              missingDays: stored.clockBoundsVersion === 1 ? [] : [{ dayStartAtMs: 0, coverage: stored.coverage }] } };
+            return { status: 200, data: { summaries: stored ? [{ dayStartAtMs: 0, payload: stored }] : [],
+              missingDays: stored?.clockBoundsVersion === 1 ? [] : [{ dayStartAtMs: 0, coverage }] } };
           }
           historyReads++;
           return { status: 200, data: { entries: [{ id: 'saved', observedAtMs: previous.fetchedAtMs,
@@ -3019,6 +3023,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         } } });
         expect(historyReads).toBe(1);
         expect(put).toHaveBeenCalledTimes(1);
+        if (recoveryMode === 'deadline_no_quota_needs_reauth') expect(readCredential).not.toHaveBeenCalled();
         expect(schedule).toEqual({ nextAutomaticRunAfterMs: null });
         expect(writeProviderAccountUsage).not.toHaveBeenCalled();
         await expect(readFile(quotaInvocationMarker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
