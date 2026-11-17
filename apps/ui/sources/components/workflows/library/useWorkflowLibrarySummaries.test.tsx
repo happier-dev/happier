@@ -489,5 +489,14 @@ describe('workflow library run summaries', () => {
         expect(hook.getCurrent()).toBe(before);
         await act(async () => { storage.setState({ workflowRunsById: { ...storage.getState().workflowRunsById } }); });
         expect(renders).toBe(afterWake);
+        executeMock.mockImplementation(async () => structuredClone({ ok: true, result: {
+            summaries: [{ ...item, needsYouCount: 0, needsYouRunId: null }], remainingSourceArtifactIds: [],
+        } }));
+        await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:private-run-a']); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().summaries?.get(sourceArtifactId)?.needsYouCount).toBe(0));
+        const changed = hook.getCurrent().summaries?.get(sourceArtifactId);
+        expect(changed).not.toBe(before.summaries?.get(sourceArtifactId));
+        expect(changed?.recent).toBe(before.summaries?.get(sourceArtifactId)?.recent);
+        expect(renders - afterWake).toBe(1);
     });
 });

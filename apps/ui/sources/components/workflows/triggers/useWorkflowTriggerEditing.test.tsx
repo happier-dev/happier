@@ -736,6 +736,48 @@ describe('workflow trigger editing lifetime', () => {
             });
         }
     });
+    it('publishes only changed addressed trigger rows across unchanged refreshes and reordering', async () => {
+        seed(set);
+        const firstRow = rows[0]!;
+        rows = [firstRow, { ...firstRow, id: 'set-2' }];
+        installRow('set-2');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const publications: Array<readonly WorkflowTriggerSetV1[]> = [];
+        const hook = await renderHook(() => {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            const read = useWorkflowTriggerSets({ workflow: definitionId }, binding ?? null);
+            React.useEffect(() => { publications.push(read.sets); }, [read.sets]);
+            return { binding, ...read };
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().sets).toHaveLength(2));
+        await act(async () => {
+            const otherServerId = await home.addHome({ name: 'Other trigger refreshes',
+                serverUrl: 'https://other-trigger-refresh-home.test', accountId: 'account-b' });
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+            storage.setState({ profileScope: { serverId: otherServerId, accountId: 'account-b' },
+                settingsScope: { serverId: otherServerId, accountId: 'account-b' } });
+            resetTriggerSets();
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().binding?.isCurrent()).toBe(true));
+        const captured = hook.getCurrent().sets;
+        publications.length = 0;
+        for (let refresh = 0; refresh < 3; refresh++) {
+            await act(async () => hook.getCurrent().retry());
+            await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+            expect(hook.getCurrent().sets).toBe(captured);
+        }
+        expect(publications).toHaveLength(0);
+
+        rows = [{ ...rows[1]!, enabled: false, templateVersion: 2 }, rows[0]!];
+        await act(async () => hook.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().sets[0]).toMatchObject({ automationId: 'set-2', enabled: false }));
+        expect(publications).toHaveLength(1);
+        expect(hook.getCurrent().sets[1]).toBe(captured[0]);
+        expect(hook.getCurrent().sets[0]).not.toBe(captured[1]);
+        expect(hook.getCurrent().sets[0]?.triggers).toBe(captured[1]?.triggers);
+        await hook.unmount();
+    });
+
     it('keeps an unfocused addressed Home independent of the focused Account trigger projection', async () => {
         seed(set);
         const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');

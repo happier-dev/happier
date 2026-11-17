@@ -5,7 +5,7 @@ import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { applyWorkflowTriggerSnapshotReceipt, createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector, EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL } from '@/sync/store/domains/automations';
 import { listWorkflowTriggerPage } from '@/sync/domains/workflows/workflowTriggerActions';
-import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { workflowTriggerQueryKey, workflowTriggerRequestForQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -131,20 +131,30 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         };
         listWorkflowTriggerPage(pageRequest, { signal: controller.signal, context, accountLifetime: lifetime }).then(result => {
             if (!controller.signal.aborted && lifetime.isCurrent()) {
-                if (addressed) snapshot.current = { identity, sets: result.sets };
+                let snapshotChanged = false;
+                if (addressed) {
+                    const previous = snapshot.current?.identity === identity ? snapshot.current.sets : undefined;
+                    const sets = retainKeyedRows(previous, result.sets, set => set.automationId);
+                    snapshotChanged = sets !== previous;
+                    snapshot.current = { identity, sets };
+                }
                 if (selected) setAttachments(current => {
                     const previous = current?.identity === identity ? current.page : undefined;
                     const page: WorkflowAttachedTriggerPageV1 = {
-                        attached: [...(cursor ? previous?.attached ?? [] : []), ...(result.attached ?? [])],
+                        attached: retainKeyedRows(previous?.attached,
+                            [...(cursor ? previous?.attached ?? [] : []), ...(result.attached ?? [])],
+                            row => JSON.stringify([row.automationId, row.triggerId, row.relation])),
                         nextCursor: result.nextCursor ?? null,
                         // The producer reports a page-independent denied count.
                         skippedNotSharedCount: result.skippedNotSharedCount ?? 0,
                     };
-                    return { identity, page: retainDeep(previous, page) };
+                    const retained = retainDeep(previous, page);
+                    return current?.identity === identity && retained === previous ? current : { identity, page: retained };
                 });
                 publishSessionContext(result.pullRequestLinks);
                 settledRead.current = inputs;
-                setState({ identity, status: 'ready' });
+                setState(current => !snapshotChanged && current.identity === identity && current.status === 'ready'
+                    ? current : { identity, status: 'ready' });
             }
         }).catch(() => {
             if (!controller.signal.aborted && lifetime.isCurrent()) {

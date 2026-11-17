@@ -1,10 +1,10 @@
 import * as React from 'react';
 
 import type { WorkflowRunSourceSummariesResultV1, WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { summarizeWorkflowRuns, summarizeWorkflowAutomationRuns } from '@/sync/domains/workflows/workflowRunListActions';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -89,7 +89,8 @@ function createSummaryOwner(lifetime: ActiveServerAccountScopeLifetime) {
                     const incoming = collected.get(key);
                     if (incoming) {
                         const stored = summaries.get(key);
-                        if (!stored || !sameStrictJsonValue(stored, incoming)) { next.set(key, incoming); changed = true; }
+                        const retained = retainDeep(stored, incoming);
+                        if (retained !== stored) { next.set(key, retained); changed = true; }
                         if (failed.delete(key)) changed = true;
                     } else if (!failed.has(key)) {
                         // Missing, empty and failed continuations never establish lastRun:null.
