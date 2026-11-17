@@ -566,7 +566,10 @@ describe('capability preflight with a cold Agent plugin', () => {
       const invoke = () => client.call(RPC_METHODS.CAPABILITIES_INVOKE, {
         id: 'cli.claude', method: 'probeModels', params: { cwd: home, bypassCache: true },
       });
-      const expectedModels = [{ id: 'default', name: 'Default' }, { id: 'claude-rpc-model', name: 'RPC model' }];
+      const expectedModels = [
+        { id: 'default', name: 'Default', capabilities: { structuredOutput: 'supported' } },
+        { id: 'claude-rpc-model', name: 'RPC model', capabilities: { structuredOutput: 'supported' } },
+      ];
       const currentOnly = await client.call(RPC_METHODS.CAPABILITIES_INVOKE, {
         id: 'cli.claude', method: 'probeModels', params: { cwd: home, currentOnly: true },
       });

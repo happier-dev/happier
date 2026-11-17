@@ -12,7 +12,7 @@ describe('native Agent catalog context', () => {
       { id: 'future-model', name: 'Future' },
     ], claudeModelConfig);
     expect(models).toEqual([
-      { id: 'default', name: 'Default' },
+      { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } },
       { id: 'claude-sonnet-4-6', name: 'Sonnet', contextWindowTokens: 200_000 },
       { id: 'claude-opus-5', name: 'Opus', contextWindowTokens: 1_000_000 },
       { id: 'future-model', name: 'Future' },
@@ -30,7 +30,7 @@ describe('native Agent catalog context', () => {
       { id: 'reported-model', name: 'Reported', contextWindowTokens: 300_000 },
       { id: 'unknown-model', name: 'Unknown' },
     ], null)).toEqual([
-      { id: 'default', name: 'Default' },
+      { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } },
       { id: 'reported-model', name: 'Reported', contextWindowTokens: 300_000 },
       { id: 'unknown-model', name: 'Unknown' },
     ]);

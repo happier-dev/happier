@@ -20,7 +20,8 @@ import {
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
-import { ProviderModelDescriptorV1Schema, resolveModelStructuredOutputSupport } from '@happier-dev/protocol/models/descriptor';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { projectNativeModelStructuredOutputCapabilities } from './nativeCatalogModels';
 import type { ProviderModelDescriptorV1, BackendTargetRefV1 } from '@happier-dev/protocol';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
@@ -673,11 +674,6 @@ export async function probeAgentModelsBestEffort(
   )?.formats;
   return {
     ...result,
-    availableModels: result.availableModels.map((model) => {
-      const support = resolveModelStructuredOutputSupport({ model, catalogModel: true, agentFormats: formats });
-      return support === 'unknown' && model.capabilities?.structuredOutput === undefined && model.id !== 'default'
-        ? model
-        : { ...model, capabilities: { ...model.capabilities, structuredOutput: support } };
-    }),
+    availableModels: projectNativeModelStructuredOutputCapabilities(result.availableModels, formats),
   };
 }

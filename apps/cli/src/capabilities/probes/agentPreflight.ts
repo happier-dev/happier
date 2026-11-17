@@ -6,6 +6,7 @@ import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import type { ResolveContributedProviderCatalogParsers } from '@/providers/probe/runtimeServices';
 import { projectNativeCatalogModels } from './nativeCatalogModels';
+import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { CapabilitiesInvokeResponse } from '@/capabilities/types';
@@ -636,6 +637,9 @@ export async function invokeCliPreflightMethod(
         const observationRuntime = dependencies.getAgentCatalogObservation?.() ?? null;
         if (observation && observationRuntime) {
             const registry = dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
+            const structuredOutputFormats = readAgentStructuredOutputCapabilities(
+                registry.agentDefinitionsById.get(agentId)?.richDefinition?.definition,
+            )?.formats;
             const resolveContributedCatalogParsers = dependencies.resolveContributedCatalogParsers;
             const isCurrent = (): boolean => requestContext.signal?.aborted !== true
                 && (dependencies.isAgentRegistryCurrent?.() ?? true);
@@ -678,7 +682,7 @@ export async function invokeCliPreflightMethod(
                     ok: true,
                     result: {
                         agentId,
-                        availableModels: projectNativeCatalogModels(result.models, modelConfig),
+                        availableModels: projectNativeCatalogModels(result.models, modelConfig, structuredOutputFormats),
                         supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
                         source: result.source,
                         observedAt: result.observedAt,
@@ -713,7 +717,7 @@ export async function invokeCliPreflightMethod(
                 if (target.status === 'unavailable') {
                     return { ok: true, result: {
                         agentId,
-                        availableModels: projectNativeCatalogModels(modelConfig?.staticModels ?? [], modelConfig),
+                        availableModels: projectNativeCatalogModels(modelConfig?.staticModels ?? [], modelConfig, structuredOutputFormats),
                         supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
                         source: 'static', refreshError: true,
                     } };
@@ -742,7 +746,7 @@ export async function invokeCliPreflightMethod(
                         ok: true,
                         result: {
                             agentId,
-                            availableModels: projectNativeCatalogModels(result.models, modelConfig),
+                            availableModels: projectNativeCatalogModels(result.models, modelConfig, structuredOutputFormats),
                             supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
                             source: result.source,
                         observedAt: result.observedAt,

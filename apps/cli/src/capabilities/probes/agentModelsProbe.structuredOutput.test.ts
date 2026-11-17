@@ -6,9 +6,13 @@ import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/regi
 import { probeAgentModelsBestEffort, probeModelsFromAcpBackend, resetAgentModelsProbeCacheForTests } from './agentModelsProbe';
 import { assertExecutionRunStructuredOutputModelAllowed, readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
 
+// The fixture imports the publication policy, which itself imports node:fs.
+// Load it before registering that boundary to avoid a circular mock factory.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+  await import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
   return createBundledPluginPublicationFsFixture(actual);
 });
 
@@ -119,8 +123,15 @@ describe('model probe structured output evidence', () => {
     await expect(assertExecutionRunStructuredOutputModelAllowed({ ...native, readNativeOfferedModel }))
       .rejects.toMatchObject({ code: 'model_structured_output_unsupported' });
     available = false;
-    const lastGood = await probeAgentModelsBestEffort({ agentId: 'codex', ...native, bypassCache: true });
-    expect(lastGood).toMatchObject({ refreshError: true, availableModels: expect.arrayContaining([expect.objectContaining(model)]) });
+    // Refresh through the same preflight owner so its resolved plugin/runtime
+    // context addresses the observation published by the native reader.
+    const { invokeCliPreflightMethod } = await import('./agentPreflight');
+    const lastGood = await invokeCliPreflightMethod('codex', 'probeModels', {
+      backendTarget: native.backendTarget, cwd: native.cwd, bypassCache: true,
+    }, { agentCatalogEntry: catalogEntry, accountContext: { credentials: null, accountSettings: null } }, {});
+    expect(lastGood).toMatchObject({ ok: true, result: {
+      refreshError: true, availableModels: expect.arrayContaining([expect.objectContaining(model)]),
+    } });
     await expect(readNativeExecutionRunOfferedModel(native)).resolves.toMatchObject(model);
     await expect(assertExecutionRunStructuredOutputModelAllowed({ ...native, readNativeOfferedModel }))
       .rejects.toMatchObject({ code: 'model_structured_output_unsupported' });
