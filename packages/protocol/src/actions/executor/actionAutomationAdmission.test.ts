@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import '../actionSpecs.js';
+import { createActionAutomationPortV1 } from './actionAutomationAdmission.js';
+import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
 
 describe('Approval profile subject admission', () => {
   it('matches only the available admission binding, including after access is withdrawn', async () => {
-    await import('../actionSpecs.js');
-    const { createActionAutomationPortV1 } = await import('./actionAutomationAdmission.js');
-    const { automationSubjectKeyV1 } = await import('../../automations/automationSubjectV1.js');
     const subject = { kind: 'approvalProfile' as const, serverId: 'home', profileId: 'profile' };
     const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [{
       automationId: 'automation', triggerId: 'trigger', triggerRevision: 1, workflowId: 'workflow',

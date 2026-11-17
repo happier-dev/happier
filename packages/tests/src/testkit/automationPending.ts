@@ -31,6 +31,9 @@ export async function startAutomaticCheckFixture(mode: 'wait' | 'notify', onFail
       ? `powershell -NoProfile -Command "[IO.File]::WriteAllText(${literal(effectPath)}, 'effect'); [Console]::Write('effect')"`
       : `printf effect > ${literal(effectPath)}; printf effect`;
     const linked = await actor.executeAsPerson('workflow.trigger.add', {
+      // The fixture person authorizes this command check at link time. Omitting
+      // this keeps the Workflow leaf at its ordinary Ask, even in notify mode.
+      actionApproval: 'automatic',
       target: { kind: 'inline', definition: { version: 1, blocks: [
         { kind: 'action', id: 'check', actionId: 'machines.command.run',
           input: { command: { kind: 'literal', value: check } } },

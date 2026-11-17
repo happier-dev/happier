@@ -3,6 +3,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createAgentApprovalRequest, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ApprovalExecutionV1Schema, ApprovalRequestSchema, ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -99,6 +101,45 @@ describe('built-in approval decisions through the canonical owner', () => {
         } finally { await hook.unmount(); }
     });
     beforeEach(async () => { standardCleanup(); await harness.reset(); });
+    it('records an explicit trigger Skip through the existing decision owner before applying the original effect', async () => {
+        const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://trigger-skip.test',
+            accountId: 'bob', teamsEnabled: true });
+        await harness.requireUiApproval(serverId, 'teams.update');
+        harness.answer(serverId, '/v1/teams/update', { body: teamSummaryFixture({ name: 'Garden' }) });
+        const artifactId = await createAgentApprovalRequest({ serverId, actionId: 'teams.update',
+            actionInput: { v: 1, teamId: 'team-1', name: 'Garden' }, actionRequestId: 'trigger-skip' });
+        const context = await captureActionAccountContext(serverId);
+        try {
+            const original = await context.fetchArtifact(artifactId);
+            if (!original || typeof original.body !== 'string') throw new Error('Expected pending approval');
+            const matched = approvalArtifactBodyMatchesHeaderV1(original.header ?? {}, original.body);
+            if (matched?.family !== 'built_in' || matched.request.v !== 2) throw new Error('Expected V2 approval');
+            const selected = { automationId: 'shared-workflow', triggerId: 'check', triggerRevision: 1,
+                ownerAccountId: 'alice', workflowId: 'workflow', workflowRevision: 1,
+                actionIds: ['teams.update'], phase: 'before', mode: 'wait', onFailure: 'ask' };
+            const request = ApprovalRequestV2Schema.parse({ ...matched.request, automaticChecks: {
+                phase: 'consent', humanApprovalRequired: true,
+                humanDecision: { kind: 'approve', authority: 'present_user', decidingAccountId: 'bob', decidedAtMs: 2 },
+                subjects: [], selectionStatus: 'ready', notices: [], selected: [selected],
+                consents: [{ automationId: selected.automationId, triggerId: selected.triggerId, decision: 'pending' }],
+                runs: [], results: [],
+            } });
+            await context.updateArtifact(artifactId, buildApprovalRequestArtifactHeaderV1(request), JSON.stringify(request), original);
+            const artifact = await context.fetchArtifact(artifactId);
+            if (!artifact) throw new Error('Expected pending automatic consent');
+            const hook = await renderHook(() => useApprovalDecisionHandler(artifact, request, '', serverId));
+            try {
+                const options = { triggerConsent: { automationId: selected.automationId,
+                    triggerId: selected.triggerId, decision: 'skip' as const }, onExecution: vi.fn() };
+                await expect(hook.getCurrent()('approve', options)).resolves.toBe(true);
+                expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')).toMatchObject({
+                    status: 'executed', automaticChecks: { consents: [{ decision: 'skip' }], runs: [],
+                        notices: [{ code: 'action_automation_skipped', reason: 'consentSkipped' }] },
+                    execution: { ok: true },
+                });
+            } finally { await hook.unmount(); }
+        } finally { context.dispose(); }
+    });
     it.each(['pending', 'declined', 'declined_lost_response', 'pending_lost_response', 'publication_pending'] as const)('reconciles a failed draft decline against its %s original', async disposition => {
         const privateDraft = disposition !== 'publication_pending';
         const pending = disposition.startsWith('pending') || !privateDraft;
@@ -330,9 +371,10 @@ describe('built-in approval decisions through the canonical owner', () => {
         await hook.unmount();
     });
     it('cancels a real pending Machine open without running the physical effect', async () => {
+        await loadSyncSingletonForTests();
         const serverId = await harness.addHome({ name: 'Terminal Home', serverUrl: 'https://terminal-cancel.test',
             serverIdentityId: 'srv_terminal-cancel', accountId: 'bob', currentAccount: true });
-        harness.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'bob', machineId: 'machine' });
         await harness.requireUiApproval(serverId, 'machines.terminal.open');
         const artifactId = await createAgentApprovalRequest({ serverId, actionId: 'machines.terminal.open',
             actionInput: { serverId, machineId: 'machine', terminalKey: 'owned-member', cwd: '/accepted' }, actionRequestId: 'open-own-member' });
