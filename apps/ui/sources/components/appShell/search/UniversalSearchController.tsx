@@ -754,7 +754,9 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     const workspaceSearchAvailable = workspaceActivationAvailable && selectedCredentialIsCurrent;
     const offlineMachineName = workspaceScope ? machineNameById.get(workspaceScope.machineId) : undefined;
     const machineLabel = offlineMachineName ?? t('universalSearch.thisMachine');
-    const workspaceUnavailableHint = offlineMachineName
+    const workspaceUnavailableHint = !workspaceScopeUnreachable
+        ? t('universalSearch.content.unavailable')
+        : offlineMachineName
         ? t('externalSessions.browseMachineOfflineTitle', { machine: offlineMachineName })
         : t('newSession.machineOfflineInlineTitle');
     // Changed files keep their +/− wherever they list: Changed in this session and typed results (lab FB2, FB2t).

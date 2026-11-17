@@ -2019,6 +2019,36 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(reply.emptyHint).toBe(t('universalSearch.content.noTextMatchesPartial', { scope: 'tidepool', query: 'highWater' }));
     });
 
+    it.each(['unknown', 'unreachable', 'reachable'] as const)('presents Text in files from canonical %s machine presence', async (reachability) => {
+        fixture.singleHome = true;
+        fixture.workspaceRefs = [{ id: 'ws-presence', serverId: HOME_B, machineId: 'machine-presence', rootPath: '/repo', label: 'Presence project', createdAtMs: 1 }];
+        fixture.daemonRpc.mockImplementation(async ({ method }) => method === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST
+            ? { ok: true, paths: [], truncated: false } : { ok: true, files: [], hasMore: false, coverage: 'complete' });
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]} initialQuery="needle" initialSource="fileContent"
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: 'machine-presence', rootPath: '/repo' }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        if (reachability !== 'unknown') {
+            const machine = createMachineFixture({ id: 'machine-presence', active: reachability === 'reachable',
+                activeAt: reachability === 'reachable' ? Date.now() : 0,
+                presenceProtocolVersion: 1,
+                metadata: { ...createMachineFixture().metadata!, displayName: 'Build box' } });
+            const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+            publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, []);
+            await act(async () => { storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [HOME_B]: [machine] } }); });
+        }
+        const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'fileContent');
+        if (!section || section.kind !== 'dynamic') throw new Error('Missing Text in files section');
+        const reply = await section.resolve('needle', new AbortController().signal);
+        expect(reply.options).toHaveLength(0);
+        expect(reply.emptyHint).toBe(reachability === 'unknown' ? t('universalSearch.content.unavailable')
+            : reachability === 'unreachable' ? t('externalSessions.browseMachineOfflineTitle', { machine: 'Build box' })
+                : t('universalSearch.content.noTextMatches', { scope: 'Presence project', query: 'needle' }));
+        const searches = fixture.daemonRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH);
+        if (reachability === 'reachable') expect(searches.length).toBeGreaterThan(0);
+        else expect(searches).toHaveLength(0);
+    });
+
     // Find lab ST "Machine offline": one line, under Text in files, not the same sentence in every group.
     it('says once that the folder\'s machine is offline', async () => {
         const { UniversalSearchController } = await import('./UniversalSearchController');
