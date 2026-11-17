@@ -3279,8 +3279,13 @@ jobs:
           CI: "1"
           HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: sqlite
+          HAPPIER_TEST_SANDBOX_IMAGE: happier-test-scm-devcontainer:git
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: "1"
           FILES: ${{ steps.affected.outputs.slow }}
         run: |
+          docker build --tag "$HAPPIER_TEST_SANDBOX_IMAGE" --file packages/tests/fixtures/machines/Dockerfile packages/tests/fixtures/machines
           read -r -a files <<< "$FILES"
           pnpm --dir packages/tests exec node scripts/run-vitest-with-heartbeat.mjs --config vitest.core.slow.config.ts "${files[@]}"
 
@@ -3366,7 +3371,13 @@ jobs:
           CI: "1"
           HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: sqlite
-        run: pnpm run test:e2e:core:slow
+          HAPPIER_TEST_SANDBOX_IMAGE: happier-test-scm-devcontainer:git
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: "1"
+        run: |
+          docker build --tag "$HAPPIER_TEST_SANDBOX_IMAGE" --file packages/tests/fixtures/machines/Dockerfile packages/tests/fixtures/machines
+          pnpm run test:e2e:core:slow
 
       - name: Upload e2e artifacts (on failure)
         if: failure()
