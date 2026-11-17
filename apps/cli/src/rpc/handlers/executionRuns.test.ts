@@ -50,6 +50,8 @@ import type { ScmBackend, ScmRepoDetection } from '@/scm/types';
 import { createMutableApiSessionClientFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createRepositoryCheckpointPromptLifecycle } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
 import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { runWithScmAccountScope } from '@/scm/accountScope';
+import { createHostScmCommandRunner, runWithScmCommandRunner } from '@/scm/runtime';
 import * as sessionRpcTransport from '@/session/transport/rpc/sessionRpc';
 import { waitForExecutionRun } from '@/session/services/executionRuns';
 import { ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -1497,14 +1499,14 @@ describe('executionRuns session RPC handlers', () => {
     }
   });
 
-  it('runs scm_diff_summary.v1 through execution.run.start and projects the retained summary result', async () => {
+  it('runs scm_diff_summary.v1 through execution.run.start and projects the retained summary result', () =>
+    runWithScmAccountScope('execution-run-test-account', () =>
+      runWithScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => true }), async () => {
     const capture = { lastPrompt: '' };
     const createdBackendOpts: Array<{ backendId: string; permissionMode: string; backendTarget?: unknown }> = [];
     const repoDir = mkdtempSync(join(tmpdir(), 'happier-scm-diff-summary-'));
     const session = createMutableApiSessionClientFixture({ sessionId: 'sess_1' });
-    const checkpoints = createRepositoryCheckpointPromptLifecycle({
-      session, runtimeDirectory: repoDir, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-    });
+    let checkpoints: ReturnType<typeof createRepositoryCheckpointPromptLifecycle> | undefined;
     try {
       runGit(repoDir, ['init', '--initial-branch=main']);
       runGit(repoDir, ['config', 'user.name', 'Execution Run Test']);
@@ -1513,6 +1515,9 @@ describe('executionRuns session RPC handlers', () => {
       writeFileSync(join(repoDir, 'src/a.ts'), 'old\n');
       runGit(repoDir, ['add', 'src/a.ts']);
       runGit(repoDir, ['commit', '-m', 'initial']);
+      checkpoints = createRepositoryCheckpointPromptLifecycle({
+        session, runtimeDirectory: repoDir, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      });
       await checkpoints.onBeforePromptDispatch?.({ messageId: 'message_1', prompt: 'edit' });
       await checkpoints.onTurnStarted?.({ messageId: 'message_1', turnId: 'turn_1', sequence: 1 });
       writeFileSync(join(repoDir, 'src/a.ts'), 'new\n');
@@ -1596,11 +1601,11 @@ describe('executionRuns session RPC handlers', () => {
       expect(capture.lastPrompt).toContain('src/a.ts');
       expect(capture.lastPrompt).toContain('@@ -1 +1 @@');
     } finally {
-      await checkpoints.onSessionEnd?.();
+      await checkpoints?.onSessionEnd?.();
       await session.close();
       rmSync(repoDir, { recursive: true, force: true });
     }
-  });
+  })));
 
   it('rejects write-capable scm_commit_message.v1 execution-run starts', async () => {
     const client = createEncryptedRpcTestClient({
