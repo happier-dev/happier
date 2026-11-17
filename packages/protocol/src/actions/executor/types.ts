@@ -3208,6 +3208,14 @@ export type ActionExecutorDeps = Readonly<{
     input: Extract<AdmittedActionInputById['session.delete'], { runId: string }>;
     context: ActionExecutorContext;
   }>) => Promise<unknown>;
+  /** The original Session delete reaches its native custodian before Home removes the Session.
+   * The receiving host calls deleteFromHome under that same operation after its
+   * beforeDelete effect; active Sessions retain the ordinary reviewed Stop child. */
+  sessionDelete?: (args: Readonly<{
+    input: Extract<AdmittedActionInputById['session.delete'], { sessionId: string }>;
+    context: ActionExecutorContext;
+    deleteFromHome: (beforeDelete?: () => Promise<ActionExecuteResult | void>) => Promise<ActionExecuteResult>;
+  }>) => Promise<unknown>;
   /** Mounted person leaf; secret material never crosses the Action result boundary. */
   savedSecretRevealAction?: (args: Readonly<{
     input: import('../../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRevealInputV1;

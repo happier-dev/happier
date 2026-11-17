@@ -327,6 +327,7 @@ import { writeUiSessionStateField } from '@/sync/state/engine';
 import { admitDeclaredSessionVoicePreferenceV1, readBuiltInSessionVoiceDeclarationV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createUiExecutionRunActionDeps } from './executionRunActionDeps';
+import { createUiSessionDeleteAction } from './sessionDeleteAction';
 import { createMachineConnectionActionDeps } from './machineConnectionActionDeps';
 import {
     forkSession as forkSessionOp,
@@ -2331,6 +2332,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return settings ? readSettingsDeclarationOperation(anchor, settings) : undefined;
     },
     ...createUiExecutionRunActionDeps(accountContext?.accountLifetime.scope, accountContext),
+    sessionDelete: createUiSessionDeleteAction(accountContext),
     resolveSessionSpawnAgentInventorySelection: args => resolveSessionSpawnAgentInventorySelectionForActions({ ...args,
       signal: accountContext?.invocationSignal, accountLifetime: accountContext?.accountLifetime }),
     prepareLocalServiceStartApproval: async ({ input, context }) => {
