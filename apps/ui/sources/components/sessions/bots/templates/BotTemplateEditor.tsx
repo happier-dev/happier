@@ -9,6 +9,8 @@ import { BotTemplatePinnedFooter, BotTemplateWhatYouGet } from './BotTemplatePag
 import { PageAsideColumns } from '@/components/ui/layout/PageAsideColumns';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
+import type { ShareSheetAnchor } from '@/components/sharing/presentShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { BotTemplatePublishButton } from './BotTemplatePublishButton';
 import { useBotTemplateEditor, useBotTemplateEditorValue } from './useBotTemplateEditor';
 import type { BotTemplateEditorBuffer, BotTemplateSave } from './botTemplateEditorBuffer';
@@ -250,10 +252,12 @@ function ReleaseControls(props: BodyProps & Readonly<{ children: (controls: Reac
     const [releasedHere, setReleasedHere] = React.useState(false);
     // Who has a copy, and of which version, stays one row away once any version is shared, not only this session.
     const shared = releasedHere || props.released !== null;
-    const release = () => {
+    // The sheet hangs from the Share… (or Shared with) control that opened it, like every share sheet on a wide layout.
+    const release = (anchor?: ShareSheetAnchor) => {
         if (releasing || !version.trim()) return;
         const draft = props.buffer.getSnapshot().draft;
         showDocumentShareSheet({ artifactId: draft.releaseArtifactId, kind: 'bot_template.v1', scope: props.scope,
+            ...(anchor ? { anchor } : {}),
             name: draft.content.identity.name, kindLabel: t('botTemplates.templateSection'), subtitle: `v${version.trim()}`,
             description: `${t('botTemplates.templateSectionDescription', { name: draft.content.identity.name })} ${t('botTemplates.notIncluded')}`,
             reviewedSelection: { onSubmit: async selection => {
@@ -280,14 +284,16 @@ function ReleaseControls(props: BodyProps & Readonly<{ children: (controls: Reac
             placeholder: '1.0.0', accessibilityLabel: t('botTemplates.version'), onChangeText: setVersion, testID: 'bot-template-version' }} />} />
         <Item title={t('botTemplates.notes')} accessoryLayout="stacked" rightElement={<InlineTextField multiline style={styles.field}
             editor={{ value: changelog, placeholder: t('botTemplates.notes'), accessibilityLabel: t('botTemplates.notes'), onChangeText: setChangelog }} />} />
-        {shared ? <Item title={t('shareSheet.documents.title')} subtitle={t('botTemplates.shared')} onPress={() => {
+        {shared ? <Item title={t('shareSheet.documents.title')} subtitle={t('botTemplates.shared')} onPress={event => {
             const draft = props.buffer.getSnapshot().draft;
+            const anchor = resolvePressTriggerAnchor(event);
             showDocumentShareSheet({ artifactId: draft.releaseArtifactId, kind: 'bot_template.v1', scope: props.scope,
+                ...(anchor ? { anchor } : {}),
                 name: draft.content.identity.name, kindLabel: t('botTemplates.templateSection'),
                 ...(props.released ? { subtitle: `v${props.released.version}` } : {}),
                 description: `${t('botTemplates.templateSectionDescription', { name: draft.content.identity.name })} ${t('botTemplates.notIncluded')}` });
         }} /> : null}
     </ItemGroup>, <RoundButton size="normal" title={t('botTemplates.shareEllipsis')} loading={releasing}
-            disabled={!version.trim() || releasing} onPress={release} testID="bot-template-release" />
+            disabled={!version.trim() || releasing} onPress={event => release(resolvePressTriggerAnchor(event))} testID="bot-template-release" />
     );
 }

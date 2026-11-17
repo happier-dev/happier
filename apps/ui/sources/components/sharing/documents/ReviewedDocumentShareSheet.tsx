@@ -91,8 +91,12 @@ export function ReviewedDocumentShareSheet(props: DocumentShareSheetProps & Read
         {failed ? <AttentionBanner testID="document-share-error" tone="danger" title={t('botTemplates.unavailable')} /> : null}
         <ShareSheet host={SHARE_SHEET_HOST} presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose}
             testID={props.testID ?? 'document-share-editor'} adapter={adapter} actions={actions}
-            primaryAction={{ testID: 'document-share-submit', label: t(shared ? 'botTemplates.shared' : 'common.share'),
-                loading: pending, disabled: !editable || (!selected.length && !signedInLink), onPress: () => { void submit(); } }}
+            // Once shared the footer ends the sheet (Done), like every share sheet after its write, instead of a
+            // disabled "Shared" button the person has to close around.
+            primaryAction={shared
+                ? { testID: 'document-share-submit', label: t('common.done'), onPress: () => props.onRequestClose?.() }
+                : { testID: 'document-share-submit', label: t('common.share'),
+                    loading: pending, disabled: !editable || (!selected.length && !signedInLink), onPress: () => { void submit(); } }}
             model={{ revision: selected.length, draft: true, editable, stale: false,
                 owner: { principal: presentSharePrincipal({ ref: { kind: 'account', accountId: props.scope.accountId },
                     profile, viewerAccountId: props.scope.accountId }) },
