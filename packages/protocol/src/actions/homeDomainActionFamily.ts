@@ -61,6 +61,7 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
   ...MANAGED_GITHUB_APP_ACTION_IDS_V1,
   ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter(isSharedSavedSecretHomeActionIdV1),
   ...ACTION_ID_FAMILIES_V1.session_organization_resources,
+  ...ACTION_ID_FAMILIES_V1.collection_space_membership,
   'session.delete',
   'session.section.set',
   'session.tags.set',
@@ -77,6 +78,7 @@ export type HomeDomainActionIdV1 =
   | ManagedGitHubAppActionIdV1
   | SharedSavedSecretHomeActionIdV1
   | typeof ACTION_ID_FAMILIES_V1.session_organization_resources[number]
+  | typeof ACTION_ID_FAMILIES_V1.collection_space_membership[number]
   | 'session.delete' | 'session.section.set' | 'session.tags.set'
   | 'projects.deploymentDefaults.set';
 

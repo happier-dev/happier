@@ -8,6 +8,7 @@ import { readCollectionSpaceId, readCollectionSpaceSelection, selectCollectionSp
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { readCollectionSpaceDefaultV1 } from './collectionSpaceDefaults';
 import { COLLECTION_SPACE_KIND_PRESENTATION } from './collectionSpaceKindPresentation';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 class SpaceMutationRejected extends Error {}
 
@@ -17,6 +18,19 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
     if (!context.accountScope || !context.isCurrent()) return { status: 'unavailable' as const, reason: 'setting_not_bound' };
     if (operation?.kind !== 'collection_space' || operation.entityKind !== entityKind) return { status: 'unavailable' as const, reason: 'space_entity_mismatch' };
     const mutation = operation.mutation;
+    if (entityKind === 'review' && mutation.op === 'delete') {
+        const execute = context.services?.executeSettingsOwnerAction;
+        if (!execute || !context.actionContext) return { status: 'unavailable' as const, reason: 'setting_not_bound' };
+        // Clear associations before removing their visible definition. A refused or pending write leaves
+        // the space available to retry; a later CAS failure leaves it without manual members, which can be filed again.
+        const cleanup = await execute({ actionId: 'collection.space.membership.set', input: {
+            resourceKind: 'artifact', operation: 'delete_space', spaceId: mutation.spaceId,
+        }, context: context.actionContext });
+        if (!cleanup.ok) return { status: 'unavailable' as const, reason: cleanup.errorCode };
+        if (ActionApprovalRequestCreatedResultSchema.safeParse(cleanup.result).success) {
+            return { status: 'unavailable' as const, reason: 'approval_required' };
+        }
+    }
     const changesSelection = mutation.op === 'create' || mutation.op === 'delete';
     const defaultId = getDefaultCollectionSpaceIdV1(entityKind);
     const needsDefault = mutation.op === 'resetDefault' || mutation.op === 'edit' && mutation.spaceId === defaultId

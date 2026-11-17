@@ -17,6 +17,70 @@ beforeEach(async () => { await home.reset(); });
 afterEach(() => standardCleanup());
 
 describe('Session organization Action scope', () => {
+    it('mutates resource space membership only on the admitted Home and reports endpoint refusal', async () => {
+        const accountId = 'account-resource-spaces';
+        const serverId = await home.addHome({ name: 'Resource spaces', serverUrl: 'https://resource-spaces.example', accountId });
+        const { ResourceSpaceMembershipMutationV1Schema } = await import('@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1');
+        let assignedSpace: string | null = null;
+        home.answer(serverId, 'POST /v2/session-organization/resource-space-memberships', { select: input => {
+            const request = ResourceSpaceMembershipMutationV1Schema.parse(input);
+            if (request.operation === 'add') assignedSpace = request.spaceId;
+            return { body: { changed: true } };
+        } });
+        const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+        const execute = scopedHomeActionExecutor({ serverId, accountId });
+        const context = { serverId, surface: 'ui' as const, authority: 'present_user' as const };
+        const input = { resourceKind: 'artifact', resourceId: 'review-one', operation: 'add', spaceId: 'release' };
+        expect(await execute('collection.space.membership.set', input, context)).toMatchObject({ ok: true, result: { changed: true } });
+        expect(assignedSpace).toBe('release');
+        assignedSpace = null;
+        expect(await scopedHomeActionExecutor({ serverId, accountId: 'another-account' })(
+            'collection.space.membership.set', input, context)).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+        expect(assignedSpace).toBeNull();
+        home.answer(serverId, 'POST /v2/session-organization/resource-space-memberships', { status: 403, body: { error: 'Forbidden' } });
+        expect(await execute('collection.space.membership.set', input, context)).toMatchObject({ ok: false });
+        expect(assignedSpace).toBeNull();
+    });
+
+    it('retains a Review space when association cleanup is refused and deletes it after cleanup succeeds', async () => {
+        const accountId = 'account-delete-review-space';
+        const serverId = await home.addHome({ name: 'Review spaces', serverUrl: 'https://delete-review-space.example', accountId });
+        const { invokeCollectionSpaceSetting } = await import('@/components/settings/session/collectionSpaceSettings');
+        const { createDefaultCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const { settingsParse, applySettings } = await import('@/sync/domains/settings/settings');
+        const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+        const execute = scopedHomeActionExecutor({ serverId, accountId });
+        const space = { ...createDefaultCollectionSpaceV1('review'), id: 'review-release' };
+        let settings = settingsParse({ collectionSpacesV1: { v: 1, spaces: [space] } });
+        const context: import('@/components/settings/catalog/settingDeclarations').SettingOperationContext = {
+            accountScope: { serverId, accountId }, isCurrent: () => true,
+            actionContext: { serverId, surface: 'agent', authority: 'account_automation' },
+            input: { kind: 'collection_space', entityKind: 'review', mutation: { op: 'delete', spaceId: space.id } },
+            readSettings: async () => settings,
+            mutateSettings: async mutate => { settings = applySettings(settings, mutate(settings) ?? {}); },
+            services: { executeSettingsOwnerAction: request => execute(request.actionId, request.input, request.context) },
+        };
+        home.answer(serverId, 'POST /v2/session-organization/resource-space-memberships', { status: 403, body: { error: 'Forbidden' } });
+        expect(await invokeCollectionSpaceSetting('review', context)).toMatchObject({ status: 'unavailable' });
+        expect(settings.collectionSpacesV1.spaces).toEqual([space]);
+        await home.requireActionApproval(serverId, 'collection.space.membership.set', 'agent');
+        const requestsBeforeApproval = home.requests.filter(request => request.path === '/v2/session-organization/resource-space-memberships').length;
+        expect(await invokeCollectionSpaceSetting('review', context)).toMatchObject({ status: 'unavailable' });
+        expect(settings.collectionSpacesV1.spaces).toEqual([space]);
+        expect(home.requests.filter(request => request.path === '/v2/session-organization/resource-space-memberships'))
+            .toHaveLength(requestsBeforeApproval);
+        await home.setActionPolicy(serverId, 'collection.space.membership.set', 'agent', 'allowed');
+        let cleanup: unknown;
+        home.answer(serverId, 'POST /v2/session-organization/resource-space-memberships', { select: input => {
+            cleanup = input;
+            expect(settings.collectionSpacesV1.spaces).toEqual([space]);
+            return { body: { changed: true } };
+        } });
+        expect(await invokeCollectionSpaceSetting('review', context)).toMatchObject({ status: 'completed' });
+        expect(cleanup).toEqual({ resourceKind: 'artifact', operation: 'delete_space', spaceId: space.id });
+        expect(settings.collectionSpacesV1.spaces).toEqual([]);
+    });
+
     it('does not infer an empty section list or prior assignment from missing-route compatibility data', async () => {
         const accountId = 'account-missing-organization';
         const serverId = await home.addHome({ name: 'Missing organization', serverUrl: 'https://missing-org.example', accountId });

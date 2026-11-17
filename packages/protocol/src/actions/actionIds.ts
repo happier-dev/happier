@@ -545,6 +545,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.sections.list', 'session.sections.create', 'session.sections.update', 'session.sections.reorder', 'session.sections.delete', 'session.sections.archive',
     'session.tags.list', 'session.tags.create', 'session.tags.rename', 'session.tags.delete',
   ],
+  collection_space_membership: ['collection.space.membership.set'],
   intent_start: [
     'review.start',
     'review.apply',

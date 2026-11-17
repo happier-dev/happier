@@ -31,6 +31,7 @@ export type { CaptureViewingActionInputById, CaptureViewingActionResultById } fr
 export type { ClientFilesActionInputById, ClientFilesActionResultById } from './clientFilesActionDtos.generated.js';
 export type { ClipboardActionInputById, ClipboardActionResultById } from './clipboardActionDtos.generated.js';
 export type { CodeIntelligenceActionInputById, CodeIntelligenceActionResultById } from './codeIntelligenceActionDtos.generated.js';
+export type { CollectionSpaceMembershipActionInputById, CollectionSpaceMembershipActionResultById } from './collectionSpaceMembershipActionDtos.generated.js';
 export type { CommandPaletteActionInputById, CommandPaletteActionResultById } from './commandPaletteActionDtos.generated.js';
 export type { CompanionControlsActionInputById, CompanionControlsActionResultById } from './companionControlsActionDtos.generated.js';
 export type { ComposerIngressActionInputById, ComposerIngressActionResultById } from './composerIngressActionDtos.generated.js';

@@ -7,6 +7,7 @@ import {
 } from '../../sessions/organization/mutations.js';
 import { SessionOrganizationSnapshotResponseSchema } from '../../sessions/organization/snapshot.js';
 import { SESSION_ORGANIZATION_TAG_DELETE_ASSIGNMENTS_DEFAULT } from '../../sessions/organization/constants.js';
+import { ResourceSpaceMembershipMutationV1Schema, ResourceSpaceMembershipMutationResultV1Schema } from '../../collections/spaces/resourceSpaceMembershipV1.js';
 import { SessionSectionRefV1Schema, SessionSectionsCreateInputV1Schema, SessionSectionsUpdateInputV1Schema,
   SessionSectionsReorderInputV1Schema, SessionSectionsListResultV1Schema, SessionSectionResultV1Schema,
   SessionSectionsReorderResultV1Schema, SessionSectionsDeleteResultV1Schema, SessionSectionsArchiveResultV1Schema } from '../sessionSections.js';
@@ -40,6 +41,11 @@ function row<
 
 function createSessionOrganizationResourceActionSpecs() {
   return [
+  row({ id: 'collection.space.membership.set', approval: {result: 'none'}, title: 'Set collection space membership',
+    description: 'Add, move, remove or reset an Artifact space association, or clear associations when removing a space.',
+    safety: 'safe', sideEffectClass: 'external', path: '/v2/session-organization/resource-space-memberships',
+    cliPath: ['collection', 'space', 'membership', 'set'], inputSchema: lazyZodSchema(() => ResourceSpaceMembershipMutationV1Schema),
+    outputSchema: lazyZodSchema(() => ResourceSpaceMembershipMutationResultV1Schema) }),
   row({ id: 'session.sections.list', approval: {result: 'none'}, title: 'List Session sections', description: 'Read all section definitions on the selected Home.',
     safety: 'safe', sideEffectClass: 'read', method: 'GET', path: '/v2/session-organization', cliPath: ['session', 'sections', 'list'], inputSchema: listInput, outputSchema: lazyZodSchema(() => SessionSectionsListResultV1Schema) }),
   row({ id: 'session.sections.create', approval: {result: 'none'}, title: 'Create Session section', description: 'Create a named Account section with an optional icon.',
