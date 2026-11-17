@@ -9,7 +9,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { useThemeLibraryArtifactInventory } from '@/sync/store/useThemeProfiles';
-import { useRegistrySources } from '@/registries/useRegistrySources';
+import { useRegistrySourceDescriptor } from '@/registries/useRegistrySourceRevision';
 import { getThemeRegistryLifecycle, getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
@@ -43,7 +43,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const selectInstalledEntries = React.useCallback((entries: readonly ThemeLibraryEntry[]) => groupInstalledStoreThemes(entries)
         .find(group => group.listing.sourceId === sourceId && group.listing.itemId === itemId)?.entries ?? noInstalledEntries, [sourceId, itemId]);
     const library = useThemeLibraryArtifactInventory(presented, selectInstalledEntries);
-    const sources = useRegistrySources('theme', presented);
+    const source = useRegistrySourceDescriptor(sourceId, presented);
     const preference = useLocalSetting('themePreference');
     const mode = resolveThemeRuntimeVisualTheme(preference, useColorScheme());
     const listing = React.useMemo(() => ({ sourceId, itemId, ...(version ? { version } : {}) }), [sourceId, itemId, version]);
@@ -109,7 +109,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
         : run('install', THEME_ACTION_IDS.install, { listing });
     return props.children({
         name: opened?.listing.summary.title ?? '', kicker: [t('settingsAppearance.theme'), describeStoreThemeModes(faces?.map(face => face.mode) ?? [])].filter(Boolean).join(' · '),
-        meta: opened ? [opened.listing.summary.publisher?.name, sources.sources.find(source => source.id === sourceId)?.title,
+        meta: opened ? [opened.listing.summary.publisher?.name, source?.title,
             opened.listing.pointer.version].filter(Boolean).join(' · ') : '',
         description: opened?.listing.summary.description ?? null,
         faces, facesState: opened ? 'ready' : failed ? 'error' : 'loading', facesError: failed, tryingFaceId,

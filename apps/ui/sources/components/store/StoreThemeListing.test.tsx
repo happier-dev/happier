@@ -27,6 +27,7 @@ const { projectInstalledStoreThemeRows } = await import('./catalog/storeThemes')
 const { presentInventoryRow } = await import('./inventory/inventoryRows');
 const { readStoreListingRoute } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+const { applyPromptLibraryCatalogAcknowledgedRecord, getPromptLibraryCatalogValue } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
 const { useStoreThemeCardAnatomy } = await import('./storeThemeCardAnatomy');
 const { projectStoreThemeCard } = await import('./catalog/storeThemes');
 const { ThemeMiniaturePreview } = await import('@/components/settings/appearance/ThemeModePreview');
@@ -43,9 +44,11 @@ it('opens one theme acquisition through the shared listing body and retries Keep
         disabledSourceIds: [], sources: [{ id: sourceId, title: 'Themes catalog', url: indexUrl,
             format: 'happier-catalog', kinds: ['theme'], enabled: true, addedAt: 1 }] } }] });
     let acquisitions = 0;
+    let sourceReads = 0;
     let catalogReads = 0;
     let failLight = true;
     const fixture = await createArtifactInventoryDemandHarness({ handleRequest: async (url, init) => {
+        if (url.pathname.startsWith('/v1/account/entity-rows/prompt-library') && (init?.method ?? 'GET') === 'GET') sourceReads++;
         const config = await catalog.handle(`${url.pathname}${url.search}`, init);
         if (config) return config;
         if (url.href === indexUrl) { catalogReads++;
@@ -106,6 +109,37 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const screen = await renderScreen(listingSurface(true));
     const view = () => screen.findAllByType(StoreThemeListing)[0]?.props;
     await vi.waitFor(() => expect(view()?.facesState, view()?.facesError ?? undefined).toBe('ready'));
+    expect(acquisitions).toBe(1);
+    await vi.waitFor(() => expect(view()?.meta).toContain('Themes catalog'));
+    const sourceScope = storage.getState().settingsScope!;
+    const sourceSnapshot = getPromptLibraryCatalogValue(sourceScope, 'registry-sources');
+    if (!sourceSnapshot.value || typeof sourceSnapshot.revision !== 'number') throw new Error('Expected admitted registry source configuration');
+    const sourceValue = sourceSnapshot.value;
+    const sourceRevision = sourceSnapshot.revision;
+    const unrelatedUrl = 'https://unrelated-theme-source.example.test/index.json';
+    sourceReads = 0;
+    listingCommits = 0;
+    for (let index = 1; index <= 10; index++) {
+        await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(sourceScope, { key: 'registry-sources', value: {
+            ...sourceValue, sources: [...sourceValue.sources, { id: deriveMarketplaceSourceId(unrelatedUrl),
+                title: `Unrelated ${index}`, url: unrelatedUrl, format: 'happier-catalog', kinds: ['theme'], enabled: true, addedAt: 2 }],
+        } }, sourceRevision + index, true));
+    }
+    expect(sourceReads, 'unrelated source publications do not read registry configuration again').toBe(0);
+    expect(acquisitions).toBe(1);
+    expect(listingCommits, 'the listing observes only its own registry source').toBe(0);
+    await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(sourceScope, { key: 'registry-sources', value: {
+        ...sourceValue, sources: sourceValue.sources.map(source => source.id === sourceId ? { ...source, title: 'Renamed theme catalog' } : source),
+    } }, sourceRevision + 11, true));
+    await vi.waitFor(() => expect(view()?.meta).toContain('Renamed theme catalog'));
+    await screen.update(listingSurface(false));
+    listingCommits = 0;
+    await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(sourceScope, { key: 'registry-sources', value: {
+        ...sourceValue, sources: sourceValue.sources.map(source => source.id === sourceId ? { ...source, title: 'Renamed while hidden' } : source),
+    } }, sourceRevision + 12, true));
+    expect(listingCommits, 'a hidden listing releases its source subscription').toBe(0);
+    await screen.update(listingSurface(true));
+    await vi.waitFor(() => expect(view()?.meta).toContain('Renamed while hidden'));
     expect(acquisitions).toBe(1);
     expect(view()?.facts.map(fact => fact.key)).toEqual(['includes', 'changes', 'worksOn', 'licence']);
     const faces = (await getThemeRegistryLifecycle().prepareStorePreview({ sourceId, itemId: 'palette' },
