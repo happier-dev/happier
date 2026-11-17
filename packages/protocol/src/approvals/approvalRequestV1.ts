@@ -155,6 +155,8 @@ export type ApprovalExecutionV1 = z.infer<typeof ApprovalExecutionV1Schema>;
  */
 export const ApprovalExecutionV2Schema = lazyZodSchema(() => z.strictObject({
   executedAtMs: z.number().check(z.int(), z.minimum(0)),
+  /** Producer's failure correlation; distinct from the approval execution origin. */
+  requestId: z.optional(z.string().check(z.minLength(1))),
   /** False only when the approval settled before its Action effect was invoked. */
   effectAttempted: z.optional(z.boolean()),
   ok: z.boolean(),

@@ -12,13 +12,24 @@ it('retains an acknowledged mutation result when cancellation arrives with it', 
     .toEqual({ value: { id: 'native-ack' } });
 });
 
-it('retains the native access refusal cause without provider messages', async () => {
+it('retains the native access refusal cause and attempted mutation without provider messages', async () => {
   const http = createPluginHttpFixture({ async request() {
     return { status: 403, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false,
       errors: [{ code: 10000, message: 'private-provider-message' }] })) };
   } });
   await expect(request({ http, signal: new AbortController().signal, now: Date.now }, 'account', '/workers/workers', 'link', 'POST', { name: 'app' }))
-    .rejects.toMatchObject({ code: 'deployment_access_denied', data: { failureCause: { errorCode: null, nativeErrorCode: '10000', httpStatus: 403 } } });
+    .rejects.toMatchObject({ code: 'deployment_access_denied', data: { effectAttempted: true,
+      failureCause: { errorCode: null, nativeErrorCode: '10000', httpStatus: 403 } } });
+});
+
+it('leaves effect evidence unknown for a refused prerequisite read', async () => {
+  const http = createPluginHttpFixture({ async request() {
+    return { status: 403, headers: {}, body: new TextEncoder().encode('{"success":false}') };
+  } });
+  const error = await request({ http, signal: new AbortController().signal, now: Date.now }, 'account', '/pages/projects', 'observe')
+    .catch((error: unknown) => error);
+  expect(error).toMatchObject({ code: 'deployment_access_denied', data: { failureCause: { httpStatus: 403 } } });
+  expect(error).not.toHaveProperty('data.effectAttempted');
 });
 
 

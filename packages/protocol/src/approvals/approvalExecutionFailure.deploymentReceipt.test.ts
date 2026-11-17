@@ -4,7 +4,7 @@ import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from 
 import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPresentation.js';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema } from '../deployments/deploymentActionsV1.js';
 import { executeDeploymentAction } from '../actions/executor/deploymentAction.js';
-import { buildApprovalDecisionResult, projectSettledApprovalExecution } from '../actions/executor/approvalResults.js';
+import { buildActionExecuteResultFromRecordedApprovalExecution, buildApprovalDecisionResult, projectSettledApprovalExecution } from '../actions/executor/approvalResults.js';
 
 function placementCreateRequest() {
   return ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -29,13 +29,20 @@ it.each([
     executionOriginV1: { ...placementCreateRequest().executionOriginV1, actionId: 'deployments.deploy' } });
   const details = { ok: true, environmentId: 'environment', revision: 3, deploymentId: 'receipt', deploymentRevision: 2,
     state, requiredFact: 'deploymentActionResult', remedy: 'Confirm the previous deployment before retrying.' };
-  const failure = { ok: false as const, errorCode, error: errorCode, details };
-  const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
-  expect(execution).toMatchObject({ details });
-  const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+  const requestId = 'failed-operation-request';
+  const failure = { ok: false as const, errorCode, error: errorCode, requestId, details };
+  const settled = projectSettledApprovalExecution({ request, actionId: 'deployments.deploy', exec: failure,
+    dispatchEffectAttempted: true, executedAtMs: 3 });
+  const execution = settled.request.execution;
+  expect(execution).toMatchObject({ requestId, details });
+  const stored = StoredApprovalRequestSchema.parse({ ...settled.request,
     decision: { kind: 'approve', decidedAtMs: 2 }, execution });
-  expect(readApprovalExecutionFailure(stored)).toMatchObject({ details });
-  expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { details } });
+  expect(readApprovalExecutionFailure(stored)).toMatchObject({ requestId, details });
+  expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { requestId, details } });
+  expect(buildApprovalDecisionResult(stored)).toMatchObject({ ok: true,
+    result: { ok: true, status: state === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
+      execution: { ok: false, errorCode, requestId, details } } });
+  expect(buildActionExecuteResultFromRecordedApprovalExecution(stored)).toMatchObject({ ok: false, errorCode, requestId, details });
   for (const invalidDetails of [{ ...details, environmentId: 'other-environment' },
     { ...details, state: 'succeeded' }, { ...details, token: 'private-fixture' }]) {
     expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: invalidDetails }, executedAtMs: 3 }))

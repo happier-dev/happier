@@ -35,6 +35,8 @@ export type PluginErrorData = Readonly<{
     remediation?: PluginRemediationData;
     diagnostics?: readonly PluginDiagnosticData[];
     failureCause?: ActionFailureCauseV1;
+    /** Producer evidence of whether the requested effect was attempted; omission stays unknown. */
+    effectAttempted?: boolean;
     actionHandlerInvocation?: PluginActionHandlerInvocation;
     /** Host Exec refused this launch before the requested process was started. */
     execLaunch?: 'notStarted';
@@ -88,6 +90,7 @@ export class PluginError extends Error {
             ...(data.retryable === undefined ? {} : { retryable: data.retryable }),
             ...(data.details === undefined ? {} : { details: data.details }),
             ...(data.failureCause === undefined ? {} : { failureCause: data.failureCause }),
+            ...(data.effectAttempted === undefined ? {} : { effectAttempted: data.effectAttempted }),
             ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
             ...(data.diagnostics === undefined ? {} : { diagnostics: data.diagnostics }),
         };

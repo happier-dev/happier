@@ -4378,6 +4378,7 @@ describe('createActionExecutor (approvals)', () => {
       ok: false,
       errorCode: 'action_failed',
       error: 'action_failed',
+      requestId: 'request-1',
     });
   });
 

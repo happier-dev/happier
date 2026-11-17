@@ -3000,10 +3000,18 @@ replay placement so replay retains its operation acceptance.
 Failed approval executions may retain the existing code-only `ActionFailureCauseV1`
 as optional `failureCause`. Settlement, public approval reads and CLI JSON preserve that
 cause and an explicitly supplied `effectAttempted`; the CLI does not infer an
-effect flag from `RPC_FORBIDDEN`. New readers still accept older executions with
-no cause. Older strict approval-execution readers, including the #62 development
+effect flag from `RPC_FORBIDDEN`. The failed execution also retains the producer's
+optional `requestId`, independently of the approval origin's request identity.
+New readers still accept older executions with no cause or request identity.
+Older strict approval-execution readers, including the #62 development
 reader, need refreshing before consuming this field. Controller and guest readers
 must therefore update together; this is unreleased development behavior.
+
+Cloudflare's post-response mutation refusals publish `effectAttempted: true`
+through the existing `PluginErrorData` and Action failure projections. Refused
+prerequisite reads leave that evidence absent. This metadata preserves the
+existing error code, approval decision and terminal status; matching development
+SDK, Protocol and host readers reload together under the unpublished 0.3 direct cut.
 
 For stored Machine metadata, an absent isolation policy reads as disabled through
 `readMachineAgentIsolationPolicyV1`. A predecessor daemon without an isolation

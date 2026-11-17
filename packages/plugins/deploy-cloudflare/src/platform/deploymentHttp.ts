@@ -85,6 +85,7 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
     || (response.status < 200 || response.status >= 300) && isObject(nativeError)) {
     throw withActionFailureDiagnostic(new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false, details: { phase },
+      ...(mutation ? { effectAttempted: true } : {}),
       failureCause: { phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: null, ...(nativeCode === null ? {} : { nativeErrorCode: nativeCode }), httpStatus: response.status } }), { phase: `deployment.cloudflare.provider.${phase ?? 'request'}`, causeKind: response.status === 404 ? 'not_found' : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
   }
   // Preserve acknowledged results even when local cancellation races with the response.

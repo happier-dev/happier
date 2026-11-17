@@ -44,6 +44,19 @@ transport owns whether the handler started. A false `retryable`
 value is the default, and a true value is not a general retry policy: preserve
 the operation's own idempotency and user-approval requirements.
 
+In 0.3 development source, a producer can also supply `effectAttempted` when it
+knows whether the requested effect was attempted. Omission means unknown; a
+failed prerequisite read does not establish that the overall Action had no
+effect. The host preserves this evidence with the failure code:
+
+```ts
+throw new PluginError({
+  code: 'deployment_access_denied',
+  retryable: false,
+  effectAttempted: true,
+});
+```
+
 ### Errors across a plugin-to-plugin Action call
 
 When your plugin invokes another plugin's Action and that Action's handler

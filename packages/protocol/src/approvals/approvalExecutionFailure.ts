@@ -455,6 +455,7 @@ export function projectApprovalExecutionFailureV2(input: Readonly<{
   const effectAttempted = input.failure.effectAttempted ?? input.effectAttempted;
   return {
     executedAtMs: input.executedAtMs,
+    ...(input.failure.requestId === undefined ? {} : { requestId: input.failure.requestId }),
     ...(effectAttempted !== undefined ? { effectAttempted } : {}),
     ok: false,
     errorCode: input.failure.errorCode,
@@ -652,6 +653,7 @@ export function readApprovalExecutionFailure(
   if (!currentExecution) return { ok: false, errorCode, error };
   const failureCause = ActionFailureCauseV1Schema.safeParse(currentExecution.failureCause);
   const failure: ActionExecuteFailure = { ok: false, errorCode, error,
+    ...(currentExecution.requestId === undefined ? {} : { requestId: currentExecution.requestId }),
     ...(typeof currentExecution.effectAttempted === 'boolean' ? { effectAttempted: currentExecution.effectAttempted } : {}),
     ...(failureCause.success ? { failureCause: failureCause.data } : {}),
   };

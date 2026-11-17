@@ -449,6 +449,7 @@ export function readPluginActionFailureHandlerInvocation(failure: Readonly<{
  */
 export type PluginActionFailureAuthorPayloadV1 = Readonly<{
   failureCause?: import('../../actions/actionExecutionResult.js').ActionFailureCauseV1;
+  effectAttempted?: boolean;
   details?: StrictJsonValue;
   remediation?: PluginDiagnosticRemediationV1;
   diagnostics?: readonly PluginDiagnosticDataV1[];
@@ -480,6 +481,7 @@ export function readPluginActionFailureAuthorPayload(
   return Object.freeze({
     ...(record.details === undefined ? {} : { details: record.details }),
     ...(failureCause === undefined ? {} : { failureCause }),
+    ...(typeof record.effectAttempted === 'boolean' ? { effectAttempted: record.effectAttempted } : {}),
     ...(remediation?.success ? { remediation: remediation.data } : {}),
     ...(diagnostics?.success ? { diagnostics: Object.freeze(diagnostics.data) } : {}),
   });

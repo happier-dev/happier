@@ -158,8 +158,9 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
   }
   const pluginFailure = readPluginActionError(error);
   if (pluginFailure) {
-    const { diagnostics: _diagnostics, ...authorPayload } = readPluginActionFailureAuthorPayload(pluginFailure.data);
+    const { diagnostics: _diagnostics, effectAttempted, ...authorPayload } = readPluginActionFailureAuthorPayload(pluginFailure.data);
     return { errorCode: pluginFailure.code, error: pluginFailure.message,
+      ...(effectAttempted === undefined ? {} : { effectAttempted }),
       details: { name: 'PluginError', code: pluginFailure.code, message: pluginFailure.message,
         retryable: pluginFailure.retryable, ...authorPayload } };
   }

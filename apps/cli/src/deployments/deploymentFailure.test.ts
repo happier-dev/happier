@@ -62,6 +62,19 @@ describe('deployment failure diagnostics', () => {
         expect(projectDeploymentException(error)).toMatchObject({ effectAttempted });
         expect(projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate')).toMatchObject({ effectAttempted });
     });
+    it.each([true, false, undefined])('preserves PluginError effect evidence %s without exposing author details', effectAttempted => {
+        const failureCause = { phase: 'deployment.provider.send', errorClass: 'Error' as const,
+            errorCode: null, nativeErrorCode: '10000', httpStatus: 403 };
+        const error = new PluginError({ code: 'deployment_access_denied', failureCause,
+            ...(effectAttempted === undefined ? {} : { effectAttempted }),
+            details: { token: 'private-provider-token' } });
+        const failure = projectDeploymentException(error);
+        expect(failure).toMatchObject({ ok: false, errorCode: 'deployment_access_denied',
+            error: 'deployment_access_denied', failureCause });
+        expect(failure.effectAttempted).toBe(effectAttempted);
+        expect(projectDeploymentReceiptFailure(failure, 'activate').effectAttempted).toBe(effectAttempted);
+        expect(JSON.stringify(failure)).not.toContain('private-provider-token');
+    });
     it.each([
         ['database_transaction_timeout', undefined],
         ['database_transaction_conflict_exhausted', false],

@@ -67,6 +67,7 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
     ? targetDetails.data : undefined);
   return {
     executedAtMs: execution.executedAtMs, ok: execution.ok,
+    ...(currentExecution?.requestId === undefined ? {} : { requestId: currentExecution.requestId }),
     ...(currentExecution?.effectAttempted !== undefined
       ? { effectAttempted: currentExecution.effectAttempted } : {}),
     ...(execution.ok && execution.result !== undefined ? { result: project ? project(execution.result) : execution.result } : {}),
