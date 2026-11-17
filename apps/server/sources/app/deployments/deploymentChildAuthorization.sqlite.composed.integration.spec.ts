@@ -8912,10 +8912,6 @@ describe('deployment children retain their controller Action authority', () => {
                 { ...f.job, phase: 'cleanup' }];
             await withAuthenticatedTestApp(machinesRoutes, async app => {
                 for (const job of candidates) {
-                    // P40-7 producer owed: auth.ts derives the scoped Environment
-                    // only from prepared refs, not this semantic intent. RED68658
-                    // rejects at mint before HTTP; do not fabricate an admitted root.
-                    if (credential === 'api' && job.kind === 'prepare') continue;
                     const originalActionEnvelope = { ...f.originalActionEnvelope, input: job.input };
                     const binding = f.authorization.binding;
                     const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
@@ -8947,7 +8943,8 @@ describe('deployment children retain their controller Action authority', () => {
                                 method: 'GET', path, body: undefined, privateKey }),
                         } });
                     };
-                    expect((await send()).statusCode).toBe(200);
+                    const admitted = await send();
+                    expect(admitted.statusCode, `${credential} ${job.kind}: ${admitted.body}`).toBe(200);
                     expect((await send(f.outsider.id)).statusCode).toBe(401);
                     expect((await send(job.machineId, f.outsider.keys.secretKey)).statusCode).toBe(401);
                     expect((await send(job.machineId, f.controller.keys.secretKey, 'retired-source-installation')).statusCode).toBe(401);

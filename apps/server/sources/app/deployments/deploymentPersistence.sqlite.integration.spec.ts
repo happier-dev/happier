@@ -846,7 +846,7 @@ describe('deployment storage real SQLite boundary', () => {
             .toEqual({ ok: false, error: 'deployment_conflict' });
     });
 
-    it('admits ID-only backup recovery to the native restore owner without mutating its captured content', async () => {
+    it('reserves ID-only backup recovery with retained rollback lineage and unchanged captured content', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
             serverId, requestKey: crypto.randomUUID(), name: 'Recovery boundary', audience: [],
@@ -875,25 +875,28 @@ describe('deployment storage real SQLite boundary', () => {
         const retained = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: target.id,
             operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), requestedByAccountId: owner.id,
             actionOperationId: crypto.randomUUID(), ...reference } });
+        const incumbent = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: target.id,
+            operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), requestedByAccountId: owner.id,
+            actionOperationId: crypto.randomUUID(), ...reference } });
+        await db.deploymentTargetLink.update({ where: { id: target.id }, data: { activeDeploymentId: incumbent.id } });
+        const capturedArtifact = await db.artifact.findUniqueOrThrow({ where: { id: reference.contentArtifactId } });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
-            let writes = 0;
-            const stop = observeSqliteRequests({ before: request => {
-                if (['Deployment', 'DeploymentEnvironment', 'Artifact'].includes(request.model ?? '')
-                    && ['create', 'update', 'updateMany', 'delete', 'deleteMany'].includes(request.action)) writes++;
-            } });
-            try {
-                const response = await app.inject({ method: 'POST',
-                    url: `/v1/deployments/environments/${environment.id}/rollback`, headers: { 'x-test-user-id': owner.id }, payload: {
-                        serverId, environmentId: environment.id, expectedRevision: environment.revision,
-                        targetLinkId: target.id, expectedTargetLinkRevision: target.revision,
-                        deploymentId: retained.id, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
-                        restoreBackupId: 'pre-migration-backup', ...reference,
-                    } });
-                expect(response.statusCode, response.body).toBe(200);
-                expect(response.json()).toMatchObject({ ok: true, state: 'queued' });
-                expect(writes).toBeGreaterThan(0);
-                expect((await db.artifact.findUniqueOrThrow({ where: { id: reference.contentArtifactId } })).bodyVersion).toBe(1);
-            } finally { stop(); }
+            const response = await app.inject({ method: 'POST',
+                url: `/v1/deployments/environments/${environment.id}/rollback`, headers: { 'x-test-user-id': owner.id }, payload: {
+                    serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                    targetLinkId: target.id, expectedTargetLinkRevision: target.revision,
+                    deploymentId: retained.id, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+                    restoreBackupId: 'pre-migration-backup', ...reference,
+                } });
+            expect(response.statusCode, response.body).toBe(200);
+            const result = DeploymentActionOutputSchemasV1['deployments.rollback'].parse(response.json());
+            expect(result).toMatchObject({ ok: true, state: 'queued' });
+            if (!result.ok) throw new Error(result.error);
+            const recovery = await db.deployment.findUniqueOrThrow({ where: { id: result.deploymentId } });
+            expect(recovery).toMatchObject({ operation: 'rollback', state: 'queued',
+                rollbackOfDeploymentId: retained.id, predecessorDeploymentId: incumbent.id, ...reference });
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: retained.id } })).toEqual(retained);
+            expect(await db.artifact.findUniqueOrThrow({ where: { id: reference.contentArtifactId } })).toEqual(capturedArtifact);
         });
     });
 

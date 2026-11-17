@@ -4,7 +4,7 @@ import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, DeploymentTargetLinkInputV1Schema,
-    DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol';
+    DeploymentTargetLinksListResultV1Schema, DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol';
 import { MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
@@ -692,7 +692,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                 url: `/v1/deployments/environments/${environmentId}/deployments?${query}`,
                 headers: { 'x-test-user-id': owner.id } });
             expect(response.statusCode, response.body).toBe(200);
-            expect(response.json()).toMatchObject({ ok: true, items: [{ id: filteredIds[0] }], nextCursor: filteredIds[0] });
+            expect(DeploymentReceiptListResultV1Schema.parse(response.json()))
+                .toMatchObject({ ok: true, items: [{ id: filteredIds[0] }], nextCursor: filteredIds[0] });
         } finally { await app.close(); }
     });
 
