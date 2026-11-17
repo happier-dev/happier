@@ -10,6 +10,7 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuratio
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
 import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../../telemetry/src/exceptions/source.js';
 import { readAccountDataSourceRecordsV1 } from './accountDataSources.js';
+import { indexTriageAdmittedSourcesV1 } from '../../actions/listEntries.js';
 import { findConfiguredSourceInstanceRow } from './administerConfiguredSourceInstance.js';
 import {
     readActiveConfiguredSourceRow,
@@ -47,13 +48,13 @@ function sourceRow(seed: number) {
 describe('the canonical active configured-source read', () => {
     it('exposes admitted exceptions in Account A without setup and preserves personal Tasks', async () => {
         const { collections, control } = createTestkitCorpusCollections();
-        const accountDataSources = readAccountDataSourceRecordsV1([{
+        const accountDataSources = readAccountDataSourceRecordsV1(indexTriageAdmittedSourcesV1([{
             contributor: { pluginId: 'happier.triage', contributionId: 'internal' },
             descriptor: INTERNAL_TASK_DESCRIPTOR_V1,
         }, {
             contributor: { pluginId: TELEMETRY_EXCEPTION_SOURCE_V1.pluginId, contributionId: TELEMETRY_EXCEPTION_SOURCE_V1.localId },
             descriptor: TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1,
-        }]);
+        }]));
         const options = { accountDataSources };
         const read = await readActiveConfiguredSourceRows(collections.sourceInstances, options);
         const exception = read.records.find(row => row.value.sourceQualifiedId === 'happier.telemetry/exceptions');

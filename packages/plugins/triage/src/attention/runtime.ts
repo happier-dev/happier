@@ -62,10 +62,10 @@ export async function runTriageAttention(context: BackgroundServiceContext): Pro
     onError: () => { if (!context.signal.aborted) context.services.logger.warn('Triage attention source discovery failed'); },
     drain: async () => {
       const admitted = await observation.readCurrent({ signal: context.signal });
-      const configured = await readActiveConfiguredSourceRows(rows, {
-        signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(admitted.contributions),
-      });
       const sources = indexTriageAdmittedSourcesV1(admitted.contributions);
+      const configured = await readActiveConfiguredSourceRows(rows, {
+        signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources),
+      });
       const current = new Set<string>();
       for (const record of configured.records) {
         const contribution = sources.get(record.value.sourceQualifiedId);

@@ -23,10 +23,10 @@ export function createTriageResolveResourceActionHandler(): TriageDataActionHand
     );
     try {
       const admitted = await observation.readCurrent(options);
-      const configured = await readActiveConfiguredSourceRows(sourceInstances, {
-        ...options, accountDataSources: readAccountDataSourceRecordsV1(admitted.contributions),
-      });
       const sources = indexTriageAdmittedSourcesV1(admitted.contributions);
+      const configured = await readActiveConfiguredSourceRows(sourceInstances, {
+        ...options, accountDataSources: readAccountDataSourceRecordsV1(sources),
+      });
       for (const row of configured.rows) {
         throwIfAborted(context.signal);
         const instance = row.configured;

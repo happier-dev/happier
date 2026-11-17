@@ -1,5 +1,6 @@
 import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
 import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type {
@@ -79,7 +80,7 @@ export function createTriageAdministerSourceInstanceActionHandler(
             collections: { sourceInstances },
             source: caller.source,
             declaredPurpose: caller.declaredPurpose,
-            accountDataSources: readAccountDataSourceRecordsV1([caller.contribution]),
+            accountDataSources: readAccountDataSourceRecordsV1(indexTriageAdmittedSourcesV1([caller.contribution])),
             request: requestFrom(input),
             nowMs: options.nowMs(),
             mintSourceInstanceId: options.mintSourceInstanceId,

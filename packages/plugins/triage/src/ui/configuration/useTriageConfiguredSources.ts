@@ -8,6 +8,7 @@ import { removeConfiguredSourceInstance } from '../../corpus/configuration/admin
 import { useTriageDurableAccount, type TriageDurableAccountV1 } from '../durable/accountDurableState.js';
 import { TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { readAccountDataSourceRecordsV1 } from '../../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1 } from '../../actions/listEntries.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
 import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 
@@ -61,11 +62,11 @@ type ConfiguredSourceRead = Readonly<{
 export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
   const host = usePluginHostApi();
   const surface = useSurfaceContext();
-  const accountDataSources = useMemo(() => readAccountDataSourceRecordsV1(
+  const accountDataSources = useMemo(() => readAccountDataSourceRecordsV1(indexTriageAdmittedSourcesV1(
     surface.targetedContributions?.points.find(point => point.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1)
       ?.protocols.find(protocol => protocol.protocol.id === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1
         && protocol.protocol.version === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1)?.contributions ?? [],
-  ), [surface.targetedContributions]);
+  )), [surface.targetedContributions]);
   const dataClient = usePluginUiDataClientOrNull();
   const durable = useTriageDurableAccount();
   const text = usePluginTranslation();

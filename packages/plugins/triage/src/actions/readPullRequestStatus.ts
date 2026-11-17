@@ -9,7 +9,9 @@ import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../corpus/collections/defini
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { configuredSourceInstanceIsOwnedBy, readConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { configuredSourceInstanceIsOwnedBy } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { readActiveConfiguredSourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import { sameConfiguredSourceAuthority } from '../corpus/configuration/configuredSourceAuthority.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
@@ -22,13 +24,14 @@ async function resolveConfiguredStatusSource(input: TriageReobserveEntryActionIn
     if (input.sourceInstanceRowId === undefined) return null;
     const options = { signal: context.signal };
     const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
-    const [row, admitted] = await Promise.all([
-        readConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceRowId, options),
-        observation.readCurrent(options),
-    ]);
+    const admitted = await observation.readCurrent(options);
     throwIfAborted(context.signal);
+    const sources = indexTriageAdmittedSourcesV1(admitted.contributions);
+    const row = await readActiveConfiguredSourceRow(sourceInstances, {
+        sourceInstanceId: input.sourceInstanceId, configurationRowId: input.sourceInstanceRowId,
+    }, { ...options, accountDataSources: readAccountDataSourceRecordsV1(sources) });
     const configured = row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? row.value.configured : null;
-    const source = indexTriageAdmittedSourcesV1(admitted.contributions).get(renderSourceQualifiedId(input.entryRef.source));
+    const source = sources.get(renderSourceQualifiedId(input.entryRef.source));
     const operation = source?.operations.readPullRequestStatus;
     if (configured === null || row === null || configured.instance.sourceInstanceId !== input.sourceInstanceId
         || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source)) return null;

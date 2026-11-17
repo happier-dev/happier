@@ -1,4 +1,4 @@
-import { admitTriageSourceDescriptorV1, type TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { CorpusRowV1 } from '../collections/rowCodec.js';
@@ -12,13 +12,12 @@ export type AccountDataSourceReadOptionsV1 = PluginCancellationOptions & Readonl
 
 /** Project setup-free Account instances from admitted descriptors, without a
  * connection row, setup Action, registry or credential materialization. */
-export function readAccountDataSourceRecordsV1(sources: readonly {
-    contributor: { pluginId: string; contributionId: string }; descriptor: unknown;
-}[]): readonly AccountDataSourceRecordV1[] {
-    return sources.flatMap(source => {
-        const admitted = admitTriageSourceDescriptorV1(source.descriptor);
-        if (!admitted.ok || !admitted.descriptor.accountDataInstance) return [];
-        return [createAccountDataSourceRecordV1(source.contributor, admitted.descriptor.accountDataInstance)];
+export function readAccountDataSourceRecordsV1(sources: ReadonlyMap<string, {
+    contributor: { pluginId: string; contributionId: string }; descriptor: TriageSourceDescriptorV1;
+}>): readonly AccountDataSourceRecordV1[] {
+    return Array.from(sources.values()).flatMap(source => {
+        const declaration = source.descriptor.accountDataInstance;
+        return declaration ? [createAccountDataSourceRecordV1(source.contributor, declaration)] : [];
     });
 }
 

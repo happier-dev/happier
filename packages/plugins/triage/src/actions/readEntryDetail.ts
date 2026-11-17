@@ -5,7 +5,9 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
-import { readConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { readActiveConfiguredSourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import {
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
@@ -141,10 +143,16 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
         const { sourceInstances, sessionLinks } = bindCorpusCollections(
             requireTriageAccountStorage(context),
         );
-        const selected = input.sourceInstanceRowId === undefined ? undefined : {
-            entryRef: input.entryRef,
-            record: await readConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceRowId, { signal: context.signal }),
-        };
+        let selected: Parameters<typeof createTriageSourceSessionRelations>[2];
+        if (input.sourceInstanceRowId !== undefined) {
+            const sources = indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution));
+            selected = {
+                entryRef: input.entryRef, sources,
+                record: await readActiveConfiguredSourceRow(sourceInstances, {
+                    sourceInstanceId: input.sourceInstanceId, configurationRowId: input.sourceInstanceRowId,
+                }, { signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources) }),
+            };
+        }
         return await readTriageEntryDetail(input, {
             sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }, selected),
             // Portable Account execution has no Session service. These optional

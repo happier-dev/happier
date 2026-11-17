@@ -47,11 +47,12 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         );
         try {
             const admitted = await observation.readCurrent(options);
+            const sources = indexTriageAdmittedSourcesV1(admitted.contributions);
             const row = await findConfiguredSourceInstanceRow(sourceInstances, request.input.sourceInstanceId, {
-                ...options, accountDataSources: readAccountDataSourceRecordsV1(admitted.contributions),
+                ...options, accountDataSources: readAccountDataSourceRecordsV1(sources),
             });
             throwIfAborted(context.signal);
-            return { row, admitted, observation };
+            return { row, sources, observation };
         } catch (error) {
             observation.dispose();
             throw error;
@@ -64,9 +65,9 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         return { kind: 'failed', failure: { class: 'unknown', code: isPluginError(error) ? error.code : 'taskSourceUnavailable' } };
     }
     try {
-        const { row, admitted } = setup;
+        const { row, sources } = setup;
         const configured = row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? row.value.configured : null;
-        const source = indexTriageAdmittedSourcesV1(admitted.contributions).get(renderSourceQualifiedId(address.source));
+        const source = sources.get(renderSourceQualifiedId(address.source));
         if (configured === null || row === null || !configuredSourceInstanceIsOwnedBy(row.value, address.source) || source === undefined) {
             return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'taskSourceUnavailable' } };
         }

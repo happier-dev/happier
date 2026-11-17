@@ -26,6 +26,7 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
+import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 
 /**
  * The caller-scoped configured-instance read.
@@ -125,6 +126,7 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
         if (resolution.kind === 'invalidCaller') return INVALID_CALLER;
 
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
+        const accountDataSources = readAccountDataSourceRecordsV1(indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution)));
         if (input.exact !== undefined) {
             const exact = input.exact;
             // Resolve caller authority BEFORE deriving or reading another source's private row.
@@ -132,7 +134,7 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
                 return fitTriageConfiguredSourceInstancesResult([]);
             }
             const stored = await readExactConfiguredSourceInstanceRow(sourceInstances, exact, { ...cancellation,
-                accountDataSources: readAccountDataSourceRecordsV1(resolution.callers.map(caller => caller.contribution)) });
+                accountDataSources });
             const row = stored?.value ?? null;
             return fitTriageConfiguredSourceInstancesResult(row !== null
                 && resolution.callers.some(caller => configuredSourceInstanceIsOwnedBy(row, caller.source))
@@ -140,7 +142,7 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
         }
         return await readTriageConfiguredSourceInstances(resolution.callers.map((caller) => caller.source), {
             sourceInstances,
-            accountDataSources: readAccountDataSourceRecordsV1(resolution.callers.map(caller => caller.contribution)),
+            accountDataSources,
             ...(context.signal ? { signal: context.signal } : {}),
         });
     };

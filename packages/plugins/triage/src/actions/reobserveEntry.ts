@@ -92,16 +92,16 @@ export async function reobserveTriageEntry(
   const invocation = (async (): Promise<TriageReobserveEntryResultV1> => {
     const sourceSnapshot = await deps.readSourceSnapshot(options);
     throwIfAborted(invocationSignal);
+    const sources = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions);
     const configured = await deps.readConfiguredInstance(input.sourceInstanceId, {
-      ...options, accountDataSources: readAccountDataSourceRecordsV1(sourceSnapshot.contributions),
+      ...options, accountDataSources: readAccountDataSourceRecordsV1(sources),
     });
     throwIfAborted(invocationSignal);
     if (configured === null || !sameSource(configured, input.entryRef)) {
       return { kind: 'unavailable' };
     }
 
-    const contribution = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions)
-      .get(renderSourceQualifiedId(input.entryRef.source));
+    const contribution = sources.get(renderSourceQualifiedId(input.entryRef.source));
     if (contribution === undefined) {
       const failure = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot, deps.requestId).get(input.entryRef.source.pluginId);
       return { kind: 'unavailable', ...(failure === undefined ? {} : { failure }) };

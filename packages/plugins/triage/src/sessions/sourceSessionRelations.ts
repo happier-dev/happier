@@ -89,8 +89,9 @@ export function createTriageSourceSessionRelations(
         services: Pick<TriageDataActionContext['services'], 'actions' | 'targetedContributions'>;
     }>,
     collections: Pick<CorpusCollectionsV1, 'sourceInstances' | 'sessionLinks'>,
-    /** An exact row already resolved by the configured-source owner for this entry. */
-    selected?: Readonly<{ entryRef: TriageEntryRefV1; record: CorpusRowV1<CorpusSourceInstanceRowV1> | null }>,
+    /** An exact row and optional admitted source view already resolved for this entry. */
+    selected?: Readonly<{ entryRef: TriageEntryRefV1; record: CorpusRowV1<CorpusSourceInstanceRowV1> | null;
+        sources?: ReadonlyMap<string, TriageAdmittedSourceV1> }>,
     readTaskList?: () => Promise<TaskList | null>,
 ) {
     const options = { signal: context.signal };
@@ -105,7 +106,8 @@ export function createTriageSourceSessionRelations(
     }
     // One invocation may link several attachments. Resolve its source/configured
     // view once; the host still validates each original operation handle at use.
-    let sourcesView: ReturnType<typeof current> | undefined;
+    let sourcesView: ReturnType<typeof current> | undefined = selected?.sources === undefined
+        ? undefined : Promise.resolve(selected.sources);
     let configuredView: ReturnType<typeof readActiveConfiguredSourceRows> | undefined;
     const accountViews = new Map<string, Promise<PluginActionResultById['connectedServices.accounts.list']['accounts'] | undefined>>();
     async function selectConfiguredInstance(instances: readonly CorpusSourceInstanceRowV1[], readEntryRef?: TriageEntryRefV1) {
@@ -156,7 +158,7 @@ export function createTriageSourceSessionRelations(
             : isBuiltinSelection(input)
             ? Promise.resolve({ rows: [INTERNAL_TASK_SOURCE_RECORD_V1.value], records: [INTERNAL_TASK_SOURCE_RECORD_V1], status: 'complete' as const })
             : configuredView ??= (sourcesView ??= current()).then(sources => readActiveConfiguredSourceRows(collections.sourceInstances, {
-                ...options, accountDataSources: readAccountDataSourceRecordsV1([...sources.values()]),
+                ...options, accountDataSources: readAccountDataSourceRecordsV1(sources),
             }));
         return Promise.all([sourcesView ??= current(), configured])
             .then(([sources, configured]) => ({ sources, configured }));

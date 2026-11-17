@@ -37,6 +37,10 @@ import {
 import { createTriageReadEntryDetailActionHandler } from './readEntryDetail.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 import { readTriageEntryDetailState } from '../ui/detail/useTriageEntryDetail.js';
+import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../telemetry/src/exceptions/source.js';
+import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 
 /**
  * The durable half of one mounted detail input.
@@ -114,6 +118,7 @@ function createContext(input: Readonly<{
     callerPluginId?: string;
     hostSurface?: PluginAccountActionContext['surface'];
     relationFailure?: Error;
+    sources?: readonly TriageAdmittedSourceV1[];
 }>): PluginAccountActionContext {
     return {
         signal: new AbortController().signal,
@@ -122,7 +127,7 @@ function createContext(input: Readonly<{
         services: {
             targetedContributions: {
                 observeForSelf: () => ({
-                    readCurrent: async () => ({ contributions: [{
+                    readCurrent: async () => ({ contributions: input.sources ?? [{
                         contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId },
                         descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example source', kinds: [
                             { id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
@@ -171,6 +176,33 @@ async function seedTwoConnections(): Promise<Readonly<{ collections: CorpusColle
 }
 
 describe('the entry detail read', () => {
+    it('opens a setup-free exceptions entry by its catalog row address with its linked Session', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        // The host contribution boundary supplies the source descriptor; no executable relation role is declared.
+        const source = { contributor: { pluginId: TELEMETRY_EXCEPTION_SOURCE_V1.pluginId,
+            contributionId: TELEMETRY_EXCEPTION_SOURCE_V1.localId }, descriptor: TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1,
+            operations: {} } as unknown as TriageAdmittedSourceV1;
+        const context = createContext({ collections, hostSurface: 'ui', sources: [source] });
+        const entryRef = { source: TELEMETRY_EXCEPTION_SOURCE_V1, kindId: 'exception', collisionScope: 'account', entryId: 'exception-1' };
+        const admitted = indexTriageAdmittedSourcesV1([source]);
+        const catalog = await readActiveConfiguredSourceRows(collections.sourceInstances, {
+            accountDataSources: readAccountDataSourceRecordsV1(admitted),
+        });
+        const record = catalog.records.find(row => row.value.sourceQualifiedId === 'happier.telemetry/exceptions');
+        expect(record).toBeDefined();
+        if (!record) throw new Error('Missing exceptions catalog row');
+        expect(await linkEntryToSession({ collections, entryRef, sessionId: SESSION_ID, nowMs: 2_000,
+            display: { locator: { v: 1, displayPath: 'Exception 1' }, scopeLabel: 'Happier exceptions' },
+        })).toMatchObject({ status: 'linked' });
+        const handler = createTriageReadEntryDetailActionHandler();
+        const input = { v: 1 as const, entryRef, sourceInstanceId: record.value.configured.instance.sourceInstanceId };
+        const ordinary = await handler(input, context);
+        expect(ordinary).toMatchObject({ kind: 'read', instance: record.value.configured, linkedSessions: [{ sessionId: SESSION_ID }] });
+        expect(await handler({ ...input, sourceInstanceRowId: record.rowId }, context)).toEqual(ordinary);
+        expect(await handler({ ...input, sourceInstanceRowId: 'missing-exceptions-row' }, context)).toEqual({ kind: 'unavailable' });
+        expect((await collections.sourceInstances.query({ index: 'by-lifecycle', order: 'asc' })).rows).toEqual([]);
+    });
+
     it.each(['present', 'wrongId', 'retired', 'wrongSource', 'missing', 'denied'] as const)(
         'resolves a known row address without catalog discovery when it is %s', async mode => {
             const { collections, control } = createTestkitCorpusCollections();

@@ -13,6 +13,7 @@ import {
     type TriageScanInputV1,
     type TriageScanResultV1,
     type TriageSourceFailureV1,
+    type TriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
@@ -98,16 +99,17 @@ export function indexTriageSourceAvailabilityFailuresV1(snapshot: TriageSourceSn
  * another's contribution id, so the key is the same qualified id the configured
  * row is stored under and there is one owner of it.
  */
-export function indexTriageAdmittedSourcesV1(
-    admitted: readonly TriageAdmittedSourceV1[],
-): ReadonlyMap<string, TriageAdmittedSourceV1> {
-    const byQualifiedId = new Map<string, TriageAdmittedSourceV1>();
+export function indexTriageAdmittedSourcesV1<T extends {
+    contributor: { pluginId: string; contributionId: string }; descriptor: unknown;
+}>(admitted: readonly T[]): ReadonlyMap<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }> {
+    const byQualifiedId = new Map<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }>();
     for (const contribution of admitted) {
-        if (!admitTriageSourceDescriptorV1(contribution.descriptor).ok) continue;
+        const admission = admitTriageSourceDescriptorV1(contribution.descriptor);
+        if (!admission.ok) continue;
         byQualifiedId.set(renderSourceQualifiedId({
             pluginId: contribution.contributor.pluginId,
             localId: contribution.contributor.contributionId,
-        }), contribution);
+        }), { ...contribution, descriptor: admission.descriptor });
     }
     return byQualifiedId;
 }
@@ -219,8 +221,9 @@ export async function assembleTriageListPass(
     deps: TriageListEntriesDepsV1,
 ): Promise<TriageAssembledListPassV1> {
     const sourceSnapshot = await deps.readSourceSnapshot(deps.signal ? { signal: deps.signal } : undefined);
+    const admittedByQualifiedId = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions);
     const options = { ...(deps.signal ? { signal: deps.signal } : {}),
-        accountDataSources: readAccountDataSourceRecordsV1(sourceSnapshot.contributions) };
+        accountDataSources: readAccountDataSourceRecordsV1(admittedByQualifiedId) };
     const resumeByInstance = resumeByInstanceId(input);
     const sources = input.sources;
     const configured = await (
@@ -247,7 +250,6 @@ export async function assembleTriageListPass(
     const configuredSourcesStatus = configured.status;
     const configuredSourcesNextCursor = 'nextCursor' in configured ? configured.nextCursor : undefined;
 
-    const admittedByQualifiedId = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions);
     const availabilityFailures = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot, deps.requestId);
 
     const configuredSources: TriageListEntriesResultV1['configuredSources'][number][] = [];
