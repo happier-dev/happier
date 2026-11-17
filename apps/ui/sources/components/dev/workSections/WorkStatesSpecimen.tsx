@@ -194,13 +194,11 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: 'wrap',
     alignItems: 'flex-start',
   },
+  // The Work pane's own surface, as the live pane draws it: a column, not a bordered card, so the Map's
+  // lead and child cards are never read as cards inside a card.
   pane: {
     width: 360,
     backgroundColor: theme.colors.surface.base,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.border.default,
-    borderRadius: 12,
-    overflow: 'hidden',
   },
   paneWide: { width: 500 },
   paneBody: {
