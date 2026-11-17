@@ -6,9 +6,15 @@ import type { AutomationSubjectKind } from '@happier-dev/plugin-sdk/automations'
 import { ProjectSourcesListOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { SessionListActionResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { PluginSubjectKindListInputV1Schema, PluginSubjectKindListResultV1Schema,
+    type PluginSubjectKindListInputV1 } from '@happier-dev/protocol/plugins/contributions/subjectKinds';
+import { readPluginAutomationSubjectKindV1, readPluginAutomationSubjectV1,
+    type PluginAutomationSubjectKindDeclarationV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { readNonEmptyString, readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import type { ProjectsListResult } from '@/sync/ops/actions/listProjects';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { WorkflowActionCallerContext } from './callWorkflowAction';
+import { WorkflowActionError } from './workflowActionError';
 
 export type AutomationSubjectPickerOption = Readonly<{
     subject: AutomationSubjectV1;
@@ -24,11 +30,12 @@ export type AutomationSubjectPickerPage = Readonly<{
 }>;
 
 export type AutomationSubjectPickerActionPageKind = Extract<AutomationSubjectKind,
-    { kind: 'session' | 'project' | 'machine' | 'app' | 'environment' | 'backup' }>;
+    { kind: 'session' | 'project' | 'machine' | 'app' | 'environment' | 'backup' | 'plugin' }>;
 
 /** Project an acknowledged page without reading its body or fetching a second page. */
 export function projectAutomationSubjectPickerActionPage(input: Readonly<{
     kind: AutomationSubjectPickerActionPageKind; serverId: string; result: unknown;
+    subjectKinds?: readonly PluginAutomationSubjectKindDeclarationV1[];
 }>): AutomationSubjectPickerPage {
     const serverId = input.serverId;
     switch (input.kind.kind) {
@@ -79,22 +86,44 @@ export function projectAutomationSubjectPickerActionPage(input: Readonly<{
                 subject: { kind: 'session', serverId, sessionId: session.id } })), nextCursor: page.nextCursor,
             coverage: page.nextCursor !== null || page.hasNext === true ? 'partial' : 'complete' };
         }
-
+        case 'plugin': {
+            const page = PluginSubjectKindListResultV1Schema.parse(input.result);
+            const kind = input.kind;
+            return { items: page.items.map(item => {
+                const admitted = readPluginAutomationSubjectV1({ ...kind, serverId, identity: item.identity,
+                    subjectKinds: input.subjectKinds ?? [] });
+                if (!admitted.ok) throw new WorkflowActionError({ message: admitted.code, rawCode: admitted.code });
+                return { label: item.label, subject: admitted.subject };
+            }), nextCursor: page.nextCursor, coverage: page.nextCursor === null ? 'complete' : 'partial' };
+        }
     }
-    throw new Error('Subject list page unavailable');
 }
 
 /** One explicitly demanded owner page through the incumbent Action/account lifetime. */
 export async function readAutomationSubjectPickerActionPage(input: Readonly<{
-    kind: AutomationSubjectPickerActionPageKind; lifetime: ServerAccountScopeLifetime;
-    cursor?: string; signal?: AbortSignal;
-}>): Promise<AutomationSubjectPickerPage> {
+    lifetime: ServerAccountScopeLifetime; signal?: AbortSignal;
+    context?: WorkflowActionCallerContext;
+}> & (Readonly<{ kind: Exclude<AutomationSubjectPickerActionPageKind, { kind: 'plugin' }>; cursor?: string }>
+    | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'plugin' }>;
+        page: PluginSubjectKindListInputV1; subjectKinds: readonly PluginAutomationSubjectKindDeclarationV1[] }>)):
+    Promise<AutomationSubjectPickerPage> {
     const serverId = input.lifetime.scope.serverId;
-    const read = resolveAutomationSubjectPickerListRead({ kind: input.kind, serverId, cursor: input.cursor });
-    if (read.kind !== 'action') throw new Error('Expected subject list Action');
+    const read = resolveAutomationSubjectPickerListRead({ kind: input.kind, serverId,
+        ...('cursor' in input ? { cursor: input.cursor } : {}) });
     const { callWorkflowAction } = await import('./callWorkflowAction');
+    if (read.kind === 'plugin_contribution' && 'subjectKinds' in input) {
+        const declaration = readPluginAutomationSubjectKindV1({ ...read, subjectKinds: input.subjectKinds });
+        if (!declaration) throw new WorkflowActionError({ message: 'subject_kind_unavailable', rawCode: 'subject_kind_unavailable' });
+        return callWorkflowAction({ actionId: 'action.invoke', input: {
+            action: { pluginId: read.pluginId, localId: declaration.listAction },
+            input: PluginSubjectKindListInputV1Schema.parse(input.page),
+        }, accountLifetime: input.lifetime, context: { ...input.context, surface: 'ui', serverId }, signal: input.signal,
+        parseResult: result => projectAutomationSubjectPickerActionPage({ kind: input.kind, serverId, result,
+            subjectKinds: input.subjectKinds }) });
+    }
+    if (read.kind !== 'action') throw new Error('Expected subject list Action');
     return callWorkflowAction({ actionId: read.actionId, input: read.input, accountLifetime: input.lifetime,
-        context: { surface: 'ui', serverId }, signal: input.signal,
+        context: { ...input.context, surface: 'ui', serverId }, signal: input.signal,
         parseResult: result => projectAutomationSubjectPickerActionPage({ kind: input.kind, serverId, result }) });
 }
 

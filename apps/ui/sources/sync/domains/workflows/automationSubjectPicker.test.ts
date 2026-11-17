@@ -49,6 +49,19 @@ describe('automation subject picker read ownership', () => {
         const second = resolveAutomationSubjectPickerListRead({ kind: { kind: 'plugin', pluginId: 'example.two', subjectKindId: 'ticket' }, serverId: 'home-b' });
         expect(first).toEqual({ kind: 'plugin_contribution', serverId: 'home-a', pluginId: 'example.one', subjectKindId: 'ticket' });
         expect(second).toEqual({ kind: 'plugin_contribution', serverId: 'home-b', pluginId: 'example.two', subjectKindId: 'ticket' });
+        const subjectKinds = [{ pluginId: 'example.one', definition: { id: 'ticket', label: 'Ticket',
+            listAction: 'tickets.list', identitySchema: { type: 'object' as const, additionalProperties: false,
+                required: ['ticketId'], properties: { ticketId: { type: 'string' as const } } } } }];
+        expect(projectAutomationSubjectPickerActionPage({ kind: { kind: 'plugin', pluginId: 'example.one', subjectKindId: 'ticket' },
+            serverId: 'home-a', subjectKinds, result: { items: [{ identity: { ticketId: 'same-id' }, label: 'Ticket' }], nextCursor: 'page-2' } }))
+            .toEqual({ items: [{ label: 'Ticket', subject: { kind: 'plugin', serverId: 'home-a', pluginId: 'example.one',
+                subjectKindId: 'ticket', identity: { ticketId: 'same-id' } } }], nextCursor: 'page-2', coverage: 'partial' });
+        expect(() => projectAutomationSubjectPickerActionPage({ kind: { kind: 'plugin', pluginId: 'example.two', subjectKindId: 'ticket' },
+            serverId: 'home-b', subjectKinds, result: { items: [{ identity: { ticketId: 'same-id' }, label: 'Ticket' }], nextCursor: null } }))
+            .toThrow(expect.objectContaining({ code: 'subject_kind_unavailable' }));
+        expect(() => projectAutomationSubjectPickerActionPage({ kind: { kind: 'plugin', pluginId: 'example.one', subjectKindId: 'ticket' },
+            serverId: 'home-a', subjectKinds, result: { items: [{ identity: { otherId: 'same-id' }, label: 'Ticket' }], nextCursor: null } }))
+            .toThrow(expect.objectContaining({ code: 'invalid_subject_identity' }));
     });
 
     it('keeps database scope at the database owner instead of fabricating a Home inventory', () => {

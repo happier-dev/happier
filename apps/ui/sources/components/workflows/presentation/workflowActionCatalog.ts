@@ -1,8 +1,10 @@
 import { isWorkflowStepActionSpecV1, listActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionDiscoveryDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ActionJsonSchemaProjectionError } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readPluginActionApprovalScopeSubjectKindV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { resolvePluginProjectedActionPresentation, type ResolvedPluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -20,6 +22,8 @@ export type WorkflowActionSpec = Readonly<Pick<ActionSpec, 'title' | 'descriptio
     projectionError?: ActionJsonSchemaProjectionError['code'];
     /** Admitted plugin identity for the host-then-plugins picker grouping. */
     plugin?: Readonly<{ id: string; title: string; icon?: string }>;
+    /** Before/after selection consumes the invocation declaration's own subject metadata. */
+    subjectKind?: ReturnType<typeof readPluginActionApprovalScopeSubjectKindV1>;
 }>;
 
 /** Resolve an authored id without replacing it when the current catalog lacks it. */
@@ -39,8 +43,8 @@ function projectWorkflowAction(read: () => WorkflowActionSpec, unavailable: () =
     }
 }
 
-export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[]): WorkflowActionSpec[] {
-    return specs.filter(isWorkflowStepActionSpecV1)
+export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[], selected?: ReadonlySet<string>): WorkflowActionSpec[] {
+    return specs.filter(selected ? spec => selected.has(spec.id) : isWorkflowStepActionSpecV1)
         .map(spec => {
             const presentation = { id: spec.id, title: resolveWorkflowActionTitle(spec.id, spec),
             ...resolveHostActionPickerPresentation(spec.id),
@@ -52,16 +56,27 @@ export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[]): Wo
         });
 }
 
+/** What an Action is offered for: a workflow step, or a trigger before or after it (the discovery owner's `automation` choices). */
+export type WorkflowActionCatalogPurpose = 'workflowStep' | 'before' | 'after';
+
 export function listWorkflowStepActionSpecs(projection?: PluginProjectionV2 | null, presentation?: PluginUiProjectionModel | null,
-    localize?: PluginLocalizedTextResolver): readonly WorkflowActionSpec[] {
-    const host = projectWorkflowHostActionSpecs(listActionSpecs());
+    localize?: PluginLocalizedTextResolver, discovery?: readonly ActionDiscoveryDefinitionSummaryV1[],
+    purpose: WorkflowActionCatalogPurpose = 'workflowStep'): readonly WorkflowActionSpec[] {
+    const selected = discovery === undefined ? undefined : new Set(discovery
+        .filter(spec => spec.automation?.[purpose] === true).map(spec => spec.id));
+    const host = projectWorkflowHostActionSpecs(listActionSpecs(), selected);
+    const subjectKinds = purpose === 'workflowStep' ? [] : Object.values(presentation?.subjectKindsById ?? {});
     const contributed = Object.entries(projection?.actionsById ?? {}).flatMap(([key, action]): WorkflowActionSpec[] => {
         const identity = parseQualifiedPluginContributionKey(key);
-        // Workflows execute on the daemon, not inside a mounted client plugin surface.
-        if (!identity || identity.pluginId !== action.pluginId || action.available === false
-            || action.execution.target !== 'daemon' || !action.surfaces.includes('agent')) return [];
+        if (!identity || identity.pluginId !== action.pluginId) return [];
         const actionId = formatQualifiedPluginActionId(identity);
+        // Offered choices consume discovery; omitted discovery is the existing
+        // authored-ID lookup used outside a mounted picker.
+        if (selected ? !selected.has(actionId) : action.available === false
+            || action.execution.target !== 'daemon' || !action.surfaces.includes('agent')) return [];
         const present = (resolved: ResolvedPluginProjectedActionPresentation): WorkflowActionSpec => ({ id: actionId, title: resolved.title,
+            ...(purpose === 'workflowStep' ? {} : { subjectKind: readPluginActionApprovalScopeSubjectKindV1({
+                declaration: action.approvalScope, pluginId: action.pluginId, subjectKinds }) }),
             plugin: { id: action.pluginId, title: projection?.installedPackagesById?.[action.pluginId]?.displayName ?? t('workflows.plugins.fromPlugins'),
                 ...(action.icon === undefined ? {} : { icon: action.icon }) },
             ...(resolved.description === null ? {} : { description: resolved.description }),
