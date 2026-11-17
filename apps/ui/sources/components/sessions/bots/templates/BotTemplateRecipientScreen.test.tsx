@@ -24,15 +24,16 @@ import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands }
 import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
 import { NewBotDraftFace } from '@/components/sessions/bots/NewBotDraftHeader';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/bots/templates/phone-template' }).module);
 vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock());
 vi.mock('@/components/sessions/bots/face/BotFaceRasterView', async () => import('@/components/sessions/bots/face/BotFaceRasterView.web'));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -42,6 +43,8 @@ vi.mock('@react-navigation/native', async importOriginal => ({
     useIsFocused: () => true,
     useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
 }));
+
+await loadSyncSingletonForTests();
 
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
 let commandReader: CurrentUiContextReader | null = null;
@@ -78,10 +81,12 @@ describe('recipient template page', () => {
             } });
         const machine = createPlainMachineRowFixture({ id: 'garden-machine', accountId: 'artifact-account', machine: hydratedMachine });
         home = await createPlainArtifactHomeFixture('https://template-draft-reopen.test', { currentAccount: true,
-            handleRequest: async path => {
+            handleRequest: async (path, init) => {
                 if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'absent' });
                 if (path === '/v1/kv/bulk') return Response.json({ values: [] });
                 if (path === '/v1/machines') return Response.json([machine]);
+                if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
+                    machineId => machineId === machine.id ? machine : null);
                 if (path === '/v1/machines/garden-machine') return Response.json({ machine });
                 return null;
             } });
@@ -186,6 +191,8 @@ describe('recipient template page', () => {
                 if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'absent' });
                 if (path === '/v1/kv/bulk') return Response.json({ values: [] });
                 if (path === '/v1/machines') return Response.json([machine]);
+                if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
+                    machineId => machineId === machine.id ? machine : null);
                 if (path === '/v1/machines/selected-machine') return Response.json({ machine });
                 // Requester-local template creation reaches the ordinary Session
                 // birth owner; it does not mint a template root authorization.
@@ -274,7 +281,9 @@ describe('recipient template page', () => {
         expect(sessionBirthRequested, JSON.stringify(result)).toBe(true);
         expect(bornMetadata).toMatchObject({ bot: { kind: 'bot' } });
         expect(bornMetadata).toHaveProperty('botFace', { seed: draftId });
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        // The ordinary Session HTTP refusal is this fixture's stopping point.
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, error: 'credential_scope_denied',
+            failureCause: { httpStatus: 403 } });
         expect(home.boundary.list()).toHaveLength(1);
         await screen.unmount();
     });
