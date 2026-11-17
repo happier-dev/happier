@@ -8,6 +8,7 @@ import { FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_R
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
+import { readLinuxWorkerProcesses } from './service_memory.mjs';
 import { createWorkspaceBuildResourceObservation } from './workspace_build_admission.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { brokerAddress, readSlotAddress, slotAddress } from './admission_socket.mjs';
@@ -120,50 +121,11 @@ async function socketListening(address) {
   } finally { peer.destroy(); }
 }
 
-function readProcessFile(path) {
-  try { return readFileSync(path, 'utf8'); }
-  catch (error) { if (error.code === 'ENOENT' || error.code === 'ESRCH') return null; throw error; }
-}
-
-/** Only the processes an admission decision credits: each admitted slot's tree,
- * walked through the kernel's per-task children lists, and each waiting client
- * itself (P03 2026-11-17: a whole-host `ps` plus every process's environ on each
- * observation kept nl1's broker at 60% CPU). A vanished process holds no pages. */
-export function readAdmissionProcesses({ roots = [], waiterPids = [] } = {}) {
-  const processes = new Map();
-  const add = (pid, parentPid) => {
-    if (processes.has(pid)) return false;
-    const rollup = readProcessFile(`/proc/${pid}/smaps_rollup`);
-    if (rollup === null) return false;
-    const field = name => {
-      const value = new RegExp(`^${name}:\\s+(\\d+)\\s+kB\\s*$`, 'm').exec(rollup)?.[1];
-      return value !== undefined && Number.isSafeInteger(Number(value)) ? Number(value) : null;
-    };
-    processes.set(pid, { pid, parentPid, rssKiB: field('Rss') ?? 0, pssKiB: field('Pss') });
-    return true;
-  };
-  const visit = (pid, parentPid) => {
-    if (!add(pid, parentPid)) return;
-    let tasks;
-    try { tasks = readdirSync(`/proc/${pid}/task`); }
-    catch (error) { if (error.code === 'ENOENT' || error.code === 'ESRCH') return; throw error; }
-    for (const task of tasks) {
-      for (const child of (readProcessFile(`/proc/${pid}/task/${task}/children`) ?? '').split(/\s+/).filter(Boolean)) {
-        visit(Number(child), pid);
-      }
-    }
-  };
-  for (const pid of roots) visit(pid, 0);
-  for (const pid of waiterPids) add(pid, 0);
-  return processes;
-}
-
 /** Physical availability already excludes resident pages. Credit each admitted
  * tree's resident pages once, reserving only the part of its floor still free. */
-export async function readAdmissionMemorySample({ slots = [], waiters = [], readProcesses = readAdmissionProcesses,
+export async function readAdmissionMemorySample({ slots = [], waiters = [], readProcesses = readLinuxWorkerProcesses,
   readMemory = readLinuxAdmissionMemory, inJobsSlice = isInAdmissionJobsSlice } = {}) {
-  const processes = slots.length || waiters.length
-    ? await readProcesses({ roots: slots.map(slot => slot.pid), waiterPids: waiters.map(item => item.pid) }) : new Map();
+  const processes = slots.length || waiters.length ? await readProcesses() : new Map();
   const roots = new Set(slots.map(slot => slot.pid));
   const waitingPids = new Set(waiters.map(item => item.pid));
   let waitingResidentMemoryKiB = 0;

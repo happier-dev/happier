@@ -2327,34 +2327,6 @@ test('connections during startup wait for the recovered initial capacity observa
   client.socket.destroy();
 });
 
-test('a memory sample reads only admitted slot trees and waiting clients, never every host process', linux, async t => {
-  // nl1 2026-11-17: a full process walk (ps plus every process's environ) on every
-  // observation kept the broker at 60% CPU with ~1 observation/s. The decision needs
-  // only its admitted trees' resident pages and its waiting clients' own pages.
-  const slot = spawn('/bin/sh', ['-c', 'sleep 30 & wait'], { stdio: 'ignore' });
-  const waiter = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
-  t.after(() => { slot.kill(); waiter.kill(); });
-  await new Promise(resolve => setTimeout(resolve, 200));
-  const descendants = spawnSync('pgrep', ['-P', String(slot.pid)], { encoding: 'utf8' }).stdout.trim().split('\n').map(Number);
-  const read = new Set();
-  const original = fs.readFileSync;
-  t.mock.method(fs, 'readFileSync', (path, ...rest) => {
-    const pid = /^\/proc\/(\d+)\//.exec(String(path))?.[1];
-    if (pid) read.add(Number(pid));
-    return original(path, ...rest);
-  });
-  syncBuiltinESMExports();
-  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
-  const sample = await readAdmissionMemorySample({ slots: [{ pid: slot.pid, floorKiB: 1024 * 1024 }],
-    waiters: [{ pid: waiter.pid }], readMemory: ({ waitingResidentMemoryKiB }) => ({ availableMemoryKiB: 1, totalMemoryKiB: 2, waitingResidentMemoryKiB }),
-    inJobsSlice: () => false });
-  const allowed = new Set([slot.pid, waiter.pid, ...descendants]);
-  assert.deepEqual([...read].filter(pid => !allowed.has(pid)), [], 'no unrelated process is read');
-  assert.ok(sample.residentMemoryKiB > 0, 'the slot tree still credits its resident pages');
-  assert.ok(sample.waitingResidentMemoryKiB > 0, 'the waiting client still credits its own pages');
-  assert.ok(sample.slotRssKiB.get(slot.pid) > 0, 'calibration still records the tree RSS');
-});
-
 test('resident descendants offset floors once, including overlapping ancestor slots', async () => {
   const sample = await readAdmissionMemorySample({ slots: [{ pid: 10, floorKiB: 80 }, { pid: 11, floorKiB: 30 }],
     readMemory: () => ({ availableMemoryKiB: 40, totalMemoryKiB: 200 }),
