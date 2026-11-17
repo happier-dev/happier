@@ -51,7 +51,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
         state.committed = true;
         publish({ kind: 'tool-result', toolCallId: state.presentation.toolCallId,
           output: { status: 'runtimeEnded', cause: content.cause }, isError: true,
-          ...correlation(state.value.turnId) });
+          ...toolCorrelation(state.value, state.presentation.toolCallId) });
       }
       // Settle pending input custody before the host closes its event stream.
       // A correlated native start already established acceptance and survives EOF.
@@ -74,6 +74,13 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     if (typeof nativeTurn !== 'string') return {};
     const admission = turns.get(nativeTurn);
     return admission ? { turnId: admission.request.delivery.turnId, agentTurnId: nativeTurn } : {};
+  }
+
+  function toolCorrelation(item: NativeRecord, itemId: string) {
+    // Reminder children stay readable in the transcript, but must not clear
+    // foreground consumers' replies as if a new tool operation had started.
+    return { ...correlation(item.turnId), ...(item.kind === 'reminderChild'
+      ? { sidechainId: typeof item.childSessionId === 'string' ? item.childSessionId : itemId } : {}) };
   }
 
   function accepted(admission: Admission) {
@@ -313,7 +320,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       : fallback ? { text: item.fallbackText ?? '' } : readMuseNativeJson(item.args);
     const input = item.tool === 'request_user_input' ? questionInput(readMuseRecord(rawInput)) : rawInput;
     state.presentation = { toolCallId, toolName, input };
-    const owner = correlation(item.turnId);
+    const owner = toolCorrelation(item, itemId);
     if (!previous) publish({ kind: 'tool-call', toolCallId, toolName, input, ...owner });
     else if (!state.committed && (item.args !== previous.value.args || item.fallbackText !== previous.value.fallbackText
       || !completed && item.visibleOutput !== previous.value.visibleOutput)) {

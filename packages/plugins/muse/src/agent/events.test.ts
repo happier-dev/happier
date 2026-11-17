@@ -224,6 +224,7 @@ it('retains readable native fallback items without creating a foreground termina
     // This turn contains three distinct native reminder children, each with its own item identity.
     expect(fallbacks).toHaveLength(3);
     expect(fallbacks.every(event => event.kind === 'tool-call' && readMuseRecord(event.input).text === 'Reminder child session')).toBe(true);
+    expect(fallbacks.every(event => event.kind === 'tool-call' && typeof event.sidechainId === 'string')).toBe(true);
     const fallback = observed.find(event => event.kind === 'tool-call' && event.toolName === 'reminderChild');
     if (!fallback || fallback.kind !== 'tool-call') throw new Error('Expected native fallback item');
     expect(observed.filter(event => event.kind === 'tool-result' && event.toolCallId === fallback.toolCallId))
@@ -241,8 +242,8 @@ it('settles an in-flight native fallback when the runtime ends', () => {
     itemId: 'reminder-01', kind: 'reminderChild', fallbackText: 'Reminder child session', status: 'inProgress',
   } } });
   projection.publish({ kind: 'runtime-ended', cause: 'processExited', retryable: true });
-  expect(observed).toContainEqual(expect.objectContaining({ kind: 'tool-call', toolCallId: 'reminder-01', toolName: 'reminderChild' }));
-  expect(observed).toContainEqual(expect.objectContaining({ kind: 'tool-result', toolCallId: 'reminder-01', isError: true }));
+  expect(observed).toContainEqual(expect.objectContaining({ kind: 'tool-call', toolCallId: 'reminder-01', toolName: 'reminderChild', sidechainId: 'reminder-01' }));
+  expect(observed).toContainEqual(expect.objectContaining({ kind: 'tool-result', toolCallId: 'reminder-01', isError: true, sidechainId: 'reminder-01' }));
   projection.dispose();
 });
 
