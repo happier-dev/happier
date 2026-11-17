@@ -34,13 +34,12 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
             audiences: [
                 { audience: 'human', allowedCount: 0, askFirstCount: 1, offCount: 0 },
                 { audience: 'agent', allowedCount: 0, askFirstCount: 1, offCount: 0 },
-                { audience: 'integration', allowedCount: 1, askFirstCount: 2, offCount: 1 },
+                { audience: 'integration', allowedCount: 1, askFirstCount: 2, offCount: 1, departed: true },
             ],
             danger: 'external',
         });
         expect(listActionSettingsEntryStatusParts(summary).map((part) => part.labelKey)).toEqual([
-            // Each audience once, by the state most of its surfaces have (integrations: 2 ask first of 4).
-            'settingsActions.status.humanAskFirst', 'settingsActions.status.agentAskFirst',
+            // Only the audience set away from its defaults (the integration waiver) is named, once.
             'settingsActions.status.integrationAskFirst',
             'settingsActions.status.external',
         ]);
@@ -129,7 +128,7 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
             askFirstCount: 0,
             offCount: 1,
             unavailableCount: 6,
-            audiences: [{ audience: 'integration', allowedCount: 1, askFirstCount: 0, offCount: 1 }],
+            audiences: [{ audience: 'integration', allowedCount: 1, askFirstCount: 0, offCount: 1, departed: true }],
             danger: null,
         })).toEqual([
             // A tie reads as the stricter state, once.
@@ -144,13 +143,23 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
             offCount: 1,
             unavailableCount: 0,
             audiences: [
-                { audience: 'agent', allowedCount: 0, askFirstCount: 1, offCount: 0 },
-                { audience: 'integration', allowedCount: 3, askFirstCount: 1, offCount: 1 },
+                { audience: 'agent', allowedCount: 0, askFirstCount: 1, offCount: 0, departed: true },
+                { audience: 'integration', allowedCount: 3, askFirstCount: 1, offCount: 1, departed: true },
             ],
             danger: null,
         })).toEqual([
             { labelKey: 'settingsActions.status.agentAskFirst', partial: false },
             { labelKey: 'settingsActions.status.integrationAllowed', partial: true },
         ]);
+    });
+    it('says nothing about an audience left on its defaults', () => {
+        expect(listActionSettingsEntryStatusParts({
+            allowedCount: 1, askFirstCount: 1, offCount: 0, unavailableCount: 0,
+            audiences: [
+                { audience: 'human', allowedCount: 1, askFirstCount: 0, offCount: 0 },
+                { audience: 'agent', allowedCount: 0, askFirstCount: 1, offCount: 0, departed: true },
+            ],
+            danger: null,
+        })).toEqual([{ labelKey: 'settingsActions.status.agentAskFirst', partial: false }]);
     });
 });

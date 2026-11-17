@@ -141,7 +141,9 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: R
 
     if (props.anatomy === 'page') {
         return (
-            <ItemGroup title={props.title ?? t('approvals.details')} description={props.description} testID={props.testID}>
+            // With no readable facts, the Technical details disclosure stands alone: no "Details" heading over nothing.
+            <ItemGroup title={fieldRows.length > 0 ? props.title ?? t('approvals.details') : undefined}
+                description={fieldRows.length > 0 ? props.description : undefined} testID={props.testID}>
                 {fieldRows.map((row, index) => row.kind === 'value' ? (
                     <ApprovalValueItem key={row.key} row={row} columns={columns} extras={rows[index]!}
                         testID={props.testID ? `${props.testID}.rows.row:${row.key}` : undefined} />

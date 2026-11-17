@@ -30,6 +30,8 @@ type ActionSettingsAudienceStatus = Readonly<{
     allowedCount: number;
     askFirstCount: number;
     offCount: number;
+    /** Some surface of this audience was set away from its default (a choice, or a surface turned off). */
+    departed?: boolean;
 }>;
 
 export type ActionSettingsEntryStatusPart = Readonly<{
@@ -86,7 +88,9 @@ export function resolveActionSettingsEntryStatusSummary(params: Readonly<{
         summary[key] += 1;
         const index = audiences.findIndex((entry) => entry.audience === audience);
         const previous = index === -1 ? { audience, allowedCount: 0, askFirstCount: 0, offCount: 0 } : audiences[index]!;
-        const next = { ...previous, [key]: previous[key] + 1 };
+        const departs = params.settings.actions[params.actionId]?.enabled === false
+            || (controlState.kind === 'approval' ? controlState.value !== 'default' : controlState.value === 'off');
+        const next = { ...previous, [key]: previous[key] + 1, ...(departs || previous.departed ? { departed: true } : {}) };
         if (index === -1) audiences.push(next);
         else audiences[index] = next;
     }
@@ -101,7 +105,8 @@ export function listActionSettingsEntryStatusParts(
         ? [{ labelKey: 'settingsActions.status.allOff', partial: false }]
         // Each audience is named once: by the state most of its surfaces have (a tie reads as the stricter one),
         // marked partial when some surfaces differ, so a row never repeats "Some integrations".
-        : summary.audiences.flatMap((audience) => {
+        // A row shows only what departs from the defaults; an audience left on its defaults says nothing.
+        : summary.audiences.filter((audience) => audience.departed === true).flatMap((audience) => {
             const total = audience.allowedCount + audience.askFirstCount + audience.offCount;
             const [key, suffix] = ([['offCount', 'Off'], ['askFirstCount', 'AskFirst'], ['allowedCount', 'Allowed']] as const)
                 .reduce((best, candidate) => audience[candidate[0]] > audience[best[0]] ? candidate : best);

@@ -215,6 +215,15 @@ it('reads a Browser view command by its target, keeping its ids and a failure co
     for (const exact of ['cmd-1', 'browser-session-1', 'view-1', 'target-1', 'openView', 'sandbox_unavailable']) expect(screen.getTextContent()).toContain(exact);
 });
 
+it('shows no Details heading over a review whose only facts are technical', async () => {
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" presentation={{ rows: [
+        { kind: 'value', path: 'action.pluginId', title: 'Plugin id', value: 'happier.triage', technical: true },
+    ], unrepresentable: null }} />);
+    const text = screen.getTextContent();
+    expect(text).toContain(t('approvals.technicalDetails'));
+    expect(text).not.toContain(t('approvals.details'));
+});
+
 it('renders the shared failure projection in the existing technical disclosure', async () => {
     const { presentActionFailureTechnicalDetails } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
     const { DeploymentSourceAdmissionFailureV1Schema } = await import('@happier-dev/protocol/deployments/deploymentReceiptEventsV1');
