@@ -220,6 +220,63 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         });
     });
 
+    it('preserves Source defaults revisions and publications for identical writes', async () => {
+        const serverId = `srv_${'f'.repeat(32)}`;
+        process.env.HAPPIER_SERVER_IDENTITY_ID = serverId;
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Leaf isolation' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const created = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
+            requestKey: randomUUID(), name: 'Selected defaults', repository, owner: { kind: 'team', teamId: team.id } }));
+        if (!created.ok) throw new Error(created.error);
+        const sourceId = created.source.id;
+        const defaults = { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } as const;
+        const first = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId,
+            expectedRevision: created.source.revision, patch: { sessionDefaults: { expectedRevision: 'absent', defaults } } }));
+        expect(first).toMatchObject({ ok: true, sessionDefaults: { revision: 1, defaults } });
+        const statements: Prisma.QueryEvent[] = [];
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
+        await client.$connect();
+        const transaction = db.$transaction;
+        db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(client.$transaction, client, args);
+        } });
+        const mutations = () => statements.filter(event => /^(INSERT|UPDATE|DELETE)\b/i.test(event.query.trimStart()));
+        try {
+            const before = await db.accountChange.findMany({ where: { accountId: owner.id,
+                entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } });
+            statements.length = 0;
+            for (let repeat = 0; repeat < 3; repeat++) {
+                expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId,
+                    expectedRevision: created.source.revision,
+                    patch: { sessionDefaults: { expectedRevision: 1, defaults } } })))
+                    .toMatchObject({ ok: true, source: { revision: created.source.revision }, sessionDefaults: { revision: 1, defaults } });
+            }
+            expect(mutations()).toHaveLength(0);
+            expect(await db.accountChange.findMany({ where: { accountId: owner.id,
+                entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } })).toEqual(before);
+            statements.length = 0;
+            const changedDefaults = { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } as const;
+            expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId,
+                expectedRevision: created.source.revision,
+                patch: { sessionDefaults: { expectedRevision: 1, defaults: changedDefaults } } })))
+                .toMatchObject({ ok: true, source: { revision: created.source.revision },
+                    sessionDefaults: { revision: 2, defaults: changedDefaults } });
+            expect(mutations().filter(event => event.query.includes('"ProjectSourceSessionDefaults"'))).toHaveLength(1);
+            expect(mutations().filter(event => event.query.includes('"ProjectSource"'))).toHaveLength(0);
+            const after = await db.accountChange.findMany({ where: { accountId: owner.id,
+                entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } });
+            expect(after[0].cursor).toBeGreaterThan(before[0].cursor);
+            expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId,
+                expectedRevision: created.source.revision,
+                patch: { sessionDefaults: { expectedRevision: 1, defaults: changedDefaults } } })))
+                .toEqual({ ok: false, error: 'source_conflict' });
+            expect(await inTx(tx => readProjectSourceInTx(tx, owner.id, { serverId, sourceId })))
+                .toMatchObject({ ok: true, sessionDefaults: { revision: 2, defaults: changedDefaults } });
+        } finally { db.$transaction = transaction; await client.$disconnect(); }
+    });
+
     it('set-reads distinct old/new audiences and delivers changes to current members and Group administrators', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const fixtures: Array<{ team: { id: string }; accounts: { id: string }[]; groups: { id: string }[] }> = [];
