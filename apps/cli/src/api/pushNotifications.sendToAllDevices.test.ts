@@ -29,13 +29,6 @@ const sendPushNotificationsAsyncSpy = vi.fn(async (_chunk: any[]): Promise<MockE
 );
 const getPushNotificationReceiptsAsyncSpy = vi.fn(async (_ids: string[]) => ({}));
 
-vi.mock('axios', () => {
-  return {
-    __esModule: true,
-    default: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), isAxiosError: (err: any) => Boolean(err?.isAxiosError) },
-  };
-});
-
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
@@ -69,21 +62,24 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
   const originalDebugPush = process.env.HAPPIER_DEBUG_PUSH;
 
   beforeEach(() => {
+    vi.spyOn(axios, 'get').mockImplementation(vi.fn());
+    vi.spyOn(axios, 'post').mockImplementation(vi.fn());
+    vi.spyOn(axios, 'delete').mockImplementation(vi.fn());
     resetActiveAccountSettingsSnapshotForTests();
     sendPushNotificationsAsyncSpy.mockClear();
     getPushNotificationReceiptsAsyncSpy.mockClear();
     (logger.debug as any).mockClear();
     vi.mocked(logger.infoFile).mockClear();
-    (axios as any).get.mockReset();
-    vi.mocked(axios.post).mockReset();
-    (axios as any).delete.mockReset();
     if (typeof originalDebugPush === 'string') {
       process.env.HAPPIER_DEBUG_PUSH = originalDebugPush;
     } else {
       delete process.env.HAPPIER_DEBUG_PUSH;
     }
   });
-  afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetActiveAccountSettingsSnapshotForTests();
+  });
 
   it('reports partial push acceptance without inventing complete success', async () => {
     sendPushNotificationsAsyncSpy.mockResolvedValueOnce([{ status: 'ok', id: 'accepted' }, { status: 'error', details: { error: 'MessageTooBig' } }]);
