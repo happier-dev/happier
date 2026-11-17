@@ -24,6 +24,7 @@ import { getPreferredLanguage, t, tLoose } from '@/text';
 import { en } from '@/text/translations/en';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { useWorkflowExistingSessionOptions } from '../screens/useWorkflowExistingSessionOptions';
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState } from '../presentation/workflowSessionChoice';
@@ -189,7 +190,10 @@ function ExampleSessionChooser(props: Readonly<{
                 if (!props.lifetime?.isCurrent()) return;
                 const session = sessions.find(candidate => candidate.sessionId === sessionId);
                 if (!session) return;
-                const selection = materializeWorkflowStarterExample(props.example, { session, timezone: readDeviceTimeZone() });
+                const serverId = resolvePortableServerIdentityForRoutingId(scope?.serverId);
+                const selection = materializeWorkflowStarterExample(props.example, {
+                    session: { ...session, ...(serverId === null ? {} : { serverId }) }, timezone: readDeviceTimeZone(),
+                });
                 if (selection.status !== 'ready') return;
                 props.onClose();
                 props.onUse(selection.example);

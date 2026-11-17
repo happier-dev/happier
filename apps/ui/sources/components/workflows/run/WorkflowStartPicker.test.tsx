@@ -678,7 +678,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     ).toMatchObject({
       trigger: {
         kind: 'sessionLifecycle',
-        sourceSessionId: session.id,
+        subject: { kind: 'session', serverId: 'srv_workflow-picker-home', sessionId: session.id },
         events: ['userActionRequired'],
       },
       definition: {
