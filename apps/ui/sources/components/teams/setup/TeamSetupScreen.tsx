@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import {
   buildProjectOpenDraft,
@@ -43,13 +43,13 @@ import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import type { TeamSetupPlan, TeamSetupRepository } from './teamSetupPlan';
-import { useTeamSetupPlan } from './useTeamSetupPlan';
+import { useTeamSetupPlan, type TeamSetupBatch } from './useTeamSetupPlan';
+import { useTeamSetupBatchProgress, type TeamSetupRepositoryPhase } from './useTeamSetupBatchProgress';
 import {
   useTeamSetupResources,
   type TeamSetupResources,
 } from './useTeamSetupResources';
 
-type RepositoryStatus = 'queued' | 'opening' | 'ready' | 'approval' | 'failed';
 type RunState =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'running'; operationId: string | null }>
@@ -208,8 +208,9 @@ function TeamSetupPlanPage(
       surface: 'ui' as const,
       serverId: context.scope.serverId,
       expectedAccountId: context.scope.accountId,
+      signal: props.lifetime.signal,
     }),
-    [context.scope.accountId, context.scope.serverId],
+    [context.scope.accountId, context.scope.serverId, props.lifetime.signal],
   );
   const plan = useTeamSetupPlan(execute, actionContext);
 
@@ -221,9 +222,6 @@ function TeamSetupPlanPage(
   const [excluded, setExcluded] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [statuses, setStatuses] = React.useState<
-    ReadonlyMap<string, RepositoryStatus>
-  >(() => new Map());
   const [run, setRun] = React.useState<RunState>({ kind: 'idle' });
 
   // The preset's own plan is read for the chosen Machine so each step shows before anything runs.
@@ -256,7 +254,7 @@ function TeamSetupPlanPage(
             : { key, plan: null, failure: result },
         );
       });
-  }, [context.scope.serverId, homeId, machineId, plan, prepareKey]);
+  }, [context.scope.serverId, homeId, machineId, plan.prepare, prepareKey]);
   const machinePlan = prepared?.key === prepareKey ? prepared : null;
 
   const included = repositories.filter((source) => !excluded.has(source.id));
@@ -281,14 +279,6 @@ function TeamSetupPlanPage(
       );
       return repository ? [repository] : [];
     });
-    setStatuses(
-      new Map(
-        repositoryInputs.map((repository) => [
-          repository.id,
-          'queued' as const,
-        ]),
-      ),
-    );
     setRun({ kind: 'running', operationId: null });
     const batch = await plan.prepare({
       target: { serverId: context.scope.serverId, homeId, machineId },
@@ -307,20 +297,12 @@ function TeamSetupPlanPage(
     let operationId: string | null = null;
     const result = await plan.run({
       plan: batch.plan,
+      selection: { team: context.address, lifetime: props.lifetime, sources: included },
       onMachineApplied: (applied) => {
         if (applied.ok && 'operationId' in applied.result) {
           operationId = applied.result.operationId;
           setRun({ kind: 'running', operationId });
         }
-      },
-      onRepositoryOpened: (id, opened) => {
-        const approval = opened.ok && ActionApprovalRequestCreatedResultSchema.safeParse(opened.result).success;
-        setStatuses((current) =>
-          new Map(current).set(
-            id,
-            !opened.ok ? 'failed' : approval ? 'approval' : 'ready',
-          ),
-        );
       },
     });
     const machineFailure =
@@ -333,7 +315,9 @@ function TeamSetupPlanPage(
         : { kind: 'done', operationId },
     );
   }, [
+    context.address,
     context.scope.serverId,
+    props.lifetime,
     homeDir,
     homeId,
     included,
@@ -503,7 +487,7 @@ function TeamSetupPlanPage(
               machineId={machineId}
               homeDir={homeDir}
               included={!excluded.has(source.id)}
-              status={statuses.get(source.id) ?? null}
+              batch={plan.batch}
               disabled={running || run.kind === 'done'}
               iconColor={theme.colors.text.secondary}
               onToggle={(next) =>
@@ -523,12 +507,15 @@ function TeamSetupPlanPage(
   );
 }
 
-const STATUS_WORD: Record<RepositoryStatus, () => string> = {
+const STATUS_WORD: Record<TeamSetupRepositoryPhase, () => string> = {
   queued: () => t('teams.join.setupPage.statusQueued'),
   opening: () => t('teams.join.setupPage.statusOpening'),
+  prepared: () => t('approvals.review'),
   ready: () => t('teams.join.setupPage.statusReady'),
   approval: () => t('teams.join.setupPage.statusApproval'),
   failed: () => t('teams.join.setupPage.statusFailed'),
+  stopped: () => t('common.unavailable'),
+  unavailable: () => t('common.unavailable'),
 };
 
 const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
@@ -537,12 +524,13 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     machineId: string | null;
     homeDir: string | null;
     included: boolean;
-    status: RepositoryStatus | null;
+    batch: TeamSetupBatch | null;
     disabled: boolean;
     iconColor: string;
     onToggle: (included: boolean) => void;
   }>,
 ) {
+  const progress = useTeamSetupBatchProgress(props.batch, props.source.id);
   const destination = props.machineId
     ? suggestProjectOpenDestination({
         machineId: props.machineId,
@@ -564,9 +552,9 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
           : undefined
       }
       showChevron={false}
-      detail={props.status ? STATUS_WORD[props.status]() : undefined}
+      detail={progress ? STATUS_WORD[progress.phase]() : undefined}
       rightElement={
-        props.status ? undefined : (
+        progress ? undefined : (
           <Switch
             testID={`team-setup-repository-include:${props.source.id}`}
             value={props.included}
