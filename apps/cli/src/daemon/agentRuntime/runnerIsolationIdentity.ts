@@ -38,28 +38,29 @@ export function createRunnerIsolationIdentity(input: Readonly<{
     signal.throwIfAborted();
     return !input.signal.aborted && input.isCurrent() && isDeepStrictEqual(input.origin, current);
   };
+  // The one shared qualification read. Each launch still owns its fresh currentness checks below.
+  const readIdentity = () => identity ??= (async (): Promise<HostRequesterExecutionIdentity> => {
+    runtime = input.tracked.requesterSessionRuntimeContext ?? await input.resolveRuntime?.(input.signal) ?? null;
+    try {
+      const context = {
+        happyHomeDir: configuration.happyHomeDir, serverId: input.serverId,
+        serverHttpBaseUrl: input.serverBaseUrl, machineId: input.machineId, sessionId: input.sessionId,
+        credentials: input.credentials, attribution, runtimeContext: runtime,
+        hostHomeServerIdentityId: input.origin?.machineId === input.machineId ? input.origin.serverIdentityId : null,
+        sessionCustodianAccountId: input.custodianAccountId,
+        isCurrent: () => isCurrent(), signal: input.signal,
+      };
+      if (runtime) return await resolveRequesterSessionExecutionIdentityForHost(context);
+      ordinaryCustody = await captureOrdinaryRequesterSessionAccountCustodyForHost(context);
+      if (!ordinaryCustody) return { kind: 'unknown', reason: 'session_requester_unavailable' };
+      return selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: context.hostHomeServerIdentityId,
+        hostAccountAgent: { ...ordinaryCustody.attribution, custodianAccountId: ordinaryCustody.attribution.accountId } });
+    } finally { await input.releaseRuntime(runtime ?? null); }
+  })();
   const resolve = async (launchSignal?: AbortSignal): Promise<HostRequesterExecutionIdentity> => {
     const signal = launchSignal ? AbortSignal.any([input.signal, launchSignal]) : input.signal;
     signal.throwIfAborted();
-    identity ??= (async (): Promise<HostRequesterExecutionIdentity> => {
-      runtime = input.tracked.requesterSessionRuntimeContext ?? await input.resolveRuntime?.(input.signal) ?? null;
-      try {
-        const context = {
-          happyHomeDir: configuration.happyHomeDir, serverId: input.serverId,
-          serverHttpBaseUrl: input.serverBaseUrl, machineId: input.machineId, sessionId: input.sessionId,
-          credentials: input.credentials, attribution, runtimeContext: runtime,
-          hostHomeServerIdentityId: input.origin?.machineId === input.machineId ? input.origin.serverIdentityId : null,
-          sessionCustodianAccountId: input.custodianAccountId,
-          isCurrent: () => isCurrent(), signal: input.signal,
-        };
-        if (runtime) return await resolveRequesterSessionExecutionIdentityForHost(context);
-        ordinaryCustody = await captureOrdinaryRequesterSessionAccountCustodyForHost(context);
-        if (!ordinaryCustody) return { kind: 'unknown', reason: 'session_requester_unavailable' };
-        return selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: context.hostHomeServerIdentityId,
-          hostAccountAgent: { ...ordinaryCustody.attribution, custodianAccountId: ordinaryCustody.attribution.accountId } });
-      } finally { await input.releaseRuntime(runtime ?? null); }
-    })();
-    const resolved = await waitForObservation(identity, signal);
+    const resolved = await waitForObservation(readIdentity(), signal);
     signal.throwIfAborted();
     if (!await isCurrent(signal) || runtime && (input.tracked.requesterSessionRuntimeContext !== runtime
       || !await waitForObservation(runtime.isCurrent(signal), signal))) return { kind: 'unknown', reason: 'session_requester_unavailable' };
@@ -73,5 +74,11 @@ export function createRunnerIsolationIdentity(input: Readonly<{
     }
     return resolved;
   };
-  return { resolve, isCurrent };
+  /** Starts the shared read when the invocation is created, so the first native launch
+   * (the Agent itself, started at Session open) does not wait for the Home round trip.
+   * Its outcome is observed by every launch through `resolve`, which awaits the same read. */
+  const prefetch = () => {
+    if (!input.signal.aborted) void readIdentity().catch(() => undefined);
+  };
+  return { resolve, isCurrent, prefetch };
 }

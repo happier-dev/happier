@@ -1610,7 +1610,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
           // an optional native isolation policy/transport port installed.
           const isolationOrigin = await params.resolveCurrentMachineExecutionOriginContext?.(signal) ?? null;
           const isolationAttribution = tracked.requesterWorkAttributionV1 ?? tracked.spawnOptions?.requesterWorkAttributionV1;
-          const { resolve: resolveIsolationIdentity, isCurrent: isolationStillCurrent } = createRunnerIsolationIdentity({
+          const { resolve: resolveIsolationIdentity, isCurrent: isolationStillCurrent, prefetch: prefetchIsolationIdentity } = createRunnerIsolationIdentity({
             signal, serverId: params.serverId, serverBaseUrl: params.serverBaseUrl, machineId: params.machineId,
             sessionId, credentials: params.credentials, custodianAccountId: params.externalActionAccountId,
             tracked, origin: isolationOrigin, readOrigin: params.resolveCurrentMachineExecutionOriginContext,
@@ -1620,6 +1620,8 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               resolveSessionAccountContext(sessionId, isolationAttribution, requestSignal) } : {}),
             releaseRuntime: releaseSessionAccountContext,
           });
+          // Every native launch of this invocation (the Agent at open, Git, tools) consumes it.
+          prefetchIsolationIdentity();
           if (!invocationRetainsRegistryLease) {
             await lease.release();
           }

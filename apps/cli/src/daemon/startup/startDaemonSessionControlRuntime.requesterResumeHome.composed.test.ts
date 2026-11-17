@@ -44,6 +44,29 @@ it.each(['unchanged', 'renewed', 'other-account'] as const)('native runner admit
     : { kind: 'isolated', separationRequired: false, requester: { accountId: 'requester' } });
 });
 
+it('prefetch starts the requester qualification before the first native launch, which reuses it', async () => {
+  const origin = { serverIdentityId: 'srv_ordinary_prefetch', machineId: 'machine' };
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
+    ordinaryAccountSession: true, externalActionAccountId: 'requester', homeServerIdentityId: origin.serverIdentityId,
+    resolveCurrentMachineExecutionOriginContext: async () => origin,
+  });
+  const credentials = await readStoredCredentialsForServerId('session-home');
+  if (!credentials) throw new Error('Missing fixture credentials');
+  const homeSessionReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).includes('/v2/sessions/')).length;
+  const identity = createRunnerIsolationIdentity({ signal: h.signal, serverId: 'session-home',
+    serverBaseUrl: 'https://session-home.test', machineId: 'machine', sessionId: h.sessionId,
+    credentials, custodianAccountId: 'requester', tracked: h.tracked, origin,
+    readOrigin: async () => origin, isCurrent: () => true, releaseRuntime: async () => {},
+  });
+  const beforePrefetch = homeSessionReads();
+  identity.prefetch();
+  // The Home qualification read starts at invocation creation, not at the first launch.
+  await vi.waitFor(() => expect(homeSessionReads()).toBe(beforePrefetch + 1));
+  await expect(identity.resolve()).resolves.toMatchObject({ kind: 'isolated', requester: { accountId: 'requester' } });
+  await expect(identity.resolve()).resolves.toMatchObject({ kind: 'isolated' });
+  expect(homeSessionReads()).toBe(beforePrefetch + 1);
+});
+
 it.each(['unchanged', 'renewed', 'other-account', 'other-daemon-account'] as const)('ordinary owner Resume preserves Account binding with %s sign-in', async signIn => {
   const home = 'srv_ordinary_resume';
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
