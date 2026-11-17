@@ -2,7 +2,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { AutomationExecutionDefinitionCreateRequestSchema } from '../../automations/automationApiV3.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
-import { SessionInitialTriggerDefinitionV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import { AutomationTriggerDefinitionInputSchema } from '../../automations/automationTriggerDefinition.js';
 
 /** Host-sealed Automation intent, consumed only inside the Session birth transaction. */
 export const SessionInitialTriggerAdmissionV1Schema = z.lazy(() => {
@@ -12,7 +12,7 @@ export const SessionInitialTriggerAdmissionV1Schema = z.lazy(() => {
     executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema,
     triggers: z.array(z.strictObject({
       triggerId: AutomationTriggerIdSchema,
-      trigger: SessionInitialTriggerDefinitionV1Schema,
+      trigger: AutomationTriggerDefinitionInputSchema,
     })),
   });
 });
