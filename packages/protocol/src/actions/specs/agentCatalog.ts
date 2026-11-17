@@ -72,6 +72,11 @@ export function inventoryOutputWithProbeObservation(observationSchema: z.ZodMini
   })));
 }
 
+// Refinement requirements are not inferred by JSON Schema conversion. Keep
+// their discovery guidance on the schema consumed by every Action surface.
+const AGENT_SPAWN_OPTIONS_TARGET_GUIDANCE =
+  'Supply agentId or backendTargetKey from agents.backends.list for the selected Agent. machineId alone does not select an Agent.';
+
 export const AgentsModelsListInputSchema = lazyZodSchema(() => z.strictObject({
   purpose: z.optional(z.enum(['scm_diff_summary', 'llm_task_runner'])),
   /** `llm_task_runner`: the background task whose runner to resolve on the machine. */
@@ -113,7 +118,7 @@ export const AgentsModelsListInputSchema = lazyZodSchema(() => z.strictObject({
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-})));
+}), z.meta({ description: `For an Agent model catalog, omit purpose. ${AGENT_SPAWN_OPTIONS_TARGET_GUIDANCE} The scm_diff_summary and llm_task_runner purposes instead require machineId and their purpose-specific fields, without an Agent selector.` })));
 
 export const AgentSpawnOptionsListInputBaseSchema = lazyZodSchema(() => z.object({
   agentId: z.optional(z.string().check(z.minLength(1))),
@@ -134,7 +139,7 @@ export const AgentSpawnOptionsListInputSchema = lazyZodSchema(() => (<T extends 
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-})));
+}), z.meta({ description: AGENT_SPAWN_OPTIONS_TARGET_GUIDANCE })));
 
 /**
  * `sessions.spawn.profiles.list` is the one spawn-option source whose agent
@@ -170,7 +175,7 @@ export const AgentsConfigOptionsListInputSchema = lazyZodSchema(() => (<T extend
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-})));
+}), z.meta({ description: AGENT_SPAWN_OPTIONS_TARGET_GUIDANCE })));
 
 export const SpawnConnectedServicesListInputSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.extend(AgentSpawnOptionsListInputBaseSchema, {
   includeUnavailable: z.optional(z.boolean()),
@@ -185,7 +190,7 @@ export const SpawnConnectedServicesListInputSchema = lazyZodSchema(() => (<T ext
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-})));
+}), z.meta({ description: AGENT_SPAWN_OPTIONS_TARGET_GUIDANCE })));
 
 export const SpawnMcpServersPreviewInputSchema = lazyZodSchema(() => z.looseObject({
   agentId: z.optional(z.string().check(z.minLength(1))),
@@ -204,7 +209,7 @@ export const SpawnMcpServersPreviewInputSchema = lazyZodSchema(() => z.looseObje
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-})));
+}), z.meta({ description: AGENT_SPAWN_OPTIONS_TARGET_GUIDANCE })));
 
 function createAgentCatalogActionSpecs() {
   return Object.freeze([
