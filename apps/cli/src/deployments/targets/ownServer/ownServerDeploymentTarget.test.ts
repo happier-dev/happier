@@ -964,11 +964,13 @@ describe('own-server target at the Action host boundary', () => {
                 } }),
         };
         let nativeInventoryReads = 0;
+        let runtimeAcquisitions = 0;
         let readAcquiredHealthAlertSource: Awaited<ReturnType<typeof host.runtime.acquire>>['readHealthAlertSource'];
         // Measurement forwards every operation into the real owner. Its public
         // object is frozen, so a spy cannot be installed on that object itself.
         const measuredHost: OwnServerDeploymentTargetHostInput = { ...host, runtime: {
             async acquire(request, admission) {
+                runtimeAcquisitions++;
                 const runtime = await host.runtime.acquire(request, admission);
                 if (retainedHealth) readAcquiredHealthAlertSource = runtime.readHealthAlertSource;
                 function listProjectServices(): readonly ProjectManagedServiceHandle[];
@@ -4043,10 +4045,13 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                         phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true });
                     expect((await docker.readContainerIds()).length).toBeGreaterThan(0);
                 }
+                const acquisitionsBeforeCleanup = runtimeAcquisitions;
                 const cleaned = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'cleanup', selectedDeploymentId: receipt.deployment.id });
                 // A failure before generation registration leaves no native generation to remove.
                 expect(cleaned).toMatchObject({ ok: true });
+                if (scenario === 'cleanup_without_candidate') expect(runtimeAcquisitions - acquisitionsBeforeCleanup).toBe(0);
+                if (scenario === 'cleanup_native_candidate') expect(runtimeAcquisitions - acquisitionsBeforeCleanup).toBeGreaterThan(0);
                 expect(receipt.content.machineResults[0]?.steps).toContainEqual(expect.objectContaining({
                     id: 'own-server-candidate-cleanup', state: 'succeeded' }));
                 expect(await docker.readContainerIds()).toEqual([]);
