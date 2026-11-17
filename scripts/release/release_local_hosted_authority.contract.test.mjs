@@ -375,7 +375,7 @@ fs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify(process.argv.slice(2
       assert.equal(plan.hostedDispatch.inputs.validation_profile, environment === 'preview' ? 'integrated' : 'stable');
       assert.equal(plan.hostedDispatch.inputs.authorized_promotion_source_sha, DEV_SOURCE_SHA);
       const grantArgs = [...args, '--release-profile', 'integrated',
-        '--include-validation-suites', 'binary-smoke', '--waive-validation-suites', 'source-contracts',];
+        '--include-validation-suites', 'binary-smoke', '--waive-validation-suites', 'docker-release-assets',];
       const grantResult = spawnSync(process.execPath, [...grantArgs, '--dry-run', '--json'], { cwd: repoRoot, env, encoding: 'utf8' });
       assert.equal(grantResult.status, 0, grantResult.stderr);
       const grantPlan = JSON.parse(grantResult.stdout);

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,6 +33,8 @@ test('pipeline CLI release dry-run reports hosted deploy inputs without predicti
         'test-release',
         '--waive-ci',
         'true',
+        '--include-validation-suites',
+        'installers-smoke',
         '--waive-validation-suites',
         'docker-release-assets',
         '--override-reason',
@@ -63,11 +67,54 @@ test('pipeline CLI release dry-run reports hosted deploy inputs without predicti
     assert.match(out, /- deploy_targets: server/);
     assert.match(out, /- force_deploy: true/);
     assert.match(out, /- waive_ci: true/);
+    assert.match(out, /- include_validation_suites: installers-smoke/);
     assert.match(out, /- waive_validation_suites: docker-release-assets/);
     assert.match(out, /- override_reason: Maintainer accepted the bounded release risk\./);
     assert.doesNotMatch(out, /runDeployServer|runPublish/);
   } finally {
     stub.cleanup();
+  }
+});
+
+test('release planning rejects unknown suites from flags and approved packet inputs before emitting transport', () => {
+  const stub = createReleaseCliDryRunEnv();
+  const root = mkdtempSync(resolve(tmpdir(), 'release-suite-admission-'));
+  const pipelineCli = resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs');
+  const args = [pipelineCli, 'release', '--confirm', 'release dev to preview',
+    '--repository', 'happier-dev/happier', '--deploy-environment', 'preview',
+    '--release-notes-id', 'test-release', '--operation-id', 'rel_suite_validation',
+    '--attempt-id', 'attempt_1', '--ci-run-id', '123', '--dry-run', '--json'];
+  const run = (extra) => spawnSync(process.execPath, [...args, ...extra], {
+    cwd: repoRoot, env: stub.env, encoding: 'utf8', timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
+  });
+  try {
+    const valid = run([]);
+    assert.equal(valid.status, 0, valid.stderr);
+    const plan = JSON.parse(valid.stdout);
+    for (const [flag, input, override] of [
+      ['--include-validation-suites', 'include_validation_suites', 'includeValidationSuiteIds'],
+      ['--waive-validation-suites', 'waive_validation_suites', 'waiveValidationSuiteIds'],
+    ]) {
+      const approved = structuredClone(plan);
+      approved.hostedDispatch.inputs[input] = 'mysql-contract';
+      approved.hostedDispatch.inputs.override_reason = 'Approved validation refinement';
+      approved.overrides[override] = ['mysql-contract'];
+      approved.overrides.reason = 'Approved validation refinement';
+      const approvedPath = resolve(root, 'approved-intent.json');
+      writeFileSync(approvedPath, JSON.stringify(approved));
+      for (const [source, extra] of [
+        ['flag', [flag, 'mysql-contract', '--override-reason', 'Approved validation refinement']],
+        ['approved packet', ['--approved-intent', approvedPath]],
+      ]) {
+        const result = run(extra);
+        assert.equal(result.status, 1, `${source} ${flag}: ${result.stderr}`);
+        assert.match(result.stderr, /Unknown release validation suite.*mysql-contract/);
+        assert.equal(result.stdout, '', 'refused suites must not emit dispatch transport');
+      }
+    }
+  } finally {
+    stub.cleanup();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
