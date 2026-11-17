@@ -68,6 +68,8 @@ import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forked
 import type { SessionForkSupportSource } from '../domains/sessionFork/forkUiSupport';
 import { getPermissionsInUiWhileLocal } from '../domains/state/agentStateCapabilities';
 import { getSessionLocalControlState, type SessionLocalControlState } from '../domains/session/control/sessionLocalControl';
+import { resolveAgentIdFromFlavor, type AgentId } from '@happier-dev/agents';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
 import { isMachineVisibleForLaunchSelection } from '../domains/machines/identity/filterVisibleMachines';
 import { resolveServerIdForSessionIdFromLocalState } from '../runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
@@ -1702,6 +1704,30 @@ export function useAllSessions(): Session[] {
       return sortValuesByUpdatedAtDescending(state.sessions);
     })
   );
+}
+
+/** Latest usage-limit evidence for one provider, shared by every session composer using it. */
+export function useLatestProviderUsageRuntimeIssueForAgent(agentId: AgentId | null): Readonly<{
+  isDataReady: boolean;
+  issue: SessionRuntimeIssueV1 | null;
+}> {
+  return getStorage()(useShallow((state) => {
+    if (!state.isDataReady || !agentId) return { isDataReady: state.isDataReady, issue: null };
+    let latest: SessionRuntimeIssueV1 | null = null;
+    let latestSessionUpdatedAt = -1;
+    for (const session of Object.values(state.sessions)) {
+      const issue = session.lastRuntimeIssue;
+      if (!issue?.usageLimit || resolveAgentIdFromFlavor(issue.provider) !== agentId) continue;
+      if (
+        latest
+        && (issue.occurredAt < latest.occurredAt
+          || (issue.occurredAt === latest.occurredAt && session.updatedAt <= latestSessionUpdatedAt))
+      ) continue;
+      latest = issue;
+      latestSessionUpdatedAt = session.updatedAt;
+    }
+    return { isDataReady: true, issue: latest };
+  }));
 }
 
 export function useAllSessionsForAttention(): Session[] {

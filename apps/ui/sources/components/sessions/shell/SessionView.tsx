@@ -243,6 +243,7 @@ import { useSessionMachineReachability } from '@/components/sessions/model/useSe
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import {
     computeConnectedServiceQuotaGaugeViewModel,
+    deriveConnectedServiceQuotaSnapshotFromRuntimeIssue,
     selectConnectedServiceSessionProviderUsageGaugeSource,
     type ConnectedServiceQuotaGaugeLabelFormatter,
     type ConnectedServiceQuotaGaugeWindowMode,
@@ -261,6 +262,7 @@ import {
 } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { resolveConnectedServiceCredentialHealthStatus } from '@/sync/domains/connectedServices/resolveConnectedServiceCredentialHealthStatus';
 import { resolveConnectedServiceProjectionSignature } from '@/sync/domains/connectedServices/resolveConnectedServiceProjectionSignature';
+import { useLatestProviderUsageRuntimeIssueForAgent } from '@/sync/store/hooks';
 import { resolveConnectedServiceQuotaProfileRefForSession } from './resolveConnectedServiceQuotaProfileRefForSession';
 import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
@@ -3800,10 +3802,36 @@ function SessionViewLoaded({
     const connectedServiceQuotaProfileRef = React.useMemo(() => (
         resolveConnectedServiceQuotaProfileRefForSession({
             metadata: session.metadata,
-            agentId,
+            agentId: liveComposerState.agentId,
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, agentId, session.metadata]);
+    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata]);
+    const latestProviderUsageIssue = useLatestProviderUsageRuntimeIssueForAgent(liveComposerState.agentId);
+    const providerRuntimeIssue = latestProviderUsageIssue.isDataReady
+        ? latestProviderUsageIssue.issue
+        : session.lastRuntimeIssue ?? null;
+    const providerRuntimeIssueSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(providerRuntimeIssue);
+    const sessionProviderRuntimeIssue = resolveAgentIdFromFlavor(session.lastRuntimeIssue?.provider) === liveComposerState.agentId
+        ? session.lastRuntimeIssue ?? null
+        : null;
+    const sessionProviderRuntimeIssueSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(sessionProviderRuntimeIssue);
+    const providerRuntimeIssueMatchesProfile = Boolean(
+        providerRuntimeIssueSnapshot
+        && connectedServiceQuotaProfileRef
+        && connectedServiceProfileKey(providerRuntimeIssueSnapshot) === connectedServiceProfileKey(connectedServiceQuotaProfileRef),
+    );
+    const sessionRuntimeIssueDescribesAccountSwitch = Boolean(
+        sessionProviderRuntimeIssueSnapshot
+        && connectedServiceQuotaProfileRef
+        && connectedServiceProfileKey(sessionProviderRuntimeIssueSnapshot) !== connectedServiceProfileKey(connectedServiceQuotaProfileRef),
+    );
+    const scopedProviderRuntimeIssue = connectedServiceQuotaProfileRef
+        ? sessionRuntimeIssueDescribesAccountSwitch
+            ? sessionProviderRuntimeIssue
+            : providerRuntimeIssueMatchesProfile
+                ? providerRuntimeIssue
+                : sessionProviderRuntimeIssue
+        : providerRuntimeIssue;
     const connectedServiceQuotaGroupService = React.useMemo(() => (
         connectedServiceQuotaProfileRef?.groupId
             ? accountProfile?.connectedServicesV2.find((service) => (
@@ -4077,14 +4105,14 @@ function SessionViewLoaded({
             connectedServiceRefProvenance: providerUsageDisplaySnapshotSource?.connectedServiceRefProvenance ?? null,
             sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
             recoveryCredits: usageLimitRecoveryCredits,
-            runtimeIssue: session.lastRuntimeIssue ?? null,
+            runtimeIssue: scopedProviderRuntimeIssue,
         });
     }, [
         connectedServiceQuotasEnabled,
         connectedServiceQuotaProfileCredentialUsable,
         liveComposerState.agentId,
         providerUsageDisplaySnapshotSource,
-        session.lastRuntimeIssue,
+        scopedProviderRuntimeIssue,
         sessionProviderUsageGaugeMode,
         usageLimitRecoveryCredits,
         usageLimitRecoveryCheckNowSupported,
