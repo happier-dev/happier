@@ -29,6 +29,8 @@
     "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/databases": "0.0.0",
     "@happier-dev/database-protocol": "0.0.0",
+    "@happier-dev/triage-protocol": "0.0.0",
+    "@happier-dev/triage-sources": "0.0.0",
     "protobufjs": "7.6.6"
   },
   "devDependencies": {

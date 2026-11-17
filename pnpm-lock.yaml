@@ -3011,31 +3011,6 @@ importers:
         specifier: 3.2.4
         version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.0.10)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
-  packages/plugins/telemetry:
-    dependencies:
-      '@happier-dev/database-protocol':
-        specifier: 0.0.0
-        version: link:../../database-protocol
-      '@happier-dev/databases':
-        specifier: 0.0.0
-        version: link:../../databases
-      '@happier-dev/plugin-sdk':
-        specifier: 0.0.0
-        version: link:../../plugin-sdk
-      protobufjs:
-        specifier: 7.6.6
-        version: 7.6.6
-    devDependencies:
-      '@types/node':
-        specifier: ^22.19.3
-        version: 22.20.5
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: 3.2.4
-        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@22.20.5)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
-
   packages/plugins/database-workbench:
     dependencies:
       '@happier-dev/database-protocol':
@@ -4554,6 +4529,37 @@ importers:
       react-native:
         specifier: 0.83.5
         version: 0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.0)(react@19.2.0)(supports-color@8.1.1)
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.4
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@22.20.5)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+
+  packages/plugins/telemetry:
+    dependencies:
+      '@happier-dev/database-protocol':
+        specifier: 0.0.0
+        version: link:../../database-protocol
+      '@happier-dev/databases':
+        specifier: 0.0.0
+        version: link:../../databases
+      '@happier-dev/plugin-sdk':
+        specifier: 0.0.0
+        version: link:../../plugin-sdk
+      '@happier-dev/triage-protocol':
+        specifier: 0.0.0
+        version: link:../../triage-protocol
+      '@happier-dev/triage-sources':
+        specifier: 0.0.0
+        version: link:../../triage-sources
+      protobufjs:
+        specifier: 7.6.6
+        version: 7.6.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.3
+        version: 22.20.5
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

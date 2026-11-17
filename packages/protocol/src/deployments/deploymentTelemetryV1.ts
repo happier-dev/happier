@@ -36,6 +36,8 @@ export const DeploymentTelemetryAssignmentsV1Schema = lazyZodSchema(() => z.stri
         environmentId: DeploymentIdentifierV1Schema,
         tokenHash: z.nullable(DeploymentTelemetryTokenHashV1Schema),
         capabilities: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
+        /** The Team owning the Environment's Project; the collector's native issue writer shares new issues with it (D34). */
+        teamId: z.optional(DeploymentIdentifierV1Schema),
     })),
 }));
 export type DeploymentTelemetryAssignmentsV1 = z.infer<typeof DeploymentTelemetryAssignmentsV1Schema>;

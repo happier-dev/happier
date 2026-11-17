@@ -1,6 +1,7 @@
 import { listDeploymentDomainPageInTx, listDeploymentDataPageInTx } from '@/app/deployments/deploymentAccountPageReadService';
 import { registerDeploymentAppEnrollmentRoute } from './deploymentAppEnrollmentRoute';
 import { z } from 'zod/mini';
+import { ProjectSourceOwnerV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DeploymentApprovalEnvironmentInputV1Schema, DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { isDeploymentApprovalMetadataPreparationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
@@ -79,11 +80,17 @@ export function registerDeploymentRoutes(app: Fastify): void {
         const rows = await inReadSnapshot(tx => tx.deploymentEnvironment.findMany({
             where: { telemetryMachineId: request.params.machineId, deletedAt: null },
             select: { id: true, telemetryTokenHash: true, telemetryMetricsEnabled: true,
-                telemetryAppLlmCostEnabled: true, telemetryExceptionsEnabled: true }, orderBy: { id: 'asc' },
+                telemetryAppLlmCostEnabled: true, telemetryExceptionsEnabled: true,
+                projectSource: { select: { owner: true } } }, orderBy: { id: 'asc' },
         }));
+        // D34: the owning Team receives the collector's native issue grants; personal Projects share nothing.
+        const teamOf = (owner: unknown) => {
+            const parsed = ProjectSourceOwnerV1Schema.safeParse(owner);
+            return parsed.success && parsed.data.kind === 'team' ? { teamId: parsed.data.teamId } : {};
+        };
         return reply.send({ ok: true as const, assignments: rows.map(row => ({ environmentId: row.id, tokenHash: row.telemetryTokenHash,
             capabilities: { metrics: row.telemetryMetricsEnabled, appLlmCost: row.telemetryAppLlmCostEnabled,
-                exceptions: row.telemetryExceptionsEnabled } })) });
+                exceptions: row.telemetryExceptionsEnabled }, ...teamOf(row.projectSource.owner) })) });
     });
     app.get('/v1/deployments/domains', {
         preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,

@@ -102,6 +102,24 @@ export const databaseActionMetadata = {
         ...write, dangerLevel: 'writesLocal', title: 'Configure database capture', placementBindings: ['secondary'],
         confirmation: { title: 'Change database capture for this project?' },
     },
+    [database.TELEMETRY_METRICS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected telemetry metrics' },
+    [database.TELEMETRY_COSTS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected app LLM cost operands' },
+    [database.TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1]: { ...read, title: 'Check saved key flow' },
+    [database.TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1]: { ...read, title: 'Compare retained deployment windows' },
+    [database.TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1]: {
+        ...write, title: 'Schedule regression check', placementBindings: [],
+        confirmation: { title: 'Schedule this Workflow’s regression check?' },
+    },
+    [database.TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1]: { ...read, title: 'Read exception occurrences' },
+    // Native issue lifecycle edits go to the collector's single issue writer.
+    [database.TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1]: {
+        ...write, title: 'Change an exception issue', placementBindings: ['secondary'],
+        confirmation: { title: 'Change this issue’s status?' },
+    },
+    [database.TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1]: {
+        ...write, title: 'Refresh exception issues', placementBindings: [],
+        confirmation: { title: 'Refresh exception issues?' },
+    },
 } as const satisfies Record<database.DatabaseActionIdV1, Metadata>;
 
 /** Admission and execution consume the declaration's canonical input predicate. */

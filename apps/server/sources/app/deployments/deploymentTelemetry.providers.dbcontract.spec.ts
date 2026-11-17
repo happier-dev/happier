@@ -251,6 +251,11 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tel
             expect(changed.statusCode, changed.body).toBe(200);
             expect((await assignments()).json()).toEqual({ ok: true,
                 assignments: [{ environmentId: f.environment.id, tokenHash: null, capabilities: selected }] });
+            // D34: a Team-owned Project's Team travels with the assignment for the native issue writer's grants.
+            await db.projectSource.update({ where: { id: f.environment.projectSourceId }, data: { owner: { kind: 'team', teamId: 'team-d34' } } });
+            expect((await assignments()).json()).toEqual({ ok: true,
+                assignments: [{ environmentId: f.environment.id, tokenHash: null, capabilities: selected, teamId: 'team-d34' }] });
+            await db.projectSource.update({ where: { id: f.environment.projectSourceId }, data: { owner: { kind: 'account', accountId: f.owner.id } } });
             const mismatched = await app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${f.environment.id}/bindings`, headers: { authorization: `Bearer ${ownerBearer}` },
                 payload: { serverId, environmentId: f.environment.id, expectedRevision: 3, ...reference,

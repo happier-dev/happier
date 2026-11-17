@@ -33,6 +33,14 @@ export const DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1 = 'happier.telemetry/action
 export const DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 = 'happier.telemetry/actions/capture/endpoints/list' as const;
 export const DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 = 'happier.telemetry/actions/capture/clear' as const;
 export const DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/configure' as const;
+export const TELEMETRY_METRICS_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/metrics/read' as const;
+export const TELEMETRY_COSTS_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/costs/read' as const;
+export const TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 = 'happier.telemetry/actions/health/key-flow' as const;
+export const TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/regressions/compare' as const;
+export const TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/regressions/schedule' as const;
+export const TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/occurrences/read' as const;
+export const TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/issues/transition' as const;
+export const TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/issues/refresh' as const;
 
 export const DATABASE_ACTION_IDS_V1 = [
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
@@ -68,6 +76,14 @@ export const DATABASE_ACTION_IDS_V1 = [
     DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
     DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
     DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
+    TELEMETRY_METRICS_READ_ACTION_ID_V1,
+    TELEMETRY_COSTS_READ_ACTION_ID_V1,
+    TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1,
+    TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1,
+    TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1,
+    TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1,
+    TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1,
+    TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1,
 ] as const;
 
 export type DatabaseActionIdV1 = typeof DATABASE_ACTION_IDS_V1[number];
