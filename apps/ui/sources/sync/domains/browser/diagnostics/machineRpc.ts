@@ -4,7 +4,8 @@ import {
     type BrowserDiagnosticsSnapshotV1,
     type BrowserDiagnosticsRequestDetailV1,
 } from '@happier-dev/protocol/browser/diagnostics/v1';
-import { isRpcMethodNotFoundResult, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
 
@@ -19,13 +20,8 @@ export type BrowserDiagnosticsSnapshotClientInput = Readonly<{
 
 export type BrowserDiagnosticsSnapshotClientResult =
     | Readonly<{ ok: true; snapshot: BrowserDiagnosticsSnapshotV1; revision?: number; requestDetail?: BrowserDiagnosticsRequestDetailV1 }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
-
-function isRpcMethodNotFoundError(error: unknown): boolean {
-    if (!error || typeof error !== 'object') return false;
-    const carrier = error as { rpcErrorCode?: unknown };
-    return carrier.rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND;
-}
+    | (Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>
+        & Pick<MachineDaemonRpcFailure, 'errorCode' | 'failureCause' | 'details'>);
 
 export async function fetchBrowserDiagnosticsSnapshotViaMachineRpc(
     input: BrowserDiagnosticsSnapshotClientInput,
@@ -61,10 +57,8 @@ export async function fetchBrowserDiagnosticsSnapshotViaMachineRpc(
             ...(parsed.data.requestDetail === undefined ? {} : { requestDetail: parsed.data.requestDetail }),
             ...(parsed.data.revision === undefined ? {} : { revision: parsed.data.revision }) };
     } catch (error) {
-        if (isRpcMethodNotFoundError(error)) {
-            return { ok: false, reason: 'unavailable' };
-        }
-        return { ok: false, reason: 'request_failed' };
+        const failure = projectMachineDaemonRpcFailure(error);
+        return { ...failure, reason: failure.reason === 'older_happier' ? 'unavailable' : 'request_failed' };
     }
 }
 

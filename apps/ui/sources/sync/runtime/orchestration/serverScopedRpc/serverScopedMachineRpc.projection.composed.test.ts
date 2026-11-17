@@ -16,6 +16,7 @@ import {
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { Encryption } from '@/sync/encryption/encryption';
 import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
+import { createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -30,6 +31,15 @@ import {
 import { machineRpcWithServerScope } from './serverScopedMachineRpc';
 import { resetScopedMachineTransportCacheForTests } from './serverScopedRpcPool';
 import { serverScopedRpcSocketPool } from './serverScopedRpcSocketPool';
+import { dispatchBrowserContextActionViaMachineRpc } from '@/sync/domains/browser/context/machineRpc';
+import { dispatchBrowserDaemonControlCommandViaMachineRpc, listBrowserDaemonViewsViaMachineRpc, watchBrowserDaemonViewsViaMachineRpc } from '@/sync/domains/browser/control/machineRpc';
+import { fetchBrowserDiagnosticsSnapshotViaMachineRpc } from '@/sync/domains/browser/diagnostics/machineRpc';
+import { createManagedChromiumBrowserAnnotationCaptureProvider } from '@/sync/domains/browser/context/managedChromiumAnnotationProvider';
+import { createBrowserAnnotationRuntimeExecutor } from '@/sync/domains/browser/context/runtimeAnnotationExecutor';
+import { createBrowserContextAnnotationAdapter } from '@/sync/domains/browser/context/annotationAdapter';
+import { createBrowserContextState } from '@/sync/domains/browser/context/state';
+import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control/reducer';
+import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 
 // Real scoped context, captured read transport, HTTP Machine-row batch, Socket.IO
 // carrier, RPC codec and Sync's applied Machine projection; only device credential
@@ -86,6 +96,8 @@ async function createActiveHome(
       ]
     >;
     refuse?: () => boolean;
+    refusal?: Readonly<{ errorCode: string; failureCause?: unknown }>;
+    result?: unknown;
   }> = {},
 ) {
   const row = createPlainMachineRowFixture({ id: MACHINE, accountId: ACCOUNT });
@@ -99,6 +111,8 @@ async function createActiveHome(
   );
   const http = createServer(async (request, response) => {
     response.setHeader('content-type', 'application/json');
+    const currentness = createPlainAccountEncryptionCurrentnessHttpResponse(request.url ?? '');
+    if (currentness) { response.end(await currentness.text()); return; }
     if (request.url === '/health' || request.url === '/v1/auth/ping')
       response.end('{}');
     else if (request.url === '/v1/machines/read-batch') {
@@ -115,12 +129,13 @@ async function createActiveHome(
     }
   });
   const decode: Decoder = async (packet) => {
-    if (options.refuse?.())
+    if (options.refuse?.() ?? Boolean(options.refusal))
       return {
         ack: {
           ok: false,
           error: 'Forbidden',
           errorCode: RPC_ERROR_CODES.FORBIDDEN,
+          ...options.refusal,
         },
       };
     for (const [label, cipher] of options.ciphers?.() ?? []) {
@@ -156,7 +171,7 @@ async function createActiveHome(
         ok: true,
         result: await socketRpcCodec.encodeResponse(
           { mode: 'plain' },
-          { success: true, key: 'plain' },
+          options.result ?? { success: true, key: 'plain' },
           decoded.callId,
         ),
       },
@@ -238,6 +253,63 @@ const ownAccess = (resourceMode: 'plain' | 'e2ee') => ({
   role: 'manage' as const,
   resourceMode,
   accessState: 'ready' as const,
+});
+
+async function annotate(home: Awaited<ReturnType<typeof createActiveHome>>) {
+  const identity = { browserSessionId: 'browser', viewId: 'view' };
+  const capabilities = buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar',
+    supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] });
+  const control = applyBrowserControlEvent(createBrowserControlState(), { ...identity, kind: 'viewOpened',
+    eventId: 'open', occurredAt: 1, target: { kind: 'externalUrl', targetId: 'target', url: 'https://example.test/' },
+    platform: 'web', adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface',
+    adapterCapabilities: { ...capabilities, contextKinds: ['browserAnnotation'] } });
+  let state = createBrowserContextState();
+  const adapter = createBrowserContextAnnotationAdapter({ resolveBinding: () => ({ state,
+    view: control.viewsById.view!, browserContextEnabled: true, attachmentsUploadsEnabled: true,
+    contextCapabilities: { enabled: true, available: true, supportedContextKinds: ['browserAnnotation'],
+      supportedAdapterKinds: ['chromiumSidecar'], screenshot: { supported: true, requiresAttachmentUploads: true },
+      text: { maxSelectionChars: 2048, maxSummaryChars: 8192 }, disabledReasons: [], policyDeniedReasons: [] },
+    captureProvider: createManagedChromiumBrowserAnnotationCaptureProvider({ machineId: MACHINE, serverId: home.profile.id }),
+    commitAnnotation: async () => ({ ok: false, reason: 'not_attached' }),
+  }), onStateChange: next => { state = next; } });
+  return createBrowserAnnotationRuntimeExecutor({ adapter })('browser.context.annotation.start', identity);
+}
+
+describe('Browser consumers preserve the real scoped RPC refusal', () => {
+  it('retains coded ACK causes through context, control, discovery, diagnostics and the annotation Action', async () => {
+    stored.token = tokenFor(ACCOUNT);
+    const failureCause = { phase: 'browser.capture', errorClass: 'Error', errorCode: 'capture_source_unavailable', httpStatus: null };
+    let refusing = false;
+    const home = await createActiveHome({ refuse: () => refusing, refusal: { errorCode: 'capture_source_unavailable', failureCause } });
+    try {
+      await applySync(home, createMachineFixture({ id: MACHINE, storageMode: 'plain', access: ownAccess('plain') }));
+      const scope = { machineId: MACHINE, serverId: home.profile.id };
+      expect(await home.rpc()).toEqual({ success: true, key: 'plain' });
+      refusing = true;
+      await expect(home.rpc()).rejects.toMatchObject({ rpcErrorCode: 'capture_source_unavailable', failureCause });
+      const expected = { ok: false, errorCode: 'capture_source_unavailable', failureCause };
+      const results = await Promise.all([
+        dispatchBrowserContextActionViaMachineRpc({ ...scope, actionId: 'browser.context.captureScreenshot', input: {} }),
+        dispatchBrowserDaemonControlCommandViaMachineRpc({ ...scope,
+          command: { kind: 'reload', commandId: 'reload', browserSessionId: 'browser', viewId: 'view' } }),
+        listBrowserDaemonViewsViaMachineRpc({ ...scope, browserSessionId: 'browser' }),
+        watchBrowserDaemonViewsViaMachineRpc({ ...scope, accountId: ACCOUNT, browserSessionId: 'browser', knownViewIds: [], signal: new AbortController().signal }),
+        fetchBrowserDiagnosticsSnapshotViaMachineRpc(scope),
+        annotate(home),
+      ]);
+      expect(results).toMatchObject(results.map(() => expected));
+    } finally { await home.close(); }
+  });
+
+  it('retains the validated returned context refusal through the real annotation adapter and Action', async () => {
+    stored.token = tokenFor(ACCOUNT);
+    const failure = { ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_context_sensitive_origin' };
+    const home = await createActiveHome({ result: { protocolVersion: 1, result: failure } });
+    try {
+      await applySync(home, createMachineFixture({ id: MACHINE, storageMode: 'plain', access: ownAccess('plain') }));
+      expect(await annotate(home)).toEqual(failure);
+    } finally { await home.close(); }
+  });
 });
 
 describe('scoped Machine RPC on the applied active Home consumes Sync’s Machine projection', () => {

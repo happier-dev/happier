@@ -141,6 +141,7 @@ function serializeResult(
     result: BrowserAnnotationAdapterResult,
 ): unknown {
     if (result.status === 'unavailable') {
+        if (typeof result.reason !== 'string' && result.reason.failure) return result.reason.failure;
         const reason = typeof result.reason === 'string' ? result.reason : result.reason.reasonCode;
         return disabledResult(reason);
     }

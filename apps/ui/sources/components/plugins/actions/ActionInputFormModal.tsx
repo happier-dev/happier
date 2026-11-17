@@ -139,7 +139,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                         label: t('approvals.failureTechnicalLabels.causePhase'), value: outcome.outcome.phase }] : []),
                 ] });
             } catch (error) {
-                setError(presentActionExecutionFailure(normalizeActionExecutorThrownError(error), t('pluginRuntime.unavailableGeneric')));
+                setError(presentActionExecutionFailure({ ok: false, ...normalizeActionExecutorThrownError(error) }, t('pluginRuntime.unavailableGeneric')));
             }
         })();
     }, [props.form, props.onClose]);

@@ -102,9 +102,9 @@ describe('dispatchBrowserDaemonControlCommandViaMachineRpc', () => {
         else machineRpcWithServerScopeMock.mockResolvedValue({ error: 'Method not found', errorCode: 'RPC_METHOD_NOT_AVAILABLE' });
         const scope = { machineId: MACHINE_ID, serverId: SERVER_ID };
         expect(await dispatchBrowserDaemonControlCommandViaMachineRpc({ ...scope, command: RELOAD_COMMAND }))
-            .toEqual({ ok: false, reason: 'request_failed' });
+            .toMatchObject({ ok: false, reason: 'request_failed' });
         expect(await listBrowserDaemonViewsViaMachineRpc({ ...scope, browserSessionId: RELOAD_COMMAND.browserSessionId }))
-            .toEqual({ ok: false, reason: 'request_failed' });
+            .toMatchObject({ ok: false, reason: 'request_failed' });
     });
 
     it('maps a transport throw to request_failed', async () => {
@@ -124,9 +124,9 @@ describe('dispatchBrowserDaemonControlCommandViaMachineRpc', () => {
         else machineRpcWithServerScopeMock.mockRejectedValue(new RpcError('Browser prerequisite', 'managed_package_missing'));
         const scope = { machineId: MACHINE_ID, serverId: SERVER_ID };
         expect(await dispatchBrowserDaemonControlCommandViaMachineRpc({ ...scope, command: RELOAD_COMMAND }))
-            .toEqual({ ok: false, reason: 'managed_package_missing' });
+            .toMatchObject({ ok: false, reason: 'managed_package_missing' });
         expect(await listBrowserDaemonViewsViaMachineRpc({ ...scope, browserSessionId: RELOAD_COMMAND.browserSessionId }))
-            .toEqual({ ok: false, reason: 'managed_package_missing' });
+            .toMatchObject({ ok: false, reason: 'managed_package_missing' });
     });
 });
 

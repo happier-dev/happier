@@ -3,6 +3,7 @@ import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds'
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 
 export type BrowserContextMachineRpcFailureReason =
     | 'unavailable'
@@ -19,7 +20,7 @@ export type BrowserContextDispatchClientInput = Readonly<{
 
 export type BrowserContextDispatchClientResult =
     | Readonly<{ ok: true; result: BrowserContextRouteResultV1 }>
-    | Readonly<{ ok: false; reason: BrowserContextMachineRpcFailureReason }>;
+    | (Readonly<{ ok: false; reason: BrowserContextMachineRpcFailureReason }> & Pick<MachineDaemonRpcFailure, 'errorCode' | 'failureCause' | 'details'>);
 
 export async function dispatchBrowserContextActionViaMachineRpc(
     input: BrowserContextDispatchClientInput,
@@ -47,7 +48,8 @@ export async function dispatchBrowserContextActionViaMachineRpc(
         return parsed.success
             ? { ok: true, result: parsed.data.result }
             : { ok: false, reason: 'invalid_response' };
-    } catch {
-        return { ok: false, reason: 'request_failed' };
+    } catch (error) {
+        const failure = projectMachineDaemonRpcFailure(error);
+        return { ...failure, reason: failure.reason === 'older_happier' ? 'unavailable' : 'request_failed' };
     }
 }

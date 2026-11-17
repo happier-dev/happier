@@ -1,3 +1,4 @@
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
     BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
 import type {
@@ -46,6 +47,7 @@ export type BrowserContextUnavailableReason = Readonly<{
     lifecycleState: BrowserContextLifecycleStateV1;
     reasonCode: BrowserContextUnavailableReasonCode;
     message: string;
+    failure?: ActionExecuteFailure;
 }>;
 
 export type BrowserContextState = Readonly<{

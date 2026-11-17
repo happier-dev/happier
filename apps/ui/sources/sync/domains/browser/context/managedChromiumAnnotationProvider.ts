@@ -2,6 +2,7 @@ import { createSessionFilePreviewSource } from '@/sync/domains/sessionFilePrevie
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveStoredImageReadScope } from '@/sync/domains/session/media/resolveStoredImageReadScope';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { parseActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BrowserAnnotationViewportCaptureResult } from './captureProvider';
 
 import { dispatchBrowserContextActionViaMachineRpc } from './machineRpc';
@@ -11,11 +12,12 @@ import type {
     BrowserContextUnavailableReason,
 } from './types';
 
-function unavailable(reasonCode: BrowserContextUnavailableReason['reasonCode']): Extract<BrowserAnnotationViewportCaptureResult, { status: 'unavailable' }> {
+function unavailable(reasonCode: BrowserContextUnavailableReason['reasonCode'], failure?: ActionExecuteFailure): Extract<BrowserAnnotationViewportCaptureResult, { status: 'unavailable' }> {
     return {
         status: 'unavailable',
         reason: {
             reasonCode,
+            ...(failure ? { failure } : {}),
             lifecycleState: reasonCode === 'browser_context_annotation_capture_failed'
                 ? 'captureFailed'
                 : 'adapterUnavailable',
@@ -58,8 +60,12 @@ export function createManagedChromiumBrowserAnnotationCaptureProvider(input: Rea
                 actionId: 'browser.context.captureScreenshot', input: { browserSessionId: request.browserSessionId,
                     viewId: request.viewId, navigationGeneration: request.navigationGeneration, contextId: buildContextId(request) } });
             if (!result.ok) return unavailable(result.reason === 'invalid_response'
-                ? 'browser_context_annotation_capture_failed' : 'browser_context_annotation_capture_unavailable');
+                ? 'browser_context_annotation_capture_failed' : 'browser_context_annotation_capture_unavailable',
+                result.errorCode ? { ok: false, errorCode: result.errorCode, error: result.errorCode,
+                    ...(result.failureCause ? { failureCause: result.failureCause } : {}) } : undefined);
             const screenshot = result.result;
+            const failure = parseActionExecuteFailure(screenshot);
+            if (failure) return unavailable('browser_context_annotation_capture_failed', failure);
             if (Array.isArray(screenshot) || !('kind' in screenshot) || screenshot.kind !== 'browserScreenshot') {
                 return unavailable('browser_context_annotation_capture_failed');
             }
