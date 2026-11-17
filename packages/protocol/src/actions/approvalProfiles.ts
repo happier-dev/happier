@@ -4,6 +4,7 @@ import { ActionSurfaceSchema } from './metadata.js';
 import { isActionEnabledByActionsSettings, setActionApprovalOverride, setScopedActionApprovalPreference, tightenActionsSettingsV1,
   type ActionSettingsActionId, type ActionSettingsOverride, type ActionsSettingsV1 } from './actionSettings.js';
 import { readExplicitActionApprovalPreferenceFromSettingsV1 } from './actionApprovalPreference.js';
+import { isDelegatedActionRequesterV1 } from './delegatedRequesterV1.js';
 import type { ActionApprovalPolicyScopeV1 } from './actionApprovalPolicy.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import type { DatabaseAgentLevelV1 } from '../deployments/deploymentEnvironmentDeployerV1.js';
@@ -132,7 +133,7 @@ export type ProfiledActionsSettingsOptionsV1 = Readonly<{
   boundProfile?: BoundApprovalProfileV1 | null;
   /** Produced once by the creation-default resolver; an explicit pick clears this bit. */
   approvalProfileTeamOrGroupDerived?: boolean;
-  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'actionCaller' | 'actionsSettings'>;
+  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'actionCaller' | 'actionsSettings' | 'authority'>;
   targetApproval?: ActionTargetApprovalV1;
 }>;
 
@@ -140,7 +141,8 @@ function applyAdmittedTargetApproval(account: ActionsSettingsV1, profiled: Actio
   options: ProfiledActionsSettingsOptionsV1): ActionsSettingsV1 {
   const target = options.targetApproval;
   const surface = options.context?.surface;
-  if (!target || (surface !== 'agent' && surface !== 'mcp')
+  // The same delegated-requester fact the database access decider admits agents by (SEC-1117 M1).
+  if (!target || !surface || !isDelegatedActionRequesterV1(options.context ?? {})
     || (target.databaseAgentLevel !== 'readWriteAsk' && target.databaseAgentLevel !== 'readWriteNoApproval')) return profiled;
   const ownAsk = readExplicitActionApprovalPreferenceFromSettingsV1(target.actionId, account, options.context, target.approvalScope) === true;
   const required = target.databaseAgentLevel === 'readWriteAsk' || ownAsk;

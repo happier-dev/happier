@@ -36,6 +36,19 @@ describe('profile and admitted target inputs at the approval router', () => {
       targetApproval: { databaseAgentLevel: 'readWriteAsk' } })).toMatchObject({ required: true });
   });
 
+  it('applies the database Ask floor to every delegated requester the access decider admits as an agent (SEC-1117 M1)', () => {
+    // A teammate's API token or Workflow carries account_automation authority on a non-agent surface.
+    for (const surface of ['api', 'rpc', 'plugin', 'cli'] as const) {
+      const allow = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
+      const caller = { surface, authority: 'account_automation' as const };
+      expect(resolveActionApprovalRouting({ actionId, spec, settings: allow, context: caller,
+        targetApproval: { databaseAgentLevel: 'readWriteAsk' } }), surface).toMatchObject({ required: true });
+      // The present person themself is not bound by the agent level.
+      expect(resolveActionApprovalRouting({ actionId, spec, settings: allow, context: { surface, authority: 'present_user' },
+        targetApproval: { databaseAgentLevel: 'readWriteAsk' } }), `${surface} person`).toMatchObject({ required: false });
+    }
+  });
+
   it('reviews accepting the same inherited profile in full even when the child start is waived', () => {
     const spawnId = 'session.spawn_new';
     const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [spawnId]: ['agent'] } });

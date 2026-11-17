@@ -1,4 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
 import type { DatabaseAccessDecisionV1, DatabaseAccessSummaryV1, DatabaseAgentLevelV1, DatabaseOperationClassV1,
     DatabaseRequesterKindV1 } from '@happier-dev/database-protocol';
 
@@ -8,7 +9,7 @@ export function resolveDatabaseRequesterKindV1(input: Readonly<{
     authority?: PluginInvocationContext['authority'];
 }>): DatabaseRequesterKindV1 | undefined {
     if (input.agentCaller === undefined || input.authority === undefined) return undefined;
-    return input.agentCaller || input.authority === 'account_automation' ? 'agent' : 'person';
+    return isDelegatedActionRequesterV1(input) ? 'agent' : 'person';
 }
 
 export type DatabaseAccessInputV1 = Readonly<{
