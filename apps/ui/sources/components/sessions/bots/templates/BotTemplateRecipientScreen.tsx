@@ -18,6 +18,7 @@ import { BotTemplateHeader } from './BotTemplateHeader';
 import { BotTemplatePreview } from './BotTemplatePreview';
 import { BotTemplatePageLayout, BotTemplateWhatItDoes } from './BotTemplatePageLayout';
 import { useBotTemplateRecipient } from './useBotTemplateRecipient';
+import { describeBotTemplateOpenRefusal } from './botTemplateOpenRefusal';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -94,9 +95,11 @@ export function BotTemplateRecipientBody({ reader, source, serverId }: Readonly<
             navigateToNewSession: openDraft,
         });
     }, [preview, source, draftParams, execution.binding, execution.getSignal, execution.isCurrent, serverId]);
-    if (!preview) return <SurfaceStateCard testID="bot-template-recipient-load" kind={reader.failed ? 'error' : 'loading'}
-        title={reader.failed ? t('botTemplates.unavailable') : t('common.loading')}
-        action={reader.failed ? { label: t('common.retry'), onPress: reader.reload } : undefined} />;
+    // A refusal (deleted, no longer shared, needs an encrypted Account) says why and offers no retry that can't succeed.
+    const failure = reader.failed ? <SurfaceStateCard testID="bot-template-recipient-load" kind={reader.refusal ? 'unavailable' : 'error'} iconName={reader.refusal ? 'lock' : undefined}
+        title={t('botTemplates.unavailable')} reason={reader.refusal ? describeBotTemplateOpenRefusal(reader.refusal) : undefined}
+        action={reader.refusal ? undefined : { label: t('common.retry'), onPress: reader.reload }} /> : null;
+    if (!preview) return failure ?? <SurfaceStateCard testID="bot-template-recipient-load" kind="loading" title={t('common.loading')} />;
     const notice = <>
         {changed ? <AttentionBanner testID="bot-template-release-changed" tone="warning" title={t('botTemplateRecipient.releaseChanged')} /> : null}
     </>;
@@ -116,8 +119,7 @@ export function BotTemplateRecipientBody({ reader, source, serverId }: Readonly<
             actions={phone ? undefined : makeOwnButton} />}
         notice={<>
             {notice}
-            {reader.failed ? <SurfaceStateCard kind="error" title={t('botTemplates.unavailable')}
-                action={{ label: t('common.retry'), onPress: reader.reload }} /> : null}
+            {failure}
         </>}>
         <BotTemplateWhatItDoes description={preview.release.content.identity.description} />
         <BotTemplatePreview content={preview.release.content} onDownloadFile={(skillKey, path) => { void download(skillKey, path); }} />

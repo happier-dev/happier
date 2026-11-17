@@ -39,5 +39,15 @@ describe('mounted template release reader', () => {
         expect(home.boundary.list()).toHaveLength(0);
         await hook.unmount();
     });
+
+    it('names a refused open (deleted or no longer shared) instead of offering a retry that cannot succeed', async () => {
+        home = await createPlainArtifactHomeFixture('https://template-preview-refused.test', { currentAccount: true });
+        const source = { kind: 'artifact' as const, serverId: home.home.id, artifactId: 'deleted-template' };
+        const hook = await renderHook(() => useBotTemplateRecipient(source, home!.home.id));
+        await vi.waitFor(() => expect(hook.getCurrent().failed).toBe(true));
+        expect(hook.getCurrent().refusal).toBe('not_found');
+        expect(hook.getCurrent().preview).toBeNull();
+        await hook.unmount();
+    });
 });
 import '@/sync/syncEngine';

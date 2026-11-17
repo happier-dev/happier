@@ -12,6 +12,7 @@ import { BotTemplateRecipientBody } from '@/components/sessions/bots/templates/B
 import { BotTemplateRecipientInfo } from '@/components/sessions/bots/templates/BotTemplateRecipientInfo';
 import { BotTemplateUpdateForm } from '@/components/sessions/bots/templates/BotTemplateUpdateReview';
 import type { useBotTemplateUpdate } from '@/components/sessions/bots/templates/useBotTemplateUpdate';
+import type { BotTemplateOpenRefusal } from '@/components/sessions/bots/templates/botTemplateOpenRefusal';
 import {
   createBotTemplateEditorBuffer,
   type BotTemplateSave,
@@ -39,7 +40,7 @@ const DRAFT_TOOL: ToolCall = {
 
 /**
  * Dev-only: the Bot template surfaces through their real components on the round-2 lab's content,
- * for side-by-side lab comparison without an Agent turn. `?frame=card|pane|page|preview|info|update|update-conflict|update-done|saved-skill`.
+ * for side-by-side lab comparison without an Agent turn. `?frame=card|pane|page|preview|refused-not_found|refused-no_access|refused-plain_account|info|update|update-conflict|update-done|saved-skill`.
  * Never linked from product surfaces; nothing here writes.
  */
 export function BotTemplatesSpecimen(
@@ -59,6 +60,8 @@ export function BotTemplatesSpecimen(
         </View>
       </ScrollView>
     );
+  const refusal = REFUSALS.find(value => frame === `refused-${value}`);
+  if (refusal) return <PreviewFrame serverId={serverId} refusal={refusal} />;
   if (frame === 'update' || frame === 'update-conflict' || frame === 'update-done') return <UpdateFrame key={frame} frame={frame} />;
   if (frame === 'info')
     return (
@@ -155,7 +158,10 @@ function EditorFrame(
   );
 }
 
-function PreviewFrame(props: Readonly<{ serverId: string }>) {
+const REFUSALS: readonly BotTemplateOpenRefusal[] = ['not_found', 'no_access', 'plain_account'];
+
+/** `refusal` renders the refused open (deleted, no longer shared, Plain recipient) instead of the release. */
+function PreviewFrame(props: Readonly<{ serverId: string; refusal?: BotTemplateOpenRefusal }>) {
   const execution = useMountedActionExecution(props.serverId);
   const source = React.useMemo(
     () =>
@@ -167,12 +173,13 @@ function PreviewFrame(props: Readonly<{ serverId: string }>) {
   );
   const reader = React.useMemo(
     () => ({
-      preview: { ...SPECIMEN_PREVIEW, source },
-      failed: false,
+      preview: props.refusal ? null : { ...SPECIMEN_PREVIEW, source },
+      failed: Boolean(props.refusal),
+      refusal: props.refusal ?? null,
       reload: async () => null,
       execution,
     }),
-    [source, execution],
+    [source, execution, props.refusal],
   );
   return (
     <BotTemplateRecipientBody

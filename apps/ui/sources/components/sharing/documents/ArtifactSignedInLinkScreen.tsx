@@ -11,6 +11,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureArtifactSignedInLinkSecret, takeNativeArtifactSignedInLinkSecret } from '@/utils/url/artifactSignedInLinkSecret';
+import { describeBotTemplateOpenRefusal, readBotTemplateOpenRefusal, type BotTemplateOpenRefusal } from '@/components/sessions/bots/templates/botTemplateOpenRefusal';
 import { t } from '@/text';
 
 const Recipient = React.lazy(() => import('@/components/sessions/bots/templates/BotTemplateRecipientScreen')
@@ -43,7 +44,7 @@ export function ArtifactSignedInLinkScreen(props: Readonly<{ lookupId: string; s
         binding: ServerCredentialAccountScopeBinding;
     }> | null>(null);
     const [pending, setPending] = React.useState(false);
-    const [failure, setFailure] = React.useState<'reopen' | 'plain_account' | 'not_found' | 'no_access' | null>(null);
+    const [failure, setFailure] = React.useState<'reopen' | BotTemplateOpenRefusal | null>(null);
     const openedCurrent = Boolean(opened && opened.binding === execution.binding && execution.isCurrent());
     React.useEffect(() => {
         if (!opened) return;
@@ -68,11 +69,7 @@ export function ArtifactSignedInLinkScreen(props: Readonly<{ lookupId: string; s
                             sourceServerId: execution.binding.scope.serverId }) as never);
                     } } });
             if (!result.ok && execution.isCurrent()) {
-                setFailure(result.errorCode === 'recipient_key_unavailable' && result.details && typeof result.details === 'object'
-                    && 'reason' in result.details && result.details.reason === 'plain_account' ? 'plain_account'
-                    : result.errorCode === 'artifact_not_found' || result.errorCode === 'not_found' ? 'not_found'
-                    : result.errorCode === 'artifact_access_forbidden' || result.errorCode === 'artifact_access_revoked' ? 'no_access'
-                    : 'reopen');
+                setFailure(readBotTemplateOpenRefusal(result) ?? 'reopen');
             }
         } catch { if (execution.isCurrent()) setFailure('reopen'); }
         finally { if (execution.isCurrent()) setPending(false); }
@@ -84,9 +81,7 @@ export function ArtifactSignedInLinkScreen(props: Readonly<{ lookupId: string; s
     const openingFailure = opened && !openedCurrent ? 'reopen' : failure;
     return <ItemList>
         <SurfaceStateCard kind={openingFailure || !secret ? 'error' : 'empty'} title={t('botTemplates.signedInLink')}
-            reason={openingFailure === 'plain_account' ? t('botTemplates.encryptedAccountRequired')
-                : openingFailure === 'not_found' ? t('shareSheet.documents.errors.notFound')
-                : openingFailure === 'no_access' ? t('shareSheet.documents.errors.noAccess')
+            reason={openingFailure && openingFailure !== 'reopen' ? describeBotTemplateOpenRefusal(openingFailure)
                 : openingFailure || !secret ? t('botTemplates.reopenLink') : !execution.ready
                 ? t('botTemplates.signInRequired') : t('botTemplates.signedInLinkDescription')} />
         {secret && !openingFailure ? <RoundButton testID="artifact-signed-in-link-open" title={t('common.open')}

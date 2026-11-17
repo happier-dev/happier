@@ -19,6 +19,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useMachineField } from '@/sync/store/hooks';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { t } from '@/text';
+import { botTemplateNeedLine } from './BotTemplatePreview';
 
 type Software = BotTemplateSetupSelectionsV1['software'];
 type Props = Readonly<{
@@ -133,7 +134,8 @@ export function BotTemplateSoftwareSetup(props: Props) {
                 {fact.status === 'found' ? <Item testID={`bot-template-software-${need.key}`} title={title}
                     subtitle={status} mode="info" showChevron={false} />
                     : <SegmentedChoiceItem testIDPrefix={`bot-template-software-${need.key}`} title={title}
-                        subtitle={[status, need.requirement === 'optional' ? need.skipConsequence : ''].filter(Boolean).join(' · ')}
+                        // Status is a sentence; a required need's "Required" follows from the unavailable Skip, an optional one says so here.
+                        subtitle={[status, need.requirement === 'optional' ? botTemplateNeedLine(need) : ''].filter(Boolean).join(' ')}
                         subtitleLines={0} value={selected?.action ?? ''} options={[
                             { id: 'install', label: t('botTemplateRecipient.installSoftware') },
                             { id: 'skip', label: t('botTemplateRecipient.skipNeed'), description: need.skipConsequence,

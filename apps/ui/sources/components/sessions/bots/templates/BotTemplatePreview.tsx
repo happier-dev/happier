@@ -81,8 +81,8 @@ const NEED_KINDS = [
     { kind: 'mcpServers', icon: 'plug', label: 'botTemplates.kindMcp' },
 ] as const;
 
-/** Required needs say what they are for; optional ones say what happens without them. */
-function needLine(need: Need) {
+/** Required needs say what they are for; optional ones say what happens without them (preview and setup alike). */
+export function botTemplateNeedLine(need: Need) {
     return need.requirement === 'required'
         ? `${t('botTemplateRecipient.required')} · ${need.purpose}`
         : `${t('botTemplateRecipient.optional')} · ${need.skipConsequence}`;
@@ -105,7 +105,7 @@ export function BotTemplatePreview({ content, onDownloadFile, showNeeds = true }
         </ItemGroup>
         {showNeeds ? <ItemGroup title={t('botTemplates.whatItNeeds')} description={needs.length > 0 ? t('botTemplates.needsChecked') : undefined}>
             {needs.length > 0 ? needs.map(({ kind, icon, label, need }) => <React.Fragment key={`${kind}:${need.key}`}>
-                <Item testID={`bot-template-need:${kind}:${need.key}`} title={need.name} subtitle={needLine(need)}
+                <Item testID={`bot-template-need:${kind}:${need.key}`} title={need.name} subtitle={botTemplateNeedLine(need)}
                     icon={<Icon name={icon} />} detail={t(label)} showChevron={false} />
                 {'definition' in need ? <SectionContentRow>
                     <CodeBlockView code={JSON.stringify(need.definition, null, 2)} language="json" wrap />

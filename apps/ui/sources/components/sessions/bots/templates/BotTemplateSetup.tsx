@@ -9,6 +9,10 @@ import { presentConnectSheet } from '@/components/settings/connectedServices/set
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon } from '@/components/ui/icons/Icon';
+import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
+import { botTemplateNeedLine } from './BotTemplatePreview';
 import { t } from '@/text';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -59,47 +63,55 @@ export function BotTemplateConnectionsSetup(props: ConnectionProps) {
         const selected = latest.current.value.mcpServers.find(item => item.key === key)?.selection;
         setMcp(key, { action: 'bind', inputs: { ...(selected?.action === 'bind' ? selected.inputs : {}), [inputKey]: value } });
     };
+    const { connectedAccounts, mcpServers } = props.needs;
+    // One section per kind, one row per need (lab r2 install-setupB): its name, why, and the one operation.
+    // An optional need nobody connects is skipped; Create already reads it that way.
     return <>
-        {props.needs.connectedAccounts.map(need => {
-            const selected = props.value.accounts.find(item => item.key === need.key)?.selection;
-            const serviceKey = resolveQualifiedConnectedAccountServiceKey(need.serviceId);
-            const service = parseQualifiedPluginContributionKey(serviceKey);
-            return <ItemGroup key={need.key} title={need.name} description={need.purpose}>
-                <Item testID={`bot-template-connect-${need.key}`} title={t(selected?.action === 'connect' ? 'botTemplateRecipient.changeConnection' : 'botTemplateRecipient.connect')}
-                    subtitle={selected?.action === 'connect' ? t('botTemplateRecipient.connectionSelected')
-                        : selected?.action === 'skip' ? need.skipConsequence : t(need.requirement === 'required' ? 'botTemplateRecipient.required' : 'botTemplateRecipient.optional')}
-                    disabled={!service} onPress={() => {
-                        if (!service) return;
-                        void presentConnectSheet({ scope: props.scope, service, intent: 'link' }).then(result => {
-                            if (result.kind !== 'dismissed') setAccount(need.key, { action: 'connect', binding: {
-                                source: 'connected', selection: 'profile', profileId: result.account.accountId,
-                            } });
-                        });
-                    }} />
-                {need.requirement === 'optional' ? <Item title={t('botTemplateRecipient.skipNeed')} subtitle={need.skipConsequence}
-                    testID={`bot-template-skip-account-${need.key}`} onPress={() => setAccount(need.key, { action: 'skip' })} /> : null}
-            </ItemGroup>;
-        })}
-        {props.needs.mcpServers.map(need => {
-            const selected = props.value.mcpServers.find(item => item.key === need.key)?.selection;
-            const inputs = selected?.action === 'bind' ? selected.inputs : {};
-            return <ItemGroup key={need.key} title={need.name} description={need.purpose}>
-                {need.definition.inputs.map(input => {
-                    const value = inputs[input.key];
-                    return input.secret ? <Item key={input.key} testID={`bot-template-mcp-${need.key}-${input.key}`}
-                        title={input.label} subtitle={value ? t('botTemplateRecipient.keySelected') : input.purpose}
-                        onPress={() => { void presentConnectSheet({ scope: props.scope, intent: 'link', service: { kind: 'key', suggestedName: input.label },
-                            ...(value?.t === 'savedSecret' ? { current: value.secretId } : {}) }).then(result => {
-                            if (result.kind !== 'dismissed') bindMcpInput(need.key, input.key, { t: 'savedSecret', secretId: result.secretRef });
-                        }); }} /> : <Item key={input.key} title={input.label} subtitle={input.purpose} showChevron={false} accessoryLayout="adaptive"
-                            rightElement={<FieldTextInput accessibilityLabel={input.label} value={value?.t === 'literal' ? value.v : ''}
-                                testID={`bot-template-mcp-${need.key}-${input.key}`} onChangeText={text => bindMcpInput(need.key, input.key, { t: 'literal', v: text })} />} />;
-                })}
-                {need.definition.inputs.every(input => !input.required) ? <Item title={t('botTemplateRecipient.useMcp')} testID={`bot-template-mcp-${need.key}-use`}
-                    onPress={() => setMcp(need.key, { action: 'bind', inputs })} /> : null}
-                {need.requirement === 'optional' ? <Item title={t('botTemplateRecipient.skipNeed')} subtitle={need.skipConsequence}
-                    testID={`bot-template-skip-mcp-${need.key}`} onPress={() => setMcp(need.key, { action: 'skip' })} /> : null}
-            </ItemGroup>;
-        })}
+        {connectedAccounts.length ? <ItemGroup title={t('botTemplates.accounts')}>
+            {connectedAccounts.map(need => {
+                const connected = props.value.accounts.find(item => item.key === need.key)?.selection.action === 'connect';
+                const service = parseQualifiedPluginContributionKey(resolveQualifiedConnectedAccountServiceKey(need.serviceId));
+                const connect = () => {
+                    if (!service) return;
+                    void presentConnectSheet({ scope: props.scope, service, intent: 'link' }).then(result => {
+                        if (result.kind !== 'dismissed') setAccount(need.key, { action: 'connect', binding: {
+                            source: 'connected', selection: 'profile', profileId: result.account.accountId,
+                        } });
+                    });
+                };
+                return <Item key={need.key} testID={`bot-template-account-${need.key}`} title={need.name} mode="info" showChevron={false}
+                    subtitle={connected ? `${t('botTemplateRecipient.connectionSelected')} · ${need.purpose}` : botTemplateNeedLine(need)}
+                    icon={<ConnectedServiceMark legacyServiceId={need.serviceId} service={service} size="card" />}
+                    rightElement={<RoundButton testID={`bot-template-connect-${need.key}`} size="small" display="secondary"
+                        title={connected ? t('common.change') : t('botTemplateRecipient.connect')} disabled={!service} onPress={connect} />} />;
+            })}
+        </ItemGroup> : null}
+        {mcpServers.length ? <ItemGroup title={t('botTemplates.mcp')}>
+            {mcpServers.map(need => {
+                const selected = props.value.mcpServers.find(item => item.key === need.key)?.selection;
+                const inputs = selected?.action === 'bind' ? selected.inputs : {};
+                const usable = need.definition.inputs.every(input => !input.required);
+                return <React.Fragment key={need.key}>
+                    <Item testID={`bot-template-mcp-${need.key}`} title={need.name} subtitle={botTemplateNeedLine(need)}
+                        icon={<Icon name="plug" />} mode="info" showChevron={false}
+                        rightElement={!usable ? undefined : selected?.action === 'bind'
+                            ? <Icon name="check-circle" size={16} />
+                            : <RoundButton testID={`bot-template-mcp-${need.key}-use`} size="small" display="secondary"
+                                title={t('botTemplateRecipient.connect')} accessibilityLabel={t('botTemplateRecipient.useMcp')}
+                                onPress={() => setMcp(need.key, { action: 'bind', inputs })} />} />
+                    {need.definition.inputs.map(input => {
+                        const value = inputs[input.key];
+                        return input.secret ? <Item key={input.key} testID={`bot-template-mcp-${need.key}-${input.key}`}
+                            title={input.label} subtitle={value ? t('botTemplateRecipient.keySelected') : input.purpose}
+                            onPress={() => { void presentConnectSheet({ scope: props.scope, intent: 'link', service: { kind: 'key', suggestedName: input.label },
+                                ...(value?.t === 'savedSecret' ? { current: value.secretId } : {}) }).then(result => {
+                                if (result.kind !== 'dismissed') bindMcpInput(need.key, input.key, { t: 'savedSecret', secretId: result.secretRef });
+                            }); }} /> : <Item key={input.key} title={input.label} subtitle={input.purpose} showChevron={false} accessoryLayout="adaptive"
+                                rightElement={<FieldTextInput accessibilityLabel={input.label} value={value?.t === 'literal' ? value.v : ''}
+                                    testID={`bot-template-mcp-${need.key}-${input.key}`} onChangeText={text => bindMcpInput(need.key, input.key, { t: 'literal', v: text })} />} />;
+                    })}
+                </React.Fragment>;
+            })}
+        </ItemGroup> : null}
     </>;
 }

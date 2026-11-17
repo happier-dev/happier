@@ -68,8 +68,9 @@ describe('authenticated template link opening', () => {
             await screen.unmount();
         }
         expect(commits).toEqual([{}, {}]);
-        for (const [code, message] of [['artifact_not_found', 'shareSheet.documents.errors.notFound'],
-            ['artifact_access_forbidden', 'shareSheet.documents.errors.noAccess']] as const) {
+        // Deleted and unshared read the same to the opener: gone from them, their copies kept.
+        for (const [code, message] of [['artifact_not_found', 'botTemplates.noLongerShared'],
+            ['artifact_access_forbidden', 'botTemplates.noLongerShared']] as const) {
             refusal = code;
             resolveNativeAppLinkHref(`happier://share/artifact/reread#k=${secret}`);
             const denied = await renderScreen(<ArtifactSignedInLinkScreen lookupId="reread" serverId={home.home.id} />,
