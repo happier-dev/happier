@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { bindCallerInput } from '@happier-dev/protocol/actions/executor/callerInput';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createHash } from 'node:crypto';
@@ -75,24 +76,32 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
-    it('transports ordinary UI Session defaults without a review or confirmation marker', async () => {
+    it.each([
+        { captureDefaults: true, observeCommit: false },
+        { captureDefaults: true, observeCommit: true },
+        { captureDefaults: false, observeCommit: true },
+    ])('transports the signed UI Session caller without a review marker (defaults=$captureDefaults, observation=$observeCommit)', async ({ captureDefaults, observeCommit }) => {
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const input = projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
             creationKey: 'ordinary-ui-capture', executionTarget: { serverId: binding.serverIdentityId, machineId: 'machine-1' },
             directory: { kind: 'path', path: '/project' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            ...(observeCommit ? { observeSessionCommit: true } : {}),
         }));
         const sessionCreationDefaults = { context: buildManagedSessionDefaultsContext({
             personalDefaultsRow: { defaultAgentTarget: input.agentTarget },
         }), authoredChoices: { executionTarget: input.executionTarget, agentTarget: input.agentTarget } };
         let receivedCapture: unknown;
+        let receivedInput: unknown;
+        homes.answer(serverId, 'POST /v1/home/governance/get', { body: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) });
         homes.answer(serverId, 'GET /v1/machines/machine-1/access', { body: {
             machineId: 'machine-1', custodian: { accountId: 'owner', displayName: 'Owner' },
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
             canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
         } });
         await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine-1',
-            tokenEpoch: 0, actionId: 'session.spawn_new', execute: (_received, context) => {
+            tokenEpoch: 0, actionId: 'session.spawn_new', execute: (received, context) => {
+                receivedInput = received;
                 receivedCapture = context.invocation.sessionCreationDefaults;
                 return projectSessionSpawnNewActionResultV1({ type: 'success', disposition: 'created', sessionId: 'created-session',
                     executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
@@ -103,12 +112,16 @@ describe('captured Account Action response decoding', () => {
             },
         });
         const result = await createDefaultActionExecutor().execute('session.spawn_new', input, {
-            surface: 'ui', authority: 'present_user', sessionCreationDefaults,
+            surface: 'ui', authority: 'present_user', ...(captureDefaults ? { sessionCreationDefaults } : {}),
         });
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
-        expect(receivedCapture).toEqual(sessionCreationDefaults);
+        if (captureDefaults) expect(receivedCapture).toEqual(sessionCreationDefaults);
+        else expect(receivedCapture).toMatchObject({ authoredChoices: {
+            executionTarget: input.executionTarget, agentTarget: input.agentTarget,
+        } });
+        expect(receivedInput).toMatchObject(input);
     });
-    it.each(['voice', 'api'] as const)('admits the R135 spawn through its sealed %s caller schema', async surface => {
+    it.each(['voice', 'api'] as const)('keeps the sealed %s Session caller terminal despite an observation preference', async surface => {
         account?.dispose();
         // R135's payload after the existing catalog binder selected Codex.
         const input = {
@@ -116,6 +129,7 @@ describe('captured Account Action response decoding', () => {
             directory: { kind: 'path', path: '.' },
             initialInput: { text: 'Create a file named teal containing the text blue.' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            observeSessionCommit: true,
         };
         const serverUrl = 'https://r135-spawn.test';
         serverId = await homes.addHome({ name: 'R135 spawn', serverUrl, serverIdentityId: input.executionTarget.serverId,
@@ -139,7 +153,8 @@ describe('captured Account Action response decoding', () => {
         const result = await executeOriginalAccountMachineAction({ account, input, actionId: 'session.spawn_new',
             requestId: `r135-spawn-${surface}`, machineId: input.executionTarget.machineId,
             authority: 'account_automation', invocation: { caller: { kind: 'host' }, surface, authority: 'account_automation' } });
-        expect(result, JSON.stringify(result)).toEqual({ ok: true, result: input });
+        const { observeSessionCommit: _observer, ...terminalInput } = input;
+        expect(result, JSON.stringify(result)).toEqual({ ok: true, result: terminalInput });
     });
     it.each([
         { creator: true, prepareCodec: true, accountMode: 'plain' }, { creator: true, prepareCodec: true, accountMode: 'e2ee' },

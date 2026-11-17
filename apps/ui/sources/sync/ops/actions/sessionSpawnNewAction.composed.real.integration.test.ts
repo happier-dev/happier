@@ -59,6 +59,7 @@ import { createOnHappySessionWebhook } from '../../../../../cli/src/daemon/sessi
 import { createAgentSessionRunnerFactoryBinding } from '../../../../../cli/src/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority } from '../../../../../cli/src/daemon/agentRuntime/sessionBridgeAuthorization';
 import { openCurrentRunnerTeamCredentialProviderBinding } from '../../../../../cli/src/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
+import { stubUndiciFetch } from '../../../../../cli/src/testkit/http/stubUndiciFetch';
 import { classifyPrimarySessionRuntimeIssue } from '../../../../../cli/src/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { awaitTrackedRunnerAgentSessionOpen, recordTrackedRunnerAgentSessionOpenAttestation } from '../../../../../cli/src/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
 import { resolveSessionRunnerEntrypointIdentityFromProcessCommand } from '../../../../../cli/src/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
@@ -826,15 +827,16 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                         runnerAgentSourceCustodyV1: retainedAgent.sourceCustody };
                     physicalLaunches += 1;
                     if (lateTeamReconnect) {
-                        const realFetch = globalThis.fetch;
-                        const transport = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+                        const realFetch = (await vi.importActual<typeof import('undici')>('undici')).fetch;
+                        const transport = stubUndiciFetch(async (...[url, init]: Parameters<typeof realFetch>) => {
                             if (String(url).startsWith('http://127.0.0.1:31001/')) {
                                 nativeBindingRequests += 1;
                                 return new Response(JSON.stringify({ ok: false, error: {
                                     code: 'connected_service_credential_reconnect_required', message: 'PRIVATE_NATIVE_DIAGNOSTIC' },
                                 }), { status: 200, headers: { 'content-type': 'application/json' } });
                             }
-                            return await realFetch(url, init);
+                            // DOM and bundled Undici expose the same network response at this boundary.
+                            return await realFetch(url, init) as unknown as Response;
                         });
                         try {
                             const failure = await openCurrentRunnerTeamCredentialProviderBinding({ authority, operation: {
@@ -844,7 +846,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                             nativeFailure = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure,
                                 occurredAt: Date.now() });
                             nativeFailureCode = nativeFailure?.code;
-                        } finally { transport.mockRestore(); }
+                        } finally { transport.mockImplementation(realFetch); }
                         Object.defineProperty(child, 'exitCode', { value: 1 });
                     } else {
                         await writeSessionMarker({ pid: runner.pid, happySessionId: authority.sessionId,
@@ -1292,13 +1294,11 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         });
         let homes: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
         let realCredentials: HomeCredentialWriteRollback | null = null;
-        let learnedProfileId: string | undefined;
         let homeCleanup: Promise<void> | undefined;
         const disposeHomes = () => homeCleanup ??= (async () => {
             if (realCredentials && !await realCredentials.rollback()) throw new Error('Requester token rollback failed');
             await homes?.dispose();
-            if (learnedProfileId) await removeServerProfile(learnedProfileId);
-            else if (homes?.homes.home) await removeServerProfile(homes.homes.home.id);
+            if (homes?.homes.home) await removeServerProfile(homes.homes.home.profileId);
         })();
         onTestFinished(disposeHomes);
         const httpResults: Array<{ path: string; status: number; code?: string }> = [];
@@ -1375,7 +1375,6 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
             const learnedProfile = await setServerProfileIdentityForUrl(endpoint, homeId);
             expect(learnedProfile).not.toBeNull();
             if (!learnedProfile) throw new Error('Home identity was not learned');
-            learnedProfileId = learnedProfile.id;
             realCredentials = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint,
                 { serverId: learnedProfile.id }, { token: requesterToken });
             if (!realCredentials) throw new Error('Could not store the real requester token');

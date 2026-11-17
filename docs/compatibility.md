@@ -11944,8 +11944,10 @@ These terminal callers cannot send the
 unnegotiated field to an older daemon. Native or Team startup refusal remains
 the canonical typed failure after a receipt; the
 original input is not resent. This development extension adds no operation owner,
-polling loop or persisted format. Live manual-creation UI opt-in remains disabled
-until destination recovery and spawn-owned pending-message controls are wired.
+polling loop or persisted format. Manual-creation UI callers that present at commit
+negotiate epoch 3 through the Session creation owner. Their existing signed Account
+ingress retains the UI invocation and its negotiated input; ordinary API and
+terminal carriers continue using the shared terminal projection.
 
 The existing daemon Action-operation owner exposes two read epochs over the same
 store. V1 list/get retain the closed snapshot reader inspected in clean `../0.2`

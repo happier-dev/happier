@@ -365,7 +365,10 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     // This incumbent own-Machine transport carries no private requester box.
     // Runtime demand, finite placement and requester invocations still prove
     // their exact Home identity freshly before selecting private custody.
-    const sessionInput = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? projectSessionSpawnNewApiRequest(params.input).input : null;
+    const sessionInput = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        ? params.invocation?.surface === 'ui' ? SessionSpawnNewActionInputV2Schema.parse(params.input)
+            : projectSessionSpawnNewApiRequest(params.input).input
+        : null;
     const preset = sessionInput?.sessionPlacement?.kind === 'preset' ? params.invocation?.sessionCreationDefaults : undefined;
     const controller = preset?.managedPresetAcquisition?.controller;
     const controllerAccess = preset?.managedPresetControllerAccess;
