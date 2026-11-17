@@ -1,12 +1,11 @@
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { createCliSourceLoader } from '../../../../../packages/cli-common/cliSourceLoader.mjs';
 
 const OUTPUT_MARKER = '__HAPPIER_GENERATOR_MODULE_JSON__';
 
-// One session has one immutable inspection graph. tsImport creates a fresh
-// namespace per request and re-evaluates shared source dependencies each time.
-const sourceLoader = await createCliSourceLoader('happier-typescript-inspection');
+// The session's process already preloads the canonical source runtime. Its
+// module cache shares dependencies within this session; the process isolates
+// the next session without adding a second namespaced loader.
 
 function serializeModule(imported, requestedExports) {
   const selected = imported && typeof imported === 'object'
@@ -39,7 +38,7 @@ for await (const line of lines) {
     if (!Number.isSafeInteger(request?.id) || typeof request?.path !== 'string') {
       throw new Error('invalid inspection request');
     }
-    const imported = await sourceLoader.import(pathToFileURL(request.path).href, import.meta.url);
+    const imported = await import(pathToFileURL(request.path).href);
     const payload = serializeModule(imported, request.exports);
     const response = JSON.stringify({ id: request.id, ok: true, payload });
     process.stdout.write(`${OUTPUT_MARKER}${response}\n`);
@@ -54,7 +53,6 @@ for await (const line of lines) {
 
 // EOF is the inspection owner's terminal signal. Authored imports can retain
 // runtime handles; drain the response pipe before ending this isolated worker.
-await sourceLoader.unregister();
 await new Promise((resolve, reject) => {
   process.stdout.write('', error => error ? reject(error) : resolve());
 });
