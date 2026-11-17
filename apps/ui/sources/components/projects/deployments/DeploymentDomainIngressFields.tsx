@@ -11,6 +11,9 @@ import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 }
 import { DeploymentDomainDnsInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainDnsV1';
 
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
+import { PluginMark } from '@/components/settings/plugins/PluginMark';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { useFirstConnection } from './useFirstConnection';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
@@ -69,6 +72,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   // choice aborts it through the Action's own signal (O-DEPLOY F2). There is no timeout.
   const flight = React.useRef<AbortController | null>(null);
   const [stopped, setStopped] = React.useState<Readonly<{ kind: 'zones' | 'tunnels'; key: string }> | null>(null);
+  // A fresh Account has no Cloudflare account yet: the one shared Connect flow adds the first (as platform-link).
+  const firstConnection = useFirstConnection(null, props.linkedZone === undefined ? binding.service : null, setCredentialRef);
+  const needsConnect = credentialRef === null && firstConnection.missing;
   const zonesOnly = props.linkedZone !== undefined || props.dnsRecordsOnly === true;
   const selectedCredential = props.linkedZone !== undefined ? props.linkedZone?.credentialRef ?? null : credentialRef;
   const selectedAccountId = props.linkedZone !== undefined ? props.linkedZone?.accountId ?? '' : accountId.trim();
@@ -194,7 +200,12 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
     dns: props.enabled && dns.success ? dns.data : undefined, fields: props.enabled ? (
     <View style={styles.fields}>
       {props.linkedZone === undefined ? <>
-      <ConnectedAccountPurposeTargetChooser
+      {needsConnect ? <EmptyState testID={`${id}.connect`} layout="centered"
+        icon={<PluginMark title="Cloudflare" pluginId={binding.service.pluginId} />}
+        title={t('projects.deployments.editors.domainConnectTitle')}
+        subtitle={t('projects.deployments.editors.domainConnectBody')}
+        primaryAction={{ label: t('projects.deployments.editors.domainConnectAction'), onPress: firstConnection.connect,
+          testID: `${id}.connect.add` }} /> : <ConnectedAccountPurposeTargetChooser
         testID={`${id}.account`}
         localizedTextPluginId={binding.service.pluginId}
         declaration={{ purpose: props.dnsRecordsOnly ? 'deploy.manage' : binding.purpose, service: binding.service, required: true }}
@@ -202,7 +213,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         onChange={target => setCredentialRef(target?.kind === 'account' ? target.account : null)}
         accountsOnly
         disabled={props.busy}
-      />
+      />}
       {!props.dnsRecordsOnly ? <>
       <ExpandableItem testID={`${id}.advanced`} expanded={advanced} onExpandedChange={setAdvanced}
         header={state => <Item testID={`${id}.advanced.header`} {...state.headerProps}

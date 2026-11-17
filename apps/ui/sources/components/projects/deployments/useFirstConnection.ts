@@ -3,35 +3,34 @@ import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { useProfile } from '@/sync/store/hooks';
+import { storage } from '@/sync/domains/state/storageStore';
+
+const inventoryKeys = { profile: ['id', 'connectedAccountsV4'], profileScope: true } as const;
 
 /**
- * A credential choice the Account cannot make yet: it has no account at all for `service` (unknown until its
- * inventory is read). `connect` runs the one shared Connect flow and hands the new account to `onConnected`.
+ * A credential choice the Account cannot make yet: it has no account at all for `service` (unknown until that
+ * Account's profile is loaded). `connect` runs the one shared Connect flow and hands the new account to `onConnected`.
+ * A form on the shown Account's page with no lifetime of its own passes null: the shown profile decides, and the
+ * Connect sheet opens for the active Account (it retires itself if that Account changes).
  */
 export function useFirstConnection(
-  lifetime: ServerAccountScopeLifetime,
+  lifetime: ServerAccountScopeLifetime | null,
   service: PluginContributionIdentityV1 | null,
   onConnected: (account: QualifiedConnectedAccountRef) => void,
 ) {
-  const accountId = lifetime.scope.accountId;
-  const hasServiceAccount = useProfile((profile) =>
-    profile.id !== accountId || !service
-      ? null
-      : connectedAccountPurposeServiceTargets(
-          profile.connectedAccountsV4 ?? [],
-          [],
-          service,
-        ).accounts.length > 0,
-  );
+  const hasServiceAccount = storage((state) => {
+    const accountId = lifetime?.scope.accountId ?? state.profileScope?.accountId ?? null;
+    if (!service || accountId === null || state.profile.id !== accountId) return null;
+    return connectedAccountPurposeServiceTargets(state.profile.connectedAccountsV4 ?? [], [], service).accounts.length > 0;
+  }, inventoryKeys);
   const connect = async () => {
     if (!service) return;
     const result = await presentConnectSheet({
-      scope: lifetime.scope,
+      ...(lifetime ? { scope: lifetime.scope } : {}),
       service,
       intent: 'add',
     });
-    if (result.kind === 'dismissed' || !lifetime.isCurrent()) return;
+    if (result.kind === 'dismissed' || lifetime && !lifetime.isCurrent()) return;
     onConnected(result.account);
   };
   return { missing: hasServiceAccount === false, connect };
