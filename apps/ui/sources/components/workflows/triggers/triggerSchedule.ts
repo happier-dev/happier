@@ -157,9 +157,10 @@ export function buildSimpleScheduleCron(schedule: SimpleSchedule): string {
     return `${schedule.minute} ${schedule.hour} * * ${weekdays}`;
 }
 
+/** A schedule's clock in every summary: 24-hour in every locale, as the At field types it (lab T1 "at 02:00"). */
 export function formatClockTime(schedule: Pick<SimpleSchedule, 'hour' | 'minute'>): string {
     return formatWithCachedDateTimeFormatter(new Date(Date.UTC(2023, 0, 1, schedule.hour, schedule.minute)),
-        getPreferredLanguage(), { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+        getPreferredLanguage(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' });
 }
 
 /** The editable field's round-trippable 24-hour value, independent of the display locale. */

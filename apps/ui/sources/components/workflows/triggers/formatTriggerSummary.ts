@@ -78,8 +78,8 @@ export function formatTriggerLastOutcome(age: string, state?: string): string {
 export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | null, enabled = true, nowMs = Date.now()): string {
     return nextRunAt === null || nextRunAt <= nowMs ? formatNextScheduledRun(null, enabled, nowMs)
         : t('workflows.triggers.row.nextRun', { time: formatWithCachedDateTimeFormatter(nextRunAt, getPreferredLanguage(),
-            { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit',
-                second: '2-digit', timeZoneName: 'short' }) });
+            { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                second: '2-digit', hourCycle: 'h23', timeZoneName: 'short' }) });
 }
 
 /**

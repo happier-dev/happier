@@ -235,6 +235,8 @@ export type TriggerPopoverProps = TriggerPopoverBaseProps & (
 /** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
 // T1's content width plus the canonical page-row insets, rather than charging the insets to its controls.
 export const TRIGGER_POPOVER_WIDTH = 380 + 2 * PAGE_LIST_METRICS.rowPaddingHorizontalPx;
+// A form taller than the popover scrolls under its foot; the fades and the shared edge chevron say there is more.
+const TRIGGER_POPOVER_EDGE_FADES = { top: true, bottom: true, size: 18 } as const;
 const CLOCK_FIELD_STYLE = { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } as const;
 
 const styles = StyleSheet.create((theme) => ({
@@ -251,8 +253,11 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: theme.space.s8,
-        paddingHorizontal: theme.space.s16,
-        // The foot sits under a scrolling form: a breath above it so the last field never touches it.
+        // On the rows' text edge, under one hairline (lab T1): a form taller than the popover scrolls
+        // above this line, so a row it cuts reads as more to scroll rather than a clipped field.
+        marginHorizontal: theme.space.s16,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.default,
         paddingTop: theme.space.s12,
         paddingBottom: theme.space.s16,
     },
@@ -563,7 +568,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             {({ maxHeight, placement, presentation }) => <TriggerPushedPageHost page={props.pushedPage} presentation={presentation}
                 renderPage={(page, sheetHeaderBack) => (
                 // Its own scroller: reusing the form's kept the form's scroll offset and hid Back and the title (D13).
-                <FloatingOverlay key="pushed-page" maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false}>
+                <FloatingOverlay key="pushed-page" maxHeight={maxHeight} scrollEnabled edgeFades={TRIGGER_POPOVER_EDGE_FADES} surfaceChrome="theme" arrow={placement ? { placement } : false}>
                     <ListPresentationProvider value="page" pageInsets="contained">
                         <View style={styles.surface}>
                             {sheetHeaderBack ? null : <View style={styles.back}><ToolbarButton testID={`${props.testID}-back`}
@@ -582,7 +587,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                     editing onEditingChange={setEventEditing} editorMaxHeight={maxHeight} />
             ) : (
                 // The floating theme surface every popover shares (DESIGN.md floating glass).
-                <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false} footer={<RoundButtonSizeScope size="small" presentation="uniform"><View style={styles.foot}>
+                <FloatingOverlay maxHeight={maxHeight} scrollEnabled edgeFades={TRIGGER_POPOVER_EDGE_FADES} surfaceChrome="theme" arrow={placement ? { placement } : false} footer={<RoundButtonSizeScope size="small" presentation="uniform"><View style={styles.foot}>
                             {failureMessage === null ? null : <Text testID={`${props.testID}-failure`} accessibilityLiveRegion="polite" style={styles.failure}>{failureMessage}</Text>}
                             {!isNew && failureMessage !== null ? completion : null}
                             {isNew ? (

@@ -61,15 +61,16 @@ describe('formatTriggerSummary', () => {
         expect(formatNextScheduledRun(at, true, midnight)).toContain('nextHours(count=9)');
         expect(readNextScheduledRunRefreshAtMs(null, now)).toBeNull();
     });
-    it.each(['en-US', 'en-GB', 'fr-FR'])('uses the same locale clock for schedules and next occurrences (%s)', (locale) => {
+    // One 24-hour clock (lab T1 "Every night at 02:00"): the summary reads as the At field types it, in every locale.
+    it.each(['en-US', 'en-GB', 'fr-FR'])('uses the same 24-hour clock for schedules and next occurrences (%s)', (locale) => {
         language.value = locale;
         const now = new Date(2026, 9, 8, 6).getTime();
         const next = new Date(2026, 9, 9, 9, 5).getTime();
-        const clock = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(next);
+        const clock = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(next);
         expect(formatClockTime({ hour: 9, minute: 5 })).toBe(clock);
         expect(formatTriggerSummary(cron('5 9 * * *'))).toContain(clock);
         expect(formatNextScheduledRunAccessibilityLabel(next, true, now)).toContain(new Intl.DateTimeFormat(locale,
-            { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(next));
+            { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(next));
         expect(parseClockTime('09:05')).toEqual({ hour: 9, minute: 5 });
     });
     it('shows relative occurrences when the native Intl boundary has no RelativeTimeFormat', () => {

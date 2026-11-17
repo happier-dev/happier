@@ -926,7 +926,7 @@ describe('workflow library page anatomy', () => {
         }
         await vi.waitFor(() => expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull());
         await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('workflows.triggers.summary.everyDayAt(time=9:00 AM)');
+            expect(screen.getTextContent()).toContain('workflows.triggers.summary.everyDayAt(time=09:00)');
         });
         expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
         expect(screen.findByTestId('workflow-builtins:builtin:plan-with-a-panel')).not.toBeNull();

@@ -4,6 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TriggerPopover } from '@/components/workflows/triggers/TriggerPopover';
+import { TriggerRunsOnRow } from '@/components/workflows/triggers/TriggerRunsOnRow';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { TriggerFormValue } from '@/components/workflows/triggers/sessionTriggerForm';
 import { t } from '@/text';
 
@@ -52,6 +54,8 @@ const FORMS: Readonly<Record<Exclude<Scene, 'new'>, TriggerFormValue>> = {
 export function TriggerPopoverSpecimen(props: Readonly<{ scene: Scene }>) {
   const anchorRef = React.useRef<View>(null);
   const [open, setOpen] = React.useState(true);
+  // The Account host's Runs on row, on this Account's real Machines (AccountTriggersSection).
+  const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(null);
   return (
     <View style={styles.page} testID="trigger-popover-specimen">
       <View ref={anchorRef} collapsable={false} style={styles.anchor}>
@@ -79,6 +83,15 @@ export function TriggerPopoverSpecimen(props: Readonly<{ scene: Scene }>) {
                 onDelete: noopAsync,
               })}
           workflowOptions={[]}
+          hostComplete={project !== null}
+          setRows={
+            <TriggerRunsOnRow
+              testID="trigger-popover-specimen-runs-on"
+              target={project}
+              onChange={setProject}
+              description={t('workflows.triggers.editor.runsOnAccountDescription')}
+            />
+          }
           machineId={null}
           onSubmit={noopAsync}
         />
