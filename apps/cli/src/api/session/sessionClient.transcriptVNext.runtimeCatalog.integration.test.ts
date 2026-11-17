@@ -250,6 +250,37 @@ describe('ApiSessionClient transcript vNext transport', () => {
     );
   });
 
+  it('sends live transcript segments as ordinary packets, never as socket.io volatile packets', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    // Boundary mirror of socket.io-client 4.x: reading `socket.volatile` arms a flag that the next emit
+    // consumes, and a volatile packet is discarded whenever the transport is mid-write.
+    const stub = sessionSocketStub;
+    let volatileArmed = false;
+    const emittedVolatile: Array<[string, boolean]> = [];
+    const plainEmit = stub.emit;
+    Object.defineProperty(stub, 'volatile', { configurable: true, get: () => {
+      volatileArmed = true;
+      return { emit: (event: string, ...args: unknown[]) => stub.emit(event, ...args) };
+    } });
+    stub.emit = vi.fn((event: string, ...args: unknown[]) => {
+      emittedVolatile.push([event, volatileArmed]);
+      volatileArmed = false;
+      return plainEmit(event, ...args);
+    }) as typeof stub.emit;
+
+    const client = trackClient(createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' })));
+    (client as any).sendAgentMessageEphemeral('codex', { type: 'message', message: 'Hello' } as any,
+      { localId: 'segment-1', tick: 1, createdAt: 1_000 });
+    (client as any).sendAgentMessageEphemeralDelta('codex', { type: 'message', message: ' world' },
+      { localId: 'segment-1', tick: 2, baseLength: 5, createdAt: 1_000 });
+
+    expect(emittedVolatile.filter(([event]) => event.startsWith('transcript-stream-segment'))).toEqual([
+      ['transcript-stream-segment', false],
+      ['transcript-stream-segment-delta', false],
+    ]);
+  });
+
   it('advances the ephemeral stream connection epoch on every socket connect', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'l1', didWrite: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });

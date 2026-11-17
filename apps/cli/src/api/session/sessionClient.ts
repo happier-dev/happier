@@ -1523,7 +1523,9 @@ export class ApiSessionClient extends EventEmitter {
                 emit: (event, payload) => {
                     this.socket?.emit?.(event, payload as never);
                 },
-                volatile: this.socket?.volatile
+                // `in`, not a read: socket.io's `volatile` getter arms a flag that the next emit
+                // consumes, which turned live transcript frames into discardable packets.
+                volatile: this.socket && 'volatile' in this.socket
                     ? {
                         emit: (event, payload) => {
                             this.socket.volatile?.emit?.(event, payload as never);
