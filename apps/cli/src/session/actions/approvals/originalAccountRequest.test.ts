@@ -13,6 +13,42 @@ const accountId = 'owner';
 const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, session: 'terminal', tokenEpoch: 1,
   provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
 
+it('retires the original Account observer when the persisted request has no approval flow', async () => {
+  const socket = await createRequesterCurrentnessSocketHarness();
+  onTestFinished(() => socket.close());
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'usage.sources.consent.set',
+    actionArgs: { serverId: 'srv_home', machineId: 'machine', sourceId: 'source' },
+    summary: 'Stop usage collection', approval: undefined,
+    executionOriginV1: { v: 1, serverId: 'srv_home', accountId, machineId: 'machine',
+      target: { kind: 'machine', machineId: 'machine' }, actionId: 'usage.sources.consent.set',
+      requestId: 'no-flow', surface: 'cli', authority: 'account_automation', caller: { kind: 'host' } },
+  });
+  // Persistent Artifact reads are the system boundary; keep the Action reader,
+  // public projection, observer and invocation lifetime real.
+  const executor = createActionExecutor({ approvalsGet: async () => request });
+  let retired!: () => void;
+  const observerRetired = new Promise<void>(resolve => { retired = resolve; });
+  socket.server.on('connection', peer => { peer.once('disconnect', retired); });
+  const presented = vi.fn();
+  const lifetime = new AbortController();
+  onTestFinished(() => lifetime.abort());
+  await expect(executeOriginalAccountCliApprovalRequest({
+    actionId: request.actionId, requestId: 'no-flow', homeId: 'srv_home', accountId,
+    target: { kind: 'machine', machineId: 'machine' }, token, serverHttpBaseUrl: 'https://home.test',
+    context: { surface: 'cli', authority: 'account_automation', runtimeAccountId: accountId, signal: lifetime.signal },
+    execute: executor.execute, onApprovalRequested: presented,
+    run: async signal => {
+      await Promise.race([observerRetired, new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      })]);
+      return { ok: true, result: { kind: 'approval_request_created', artifactId: 'no-flow', actionId: request.actionId } };
+    },
+  })).resolves.toMatchObject({ ok: true });
+  expect(presented).not.toHaveBeenCalled();
+  expect(socket.clients.every(client => !client.active)).toBe(true);
+});
+
 it.each(['deferred', 'blocking', 'root_invoke_blocking', 'target_durable', 'target_live_only'] as const)('presents original Account approval only through its %s flow owner', async flow => {
   const socket = await createRequesterCurrentnessSocketHarness();
   onTestFinished(() => socket.close());
