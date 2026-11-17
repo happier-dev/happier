@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { AutomationIdV1Schema } from './automationIdV1.js';
 
 import {
   defineProtocolNumber,
@@ -16,6 +17,12 @@ export const AutomationTriggerIdProtocolSchema = defineProtocolString({
 export const AutomationTriggerIdSchema = asProtocolZod(AutomationTriggerIdProtocolSchema)
   .brand<'AutomationTriggerId'>();
 export type AutomationTriggerId = z.infer<typeof AutomationTriggerIdSchema>;
+
+/** Existing persisted parent/child locator, independent of a source's private config. */
+export const AutomationTriggerReferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema,
+}));
+export type AutomationTriggerReferenceV1 = z.infer<typeof AutomationTriggerReferenceV1Schema>;
 
 /** Independent currentness witness for one trigger definition. */
 export const AutomationTriggerRevisionProtocolSchema = defineProtocolNumber({

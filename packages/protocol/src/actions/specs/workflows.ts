@@ -6,6 +6,7 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1, type WorkflowActionIdV1 } from '../../workflows/actionsV1.js';
 import { WORKFLOW_ACTION_IDS_V1 } from '../actionIds.js';
+import { WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 } from '../actionIds.js';
 import { getWorkflowInputHints, WORKFLOW_AUTOMATION_REMOVAL_WARNING } from './workflowInputHints.js';
 
 
@@ -42,6 +43,7 @@ export const WORKFLOW_ACTION_TITLES: Readonly<Record<WorkflowActionIdV1, string>
   'workflow.definition.import': 'Import workflow document',
   'workflow.definition.export': 'Export workflow document',
   'workflow.definition.capture': 'Prepare an editable pattern',
+  'workflow.subjects.list': 'List saved health checks',
   'workflow.trigger.list': 'List workflow triggers',
   'workflow.trigger.add': 'Add workflow trigger',
   'workflow.trigger.update': 'Update workflow trigger',
@@ -96,7 +98,7 @@ export const WORKFLOW_READ_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new Set
   'workflow.validate', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.invocations.list', 'workflow.run.invocations.get',
   'workflow.definition.list', 'workflow.definition.get', 'workflow.definition.import', 'workflow.definition.export', 'workflow.definition.capture',
-  'workflow.trigger.list', 'session.trigger.list',
+  WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1, 'workflow.trigger.list', 'session.trigger.list',
 ]);
 
 function removesWholeTriggerSet(input: unknown): boolean {

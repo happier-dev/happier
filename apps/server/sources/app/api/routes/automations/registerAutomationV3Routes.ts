@@ -184,6 +184,8 @@ export function registerAutomationV3Routes(
                 await readAutomationTriggerEventDeclarations(accountId, query));
             const page = await listAutomationDefinitionsPage({
                 accountId,
+                ...(query.subject !== undefined ? { subject: query.subject } : {}),
+                ...(query.contextSubjects !== undefined ? { contextSubjects: query.contextSubjects } : {}),
                 limit: query.limit,
                 ...(query.cursor ? { cursor: query.cursor } : {}),
                 ...(query.workflowDefinitionId !== undefined ? { workflowDefinitionId: query.workflowDefinitionId } : {}),
@@ -193,8 +195,10 @@ export function registerAutomationV3Routes(
                 ...(query.managedTarget !== undefined ? { managedTarget: query.managedTarget } : {}),
                 ...(query.includeUnindexedManagedTargets !== undefined ? { includeUnindexedManagedTargets: query.includeUnindexedManagedTargets } : {}),
                 ...(query.managedTargetUnindexed !== undefined ? { managedTargetUnindexed: query.managedTargetUnindexed } : {}),
+                ...(query.healthCheckSources !== undefined ? { healthCheckSources: query.healthCheckSources } : {}),
                 ...('details' in query ? { details: true as const } : {}),
             });
+            if (page.attached !== undefined) return AutomationDefinitionListResponseSchema.parse(page);
             const rows = page.automations;
             const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
                 loadAutomationEventStatusProjections({ automations: rows, ...('details' in query ? { includePayloadSchemas: true as const } : {}) }),

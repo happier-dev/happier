@@ -1,4 +1,9 @@
+import type { AutomationTriggerReferenceV1 } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { decodeStoredText, encodeStoredText } from '@/storage/storedContent';
+import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import type { WorkflowAttachedTriggerPageV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { listAutomationAttachedTriggers } from './automationAttachedTriggerQuery';
 import { randomUUID } from "node:crypto";
 import { markSharedWorkflowTriggerSummaryChangedInTx, publishAutomationMutationInTx,
     type AutomationMutationPublication } from './automationSharedWorkflowSummaries';
@@ -4695,6 +4700,8 @@ function decodeAutomationDefinitionListCursor(
  */
 export async function listAutomationDefinitionsPage(params: Readonly<{
     accountId: string;
+    subject?: AutomationSubjectV1;
+    contextSubjects?: readonly AutomationSubjectV1[];
     limit?: number;
     cursor?: string | null;
     workflowDefinitionId?: string;
@@ -4704,17 +4711,29 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
     managedTarget?: AutomationManagedTargetV1;
     includeUnindexedManagedTargets?: true;
     managedTargetUnindexed?: true;
+    healthCheckSources?: Readonly<{ sources?: readonly AutomationTriggerReferenceV1[] }>;
     /** The explicit private-detail query uses the canonical full definition selection. */
     details?: true;
 }>): Promise<Readonly<{
     automations: AutomationListItem[];
     nextCursor: string | null;
+    attached?: WorkflowAttachedTriggerPageV1["attached"];
+    skippedNotSharedCount?: number;
 }>> {
+    if (params.subject !== undefined) {
+        return { automations: [], ...await listAutomationAttachedTriggers({ ...params, subject: params.subject }) };
+    }
     const limit = Math.min(
         Math.max(Math.floor(params.limit ?? AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS), 1),
         AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
     );
     const cursor = decodeAutomationDefinitionListCursor(params.cursor);
+    const healthTriggers = params.healthCheckSources ? { kind: 'pluginEvent' as const, deletedAt: null,
+        sourceContractVersion: HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.sourceContractVersion,
+        OR: HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.eventRefs.map(ref => ({ eventPluginId: ref.pluginId, eventLocalId: ref.localId })),
+        ...(params.healthCheckSources.sources ? { id: { in: params.healthCheckSources.sources.map(source => source.triggerId) } } : {}),
+    } : undefined;
+    const baseSelect = params.details ? automationListItemSelect : automationDefinitionListItemSelect;
     const rows = await db.automation.findMany({
         where: {
             accountId: params.accountId,
@@ -4725,6 +4744,10 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
             ...(params.scopeSessionId !== undefined ? { scopeSessionId: params.scopeSessionId } : {}),
             ...(params.scope === "account_inline" ? { workflowDefinitionId: null, scopeSessionId: null } : {}),
             AND: [
+                ...(healthTriggers ? [{ triggers: { some: healthTriggers } }] : []),
+                ...(params.healthCheckSources?.sources ? [{ OR: params.healthCheckSources.sources.map(source => ({
+                    id: source.automationId, triggers: { some: { id: source.triggerId } },
+                })) }] : []),
                 ...(params.scope === "account_saved" ? [{ workflowDefinitionId: { not: null }, scopeSessionId: null }] : []),
                 ...(params.managedTarget ? [{ OR: [
                     { managedTargetIndexed: true, managedTargetHomeId: params.managedTarget.homeId, managedTargetManagedId: params.managedTarget.managedId },
@@ -4736,7 +4759,9 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
                 ] }] : []),
             ],
         },
-        select: params.details ? automationListItemSelect : automationDefinitionListItemSelect,
+        select: healthTriggers ? { ...baseSelect, triggers: { ...baseSelect.triggers,
+            where: { ...baseSelect.triggers.where, ...healthTriggers },
+        } } : baseSelect,
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
         take: limit + 1,
     });

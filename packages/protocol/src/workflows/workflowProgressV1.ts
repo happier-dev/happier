@@ -248,6 +248,14 @@ export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type WorkflowRunSummaryV1 = z.infer<typeof WorkflowRunSummaryV1Schema>;
 
+/** Latest-started Run facts shared by Automation and selected-trigger summaries. */
+export const WorkflowRunLastStartedSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  ...z.pick(WorkflowRunSummaryV1Schema, { id: true, state: true, workflowCustodyState: true,
+    attentionRequired: true, failureUnseen: true, invocationAttentionRequired: true, createdAt: true }).shape,
+  startedAt: z.string().check(z.iso.datetime()),
+}));
+export type WorkflowRunLastStartedSummaryV1 = z.infer<typeof WorkflowRunLastStartedSummaryV1Schema>;
+
 /** Public-index-only parent witness used by the exact-machine recovery reader. */
 export const WorkflowRunRecoveryCandidateV1Schema = lazyZodSchema(() => z.strictObject({
   run: WorkflowRunSummaryV1Schema,

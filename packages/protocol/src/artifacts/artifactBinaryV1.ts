@@ -15,8 +15,12 @@ export const ArtifactBodyV1Schema = lazyZodSchema(() => z.union([z.string(), Art
 export type ArtifactBodyV1 = z.infer<typeof ArtifactBodyV1Schema>;
 
 /** Save attribution is private metadata, outside public-share content custody. */
+export const ArtifactSavedByPersonV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('person'), accountId: preservedBoundedNfcString(191, 'Account ids'),
+}));
+export type ArtifactSavedByPersonV1 = z.infer<typeof ArtifactSavedByPersonV1Schema>;
 export const ArtifactSavedByV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('person'), accountId: preservedBoundedNfcString(191, 'Account ids') }),
+  ArtifactSavedByPersonV1Schema,
   z.strictObject({ kind: z.literal('agent'), accountId: preservedBoundedNfcString(191, 'Account ids'),
     sessionId: zMini.optional(preservedBoundedNfcString(191, 'Session ids')) }),
 ]));

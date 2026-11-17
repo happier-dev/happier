@@ -1,4 +1,5 @@
 import { readPluginAutomationSubjectV1 } from '../../automations/automationPluginSubjectV1.js';
+import { encodeBase64 } from '../../crypto/base64.js';
 import { collectWorkflowTriggerEventReferencesV1, createWorkflowActionTriggerEventDeclarationV1, type WorkflowTriggerEventDeclarationV1 } from '../../workflows/workflowTriggerEventReferenceV1.js';
 import type {
   AutomationDefinitionCreateRequest, AutomationDefinitionDetail, AutomationTriggerDetail, AutomationDefinitionListResponse,
@@ -24,6 +25,8 @@ import { ActionRefusalDiagnosticV1Schema } from '../actionRefusalDiagnostic.js';
 import { resolveWorkflowRunVisibleTeamV1 } from '../../workflows/workflowRunVisibilityV1.js';
 import {
   WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema,
+  WorkflowSubjectsListRequestV1Schema, type WorkflowSubjectsListRequestV1, type WorkflowSubjectsListResultV1,
+  WorkflowAttachedTriggerPageV1Schema,
   WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerRemoveRequestV1Schema,
   WorkflowTriggerRunNowRequestV1Schema, type WorkflowTriggerRunNowRequestV1,
   type WorkflowTriggerAddRequestV1, type WorkflowTriggerListRequestV1,
@@ -163,6 +166,7 @@ export interface WorkflowTriggerActions {
   readWorkflowSummaries: (workflowDefinitionIds: readonly string[]) => Promise<ReadonlyMap<string, Readonly<{
     triggers: readonly WorkflowTriggerSummaryInputV1[]; nextRunAt: number | null;
   }>>>;
+  listSubjects: (raw: WorkflowSubjectsListRequestV1) => Promise<WorkflowSubjectsListResultV1>;
   list: (raw: WorkflowTriggerListRequestV1, caller?: Caller) => Promise<ReturnType<typeof WorkflowTriggerListResultV1Schema.parse>>;
   add: (raw: WorkflowTriggerAddRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   update: (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
@@ -230,17 +234,20 @@ async function automationRows<T>(readPage: (input: Readonly<Partial<AutomationDe
 export async function readSavedHealthCheckSourceSnapshotV1(deps: Readonly<{
   automations: Pick<WorkflowTriggerAutomationOperations, 'listDetails'>;
   openPluginEventTrigger?: WorkflowTriggerActionsDependencies['openPluginEventTrigger'];
-}>): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>> {
+}>, selection: Pick<WorkflowSubjectsListRequestV1, 'sources'> = {}): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>> {
   if (!deps.openPluginEventTrigger) refuse('source_unavailable');
   const candidates = new Map<string, WorkflowTriggerHealthSourceV1>();
   const priority = (candidate: WorkflowTriggerHealthSourceV1) => candidate.enabled ? candidate.observer ? 2 : 1 : 0;
-  for (const row of await automationRows(deps.automations.listDetails, {})) {
+  for (const row of await automationRows(deps.automations.listDetails, { healthCheckSources: selection })) {
     for (const trigger of row.triggers) {
       if (trigger.kind !== 'pluginEvent' || !isHealthCheckEventSourceV1(trigger)) continue;
       const definition = await deps.openPluginEventTrigger(row, trigger);
+      // Transition listeners use these Events without defining saved probes.
+      const source = HealthCheckSourceConfigV1Schema.safeParse(definition.sourceConfig);
+      if (!source.success) continue;
       const sourceInstanceId = definition.sourceInstanceId;
       const candidate = { sourceInstanceId, revision: `${row.id}:${trigger.id}:${trigger.revision}`,
-        source: HealthCheckSourceConfigV1Schema.parse(definition.sourceConfig), enabled: row.enabled && trigger.enabled,
+        source: source.data, enabled: row.enabled && trigger.enabled,
         observer: trigger.observation.kind === 'checkpointedPull' ? trigger.observation.watcher : null,
         automationId: row.id, triggerId: trigger.id } satisfies WorkflowTriggerHealthSourceV1;
       const previous = candidates.get(sourceInstanceId);
@@ -834,8 +841,33 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       } while (cursor);
       return summaries;
     },
+    listSubjects: async (raw: WorkflowSubjectsListRequestV1) => {
+      const input = WorkflowSubjectsListRequestV1Schema.parse(raw);
+      if (input.sources?.length === 0) return { subjects: [], nextCursor: null };
+      if (!deps.nativeAccount) refuse('source_unavailable');
+      const serverId = deps.nativeAccount.serverId;
+      const snapshot = await readSavedHealthCheckSourceSnapshotV1(deps, { sources: input.sources });
+      const sources = [...snapshot.values()];
+      // Global dedup/priority precedes pagination. The cursor identifies a saved source,
+      // never a check row; the inherited definition-list limit counts saved sources.
+      const cursorFor = (source: WorkflowTriggerHealthSourceV1) => encodeBase64(new TextEncoder().encode(source.sourceInstanceId), 'base64url');
+      const start = input.cursor ? sources.findIndex(source => cursorFor(source) === input.cursor) + 1 : 0;
+      if (input.cursor && start === 0) refuse('invalid_input');
+      const page = sources.slice(start, start + input.limit);
+      return { subjects: page.flatMap(source => source.source.checks.map(check => ({
+        subject: { kind: 'healthCheck' as const, serverId, sourceInstanceId: source.sourceInstanceId, checkId: check.checkId },
+        source: { automationId: source.automationId, triggerId: source.triggerId },
+        label: `${check.kind.localId} (${check.checkId})`,
+      }))), nextCursor: start + page.length < sources.length ? cursorFor(page[page.length - 1]!) : null };
+    },
     list: async (raw: WorkflowTriggerListRequestV1, caller?: Caller) => {
       const input = WorkflowTriggerListRequestV1Schema.parse(raw);
+      if ('subject' in input) {
+        const page = await deps.automations.list(input);
+        return { sets: [], ...WorkflowAttachedTriggerPageV1Schema.parse({
+          attached: page.attached, nextCursor: page.nextCursor, skippedNotSharedCount: page.skippedNotSharedCount,
+        }) };
+      }
       if ('backupFreshness' in input) {
         const row = await read(input.backupFreshness.automationId);
         if (row.scheduleOccurrences === undefined) refuse('source_unavailable');

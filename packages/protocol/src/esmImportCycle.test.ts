@@ -27,6 +27,13 @@ async function importInFreshProcess(relativeEntryPath: string, afterImport = '',
 
 describe('protocol ESM import safety', () => {
   it.each([
+    'automations/automationActionSpecsV1.ts',
+    'automations/automationEventV1.ts',
+  ])('imports Event HTTP schemas with %s first under the native source runtime', async (entryPath) => {
+    await importInFreshProcess(entryPath, '', true);
+  }, MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
+  it.each([
     'sessions/pending/pendingRequestedActionV1.ts',
     'sessions/messages/sessionPendingMachineAdmissionV1.ts',
     'account/publicProfilePublication.ts',

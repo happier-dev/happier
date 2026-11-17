@@ -1432,11 +1432,11 @@ export const AutomationConversationAdmitHttpRequestV1Schema = lazyZodSchema(() =
 ]));
 
 export const AutomationConversationActionHttpRequestSchemasV1 = Object.freeze({
-  'automation.conversation.targets.list': z.strictObject({
+  'automation.conversation.targets.list': lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     caller: AutomationConversationActionHttpCallerV1Schema,
     input: AutomationConversationTargetsListInputV1Schema,
-  }),
+  })),
   'automation.conversation.target.verify': z.strictObject({
     v: z.literal(1),
     caller: AutomationConversationActionHttpCallerV1Schema,
@@ -1550,17 +1550,17 @@ export type AutomationEventAdmitHttpRequestV1 = z.infer<
 >;
 
 export const AutomationEventActionHttpRequestSchemasV1 = Object.freeze({
-  'automation.event.sources.list': z.strictObject({
+  'automation.event.sources.list': lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     caller: AutomationEventActionHttpCallerV1Schema,
     input: AutomationEventSourcesListInputV1Schema,
-  }),
+  })),
   'automation.event.admit': AutomationEventAdmitHttpRequestV1Schema,
-  'automation.event.source.status.report': z.strictObject({
+  'automation.event.source.status.report': lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     caller: AutomationEventActionHttpCallerV1Schema,
     input: AutomationEventSourceStatusReportV1Schema,
-  }),
+  })),
 } as const satisfies Readonly<Record<AutomationEventActionIdV1, z.ZodMiniType>>);
 
 /**

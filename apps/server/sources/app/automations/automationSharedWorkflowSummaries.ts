@@ -1,3 +1,5 @@
+import { automationConsentReferenceSelect, readAutomationDefinitionConsentFor } from './automationActionTriggerConfiguration';
+import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
 import { parseAutomationStoredWorkflowDefinitionRecipeV2, AutomationStoredWorkflowDefinitionV2ReadSchema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { summarizeWorkflowTriggerRowsV1, type WorkflowTriggerSummaryV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { resolveWorkflowRunAdmissionRecipientAccountIdsInTx, resolveWorkflowRunVisibilityScopesInTx } from '@/app/workflows/workflowRunAccess';
@@ -97,20 +99,23 @@ export async function readSharedWorkflowTriggerSummaries(input: Readonly<{
         const teamsBySource = new Map(scopes.map(scope => [scope.sourceArtifactId, scope.visibleTeamIds]));
         const candidates = await tx.automation.findMany({ where: { accountId: { not: input.accountId }, deletedAt: null,
             scopeSessionId: null, workflowDefinitionId: { in: [...teamsBySource.keys()] } },
-            select: { ...automationDefinitionListItemSelect, templateCiphertext: true, account: { select: { encryptionMode: true } } } });
+            select: { ...automationDefinitionListItemSelect, templateCiphertext: true, account: { select: { encryptionMode: true, ...ACCOUNT_DISPLAY_PROFILE_SELECT } } } });
         // Match the canonical definition readers: stored trigger rows use the
         // current Automation domain, while Prisma retains legacy enum members.
         return candidates.filter(row => {
             const visibleTeamId = readSelectedTeam(row);
             return visibleTeamId !== null && row.workflowDefinitionId !== null
                 && teamsBySource.get(row.workflowDefinitionId)?.includes(visibleTeamId) === true;
-        }) as AutomationListItem[];
+        }).map(row => ({ definition: row as AutomationListItem,
+            setUpBy: { accountId: row.accountId, displayName: resolveAccountDisplayLabelV1(row.account) } }));
     });
     const [events, lifecycle] = await Promise.all([
-        loadAutomationEventStatusProjections({ automations: rows }),
-        loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
+        loadAutomationEventStatusProjections({ automations: rows.map(row => row.definition) }),
+        loadAutomationSessionLifecycleStatusProjections({ automations: rows.map(row => row.definition) }),
     ]);
-    return [...summarizeWorkflowTriggerRowsV1(rows.map(row => toAutomationDefinitionListItemApiDto(row, null, events, lifecycle.get(row.id)))).values()];
+    return [...summarizeWorkflowTriggerRowsV1(rows.map(({ definition, setUpBy }) => ({
+        ...toAutomationDefinitionListItemApiDto(definition, null, events, lifecycle.get(definition.id)), setUpBy,
+    }))).values()];
 }
 
 export async function readAutomationActionIndex(input: Readonly<{
@@ -159,6 +164,33 @@ export async function readAutomationActionIndex(input: Readonly<{
         return { v: 1 as const, rows: admitted.flatMap(row => projectAutomationActionIndexRows(row, revisions,
             row.accountId !== input.accountId)) };
     });
+}
+
+export type AutomationActorConsentReference = Readonly<{
+    automationId: string;
+    triggerId: string;
+    consentFor: NonNullable<ReturnType<typeof readAutomationDefinitionConsentFor>>;
+}>;
+
+/** Selected history retains every actor reference; activation and currentness have separate owners. */
+export async function readAutomationActorConsentReferencesInTx(tx: Tx, input: Readonly<{
+    accountId: string;
+    sourceTriggers: readonly Readonly<{ automationId: string; triggerId: string }>[];
+}>): Promise<readonly AutomationActorConsentReference[]> {
+    const references = new Map<string, AutomationActorConsentReference>();
+    for (const sourceTriggers of portableQueryChunks({ values: input.sourceTriggers,
+        bindingsPerValue: 2, fixedBindings: 2 })) {
+        const rows = await tx.automationTrigger.findMany({ where: {
+            kind: 'action', automation: { is: { accountId: input.accountId } },
+            OR: sourceTriggers.map(source => ({ consentForAutomationId: source.automationId,
+                consentForTriggerId: source.triggerId })),
+        }, select: { id: true, automationId: true, ...automationConsentReferenceSelect } });
+        for (const row of rows) {
+            const consentFor = readAutomationDefinitionConsentFor([row]);
+            if (consentFor) references.set(row.id, { automationId: row.automationId, triggerId: row.id, consentFor });
+        }
+    }
+    return [...references.values()];
 }
 
 export type AutomationMutationPublication = Readonly<{

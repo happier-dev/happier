@@ -6,6 +6,8 @@ import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/au
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -20,6 +22,60 @@ describe('Team workflow schedule summaries', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-team-schedules-' }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('retains selected direct/context admission and count privacy on SQLite without a Team', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain', name: 'Shared check author' } });
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const subject = { kind: 'machine' as const, serverId: randomUUID(), machineId: randomUUID() };
+        const visibleWorkflowId = randomUUID();
+        const deniedWorkflowId = randomUUID();
+        const visibleTriggerId = randomUUID();
+        const structural = { kind: 'action' as const, phase: 'after', actionIdsJson: JSON.stringify(['session.archive']),
+            subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject), reachesOthers: true };
+        const triggerRow = (automationId: string, id: string) => ({ ...structural, id,
+            definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: 0, triggerKind: 'action' },
+                definition: { kind: 'action', phase: 'after', actionIds: ['session.archive'], subject } })),
+        });
+        for (const id of [visibleWorkflowId, deniedWorkflowId]) {
+            await db.artifact.create({ data: { id, accountId: owner.id,
+                header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }))),
+                body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ privateSteps: 'not summary evidence' }))),
+                dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
+            const automationId = randomUUID();
+            await db.automation.create({ data: { id: automationId, accountId: owner.id, workflowDefinitionId: id,
+                name: 'Private recipe name', templateCiphertext: 'opaque private context',
+                triggers: { create: triggerRow(automationId, id === visibleWorkflowId ? visibleTriggerId : randomUUID()) } } });
+        }
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: visibleWorkflowId,
+            accountId: viewer.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        const privateAutomationId = randomUUID();
+        await db.automation.create({ data: { id: privateAutomationId, accountId: owner.id,
+            workflowDefinitionId: deniedWorkflowId, name: 'Author-only check', templateCiphertext: 'opaque private context',
+            triggers: { create: { ...triggerRow(privateAutomationId, randomUUID()), reachesOthers: false } } } });
+        const app = createAuthenticatedTestApp();
+        registerAutomationV3Routes(app);
+        await app.ready();
+        const query = (payload: object) => app.inject({ method: 'POST', url: '/v3/automations/query',
+            headers: { 'x-test-user-id': viewer.id }, payload });
+        try {
+            const direct = await query({ subject });
+            expect(direct.statusCode, direct.body).toBe(200);
+            expect(direct.json()).toMatchObject({ automations: [], attached: [{ triggerId: visibleTriggerId,
+                workflowDefinitionId: visibleWorkflowId, relation: 'direct',
+                setUpBy: { accountId: owner.id, displayName: owner.name } }], nextCursor: null, skippedNotSharedCount: 1 });
+            expect(direct.body).not.toContain(deniedWorkflowId);
+            expect(direct.body).not.toContain('Private recipe name');
+            expect(direct.body).not.toContain('opaque private context');
+            expect(direct.body).not.toContain('not summary evidence');
+            const otherHome = { ...subject, serverId: randomUUID() };
+            expect((await query({ subject: otherHome })).json()).toMatchObject({
+                automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
+            expect((await query({ subject: otherHome, contextSubjects: [subject] })).json()).toMatchObject({
+                attached: [{ triggerId: visibleTriggerId, relation: 'context' }], skippedNotSharedCount: 1 });
+            expect((await query({ subject, details: true })).statusCode).toBe(400);
+        } finally { await app.close(); }
+    });
 
     it('shows only Team-visible schedules to current Team viewers, retaining private Account details', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

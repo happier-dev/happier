@@ -12,7 +12,7 @@ import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessi
 import {
     projectAutomationRunState,
     isTerminalAutomationRunState,
-    type AutomationListItem,
+    type AutomationTriggerSummarySource,
     type AutomationRunState,
     type AutomationTriggerItem,
 } from "./automationTypes";
@@ -25,7 +25,7 @@ type LifecycleStatusRun = Pick<StoredAutomationRun,
     "id" | "state" | "triggerId" | "causeSessionLifecycleEvent" | "causeSourceSessionId" | "causeSourceTurnId"
 >;
 
-function lifecycleTriggers(automations: readonly AutomationListItem[]) {
+function lifecycleTriggers(automations: readonly AutomationTriggerSummarySource[]) {
     return automations.flatMap((automation) => automation.triggers.flatMap((trigger) => (
         trigger.kind === "sessionLifecycle"
             ? [{
@@ -52,7 +52,7 @@ function admittedStatus(
 
 /** Batch-derived lifecycle status from the source facts, budget, and latest immutable Run. */
 export async function loadAutomationSessionLifecycleStatusProjections(params: Readonly<{
-    automations: readonly AutomationListItem[];
+    automations: readonly AutomationTriggerSummarySource[];
     tx?: Tx;
 }>): Promise<ReadonlyMap<string, ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus>>> {
     const client = params.tx ?? db;

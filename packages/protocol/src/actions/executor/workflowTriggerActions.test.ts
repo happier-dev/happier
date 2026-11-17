@@ -1,3 +1,4 @@
+import { WorkflowSubjectsListResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { bundledUsageModelPriceCatalog } from '../../usage/usageModelPriceCatalog.js';
 import { describe, expect, it } from 'vitest';
 import { SessionInputAdmissionResultV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
@@ -474,7 +475,7 @@ describe('trigger source display provenance', () => {
       .toEqual([{ event: pending.eventRef, payloadSchema }]);
   });
 
-  it('reads two saved Environment health sources in one retained definition census', async () => {
+  it('reads saved Environment probe sources while skipping transition listeners in one definition census', async () => {
     const f = fixture();
     let censusReads = 0;
     const host = createAccountWorkflowTriggerActions({ automations: { ...f.deps.automations,
@@ -492,11 +493,19 @@ describe('trigger source display provenance', () => {
         displayLabel: environmentId, filter: null, maximumObservationAgeMs: null,
         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
           machineId: 'observer', pluginId: 'happier.machine.services', materializationId: 'services' } } } });
+    await host.add({ target: { kind: 'inline', definition }, project,
+      trigger: { kind: 'pluginEvent', enabled: true,
+        eventRef: { pluginId: 'happier.machine.services', localId: 'health-check-failed' },
+        sourceInstanceId: 'health-saved:account', sourceContractVersion: 1,
+        sourceConfig: { v: 1, serverId: 'home', observingSince: 0 }, displayLabel: 'Saved transitions',
+        filter: null, maximumObservationAgeMs: null,
+        observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+          machineId: 'observer', pluginId: 'happier.machine.services', materializationId: 'services' } } } });
     expect([...f.rows.values()].flatMap(row => row.triggers).map(item => item.kind === 'pluginEvent' ? item.eventRef.localId : null))
-      .toEqual(['health-check-failed', 'health-check-failed']);
+      .toEqual(['health-check-failed', 'health-check-failed', 'health-check-failed']);
     censusReads = 0;
     const result = await host.list(WorkflowTriggerListRequestV1Schema.parse({
-      healthSource: { sourceInstanceIds: ['health:production', 'health:preview'] } }));
+      healthSource: { sourceInstanceIds: ['health:production', 'health:preview', 'health-saved:account'] } }));
     expect(result).toMatchObject({ healthSources: [
       { sourceInstanceId: 'health:production', source: { subject: { environmentId: 'production' } } },
       { sourceInstanceId: 'health:preview', source: { subject: { environmentId: 'preview' } } },
@@ -2193,6 +2202,68 @@ describe('workflow trigger Automation composition', () => {
       triggers: [{ kind: 'schedule', schedule: trigger.schedule, automationId: saved.set.automationId,
         triggerId: saved.triggerId, enabled: false, nextRunAt: null }], nextRunAt: null,
     }]]));
+  });
+  it('lists selected attached facts through the Action boundary without requesting private definitions', async () => {
+    const { deps, executor } = fixture();
+    const attached = [{ automationId: 'inline-set', triggerId: 'inline-trigger', workflowDefinitionId: null,
+      relation: 'direct' as const, enabled: false, revision: 3,
+      summary: { kind: 'schedule' as const, schedule: trigger.schedule, enabled: false, nextRunAt: null },
+      setUpBy: { accountId: 'owner', displayName: null } },
+    { automationId: 'shared-set', triggerId: 'shared-trigger', workflowDefinitionId: workflow,
+      relation: 'context' as const, enabled: true, revision: 5,
+      summary: { kind: 'schedule' as const, schedule: trigger.schedule, enabled: true, nextRunAt: 100 },
+      setUpBy: { accountId: 'another-account', displayName: 'Workflow author' } }];
+    const page = { attached, nextCursor: 'next-selected-page', skippedNotSharedCount: 2 };
+    // Only the network/persistent Automation operations are replaced; Action dispatch,
+    // schemas and trigger-list semantics run unchanged, with no context-reader override.
+    const read = createWorkflowTriggerActions({ ...deps, automations: { ...deps.automations,
+      list: async () => ({ automations: [], ...page }),
+      listDetails: async () => { throw new Error('selected_read_must_not_open_private_details'); },
+      get: async () => { throw new Error('selected_read_must_not_open_private_definition'); } } });
+    const result = await executor(read).execute('workflow.trigger.list', {
+      subject: { kind: 'machine', serverId: 'home-one', machineId: 'machine-one' },
+      contextSubjects: [{ kind: 'session', serverId: 'home-one', sessionId: 'session-one' }], limit: 2,
+    }, ownCaller);
+    expect(result).toEqual({ ok: true, result: { sets: [], ...page } });
+    if (!result.ok) throw new Error('Expected selected attached facts');
+    expectDeclaredActionOutput('workflow.trigger.list', result.result);
+  });
+  it('lists saved check choices through the Action boundary without enrolling new probes', async () => {
+    const f = fixture();
+    const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations,
+      nativeAccount: { accountId: 'owner', serverId: 'home-one', isCurrent: async () => true },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => crypto.randomUUID() });
+    for (const environmentId of ['production', 'preview']) await host.add({ target: { kind: 'inline', definition }, project,
+      trigger: { kind: 'pluginEvent', enabled: true,
+        eventRef: { pluginId: 'happier.machine.services', localId: 'health-check-failed' },
+        sourceInstanceId: `health:${environmentId}`, sourceContractVersion: 1,
+        sourceConfig: { v: 1, subject: { kind: 'environment', environmentId }, checks: [{ checkId: 'http',
+          kind: { pluginId: 'happier.machine.services', localId: 'http' }, binding: { kind: 'healthCheck' },
+          config: { endpoint: 'https://private-probe.test', expectStatus: 200 }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1 }] },
+        displayLabel: environmentId, filter: null, maximumObservationAgeMs: null,
+        observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+          machineId: 'observer', pluginId: 'happier.machine.services', materializationId: 'services' } } } });
+    const executor = f.executor(host);
+    const read = async (cursor?: string) => {
+      const response = await executor.execute('workflow.subjects.list', { kind: 'healthCheck', limit: 1,
+        ...(cursor ? { cursor } : {}) }, ownCaller);
+      expect(response.ok).toBe(true);
+      if (!response.ok) throw new Error('Expected saved check choices');
+      expectDeclaredActionOutput('workflow.subjects.list', response.result);
+      return WorkflowSubjectsListResultV1Schema.parse(response.result);
+    };
+    const first = await read();
+    expect(first.subjects.map(row => row.subject)).toEqual([{ kind: 'healthCheck', serverId: 'home-one',
+      sourceInstanceId: 'health:production', checkId: 'http' }]);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await read(first.nextCursor!);
+    expect(second.subjects.map(row => row.subject)).toEqual([{ kind: 'healthCheck', serverId: 'home-one',
+      sourceInstanceId: 'health:preview', checkId: 'http' }]);
+    expect(second.nextCursor).toBeNull();
+    expect(JSON.stringify([first, second])).not.toContain('private-probe.test');
+    expect(f.rows.size).toBe(2);
   });
   it('merges the authorized Team summary into the same library facts without opening another Account context', async () => {
     const { deps, actions } = fixture();

@@ -6,7 +6,7 @@ import { type PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/pl
 import { db } from "@/storage/db";
 
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
-import type { AutomationListItem, AutomationTriggerItem } from "./automationTypes";
+import type { AutomationTriggerSummarySource, AutomationTriggerItem } from "./automationTypes";
 
 import { loadAutomationEventPayloadSchemas } from './automationEventPayloadSchemaProjection';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
@@ -151,7 +151,7 @@ function assignedWatcherCatalogLookup(accountId: string, trigger: PluginEventTri
  * projected into the list/detail-safe DTO.
  */
 export async function loadAutomationEventStatusProjections(params: Readonly<{
-    automations: readonly AutomationListItem[];
+    automations: readonly AutomationTriggerSummarySource[];
     includePayloadSchemas?: true;
 }>): Promise<ReadonlyMap<string, AutomationEventStatusProjection>> {
     const projections = new Map<string, AutomationEventStatusProjection>();

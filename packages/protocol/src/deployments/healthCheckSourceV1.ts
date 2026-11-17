@@ -143,8 +143,12 @@ export const HealthCheckSourceConfigV1Schema = lazyZodSchema(() => z.union([
 export type HealthCheckSourceConfigV1 = z.infer<typeof HealthCheckSourceConfigV1Schema>;
 export const HealthCheckSourceConfigV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSourceConfigV1Schema));
 
+export const HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1 = {
+    sourceContractVersion: 1, eventRefs: Object.values(HEALTH_CHECK_EVENT_REFS_V1),
+} as const;
 export function isHealthCheckEventSourceV1(source: Pick<AutomationPluginEventTrigger, 'eventRef' | 'sourceContractVersion'>): boolean {
-    return source.sourceContractVersion === 1 && Object.values(HEALTH_CHECK_EVENT_REFS_V1).some(ref =>
+    return source.sourceContractVersion === HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.sourceContractVersion
+        && HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.eventRefs.some(ref =>
         ref.pluginId === source.eventRef.pluginId && ref.localId === source.eventRef.localId);
 }
 

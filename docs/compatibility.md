@@ -1297,6 +1297,18 @@ reverse-development rollback direction is introduced.
 
 ## Trigger Event subject projection (unreleased 0.3)
 
+The selected `workflow.trigger.list` input is an unreleased 0.3 direct cut. Its selection
+and identity objects are closed. Matching Protocol, CLI, UI and server readers
+must reload together; older strict development readers reject these new
+selections. Existing unselected list inputs remain valid. Attachment results add
+only list-safe summaries, source/Run facts, Artifact access presentation and safe
+author attribution; denied references disclose only a Trigger count. No new
+persisted format, migration, compatibility adapter or wire epoch is introduced
+by these reads.
+
+The saved-check-only `workflow.subjects.list` Action follows the same matching
+development-reader contract. It adds no persisted format or probe enrollment.
+
 The closed `workflow.trigger.list` Event detail adds optional `subject`, using
 the existing closed Health check subject schema. The Account trigger owner opens
 recognized receipt and Health Event sources through its existing plaintext/E2EE

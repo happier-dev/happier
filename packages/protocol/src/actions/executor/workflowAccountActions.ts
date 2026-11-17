@@ -1,3 +1,4 @@
+import { WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 } from '../actionIds.js';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema } from '../../workflows/actionsV1.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import type { ActionExecutorDeps, HostReviewedChildrenPreparationV1, WorkflowActionExecute, WorkflowActionExecuteArgs } from './types.js';
@@ -268,6 +269,10 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       }
       if (actionId === 'workflow.definition.delete') {
         return await deps.definitions.delete(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context);
+      }
+      if (actionId === WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1) {
+        return deps.triggers ? await deps.triggers.listSubjects(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input))
+          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
       }
       if (actionId === 'workflow.trigger.list') {
         return deps.triggers ? await deps.triggers.list(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)

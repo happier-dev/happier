@@ -62,6 +62,9 @@ function automationDefinitionListInput(params: Readonly<Partial<AutomationDefini
   return {
     ...(params.limit === undefined ? {} : { limit: params.limit }),
     ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
+    ...(params.healthCheckSources === undefined ? {} : { healthCheckSources: params.healthCheckSources }),
+    ...(params.subject === undefined ? {} : { subject: params.subject }),
+    ...(params.contextSubjects === undefined ? {} : { contextSubjects: params.contextSubjects }),
     ...(params.workflowDefinitionId === undefined ? {} : { workflowDefinitionId: params.workflowDefinitionId }),
     ...(params.workflowDefinitionIds === undefined ? {} : { workflowDefinitionIds: params.workflowDefinitionIds }),
     ...(params.scopeSessionId === undefined ? {} : { scopeSessionId: params.scopeSessionId }),
@@ -88,7 +91,7 @@ export async function listAutomationDefinitions(params: Readonly<Partial<Automat
     timeout: AUTOMATION_HTTP_TIMEOUT_MS,
     validateStatus: () => true,
   };
-  const response = query.workflowDefinitionIds !== undefined || query.managedTarget !== undefined || query.managedTargetUnindexed !== undefined
+  const response = query.healthCheckSources !== undefined || query.subject !== undefined || query.workflowDefinitionIds !== undefined || query.managedTarget !== undefined || query.managedTargetUnindexed !== undefined
     ? await axios.post(`${resolveServerHttpBaseUrl()}/v3/automations/query`, query, options)
     : await axios.get(
     `${resolveServerHttpBaseUrl()}/v3/automations?${search.toString()}`,

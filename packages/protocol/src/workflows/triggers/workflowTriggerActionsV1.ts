@@ -3,15 +3,24 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionRefusalDiagnosticV1Schema } from '../../actions/actionRefusalDiagnostic.js';
 import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
 import { WorkflowDefinitionSavedByV1Schema } from '../workflowDefinitionV1.js';
+import { ArtifactSavedByPersonV1Schema } from '../../artifacts/artifactBinaryV1.js';
+import { ArtifactCallerAccessV1Schema } from '../../artifacts/artifactAccessV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
 import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema, AutomationPluginEventDefinitionTriggerSchema } from '../../automations/automationTriggerDefinition.js';
-import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
+import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../../automations/automationTriggerIdentity.js';
+import { OPAQUE_CURSOR_SCHEMA } from '../../automations/automationActionSpecsV1.js';
+import { AutomationEventSourceStatusV1Schema } from '../../automations/automationEventSourceStatusV1.js';
+import { AutomationHealthCheckSubjectV1Schema } from '../../automations/automationSubjectV1.js';
+import { AutomationTriggerReferenceV1Schema } from '../../automations/automationTriggerIdentity.js';
+import { AutomationDefinitionListRequestSchema } from '../../automations/automationApiV3.js';
+import { WorkflowRunLastStartedSummaryV1Schema } from '../workflowProgressV1.js';
+import { AutomationSubjectV1Schema } from '../../automations/automationSubjectV1.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { AutomationManualIdempotencyKeyV1Schema } from '../../automations/automationOccurrenceV1.js';
 import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchema,
   AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerProjectionSchema,
-  AutomationActionTriggerProjectionSchema,
+  AutomationActionTriggerProjectionSchema, AutomationEventSourceCatalogStatusSchema,
   AutomationCheckpointedPullObservationSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -30,6 +39,12 @@ import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/autom
 import { AutomationActionTriggerSchema } from '../../automations/automationActionTriggerV1.js';
 
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
+/** Safe author identity shared by attached and Workflow-level trigger summaries. */
+export const WorkflowTriggerSetUpByV1Schema = lazyZodSchema(() => z.strictObject({
+  accountId: ArtifactSavedByPersonV1Schema.shape.accountId,
+  displayName: z.nullable(z.string()),
+}));
+export type WorkflowTriggerSetUpByV1 = z.infer<typeof WorkflowTriggerSetUpByV1Schema>;
 /** Only public list-safe inputs consumed by the shared human-readable trigger summary. */
 export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
   const historyIdentity = {
@@ -37,6 +52,7 @@ export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
     triggerId: zMini.optional(AutomationTriggerIdSchema),
     /** False when the trigger or its set is off, so every summary says Off where its detail does; older summaries omit it. */
     enabled: zMini.optional(z.boolean()),
+    setUpBy: zMini.optional(WorkflowTriggerSetUpByV1Schema),
   };
   return z.discriminatedUnion('kind', [
     zMini.extend(zMini.pick(AutomationActionTriggerProjectionSchema, { kind: true, phase: true, actionIds: true,
@@ -55,6 +71,32 @@ export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
   ]);
 });
 export type WorkflowTriggerSummaryInputV1 = z.infer<typeof WorkflowTriggerSummaryInputV1Schema>;
+/** Selected, list-safe rows; the query owner admits visibility before this projection. */
+export const WorkflowAttachedTriggerV1Schema = lazyZodSchema(() => z.strictObject({
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  triggerId: AutomationTriggerIdSchema,
+  workflowDefinitionId: z.nullable(WorkflowDefinitionRefV1StringSchema),
+  workflowAccess: z.optional(z.strictObject({
+    ownerAccountId: ArtifactSavedByPersonV1Schema.shape.accountId,
+    access: ArtifactCallerAccessV1Schema,
+  })),
+  relation: z.enum(['direct', 'context']),
+  enabled: z.boolean(),
+  revision: AutomationTriggerRevisionSchema,
+  summary: WorkflowTriggerSummaryInputV1Schema,
+  sourceStatus: z.optional(z.nullable(AutomationEventSourceStatusV1Schema)),
+  sourceCatalogStatus: z.optional(z.nullable(AutomationEventSourceCatalogStatusSchema)),
+  lastRun: z.optional(z.nullable(WorkflowRunLastStartedSummaryV1Schema)),
+  setUpBy: WorkflowTriggerSetUpByV1Schema,
+}));
+export type WorkflowAttachedTriggerV1 = z.infer<typeof WorkflowAttachedTriggerV1Schema>;
+/** Denied references are represented only by a scope-wide count, independent of the displayed page. */
+export const WorkflowAttachedTriggerPageV1Schema = lazyZodSchema(() => z.strictObject({
+  attached: z.array(WorkflowAttachedTriggerV1Schema),
+  nextCursor: z.nullable(OPAQUE_CURSOR_SCHEMA),
+  skippedNotSharedCount: z.number().check(z.int(), z.nonnegative()),
+}));
+export type WorkflowAttachedTriggerPageV1 = z.infer<typeof WorkflowAttachedTriggerPageV1Schema>;
 /** Intended Event membership needs only its current declaration locator, never private source configuration. */
 export const WorkflowIntendedPluginEventV1Schema = lazyZodSchema(() => z.pick(AutomationPluginEventDefinitionTriggerSchema, {
   kind: true, eventRef: true, observationTransport: true,
@@ -73,16 +115,15 @@ export const WorkflowTriggerSummaryV1Schema = lazyZodSchema(() => z.strictObject
 export type WorkflowTriggerSummaryV1 = z.infer<typeof WorkflowTriggerSummaryV1Schema>;
 
 /** Both owned and Team projections consume the scheduler's next time, never recompute it. */
-export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
+export function summarizeWorkflowTriggerInputsV1(row: Readonly<{
   id: string; workflowDefinitionId?: string | null; enabled: boolean;
+  setUpBy?: WorkflowTriggerSetUpByV1;
   triggers: readonly import('../../automations/automationTriggerProjectionV1.js').AutomationTriggerListItem[];
-}>[]): Map<string, WorkflowTriggerSummaryV1> {
-  const result = new Map<string, WorkflowTriggerSummaryV1>();
-  for (const row of rows) {
-    if (!row.workflowDefinitionId) continue;
-    const summary = result.get(row.workflowDefinitionId) ?? { workflowDefinitionId: row.workflowDefinitionId, triggers: [], nextRunAt: null };
+}>): Pick<WorkflowTriggerSummaryV1, 'triggers' | 'nextRunAt'> {
+    const summary: Pick<WorkflowTriggerSummaryV1, 'triggers' | 'nextRunAt'> = { triggers: [], nextRunAt: null };
     for (const trigger of row.triggers) {
-      const historyIdentity = { automationId: row.id, triggerId: trigger.id, enabled: row.enabled && trigger.enabled };
+      const historyIdentity = { automationId: row.id, triggerId: trigger.id, enabled: row.enabled && trigger.enabled,
+        ...(row.setUpBy === undefined ? {} : { setUpBy: row.setUpBy }) };
       switch (trigger.kind) {
         case 'action': {
           if ('consentFor' in trigger) break;
@@ -105,7 +146,21 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
         case 'prComment': case 'ciFailed': summary.triggers.push({ ...historyIdentity, kind: trigger.kind }); break;
       }
     }
-    result.set(row.workflowDefinitionId, summary);
+    return summary;
+}
+
+export function summarizeWorkflowTriggerRowsV1(rows: readonly Parameters<typeof summarizeWorkflowTriggerInputsV1>[0][]): Map<string, WorkflowTriggerSummaryV1> {
+  const result = new Map<string, WorkflowTriggerSummaryV1>();
+  for (const row of rows) {
+    if (!row.workflowDefinitionId) continue;
+    const incoming = summarizeWorkflowTriggerInputsV1(row);
+    const summary = result.get(row.workflowDefinitionId);
+    if (!summary) result.set(row.workflowDefinitionId, { workflowDefinitionId: row.workflowDefinitionId, ...incoming });
+    else {
+      summary.triggers.push(...incoming.triggers);
+      if (incoming.nextRunAt !== null) summary.nextRunAt = summary.nextRunAt === null
+        ? incoming.nextRunAt : Math.min(summary.nextRunAt, incoming.nextRunAt);
+    }
   }
   return result;
 }
@@ -113,6 +168,12 @@ const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDef
 /** A policy-independent capture identity; Environment edits do not rewrite a saved Workflow's target. */
 export const WorkflowDeploymentBackupTargetV1Schema = lazyZodSchema(() => z.omit(DeploymentBackupRunInputV1Schema, { expectedRevision: true }));
 export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    subject: AutomationSubjectV1Schema,
+    contextSubjects: z.optional(z.array(AutomationSubjectV1Schema)),
+    limit: z.optional(AutomationDefinitionListRequestSchema.shape.limit),
+    cursor: z.optional(AutomationDefinitionListRequestSchema.shape.cursor),
+  }),
   z.strictObject({ workflow: WorkflowDefinitionRefV1StringSchema }),
   z.strictObject({ managedTarget: AutomationManagedTargetV1Schema }),
   z.strictObject({ deploymentBackup: WorkflowDeploymentBackupTargetV1Schema }),
@@ -237,6 +298,21 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
 const WorkflowTriggerEventDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
   triggerId: AutomationTriggerIdSchema, definition: AutomationEventTriggerDefinitionStoredPayloadV1Schema,
 }));
+/** Public saved-check selection exposes identity and a config-free label only. */
+export const WorkflowSubjectsListRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('healthCheck'),
+  sources: z.optional(z.array(AutomationTriggerReferenceV1Schema)),
+  /** Saved sources per page; a source may contain several check subjects. */
+  limit: AutomationDefinitionListRequestSchema.shape.limit,
+  cursor: z.optional(AutomationDefinitionListRequestSchema.shape.cursor),
+}));
+export type WorkflowSubjectsListRequestV1 = z.infer<typeof WorkflowSubjectsListRequestV1Schema>;
+export const WorkflowSubjectsListResultV1Schema = lazyZodSchema(() => z.strictObject({
+  subjects: z.array(z.strictObject({ subject: AutomationHealthCheckSubjectV1Schema, source: AutomationTriggerReferenceV1Schema, label: z.string() })),
+  nextCursor: z.nullable(OPAQUE_CURSOR_SCHEMA),
+}));
+export type WorkflowSubjectsListResultV1 = z.infer<typeof WorkflowSubjectsListResultV1Schema>;
+
 /** Saved health configuration and its observer are one private source-owner answer. */
 export const WorkflowTriggerHealthSourceV1Schema = lazyZodSchema(() => z.strictObject({
   sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
@@ -250,6 +326,9 @@ export const WorkflowTriggerHealthSourceV1Schema = lazyZodSchema(() => z.strictO
 export type WorkflowTriggerHealthSourceV1 = z.infer<typeof WorkflowTriggerHealthSourceV1Schema>;
 export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({
   sets: z.array(WorkflowTriggerSetV1Schema), triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
+  attached: z.optional(WorkflowAttachedTriggerPageV1Schema.shape.attached),
+  nextCursor: z.optional(WorkflowAttachedTriggerPageV1Schema.shape.nextCursor),
+  skippedNotSharedCount: z.optional(WorkflowAttachedTriggerPageV1Schema.shape.skippedNotSharedCount),
   healthSources: z.optional(z.array(WorkflowTriggerHealthSourceV1Schema)),
   backupEnvironments: z.optional(z.array(z.strictObject({
     serverId: WorkflowDeploymentBackupTargetV1Schema.shape.serverId,

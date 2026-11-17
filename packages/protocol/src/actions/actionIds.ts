@@ -204,7 +204,9 @@ export const EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID = 'sessions.extern
 export const EXTERNAL_SESSION_TRANSCRIPT_PAGE_ACTION_ID = 'sessions.external.transcript.page';
 export const EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER_ACTION_ID = 'sessions.external.transcript.readAfter';
 
+export const WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 = 'workflow.subjects.list';
 export const WORKFLOW_ACTION_IDS_V1 = [
+  WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1,
   'workflow.validate', WORKFLOW_RUN_START_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.read_state.set',
   'workflow.run.pause', 'workflow.run.resume', 'workflow.run.cancel', 'workflow.run.invocations.list',

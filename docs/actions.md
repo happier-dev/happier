@@ -6294,6 +6294,23 @@ Action still determines the rule. The selector is carried through the
 [Automation definition query](api.md#automation-definitions-03-development),
 not an Account-wide trigger census.
 
+In unreleased 0.3 source, `workflow.trigger.list` accepts
+`{ subject, contextSubjects?, limit?, cursor? }` for indexed attachment reads.
+It returns `attached` rows with direct/context relation, safe author attribution,
+available source status and the actor's latest started Run. Workflow visibility
+comes from the existing Artifact header reader, including direct-person grants.
+Unavailable Workflow references contribute only to `skippedNotSharedCount`,
+deduplicated by Trigger across the selected scope and independent of pagination.
+Private Workflow bodies and other Accounts' authored operands are not returned.
+Omitted-subject applicability still depends on its structural producer.
+
+The read Action `workflow.subjects.list` accepts `kind: 'healthCheck'` and optional
+saved `{ automationId, triggerId }` source locators. It lists saved check identities
+and config-free labels through the existing private source reader, without
+enrolling probes. Source priority and deduplication precede pagination. Other
+subject kinds retain their existing list Actions; plugin kinds use their
+contributed list Action.
+
 `workflow.definition.list` opens saved definitions through the existing batched
 Artifact read. In 0.3 development, saved-definition pages request trigger summary
 facts only for that page's definition IDs. The CLI/UI Automation adapters carry

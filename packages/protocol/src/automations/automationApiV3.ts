@@ -1,3 +1,4 @@
+import { AutomationTriggerReferenceV1Schema } from './automationTriggerIdentity.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
@@ -56,7 +57,8 @@ export * from './automationRunLifecycle.js';
 import type { AutomationTriggerDetail, AutomationTriggerListItem } from './automationTriggerProjectionV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflows/workflowDefinitionRefV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListPageV1.js';
-import { WorkflowTriggerSummaryV1Schema, WorkflowIntendedPluginEventV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
+import { WorkflowTriggerSummaryV1Schema, WorkflowIntendedPluginEventV1Schema, WorkflowAttachedTriggerPageV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
+import { AutomationSubjectV1Schema } from './automationSubjectV1.js';
 import { WorkflowTriggerEventDeclarationV1Schema } from '../workflows/workflowTriggerEventReferenceV1.js';
 
 export {
@@ -416,6 +418,14 @@ export const AutomationDefinitionListItemSchema = lazyZodSchema(() => (<T extend
     AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
     AutomationStoredWorkflowDefinitionRecipeV2ReadSchema,
   ])),
+})).check(z.superRefine((value, context) => {
+  if (value.observationOnly !== undefined) return;
+  for (const [index, trigger] of value.triggers.entries()) {
+    if (trigger.kind === 'pluginEvent' && trigger.triggerDefinitionEnvelope !== undefined) {
+      context.addIssue({ code: 'custom', path: ['triggers', index, 'triggerDefinitionEnvelope'],
+        message: 'An ordinary list may carry private Event display only for observation-only definitions' });
+    }
+  }
 })));
 export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionListItemSchema>;
 
@@ -446,6 +456,8 @@ export const AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS = 100;
 export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.strictObject({
   limit: z._default(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)), AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS),
   cursor: zMini.optional(OPAQUE_CURSOR_SCHEMA),
+  subject: z.optional(AutomationSubjectV1Schema),
+  contextSubjects: z.optional(z.array(AutomationSubjectV1Schema)),
   workflowDefinitionId: zMini.optional(WorkflowDefinitionRefV1StringSchema),
   /** Body-bearing list selection for the definitions in one demanded library page. */
   workflowDefinitionIds: z.optional(z.array(WorkflowDefinitionRefV1StringSchema).check(z.maxLength(ARTIFACT_LIST_PAGE_MAX_ITEMS_V1))),
@@ -454,8 +466,22 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   managedTarget: z.optional(AutomationManagedTargetV1Schema),
   includeUnindexedManagedTargets: z.optional(z.literal(true)),
   managedTargetUnindexed: z.optional(z.literal(true)),
+  healthCheckSources: z.optional(z.strictObject({ sources: z.optional(z.array(AutomationTriggerReferenceV1Schema)) })),
 }).check(z.superRefine((value, context) => {
   const managedSelection = value.managedTarget !== undefined || value.managedTargetUnindexed !== undefined;
+  if (value.healthCheckSources && (managedSelection || value.includeUnindexedManagedTargets !== undefined
+    || value.workflowDefinitionId !== undefined || value.workflowDefinitionIds !== undefined
+    || value.scopeSessionId !== undefined || value.scope !== undefined || value.subject !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['healthCheckSources'], message: 'Saved health sources cannot be combined with another definition selection' });
+  }
+  if (value.contextSubjects !== undefined && value.subject === undefined) {
+    context.addIssue({ code: 'custom', path: ['contextSubjects'], message: 'Context subjects require a selected subject' });
+  }
+  if (value.subject !== undefined && (managedSelection || value.includeUnindexedManagedTargets !== undefined
+    || value.workflowDefinitionId !== undefined || value.workflowDefinitionIds !== undefined
+    || value.scopeSessionId !== undefined || value.scope !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['subject'], message: 'Subject selection cannot be combined with another definition selection' });
+  }
   if (value.includeUnindexedManagedTargets !== undefined && value.managedTarget === undefined) {
     context.addIssue({ code: 'custom', path: ['includeUnindexedManagedTargets'], message: 'Unknown fallback requires a managed target' });
   }
@@ -489,7 +515,7 @@ export type AutomationTriggerEventDeclarationsResponse = z.infer<typeof Automati
 /** Explicit private-content demand; ordinary definition queries remain bodyless summaries. */
 export const AutomationDefinitionDetailsRequestSchema = lazyZodSchema(() => z.safeExtend(AutomationDefinitionListRequestSchema, {
   details: z.literal(true),
-}));
+}).check(z.refine(value => value.subject === undefined, 'Subject selection returns list-safe attached rows only')));
 export type AutomationDefinitionDetailsRequest = z.infer<typeof AutomationDefinitionDetailsRequestSchema>;
 
 export const AutomationDefinitionDetailsResponseSchema = lazyZodSchema(() => z.strictObject({
@@ -502,6 +528,8 @@ export const AutomationDefinitionListResponseSchema = lazyZodSchema(() => z.stri
   automations: z.array(AutomationDefinitionListItemSchema).check(z.maxLength(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)),
   /** Authorized Team facts only; never another Account's private trigger-set details. */
   sharedWorkflowSummaries: z.optional(z.array(WorkflowTriggerSummaryV1Schema)),
+  attached: z.optional(WorkflowAttachedTriggerPageV1Schema.shape.attached),
+  skippedNotSharedCount: z.optional(WorkflowAttachedTriggerPageV1Schema.shape.skippedNotSharedCount),
   nextCursor: zMini.nullable(OPAQUE_CURSOR_SCHEMA),
 }));
 export type AutomationDefinitionListResponse = z.infer<typeof AutomationDefinitionListResponseSchema>;

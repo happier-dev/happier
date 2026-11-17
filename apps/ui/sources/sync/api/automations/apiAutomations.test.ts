@@ -55,12 +55,17 @@ it.each([
     expect(JSON.parse(String(init?.body))).toMatchObject(query);
 });
 
-it('refuses an unsupported selected read without falling back to an Account census', async () => {
-    const request = vi.fn(async (_path: string) => new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }));
-    await expect(listAutomationDefinitions(credentials, { workflowDefinitionIds: ['builtin:review'] },
+it.each([
+    { workflowDefinitionIds: ['builtin:review'] },
+    { subject: { kind: 'machine' as const, serverId: 'home-one', machineId: 'machine-one' },
+        contextSubjects: [{ kind: 'project' as const, serverId: 'home-one', projectKey: 'project-one' }] },
+])('refuses an unsupported selected read without falling back to an Account census', async query => {
+    // HTTP boundary: a Home without selected-query support still serves its Account census.
+    const request = async (path: string) => new URL(path, 'https://api.example.test').pathname === '/v3/automations'
+        ? Response.json({ automations: [], nextCursor: null })
+        : new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+    await expect(listAutomationDefinitions(credentials, query,
         { serverId: 'test', request })).rejects.toMatchObject({ status: 404 });
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls[0]?.[0]).toBe('/v3/automations/query');
 });
 
 describe('Automation write receipt certainty', () => {
@@ -463,6 +468,15 @@ describe('apiAutomations', () => {
         expect(calls[0]?.headers.get('Authorization')).toBe('Bearer token-1');
         expect(calls[1]?.headers.get('Content-Type')).toBe('application/json');
         expect(calls[2]?.headers.get('Content-Type')).toBeNull();
+    });
+
+    it('retains the private display carrier for an observation-only summary', async () => {
+        const summary = { ...eventSummary, targetType: null, existingSessionId: null, assignments: [],
+            observationOnly: { kind: 'observationOnly' as const, templateVersion: eventSummary.templateVersion },
+            triggers: eventDetail.triggers };
+        const request = async () => Response.json({ automations: [summary], nextCursor: null });
+        await expect(listAutomationDefinitions(credentials, {}, { serverId: 'test', request }))
+            .resolves.toMatchObject({ automations: [summary], nextCursor: null });
     });
 
     it('rejects private definition content in a current list response instead of treating it as a summary', async () => {

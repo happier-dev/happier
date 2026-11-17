@@ -886,24 +886,22 @@ export function createAccountHealthCheckSourceReaderV1(params: HealthCheckSource
 
 export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccountHostParams): WorkflowTriggerActions {
   const actions = createAccountWorkflowTriggerActionOwner(params);
-  return {
-    ...actions,
-    list: async (raw, caller) => {
-      // The whole census opens under one fresh Account witness, not one HTTP
-      // currentness round trip per context/trigger. Nothing survives this call.
-      let encryption: Promise<AvailableAutomationAccountEncryptionV1> | undefined;
-      const census = createAccountWorkflowTriggerActionOwner({ ...params,
-        resolveEncryption: () => (encryption ??= params.resolveEncryption()),
-      });
-      const result = await census.list(raw, caller);
-      if (encryption) {
-        const opened = await encryption;
-        // Private disclosure still has a fresh final authority check. The
-        // Account-wide sequence may advance during legacy writes; only mode
-        // and content-key identity determine whether these bytes can be opened.
-        await assertAccountDisclosureCurrent(opened, params.resolveEncryption);
-      }
-      return result;
-    },
+  const readWithAccountWitness = async <Result>(read: (owner: WorkflowTriggerActions) => Promise<Result>) => {
+    // Each private source read opens under one fresh Account witness.
+    let encryption: Promise<AvailableAutomationAccountEncryptionV1> | undefined;
+    const owner = createAccountWorkflowTriggerActionOwner({ ...params,
+      resolveEncryption: () => (encryption ??= params.resolveEncryption()),
+    });
+    const result = await read(owner);
+    if (encryption) {
+      const opened = await encryption;
+      // Mode and content-key identity govern disclosure, not a catalog revision.
+      await assertAccountDisclosureCurrent(opened, params.resolveEncryption);
+    }
+    return result;
+  };
+  return { ...actions,
+    list: (raw, caller) => readWithAccountWitness(owner => owner.list(raw, caller)),
+    listSubjects: raw => readWithAccountWitness(owner => owner.listSubjects(raw)),
   };
 }

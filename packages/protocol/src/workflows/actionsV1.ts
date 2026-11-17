@@ -5,6 +5,7 @@ import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import { SessionManagedCreationV1Schema } from '../sessions/creation/sessionCreationCorrespondenceV1.js';
 import {
   WorkflowTriggerListRequestV1Schema, WorkflowTriggerAddRequestV1Schema,
+  WorkflowSubjectsListRequestV1Schema, WorkflowSubjectsListResultV1Schema,
   WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerRemoveRequestV1Schema,
   WorkflowTriggerRunNowRequestV1Schema,
   WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema, WorkflowTriggerRemoveResultV1Schema,
@@ -63,6 +64,7 @@ import {
   WorkflowRunOriginV1Schema,
   WorkflowRunStateV1Schema,
   WorkflowRunSummaryV1Schema,
+  WorkflowRunLastStartedSummaryV1Schema,
   WorkflowUsageV1Schema,
   WorkflowNotificationConditionV1Schema,
   WorkflowOperationErrorCodeV1Schema,
@@ -356,19 +358,11 @@ export const WorkflowRunSourceSummariesResultV1Schema = lazyZodSchema(() => z.st
   remainingSourceArtifactIds: z.array(WorkflowDefinitionIdV1Schema),
 }));
 export type WorkflowRunSourceSummariesResultV1 = z.infer<typeof WorkflowRunSourceSummariesResultV1Schema>;
+export { WorkflowRunLastStartedSummaryV1Schema, type WorkflowRunLastStartedSummaryV1 } from './workflowProgressV1.js';
 export const WorkflowRunAutomationSummariesResultV1Schema = lazyZodSchema(() => z.strictObject({
   automationSummaries: z.array(z.strictObject({
     automationId: asProtocolZod(AutomationIdV1Schema),
-    lastRun: z.nullable(z.strictObject({
-      id: WorkflowRunIdV1Schema,
-      state: WorkflowRunStateV1Schema,
-      workflowCustodyState: WorkflowRunSummaryV1Schema.shape.workflowCustodyState,
-      attentionRequired: z.boolean(),
-      failureUnseen: z.boolean(),
-      invocationAttentionRequired: z.boolean(),
-      createdAt: z.string().check(z.iso.datetime()),
-      startedAt: z.string().check(z.iso.datetime()),
-    })),
+    lastRun: z.nullable(WorkflowRunLastStartedSummaryV1Schema),
   })),
   remainingAutomationIds: z.array(asProtocolZod(AutomationIdV1Schema)),
 }));
@@ -633,6 +627,7 @@ export const WorkflowActionInputSchemasV1: {
   readonly 'workflow.definition.import': typeof WorkflowDefinitionImportRequestV1Schema;
   readonly 'workflow.definition.capture': typeof WorkflowDefinitionCaptureRequestV1Schema;
   readonly 'workflow.definition.export': typeof WorkflowDefinitionExportRequestV1Schema;
+  readonly 'workflow.subjects.list': typeof WorkflowSubjectsListRequestV1Schema;
   readonly 'workflow.trigger.list': typeof WorkflowTriggerListRequestV1Schema;
   readonly 'workflow.trigger.add': typeof WorkflowTriggerAddRequestV1Schema;
   readonly 'workflow.trigger.update': typeof WorkflowTriggerUpdateRequestV1Schema;
@@ -668,6 +663,7 @@ export const WorkflowActionInputSchemasV1: {
   'workflow.definition.import': WorkflowDefinitionImportRequestV1Schema,
   'workflow.definition.capture': WorkflowDefinitionCaptureRequestV1Schema,
   'workflow.definition.export': WorkflowDefinitionExportRequestV1Schema,
+  'workflow.subjects.list': WorkflowSubjectsListRequestV1Schema,
   'workflow.trigger.list': WorkflowTriggerListRequestV1Schema,
   'workflow.trigger.add': WorkflowTriggerAddRequestV1Schema,
   'workflow.trigger.update': WorkflowTriggerUpdateRequestV1Schema,
@@ -705,6 +701,7 @@ export const WorkflowActionOutputSchemasV1: {
   readonly 'workflow.definition.import': typeof WorkflowDefinitionImportResultV1Schema;
   readonly 'workflow.definition.capture': typeof WorkflowDefinitionCaptureResultV1Schema;
   readonly 'workflow.definition.export': typeof WorkflowDefinitionExportResultV1Schema;
+  readonly 'workflow.subjects.list': typeof WorkflowSubjectsListResultV1Schema;
   readonly 'workflow.trigger.list': typeof WorkflowTriggerListResultV1Schema;
   readonly 'workflow.trigger.add': typeof WorkflowTriggerWriteResultV1Schema;
   readonly 'workflow.trigger.update': typeof WorkflowTriggerWriteResultV1Schema;
@@ -740,6 +737,7 @@ export const WorkflowActionOutputSchemasV1: {
   'workflow.definition.import': WorkflowDefinitionImportResultV1Schema,
   'workflow.definition.capture': WorkflowDefinitionCaptureResultV1Schema,
   'workflow.definition.export': WorkflowDefinitionExportResultV1Schema,
+  'workflow.subjects.list': WorkflowSubjectsListResultV1Schema,
   'workflow.trigger.list': WorkflowTriggerListResultV1Schema,
   'workflow.trigger.add': WorkflowTriggerWriteResultV1Schema,
   'workflow.trigger.update': WorkflowTriggerWriteResultV1Schema,
