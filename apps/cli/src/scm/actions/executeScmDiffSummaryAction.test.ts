@@ -144,6 +144,29 @@ describe('executeScmDiffSummaryAction', () => {
         expect(resolved).toMatchObject({ modelId: 'gpt-6-luna', connectedServices: null });
     });
 
+    it('retains a selected Team source while lowering generation to the Run Team carrier', async () => runWithScmAccountScope('scm-diff-summary-action-test', async () => {
+        const fixture = await changedRepository();
+        const modelSelection = { source: 'team_resource' as const, agentTargetKey: buildBackendTargetKeyV2(BACKEND_TARGET),
+            modelId: 'team-model', resourceId: 'selected-resource', teamId: 'selected-team',
+            expectedResourceRevision: 3, deliveryMode: 'brokered' as const };
+        let admitted: ReturnType<typeof ExecutionRunStartRequestSchema.parse> | undefined;
+        const output = await executeScmDiffSummaryAction({ request: { cwd: fixture.rootPath,
+            source: { kind: 'workingTree' }, modelSelector: { modelSelection } },
+            sessionId: 'team-summary-parent', backendTarget: BACKEND_TARGET,
+            executeCanonicalAction: async (_actionId, input) => {
+                admitted = ExecutionRunStartRequestSchema.parse(input);
+                const resolved = resolveExecutionRunChildSelection({ ...admitted, lifecycle: 'attached' });
+                expect(resolved.teamCredentialModel).toMatchObject({ resourceId: 'selected-resource', modelId: 'team-model' });
+                return { ok: true, result: { runId: 'team-summary-run', callId: 'call', sidechainId: 'sidechain' } };
+            } });
+        expect(output).toMatchObject({ success: true, runId: 'team-summary-run' });
+        expect(admitted).toMatchObject({ teamCredentialModel: { resourceId: 'selected-resource', teamId: 'selected-team',
+            expectedResourceRevision: 3, deliveryMode: 'brokered', modelId: 'team-model' } });
+        expect(admitted).not.toHaveProperty('modelSelection');
+        const saved = await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath, sessionId: 'team-summary-parent', resultId: output.resultId! });
+        expect(saved).toMatchObject({ success: true, result: { generator: { modelSelection } } });
+    }));
+
     function savedSummaryOutput(captured: Awaited<ReturnType<typeof captureScmComparison>>, summaryMarkdown: string) {
         const changeRefs = captured.comparison.inventory.files.flatMap(file => file.occurrences.map(occurrence => occurrence.id));
         return ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: captured.comparison.id,

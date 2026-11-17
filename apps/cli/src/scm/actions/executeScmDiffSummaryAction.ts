@@ -22,6 +22,7 @@ import { logger } from '@/ui/logger';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
+import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 type ExecuteCanonicalAction = (
     actionId: 'execution.run.start' | 'scm.pullRequest.openCompose',
@@ -195,7 +196,7 @@ async function executeScmDiffSummaryActionInAccountScope(
             runClass: 'long_lived',
             ioMode: 'streaming',
             ...(selector?.profileId ? { profileId: selector.profileId } : {}),
-            ...(selector?.modelSelection ? { modelSelection: selector.modelSelection } : {}),
+            ...(selector?.modelSelection ? projectSessionModelRefToExecutionModelSelection(selector.modelSelection) : {}),
             ...(selector?.connectedServices !== undefined ? { connectedServices: selector.connectedServices } : {}),
             ...(selector?.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: selector.sessionConfigOptionOverrides } : {}),
             // A known attached parent supplies its applied model at the runner
