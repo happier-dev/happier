@@ -4,6 +4,7 @@ import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { withConfiguredDaemonTestHome, writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
@@ -45,7 +46,15 @@ it.each(['owner', 'foreign-account', 'foreign-home', 'stale-task', 'own-controll
                 serverUrl: 'https://changed-home.test', webappUrl: 'https://changed-home.test', createdAt: 0, updatedAt: 1,
                 homeConnectionDescriptor: { v: 1, homeServerIdentityId: 'srv_foreign', canonicalServerUrl: 'https://changed-home.test',
                     revision: 1, endpoints: [{ kind: 'https', url: 'https://changed-home.test' }] } } } });
-        const http = createServer();
+        const http = createServer((request, response) => {
+            if (request.method === 'GET' && request.url === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+                response.writeHead(200, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] })));
+                return;
+            }
+            response.writeHead(404);
+            response.end();
+        });
         const io = new Server(http, { path: '/v1/updates/' });
         const answers: unknown[] = [];
         io.on('connection', socket => socket.on('rpc-call', async (packet, ack) => {

@@ -57,6 +57,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     executeTeamCredentialBrokerAction?: import('@/plugins/runtime/accountExecutionRuntime').AccountExecutionRuntimeInput['executeTeamCredentialBrokerAction'];
     prepareLocalServiceStartApproval?: ActionExecutorDeps['prepareLocalServiceStartApproval'];
     clientActionExecute?: ActionExecutorDeps['clientActionExecute'];
+    machineManagedInstallationRespond?: ActionExecutorDeps['machineManagedInstallationRespond'];
     confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
     confidentialActionInputs?: ActionExecutorDeps['confidentialActionInputs'];
     /** Bound by the live Session/Run host; private and deferred operations retain Artifact custody. */
@@ -224,6 +225,7 @@ export function createCliActionExecutor(
     {
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
       ...(params.teamCredentialUsageExport ? { teamCredentialUsageExport: params.teamCredentialUsageExport } : {}),
+      ...(params.machineManagedInstallationRespond ? { machineManagedInstallationRespond: params.machineManagedInstallationRespond } : {}),
       clientActionExecute: createCliLocalServiceClientActionExecutor(params.clientActionExecute),
       ...(params.confidentialSecretFill ? { confidentialSecretFill: params.confidentialSecretFill } : {}),
       ...(params.confidentialActionInputs ? { confidentialActionInputs: params.confidentialActionInputs } : {}),
