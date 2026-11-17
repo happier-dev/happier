@@ -5,6 +5,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/pro
 import { mergeThemeProfileDocumentEdit, type ThemeProfileLibrary, type ThemeProfileMode, type ThemeReference, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 import { importThemeProfileFromJson, exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
+import { createShareThemePlugin } from '@/theme/profiles/shareThemePlugin';
 import type { BoundThemeRegistryLifecycle } from '@/registries/themeRegistryInstall';
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 
@@ -139,6 +140,8 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                 }
                 case THEME_ACTION_IDS.duplicate:
                     return { entry: (await library.duplicate({ reference: request.input.ref })).entry! };
+                case THEME_ACTION_IDS.sharePlugin:
+                    return createShareThemePlugin(library)(request);
                 case THEME_ACTION_IDS.delete:
                     if (request.input.ref.kind !== 'artifact') {
                         return { ok: false as const, errorCode: 'theme_immutable_source', error: 'theme_immutable_source' };

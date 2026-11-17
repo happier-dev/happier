@@ -5,6 +5,7 @@ import type { HostReviewedChildInvocationV1, HostReviewedChildPortV1 } from '@ha
 
 import { createThemeProfileLibrary, type ThemeProfileArtifactAdapter } from './themeProfileLibrary';
 import { createShareThemePlugin } from './shareThemePlugin';
+import { createThemeActionExecute } from '@/sync/ops/actions/themeActionDeps';
 
 function setup(count: number, packFails = false) {
     const documents = Array.from({ length: count }, (_, index) => {
@@ -54,7 +55,8 @@ function setup(count: number, packFails = false) {
         },
     };
     const refs: ThemeReference[] = documents.map(document => ({ kind: 'artifact', id: document.profile.id }));
-    return { share: createShareThemePlugin(library), documents, reads, writes, calls, path,
+    return { share: createThemeActionExecute({ withLibrary: operation => operation(library),
+        readSelection: () => ({ light: null, dark: null }), clientId: () => '' }), documents, reads, writes, calls, path,
         request: ({ actionId: THEME_ACTION_IDS.sharePlugin, input: { refs, machineId: 'machine-one', path }, context: { hostReviewedChild: child } } satisfies
             Parameters<ReturnType<typeof createShareThemePlugin>>[0]) };
 }
