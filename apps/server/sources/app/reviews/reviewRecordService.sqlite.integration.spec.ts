@@ -22,14 +22,19 @@ describe('durable Review lifecycle metadata', () => {
         await harness?.close();
     });
     it('keeps clean, failed and cancelled rounds queryable independently of findings or runs', async () => {
-        const metadata = { projectSourceId: null, workflowId: null, subjectKind: 'comparison' as const,
-            sourceKind: 'direct' as const, currentRoundOrdinal: 1, state: 'running' as const, startedAt: 10, finishedAt: null };
+        const metadata = { projectSourceId: randomUUID(), workflowId: randomUUID(), subjectKind: 'repository' as const,
+            sourceKind: 'workflow' as const, currentRoundOrdinal: 1, state: 'running' as const, startedAt: 10, finishedAt: null };
         expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata }))).toBe(true);
         await expect(assertReviewRoundBinding({ reviewId, roundOrdinal: 1 })).resolves.toBeUndefined();
         expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(true);
         expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(false);
-        await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { ...metadata, currentRoundOrdinal: 2, startedAt: 30 } }));
-        await expect(assertReviewRoundBinding({ reviewId, roundOrdinal: 1 })).rejects.toMatchObject({ code: 'review_round_not_admitted' });
+        await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { ...metadata,
+            projectSourceId: null, workflowId: null, subjectKind: 'comparison', sourceKind: 'direct',
+            currentRoundOrdinal: 2, startedAt: 30 } }));
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId: reviewId } })).toMatchObject({
+            ...metadata, currentRoundOrdinal: 2, startedAt: new Date(30),
+        });
+        await expect(assertReviewRoundBinding({ reviewId, roundOrdinal: 1 })).rejects.toMatchObject({ code: 'invalid-params' });
         await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 2, state: 'failed', finishedAt: 40 } }));
         expect(await db.reviewMetadata.findUnique({ where: { artifactId: reviewId } })).toMatchObject({ state: 'failed', currentRoundOrdinal: 2 });
         await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { ...metadata, currentRoundOrdinal: 3, startedAt: 50 } }));
@@ -49,5 +54,12 @@ describe('durable Review lifecycle metadata', () => {
             header: { bytes: header, expectedVersion: 1 }, body: { bytes: body, expectedVersion: 1 },
             reviewMetadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } })).toMatchObject({ ok: true });
         expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({ state: 'completed' });
+        expect(await updateArtifact({ actorUserId: accountId, artifactId,
+            header: { bytes: header, expectedVersion: 2 }, body: { bytes: body, expectedVersion: 2 },
+            reviewMetadata: { ...metadata, projectSourceId: randomUUID(), workflowId: randomUUID(),
+                subjectKind: 'repository', sourceKind: 'workflow', currentRoundOrdinal: 2, startedAt: 30 } })).toMatchObject({ ok: true });
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({
+            ...metadata, currentRoundOrdinal: 2, startedAt: new Date(30),
+        });
     });
 });

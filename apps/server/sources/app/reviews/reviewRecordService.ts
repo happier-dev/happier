@@ -3,7 +3,7 @@ import type { Tx } from '@/storage/inTx';
 import { inReadSnapshot } from '@/storage/inTx';
 
 function notAdmitted(): never {
-    throw Object.assign(new Error('review_round_not_admitted'), { code: 'review_round_not_admitted' });
+    throw Object.assign(new Error('invalid-params'), { code: 'invalid-params' });
 }
 
 /** Admission only. The admitted materializer carries this binding through its later writes. */
@@ -15,16 +15,19 @@ export async function assertReviewRoundBinding(binding: ReviewRoundBindingV1): P
     await inReadSnapshot(tx => assertReviewRoundBindingInTx(tx, binding));
 }
 
-/** The existing Artifact mutation calls this once inside its content/publication transaction. */
+/** The existing Artifact mutation calls this once inside its content/publication transaction.
+ * Later rounds advance lifecycle state while retaining the Review's original source identity.
+ */
 export async function writeReviewRoundState(tx: Tx, input: Readonly<{ reviewId: string; metadata: ReviewMetadataWriteV1 }>): Promise<boolean> {
     const { reviewId, metadata } = input;
     const current = await tx.reviewMetadata.findUnique({ where: { artifactId: reviewId } });
     if (metadata.state === 'running') {
         if (current?.currentRoundOrdinal === metadata.currentRoundOrdinal) return false;
         if (metadata.currentRoundOrdinal !== (current?.currentRoundOrdinal ?? 0) + 1) notAdmitted();
-        const data = { ...metadata, startedAt: new Date(metadata.startedAt), finishedAt: null };
+        const data = { state: metadata.state, currentRoundOrdinal: metadata.currentRoundOrdinal,
+            startedAt: new Date(metadata.startedAt), finishedAt: null };
         if (current) await tx.reviewMetadata.update({ where: { artifactId: reviewId }, data });
-        else await tx.reviewMetadata.create({ data: { artifactId: reviewId, ...data } });
+        else await tx.reviewMetadata.create({ data: { artifactId: reviewId, ...metadata, ...data } });
         return true;
     }
     if (current?.currentRoundOrdinal !== metadata.currentRoundOrdinal) notAdmitted();
