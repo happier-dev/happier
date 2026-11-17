@@ -37,6 +37,22 @@ beforeEach(async () => {
 afterEach(async () => { await account.reset(); retireActiveServerAccountScopeLifetime(); publishAppliedActiveServerRuntimeAvailability(false); resetRuntimeFetch(); vi.restoreAllMocks(); });
 
 describe('ordinary Account erasure managed-resource review', () => {
+    it('returns the admitted erasure result when its Account retires before the response arrives', async () => {
+        setRuntimeFetch(async (url, init) => {
+            if (new URL(String(url)).pathname !== '/v1/auth/account/delete') return new Response('{}', { status: 404 });
+            retireActiveServerAccountScopeLifetime();
+            init?.signal?.throwIfAborted();
+            return Response.json({ status: 'disabled_pending_completion' });
+        });
+        let credentialsRemoved = false;
+        await expect(completeAccountDeletion({ target,
+            deleteCurrentAccount: options => deleteCurrentAccount(credentials, options),
+            logout: async options => { await options?.beforeMutation?.(); credentialsRemoved = true; return { kind: 'completed' }; },
+            replace: () => {},
+        })).resolves.toEqual({ kind: 'completed', erasure: { status: 'disabled_pending_completion' } });
+        expect(credentialsRemoved).toBe(true);
+    });
+
     it('keeps credentials and the current screen after an upload-pending refusal', async () => {
         setRuntimeFetch(async url => new URL(String(url)).pathname === '/v1/auth/account/delete'
             ? Response.json({ error: 'account_erasure_upload_pending' }, { status: 409 })

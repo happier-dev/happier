@@ -632,11 +632,26 @@ describe('captureLazyActionAccountContext encryption on demand', () => {
 });
 
 describe('captureActionAccountContext transport authority', () => {
+    it('keeps caller cancellation for a dispatched mutation', async () => {
+        const cancellation = new AbortController();
+        network.mockImplementation(async (url, init) => {
+            if (url.pathname !== '/v1/artifacts' || init?.method !== 'POST') return homes.fetch(url, init);
+            cancellation.abort();
+            init.signal?.throwIfAborted();
+            return Response.json({ committed: true });
+        });
+        const context = await captureLazyActionAccountContext(homes.homes.a!.id, cancellation.signal);
+        try {
+            await expect(context.request('/v1/artifacts', { method: 'POST', body: '{}' })).rejects.toMatchObject({ name: 'AbortError' });
+        } finally { context.dispose(); }
+    });
     it('preserves a mutation acknowledgement when retirement arrives during the response', async () => {
         const response = Response.json({ committed: true });
         network.mockImplementation(async (url, init) => {
             if (url.pathname !== '/v1/artifacts' || init?.method !== 'POST') return homes.fetch(url, init);
             await TokenStorage.removeCredentialsForServerUrl(homes.homes.a!.serverUrl, { serverId: homes.homes.a!.id });
+            // Real fetch rejects an aborted request before delivering its acknowledgement.
+            init.signal?.throwIfAborted();
             return response;
         });
         const context = await captureLazyActionAccountContext(homes.homes.a!.id);

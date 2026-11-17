@@ -321,7 +321,9 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             assertCurrent();
             const method = (init?.method ?? 'GET').toUpperCase();
             const mutation = method !== 'GET' && method !== 'HEAD';
-            const cancellation = mergeAbortSignals([controller.signal, signal, init?.signal ?? undefined]);
+            // Account retirement withdraws future requests and active reads;
+            // an admitted mutation retains its acknowledgement and caller cancellation.
+            const cancellation = mergeAbortSignals([mutation ? undefined : controller.signal, signal, init?.signal ?? undefined]);
             try {
                 throwIfAborted(cancellation.signal);
                 const requestInit = await prepareRequest(path, { ...init, signal: cancellation.signal });

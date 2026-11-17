@@ -37,8 +37,6 @@ export async function completeAccountDeletion(params: Readonly<{
         return error;
     };
     const attempt = async (deleteRemotely: boolean): Promise<AccountDeletionLifecycleResult> => {
-        const abort = new AbortController();
-        const retirement = deleteRemotely ? params.target.onRetire(() => abort.abort()) : null;
         try {
             if (deleteRemotely && !params.target.isCurrent()) throw abortError();
             const lifecycle = await params.logout({
@@ -46,18 +44,18 @@ export async function completeAccountDeletion(params: Readonly<{
                     if (deleteRemotely) {
                         let managedResourceDispositions: DeleteCurrentAccountOptions['managedResourceDispositions'];
                         while (true) {
-                            if (!params.target.isCurrent() || abort.signal.aborted) throw abortError();
+                            if (!params.target.isCurrent()) throw abortError();
                             try {
-                                erasure = await params.deleteCurrentAccount({ signal: abort.signal,
+                                erasure = await params.deleteCurrentAccount({
                                     ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
                                 });
                                 break;
                             } catch (cause) {
                                 if (!(cause instanceof AccountErasureManagedResourcesReviewRequiredError)) throw cause;
-                                if (!params.target.isCurrent() || abort.signal.aborted) throw abortError();
+                                if (!params.target.isCurrent()) throw abortError();
                                 const reviewed = await reviewManagedResourceRemoval(cause.resources, undefined,
                                     { confirmationRequired: params.confirmManagedResourceRemoval !== false });
-                                if (!reviewed || !params.target.isCurrent() || abort.signal.aborted) throw abortError();
+                                if (!reviewed || !params.target.isCurrent()) throw abortError();
                                 managedResourceDispositions = reviewed;
                             }
                         }
@@ -70,7 +68,7 @@ export async function completeAccountDeletion(params: Readonly<{
         } catch (cause) {
             if (erasure) throw new AccountDeletedLocalCleanupError(() => attempt(false), erasure, { cause });
             throw cause;
-        } finally { retirement?.dispose(); }
+        }
     };
     return await attempt(true);
 }
