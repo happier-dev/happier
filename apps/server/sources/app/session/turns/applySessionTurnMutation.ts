@@ -201,8 +201,17 @@ function makeNoOp(params: Readonly<{
     };
 }
 
-function shouldMoveLatestTurnPointer(action: SessionTurnMutationV1["action"]): boolean {
-    return action === "begin" || action === "touch_active" || action === "complete" || action === "fail" || action === "cancel";
+function shouldMoveLatestTurnPointer(
+    action: SessionTurnMutationV1["action"],
+    turn: SessionTurnV1,
+    latestTurn: SessionTurnV1 | null,
+): boolean {
+    if (action === "begin" || action === "touch_active") return true;
+    if (action === "complete" || action === "fail" || action === "cancel") {
+        // Delayed terminal evidence settles history without selecting it over a later turn.
+        return !latestTurn || latestTurn.startedAt <= turn.startedAt;
+    }
+    return false;
 }
 
 function replaceTurn(turns: readonly SessionTurnV1[], nextTurn: SessionTurnV1): readonly SessionTurnV1[] {
@@ -222,6 +231,9 @@ export function applySessionTurnMutationToTurns(params: Readonly<{
     const requestedTurnId = mutation.turnId ?? params.currentLatestTurnId ?? undefined;
     const existingTurn = requestedTurnId
         ? turns.find((turn) => turn.turnId === requestedTurnId) ?? null
+        : null;
+    const latestTurn = params.currentLatestTurnId
+        ? turns.find((turn) => turn.turnId === params.currentLatestTurnId) ?? null
         : null;
     const isExactSessionEnd = isExactSessionTurnEndMutationV1(mutation);
 
@@ -335,7 +347,6 @@ export function applySessionTurnMutationToTurns(params: Readonly<{
         && requestedTurnId !== params.currentLatestTurnId
         && !isExactSessionEnd
     ) {
-        const latestTurn = turns.find((turn) => turn.turnId === params.currentLatestTurnId) ?? null;
         if (latestTurn?.status === "in_progress") {
             return makeNoOp({
                 reason: "stale-terminal",
@@ -478,7 +489,7 @@ export function applySessionTurnMutationToTurns(params: Readonly<{
         nextTurn = reopenedTurn;
     }
 
-    const latestTurnId = shouldMoveLatestTurnPointer(mutation.action)
+    const latestTurnId = shouldMoveLatestTurnPointer(mutation.action, nextTurn, latestTurn)
         ? turnId
         : params.currentLatestTurnId;
     const nextTurns = replaceTurn(turns, nextTurn);
