@@ -22,11 +22,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import { ProjectManifestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import { registerMachineTerminalRpcHandlers } from '@/api/machine/rpcHandlers.terminal';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { createPythonPtyRelayProvider } from '@/terminal/pty/pythonRelay';
 import type { PtyExitEvent, PtyProcess, PtySpawnParams } from '@/terminal/pty/provider';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
@@ -135,6 +138,49 @@ class ObservedSetupPty implements PtyProcess {
 }
 
 describe('accepted Project Service declaration starter', () => {
+    it.skipIf(process.platform === 'win32')('keeps launching Account service terminal custody on the daemon profile across a portable Home', async () => {
+        const h = await fixture(false, undefined, true, undefined, 'private-service-profile', 'srv_serviceHome', undefined, undefined, false, true);
+        const runtime = { ...h.runtime, terminalSessions: h.terminalSessions, operationRuntime: h.operationRuntime };
+        const handlers = new Map<string, RpcHandler>();
+        const registration = registerMachineTerminalRpcHandlers({
+            rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+            deps: { serverId: h.runtime.serverId, resolveHostHomeServerIdentityId: async () => h.serverIdentityId,
+                env: {}, workingDirectory: h.root, sessionManager: h.terminalSessions,
+                accountReadRuntime: async () => runtime, projectFiniteRuntime: async () => runtime },
+        });
+        try {
+            // Control: the same admitted Account can read an ordinary Project shell.
+            const shell = await handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'control', workspace: h.request.workspace }, h.ingress);
+            expect(shell).toMatchObject({ ok: true, terminalId: expect.any(String) });
+            if (!shell || typeof shell !== 'object' || !('terminalId' in shell)) throw new Error('Project control terminal missing');
+            await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!({ terminalId: shell.terminalId, byteOffset: 0 }, h.ingress))
+                .resolves.toMatchObject({ ok: true });
+            const review = await h.selectStart();
+            const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
+            expect(started, JSON.stringify(started)).toMatchObject({ status: 'succeeded' });
+            const service = h.owner.listProjectServices()[0]!;
+            const terminalId = service.terminalView?.terminalId;
+            expect(terminalId).toEqual(expect.any(String));
+            const read = { terminalId, byteOffset: 0 };
+            const interrupt = { terminalId, event: { t: 'key', key: 'c', modifiers: ['ctrl'] } };
+            // Manage permission does not grant another Account this retained terminal.
+            const foreign = { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'other-account' } };
+            await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!(read, foreign))
+                .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
+            await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)!(interrupt, foreign))
+                .resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });
+            await expect.soft(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!(read, h.ingress))
+                .resolves.toMatchObject({ ok: true });
+            await expect.soft(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)!(interrupt, h.ingress))
+                .resolves.toEqual({ ok: true });
+            expect(h.terminalSessions.getCustody(terminalId!)).toMatchObject({ serverId: h.runtime.serverId,
+                requesterAccountId: 'owner', machineId: 'machine', installationId: 'installation' });
+            await expect.poll(() => service.snapshot().state).toBe('stopped');
+        } finally {
+            try { await Promise.all(h.owner.listProjectServices().map(service => service.stop())); }
+            finally { registration.dispose(); }
+        }
+    });
     it('discovers, reviews and starts an accepted shared-only Service without a repository manifest', async () => {
         const h = await fixture(false, undefined, true, undefined, 'home', 'home', undefined, undefined, true);
         const discovered = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [h.workspace],
@@ -695,11 +741,12 @@ describe('accepted Project Service declaration starter', () => {
     }
 
     async function fixture(setup = false, source?: unknown, finiteAccepting = true, workerExecution?: 'portable' | 'primary', profileId = 'home', homeId = profileId, supervisorPlatform?: NodeJS.Platform,
-        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1, acceptedSharedSetup = false) {
+        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1, acceptedSharedSetup = false, interactive = false) {
         const root = await mkdtemp(join(tmpdir(), 'happier-project-service-'));
         await mkdir(join(root, '.happier'));
         const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
         const manifest = ProjectManifestV1Schema.parse({ version: 1, services: { worker: { source: source ?? { kind: 'command', command },
+            ...(interactive ? { runtime: { terminal: true } } : {}),
             ...(workerExecution ? { execution: workerExecution } : {}) } },
             ...(setup ? { workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } } : {}), ...(toolchain ? { toolchain } : {}) });
         if (!acceptedSharedSetup) await writeFile(join(root, '.happier/project.json'), JSON.stringify(manifest));
@@ -892,10 +939,12 @@ describe('accepted Project Service declaration starter', () => {
         const setupProcesses: Array<{ params: PtySpawnParams; pty: ObservedSetupPty }> = [];
         let resolveSetupStarted!: () => void;
         const setupStarted = new Promise<void>(resolve => { resolveSetupStarted = resolve; });
-        const terminalSessions = createTerminalPtySessionManager({ ptyProvider: { spawn(params) {
+        const interactiveProvider = interactive ? createPythonPtyRelayProvider({ env: process.env, platform: process.platform, pythonExecutable: 'python3' }) : null;
+        if (interactive && !interactiveProvider) throw new Error('Interactive Service fixture requires the existing Python PTY relay');
+        const terminalSessions = createTerminalPtySessionManager({ ptyProvider: interactiveProvider ?? { spawn(params) {
             const pty = new ObservedSetupPty(resolveSetupStarted); setupProcesses.push({ params, pty }); return pty;
         // This fake OS process has no descendants after its supplied exit.
-        } }, stopProcessTree: async () => {}, probeProcessGroup: () => 'absent',
+        } }, ...(interactive ? {} : { stopProcessTree: async () => {}, probeProcessGroup: () => 'absent' as const }),
             config: { bufferMaxBytes: 1_000_000, bufferMaxEvents: 1000,
                 urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384, defaultCols: 80, defaultRows: 24 }, env: {}, platform: 'linux' });
         const operationSnapshots: ActionOperationSnapshotV1[] = [];
@@ -994,7 +1043,7 @@ describe('accepted Project Service declaration starter', () => {
                 states: ['accepted', 'running'] }).items,
             runTargets: () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [targetWorkspace], projectDefinitionAccount }) });
         const routes = createLocalServiceLauncherRoutes({ feed, history, ...starter });
-        return { root, workspace, targetRoot, targetWorkspace, serverIdentityId, machineInstallationKeys, projectDefinitionActionFor, manifest, starter, routes, history, request, ingress, context, owner, post, setupProcesses, setupStarted, operationRuntime, operationSnapshots, operationPublished, runtime, admissionDrain, prepareBetween,
+        return { root, workspace, targetRoot, targetWorkspace, serverIdentityId, machineInstallationKeys, projectDefinitionActionFor, manifest, starter, routes, history, request, ingress, context, owner, post, setupProcesses, setupStarted, terminalSessions, operationRuntime, operationSnapshots, operationPublished, runtime, admissionDrain, prepareBetween,
             async selectStart(selectedIngress: Parameters<typeof starter.resolveStartTarget>[1] = ingress) {
                 const selected = await starter.resolveStartTarget(request, selectedIngress, context);
                 if (!selected.ok) throw new Error(selected.reasonCode);

@@ -43,7 +43,7 @@ import { createProjectServiceDeclarationTargetIdV1, LocalServiceManagedServiceAc
 import type { WorkspaceSyncWorkerTargetBasis } from '@/workspaces/sync/workspaceSyncPreparation';
 import type { ProjectServiceStartChoice } from '@/workspaces/execution/projectServicePlacement';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceAddressFromRefV1, projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { assertProjectReceivingPlacement } from '@/workspaces/execution/projectReceivingPlacement';
 import { isProjectNativeProcessUncertain, preserveUnconfirmedNativeProcess, type ProjectNativeAdapterLeaseV1, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
@@ -797,7 +797,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     const operationSignal = AbortSignal.any([current.preparation.signal!, operation.signal]);
                     const buildSetupInput = (): ProjectSetupExecutionInput => ({ preparation: { ...current.preparation, signal: operationSignal }, requesterAccountId: current.runtime.accountId,
                         operation, terminalSessions: current.runtime.terminalSessions, environmentIo: current.runtime.environmentIo,
-                        terminalCustody: { serverId: current.runtime.serverId, requesterAccountId: current.runtime.accountId,
+                        terminalCustody: { serverId: selected.runtime.serverId, requesterAccountId: current.runtime.accountId,
                             machineId: current.runtime.machineId, installationId: ingress.machineAdmission!.installationId,
                             workspaceRefId: current.plan.workspace.id, projectKey: current.plan.workspace.projectKey!, rootPath: current.plan.workspace.rootPath },
                         ...(current.runtime.platform ? { platform: current.runtime.platform } : {}),
@@ -884,6 +884,11 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (!isCurrent()) throw new ServiceStartRefusal('native_adapter_retired');
             const builtinNative = current.builtinNative;
             const releaseNativeLifecycle = current.releaseNativeLifecycle;
+            const selectedService = current.declaration.selection.kind === 'manifest'
+                ? current.plan.manifest?.services?.[current.declaration.selection.name] : undefined;
+            const interactive = current.command.kind === 'literal' && selectedService?.runtime?.terminal === true;
+            const spawnManagedService = current.runtime.terminalSessions.spawnManagedService;
+            if (interactive && !spawnManagedService) throw new ServiceStartRefusal('terminal_unavailable');
             context.operationProgress?.update({ phase: 'starting', label: 'Starting service' });
             const handle = await registry.projectManagedServices.superviseProject({ kind: 'workspace', workspace: current.plan.workspace, declaration: current.declaration,
                 ...(current.command.kind === 'native' ? { nativeTool: current.command.source.tool } : {}),
@@ -891,8 +896,18 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 requester: { serverId: current.runtime.serverId, accountId: ingress.machineAdmission!.actorAccountId,
                     machineId: ingress.machineAdmission!.machineId, installationId: ingress.machineAdmission!.installationId },
                 serviceId: current.serviceId, execution: current.execution,
+                ...(interactive ? { interactive: true as const } : {}),
                 specIdentity: selected.reviewedEffectDigest, signal: current.preparation.signal, isCurrent,
-                processSpec: { mode: current.processMode },
+                processSpec: { mode: current.processMode, ...(interactive && spawnManagedService ? { interactiveTerminal: {
+                    sessions: { spawnManagedService }, terminalKey: current.serviceId, custody: {
+                        // Terminal custody retains the admitted daemon profile; review's
+                        // runtime uses the portable Home identity for workspace reads.
+                        serverId: selected.runtime.serverId, machineId: ingress.machineAdmission!.machineId,
+                        requesterAccountId: ingress.machineAdmission!.actorAccountId, installationId: ingress.machineAdmission!.installationId,
+                        workspaceRefId: current.plan.workspace.id, rootPath: current.plan.workspace.rootPath,
+                        projectKey: projectWorkspaceRefV1(current.plan.workspace).projectKey,
+                    },
+                } } : {}) },
                 authorizeLaunch: async ({ signal }) => {
                     const launchInvocations = new Set<ProjectNativeEffectCaptureForHost>();
                     const nativeCustody = createProjectNativeInvocationCustody({ signal }, launchInvocations);
@@ -970,7 +985,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             context.operationOwnerUpdate?.update({ domainRef: { kind: 'projectService', purpose: 'start',
                 sourceWorkspace: { serverId: request.workspace!.serverId, refId: request.workspace!.workspaceId },
                 workspace: workspaceAddressFromRefV1(handle.workspace), declaration: handle.declaration, currentTarget } });
-            return { status: 'succeeded', currentTarget };
+            return { status: 'succeeded', currentTarget, ...(handle.terminalView ? { terminalView: handle.terminalView } : {}) };
         } catch (error) { uncertain ||= isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) throw error;
             const denied = refusal(error); return { status: 'denied', reasonCode: denied.reasonCode,
