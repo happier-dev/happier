@@ -2,6 +2,53 @@
 // Contract basis: lima-vm/lima v2.1.0 cmd/limactl/{info,list,start,restart,shell,delete}.go
 // and pkg/{store/instance,instance/restart,instance/stop}.go (createAction lives in start.go).
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+
+// Lima v2.2.1 filenames.LongestSock includes OpenSSH's temporary 16-byte suffix.
+const longestLimaSocket = 'ssh.sock.1234567890123456';
+const acquisitionDigestWidth = Math.ceil(256 / Math.log2(36));
+
+function limaSocketPathsFit(store, instance) {
+  const unixPathMax = process.platform === 'linux' ? 108 : 104;
+  return [path.posix.join(store, instance, longestLimaSocket),
+    path.posix.join(store, '_networks', 'user-v2', 'user-v2_qemu.sock')]
+    .every(socket => Buffer.byteLength(socket) < unixPathMax);
+}
+
+function resolveLimaStorePath(store) {
+  const missing = [];
+  let existing = store;
+  while (true) {
+    try { return path.posix.join(realpathSync(existing), ...missing); }
+    catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      missing.unshift(path.posix.basename(existing));
+      existing = path.posix.dirname(existing);
+    }
+  }
+}
+
+/** Select once for acquisition; retained resource identities are never rewritten. */
+export function limaAcquisitionIdentity({ store, managedId }) {
+  const selected = resolveLimaStorePath(validateLimaStore(store));
+  const digest = value => BigInt(`0x${createHash('sha256').update(value).digest('hex')}`).toString(36);
+  const instance = `happier-${digest(managedId)}`;
+  // All acquisitions in one launch store, including prepared bases and clones,
+  // choose the same store even when their full digests have different widths.
+  if (limaSocketPathsFit(selected, `happier-${'z'.repeat(acquisitionDigestWidth)}`)) {
+    return { store: selected, instance };
+  }
+  // Lima itself uses ~/.lima specifically to fit Unix socket paths. Preserve
+  // the entire digest and selected-store scope in the shorter native name.
+  const shortStore = resolveLimaStorePath(path.posix.join(homedir(), '.lima'));
+  const shortInstance = `h${digest(`${selected}\0${managedId}`)}`;
+  if (!limaSocketPathsFit(shortStore, shortInstance)) {
+    throw limaError('LIMA_STORE_PATH_TOO_LONG', 'native home cannot fit Lima Unix socket paths');
+  }
+  return { store: shortStore, instance: shortInstance };
+}
 
 export function validateLimaInstanceName(value) {
   const instance = String(value ?? '').trim();
@@ -75,21 +122,16 @@ export function decodeLimaInstanceOutput(output, { instance: rawInstance, store 
   return record;
 }
 
-function limaStoreOptions(store, instance) {
+function limaStoreOptions(store) {
   if (store === undefined) return {};
   const home = validateLimaStore(store);
-  // Lima 2.2.1 usernet/gvproxy.go parses this endpoint as unix://<endpoint>:
-  // a relative instance becomes the URL host and loses its directory. Keep
-  // absolute endpoints when they fit Lima's osutil UnixPathMax (including NUL),
-  // and retain relative paths for long stores supported by the QEMU driver.
-  const endpoint = instance === undefined ? undefined : path.posix.join(home, instance, 'default_ep.sock');
-  const unixPathMax = process.platform === 'linux' ? 108 : 104;
-  const nativeHome = endpoint !== undefined && Buffer.byteLength(endpoint) < unixPathMax ? home : '.';
-  return { cwd: home, env: { LIMA_HOME: nativeHome } };
+  // Lima resolves the store before opening SSH/host-agent sockets. Relative
+  // LIMA_HOME cannot shorten them and also breaks VZ's unix:// URL parsing.
+  return { cwd: home, env: { LIMA_HOME: home } };
 }
 
 export async function runLimaCommand({ executor, store, instance, args, input, interactive = false }) {
-  const options = { ...limaStoreOptions(store, instance), ...(input === undefined ? {} : { input }) };
+  const options = { ...limaStoreOptions(store), ...(input === undefined ? {} : { input }) };
   const result = await executor[interactive ? 'run' : 'capture']('limactl', args, options);
   return result;
 }
@@ -213,7 +255,7 @@ export async function openLimaGuestChannel({ executor, instance: rawInstance, st
   const instance = validateLimaInstanceName(rawInstance);
   if (typeof executor.channel !== 'function') throw limaError('LIMA_CHANNEL_UNSUPPORTED', 'this Lima executor carries no live channel');
   await assertLimaGuestRunning({ executor, instance, store });
-  return executor.channel('limactl', limaGuestShellArgs({ instance, argv, workdir: '/' }), limaStoreOptions(store, instance));
+  return executor.channel('limactl', limaGuestShellArgs({ instance, argv, workdir: '/' }), limaStoreOptions(store));
 }
 
 export async function putLimaGuestFile({ executor, instance, store, guestPath, bytes, mode = '0600' }) {

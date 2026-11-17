@@ -32,6 +32,14 @@ function processResult(stdout = new Uint8Array()): PluginProcessResult {
     stdout, stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
 
+function createdGuest(request: Parameters<ExecService['run']>[0]): typeof native {
+  const args = request.args ?? [];
+  const instance = args[args.indexOf('--name') + 1];
+  const store = request.env?.LIMA_HOME;
+  if (!instance || !store) throw new Error('Native create requires its name and absolute store');
+  return { ...native, name: instance, dir: join(store, instance) };
+}
+
 async function activatedAction(id: string, exec: Pick<ExecService, 'run'> & Partial<Pick<ExecService, 'spawn'>>, readyDependencies?: readonly string[], dependencyFailure?: Error) {
   const handlers = new Map<string, ActionHandler>();
   // This fixture replaces only the external host registration/services boundary;
@@ -86,9 +94,9 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
   it.each([
     { hostOS: 'darwin', arch: 'aarch64', vmType: 'vz' },
     { hostOS: 'linux', arch: 'x86_64', vmType: 'qemu' },
-  ])('creates and recovers the same native identity inside a long selected persistent store on $hostOS', async ({ hostOS, arch, vmType }) => {
+  ])('creates and recovers one socket-safe native identity for a long selected persistent store on $hostOS', async ({ hostOS, arch, vmType }) => {
     const store = join(testDirectory, 'long-selected-persistent-store-'.repeat(5));
-    const instance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
+    let created: typeof native | undefined;
     let present = false;
     let running = false;
     const exec: Pick<ExecService, 'run'> = { run: async request => {
@@ -96,25 +104,30 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
       if (command === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
         hostOS, hostArch: arch, vmTypes: [vmType],
       })));
-      expect(request.cwd).toBe(store);
-      expect(request.env).toEqual({ LIMA_HOME: '.' });
-      if (command === 'create') present = true;
+      expect(request.cwd).not.toBe(store);
+      expect(request.env).toEqual({ LIMA_HOME: request.cwd });
+      if (command === 'create') { present = true; created = createdGuest(request); }
       if (command === 'restart') running = true;
       if (command === 'delete') present = false;
       return processResult(new TextEncoder().encode(command === 'list' && present
-        ? JSON.stringify({ ...native, arch, vmType, config: { ...native.config, images: [{ location: resource.image, arch }] },
-          name: instance, dir: instance, status: running ? 'Running' : 'Stopped' }) : ''));
+        ? JSON.stringify({ ...created, arch, vmType, config: { ...native.config, images: [{ location: resource.image, arch }] },
+          status: running ? 'Running' : 'Stopped' }) : ''));
     } };
     const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
     const launch = { ...identity, store, arch, vmType, memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 };
     const acquire = await activatedAction('acquire', exec);
     const result = LIMA_RECONCILIATION_SCHEMAS.result.parse(await acquire.handler({ managedId: 'test-row', launch }, acquire.context));
-    expect(result).toMatchObject({ kind: 'bound', resource: { value: { store, instance } } });
+    expect(result.kind).toBe('bound');
+    if (result.kind !== 'bound') throw new Error('Expected native acquisition');
+    const acquired = LimaResourceSchema.parse(result.resource.value);
+    expect(join(acquired.store, acquired.instance)).toBe(created?.dir);
+    expect(Buffer.byteLength(`${acquired.store}/${acquired.instance}/ssh.sock.1234567890123456`))
+      .toBeLessThan(process.platform === 'linux' ? 108 : 104);
     const reconcile = await activatedAction('reconcile', exec);
     expect(await reconcile.handler({ correlation: { managedId: 'test-row', launch } }, reconcile.context))
-      .toMatchObject({ kind: 'bound', resource: { value: { store, instance } } });
+      .toMatchObject({ kind: 'bound', resource: { value: acquired } });
     const destroy = await activatedAction('destroy', exec);
-    expect(await destroy.handler({ resource: { ...resource, store, instance } }, destroy.context)).toEqual({ kind: 'confirmed' });
+    expect(await destroy.handler({ resource: acquired }, destroy.context)).toEqual({ kind: 'confirmed' });
   });
 
   it('resizes through the declared native role and publishes inspected physical dimensions', async () => {
@@ -158,26 +171,27 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
 
   it.each(['failed', 'unconfirmed'] as const)('retains native startup uncertainty through acquisition without leaking private output (%s)', async outcome => {
     let present = false;
-    const instance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
+    let created: typeof native | undefined;
     const calls: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])]; calls.push(args);
       if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
         hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz', 'qemu'],
       })));
-      if (args[0] === 'create') present = true;
+      if (args[0] === 'create') { present = true; created = createdGuest(request); }
       if (args[0] === 'restart' && outcome === 'failed') return { ...processResult(),
         termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
         stderr: new TextEncoder().encode('failed to open "/private/secret/image": no such file or directory; token=private-token'),
       };
       return processResult(new TextEncoder().encode(args[0] === 'list' && present
-        ? JSON.stringify({ ...native, name: instance, dir: `${resource.store}/${instance}`, status: 'Stopped' }) : ''));
+        ? JSON.stringify({ ...created, status: 'Stopped' }) : ''));
     } };
     const { handler, context } = await activatedAction('acquire', exec);
     const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
     const result = await handler({ managedId: 'test-row', launch: { ...identity,
       memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context);
-    expect(result).toMatchObject({ kind: 'unknown', recovery: { reason: outcome === 'failed' ? 'lima_start_failed' : 'lima_start_unconfirmed' },
+    expect(result).toMatchObject({ kind: 'unknown', recovery: { reference: created?.dir,
+      reason: outcome === 'failed' ? 'lima_start_failed' : 'lima_start_unconfirmed' },
       ...(outcome === 'failed' ? { nativeCause: {
       localCause: 'native_command_failed', command: 'restart', exitCode: 1,
       stderr: expect.stringContaining('no such file or directory'),
@@ -223,7 +237,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
   it('binds the exact observed guest after a failed create reply without allocating again', async () => {
     let issued = false;
     const calls: string[][] = [];
-    const instance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
+    let created: typeof native | undefined;
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])]; calls.push(args);
       if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
@@ -231,17 +245,20 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
       })));
       if (args[0] === 'create') {
         issued = true;
+        created = createdGuest(request);
         return { ...processResult(), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
           stderr: new TextEncoder().encode('create response unavailable') };
       }
-      return processResult(new TextEncoder().encode(issued ? JSON.stringify({ ...native, name: instance,
-        dir: `${resource.store}/${instance}` }) : ''));
+      return processResult(new TextEncoder().encode(issued ? JSON.stringify(created) : ''));
     } };
     const { handler, context } = await activatedAction('acquire', exec);
     const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
-    expect(LIMA_RECONCILIATION_SCHEMAS.result.parse(await handler({ managedId: 'test-row', launch: { ...identity,
-      memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context)))
-      .toMatchObject({ kind: 'bound', resource: { value: { instance, store: resource.store } } });
+    const result = LIMA_RECONCILIATION_SCHEMAS.result.parse(await handler({ managedId: 'test-row', launch: { ...identity,
+      memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context));
+    expect(result.kind).toBe('bound');
+    if (result.kind !== 'bound') throw new Error('Expected native acquisition');
+    const acquired = LimaResourceSchema.parse(result.resource.value);
+    expect(join(acquired.store, acquired.instance)).toBe(created?.dir);
     expect(calls.filter(args => args[0] === 'create')).toHaveLength(1);
     expect(calls.some(args => args[0] === 'delete' || args[0] === 'restart')).toBe(false);
   });

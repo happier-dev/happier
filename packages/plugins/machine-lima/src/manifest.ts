@@ -17,7 +17,7 @@ import {
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createLimaSdkExecutor } from './machine/nativeExecutor.js';
 import { limaArchiveSource } from './machine/dependency.js';
-import { createLimaProvider, limaAcquisitionResource, LIMA_DEPENDENCY_ID, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID, LIMA_QEMU_DEPENDENCY_IDS } from './machine/provider.js';
+import { createLimaProvider, LIMA_DEPENDENCY_ID, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID, LIMA_QEMU_DEPENDENCY_IDS } from './machine/provider.js';
 import { LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './machine/schemas.js';
 import { createLimaPreparationClient, LimaPreparationInputSchema, LimaPreparedArtifactSchema, LimaPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 
@@ -195,8 +195,9 @@ export const LIMA_PLUGIN = definePlugin({
       async run(input, context) {
         try { return await (await provider(context)).acquire(input); }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const,
-          recovery: { reference: input.managedId === undefined ? input.launch.store
-            : `${input.launch.store}/${limaAcquisitionResource(input.launch, input.managedId).instance}`, reason: errorCode(error) } })); }
+          // Native effects settle in acquire with the selected resource scope.
+          // Factory/admission failures here have not acquired an instance.
+          recovery: { reference: input.launch.store, reason: errorCode(error) } })); }
       },
     },
     reconcile: {

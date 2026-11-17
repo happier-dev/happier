@@ -2060,6 +2060,14 @@ These projections retain the existing canonical implementations; plugin leaves
 do not import the private Protocol or CLI-common packages. The bounded Claude
 predecessor message-metadata build translation remains a build-only exception.
 
+In 0.3 development, the shared Lima acquisition owner keeps the selected store
+when its native sockets fit the host limit, including OpenSSH's temporary suffix.
+Long launch stores use the executing user's canonical `~/.lima` and a full,
+store-scoped digest name. Prepared bases and clones share that selected store;
+the resource records its exact native identity for later recovery and operations.
+An excessively long native home fails with `LIMA_STORE_PATH_TOO_LONG` before
+allocation. Retained resources continue using their recorded store and name.
+
 In 0.3 development source, a missing or wrong-tier generated UI artifact has no
 verified release slot. Its declaration remains visible with the UI projection's
 typed unavailable reason; neighbouring valid slots and daemon startup remain usable.

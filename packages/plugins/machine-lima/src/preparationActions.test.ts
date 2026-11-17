@@ -37,9 +37,9 @@ function boundary(options: { setupExit?: number; setupCancelled?: boolean; editE
     if (command === 'list') return result([...instances.values()].filter(i => args.includes(i.name)).map(i => JSON.stringify(i)).join('\n'));
     if (command === 'create') {
       const name = args[args.indexOf('--name') + 1]!;
-      instances.set(name, { name, dir: `${root}/${name}`, status: 'Stopped', arch: launch.arch, vmType: launch.vmType,
+      instances.set(name, { name, dir: `${request.cwd}/${name}`, status: 'Stopped', arch: launch.arch, vmType: launch.vmType,
         cpus: launch.cpus, memory: launch.memoryGiB * 1024 ** 3, disk: launch.diskGiB * 1024 ** 3,
-        config: { images: [{ location: launch.image, arch: launch.arch }], mounts: JSON.parse(args.find(arg => arg.startsWith('.mounts = '))!.slice('.mounts = '.length)) as unknown[], ssh: { forwardAgent: false },
+        config: { images: [{ location: launch.image, arch: launch.arch }], mounts: JSON.parse(args.find(arg => arg.startsWith('.mounts = '))?.slice('.mounts = '.length) ?? '[]') as unknown[], ssh: { forwardAgent: false },
           containerd: { user: false, system: false } } });
     }
     if (command === 'clone') {
@@ -47,7 +47,7 @@ function boundary(options: { setupExit?: number; setupCancelled?: boolean; editE
       const source = instances.get(args.at(-2)!)!;
       if (source.status !== 'Stopped') return result('', 1);
       const name = args.at(-1)!;
-      instances.set(name, { ...structuredClone(source), name, dir: `${root}/${name}` });
+      instances.set(name, { ...structuredClone(source), name, dir: `${request.cwd}/${name}` });
       instances.get(name)!.config.mounts = JSON.parse(args.find(arg => arg.startsWith('.mounts = '))!.slice('.mounts = '.length)) as unknown[];
     }
     if (command === 'restart') instances.get(args.at(-1)!)!.status = 'Running';
@@ -73,11 +73,9 @@ function boundary(options: { setupExit?: number; setupCancelled?: boolean; editE
 describe.skipIf(process.platform === 'win32')('Lima Prepare through public Actions', () => {
   it('builds a stopped base, recovers it in a fresh runtime, clones it without setup, and deletes only the base', async () => {
     const native = boundary();
-    const mountedLaunch = { ...launch, mounts: [{ location: '/host/work', mountPoint: '/workspace', writable: true }] };
-    const mountedInput = { ...input, input: { ...input.input, launch: { ...input.input.launch, choices: mountedLaunch } } };
     let kit = await native.kit();
     try {
-      const built = MachineProvisionerPreparationBuildResultV1Schema.parse(await kit.invokeAction('prepare-build', mountedInput, { surface: 'plugin' }));
+      const built = MachineProvisionerPreparationBuildResultV1Schema.parse(await kit.invokeAction('prepare-build', input, { surface: 'plugin' }));
       expect(built.kind).toBe('ready');
       if (built.kind !== 'ready') throw new Error('base did not complete');
       expect([...native.instances.values()].map(i => i.status)).toEqual(['Stopped']);
@@ -86,7 +84,7 @@ describe.skipIf(process.platform === 'win32')('Lima Prepare through public Actio
       expect(native.calls.filter(c => c.args[0] === 'shell').map(c => c.args.join(' ')).join('\n')).not.toContain('printf setup');
       await kit.dispose();
       kit = await native.kit();
-      expect(await kit.invokeAction('prepare-inspect', { operationId: input.operationId, launch: mountedLaunch }, { surface: 'plugin' })).toEqual(built);
+      expect(await kit.invokeAction('prepare-inspect', { operationId: input.operationId, launch }, { surface: 'plugin' })).toEqual(built);
       const artifact = built.artifact;
       const choices = LimaLaunchSchema.parse((artifact.value as { launch: unknown }).launch);
       const shellsBefore = native.calls.filter(c => c.args[0] === 'shell').length;
@@ -95,10 +93,10 @@ describe.skipIf(process.platform === 'win32')('Lima Prepare through public Actio
       expect(native.calls.filter(c => c.args[0] === 'clone')).toHaveLength(1);
       expect(native.calls.filter(c => c.args[0] === 'create')).toHaveLength(1);
       expect(native.calls.filter(c => c.args[0] === 'shell')).toHaveLength(shellsBefore);
-      expect([...native.instances.values()].find(i => i.status === 'Running')!.config.mounts).toEqual(mountedLaunch.mounts);
+      expect([...native.instances.values()].find(i => i.status === 'Running')!.config.mounts).toEqual([]);
       expect(await kit.invokeAction('prepare-destroy', { artifact }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
       expect([...native.instances.values()].map(i => i.status)).toEqual(['Running']);
-      expect(await kit.invokeAction('prepare-inspect', { operationId: input.operationId, launch: mountedLaunch }, { surface: 'plugin' })).toEqual({ kind: 'absent' });
+      expect(await kit.invokeAction('prepare-inspect', { operationId: input.operationId, launch }, { surface: 'plugin' })).toEqual({ kind: 'absent' });
     } finally { await kit.dispose(); }
   });
 

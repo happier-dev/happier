@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
+import { posix } from 'node:path';
 import type { LimaCommandResult, LimaExecutor } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { buildCreateArgs, createLimaProvider } from './provider.js';
+import { buildCreateArgs, createLimaProvider, limaAcquisitionResource, limaPreparationMessage } from './provider.js';
 import { LimaLaunchSchema } from './schemas.js';
 import { MACHINE_PROVISIONER_CLOUD_SSH_USER } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerObservationV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -61,6 +63,57 @@ describe('public Lima native leaf', () => {
     expect(await provider.inspect(legacy)).toMatchObject({ availability: 'present' });
     expect(await provider.destroy(legacy)).toEqual({ kind: 'confirmed' });
   });
+  it.each([false, true])('keeps long-store acquisition, recovery and guest lifecycle in one socket-safe native store (prepared=%s)', async prepared => {
+    const operationId = 'long-store-base';
+    const selected = { ...launch, store: '/home/happier/.happier/qa/mach-i1-account-a-1116/lima',
+      ...(prepared ? { preparedBase: { operationId } } : {}) };
+    const target = limaAcquisitionResource(selected, managedId);
+    const base = limaAcquisitionResource({ ...selected, mounts: [] }, `prepare:${operationId}`);
+    expect(target.store).toBe(posix.join(homedir(), '.lima'));
+    expect(base.store).toBe(target.store);
+    expect(target.instance).not.toBe(base.instance);
+    expect(limaAcquisitionResource(selected, managedId)).toEqual(target);
+    expect(limaAcquisitionResource({ ...selected, store: `${selected.store}-other` }, managedId).instance).not.toBe(target.instance);
+    // Lima 2.2.1 filenames.LongestSock includes OpenSSH's temporary suffix.
+    for (const resource of [target, base]) {
+      expect(Buffer.byteLength(`${resource.store}/${resource.instance}/ssh.sock.1234567890123456`))
+        .toBeLessThan(process.platform === 'linux' ? 108 : 104);
+    }
+    let present = false;
+    let status = 'Stopped';
+    const { executor } = processBoundary((args, options) => {
+      expect(options?.env?.LIMA_HOME).toBe(target.store);
+      expect(options?.cwd).toBe(target.store);
+      if (args[0] === 'clone') {
+        expect(args.slice(-2)).toEqual([base.instance, target.instance]);
+        present = true;
+      }
+      if (args[0] === 'create') present = true;
+      if (args[0] === 'restart') status = 'Running';
+      if (args[0] === 'stop') status = 'Stopped';
+      if (args[0] === 'delete') present = false;
+      const isBase = args.at(-1) === base.instance;
+      const resource = isBase ? base : target;
+      return { exitCode: 0, out: args[0] === 'list' && (present || isBase) ? JSON.stringify({ ...native,
+        name: resource.instance, dir: `${resource.store}/${resource.instance}`, status: isBase ? 'Stopped' : status,
+        config: { ...native.config, ...(isBase ? { message: limaPreparationMessage(operationId) } : {}) },
+      }) : '', err: '' };
+    });
+    const provider = createLimaProvider({ ...executor, channel: async (_command, _args, options) => {
+      expect(options?.env?.LIMA_HOME).toBe(target.store);
+      return 'channel';
+    } });
+    const acquired = await provider.acquire({ managedId, launch: selected });
+    expect(acquired).toMatchObject({ kind: 'bound', resource: { value: target } });
+    expect(await provider.reconcile({ managedId, launch: selected })).toMatchObject({ kind: 'bound', resource: { value: target } });
+    expect(await provider.exec(target, ['true'])).toMatchObject({ exitCode: 0 });
+    expect(await provider.stream(target, ['true'])).toBe('channel');
+    expect(await provider.putFile(target, '/tmp/payload', new Uint8Array())).toEqual({ kind: 'written' });
+    expect(await provider.power(target, 'stop')).toEqual({ kind: 'confirmed' });
+    expect(await provider.power(target, 'start')).toEqual({ kind: 'confirmed' });
+    expect(await provider.destroy(target)).toEqual({ kind: 'confirmed' });
+  });
+
   it.each(['exec', 'stream', 'putFile', 'power', 'destroy'] as const)('%s inspects native identity only at the shared effect boundary', async role => {
     let status = 'Running';
     let present = true;

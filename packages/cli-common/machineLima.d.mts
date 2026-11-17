@@ -8,6 +8,7 @@ export type LimaExecutor<TResult extends LimaCommandResult = LimaCommandResult> 
 export type LimaInstance = Record<string, unknown>;
 export type LimaIdentity = Readonly<{ instance: string; store?: string }>;
 export type LimaInstanceOptions = LimaIdentity & Readonly<{ executor: LimaExecutor }>;
+export function limaAcquisitionIdentity(options: { store: string; managedId: string }): { store: string; instance: string };
 export function validateLimaInstanceName(value: unknown): string;
 export function validateLimaStore(value: unknown): string;
 export function parseLimaVersion(output: unknown): number[] | null;

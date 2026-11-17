@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import {
   changeLimaPower, createLimaInstance, deleteLimaInstance, execLimaGuest, inspectLimaCapabilities, inspectLimaInstance,
-  limaInstanceField, limaVersionAtLeast, openLimaGuestChannel, parseLimaVersion, putLimaGuestFile, runLimaCommand,
+  limaAcquisitionIdentity, limaInstanceField, limaVersionAtLeast, openLimaGuestChannel, parseLimaVersion, putLimaGuestFile, runLimaCommand,
   validateLimaStore,
 } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import type { LimaCommandResult, LimaExecutor, LimaInstance } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
@@ -98,11 +97,7 @@ function sameCreationFacts(instance: LimaInstance, expected: LimaResource) {
 
 export function limaAcquisitionResource(launch: LimaLaunch, managedId: string): LimaResource {
   const { memoryGiB, diskGiB, preparedBase: _preparedBase, ...identity } = launch;
-  // Lima v2.1.0 pkg/identifiers/validate.go permits only single internal
-  // separators. Base36 keeps the full opaque-id digest alphanumeric and the
-  // prefixed name below our existing 63-character native identity boundary.
-  const nativeId = BigInt(`0x${createHash('sha256').update(managedId).digest('hex')}`).toString(36);
-  return LimaResourceSchema.parse({ ...identity, instance: `happier-${nativeId}`,
+  return LimaResourceSchema.parse({ ...identity, ...limaAcquisitionIdentity({ store: launch.store, managedId }),
     memoryBytes: memoryGiB * gib, diskBytes: diskGiB * gib });
 }
 
@@ -280,7 +275,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
         if (!availability.available) {
           throw Object.assign(new Error('reviewed native launch unavailable'), { code: 'code' in availability ? availability.code : 'lima_driver_unavailable' });
         }
-        const nativeLaunch = { ...launch, instance: expected.instance };
+        const nativeLaunch = { ...launch, store: expected.store, instance: expected.instance };
         let created: Awaited<ReturnType<typeof createLimaInstance>>;
         if (launch.preparedBase) {
           const source = await inspectLimaPreparation(executor, launch, launch.preparedBase.operationId);
@@ -288,7 +283,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
           if (await inspectLimaInstance({ executor, ...expected })) return { kind: 'rejected' as const, code: 'resource_mismatch' as const };
           // Lima 2.2.1 clone requires a stopped source and refuses an existing
           // destination. Only our clean build can supply this source identity.
-          const cloned = await runLimaCommand({ executor, store: launch.store, instance: expected.instance, interactive: true,
+          const cloned = await runLimaCommand({ executor, store: expected.store, instance: expected.instance, interactive: true,
             args: ['clone', '--tty=false', '--start=false', '--set', '.mounts = []',
               source.resource.instance, expected.instance] });
           if (cloned.exitCode !== 0) throw Object.assign(new Error('native clone failed'), { code: 'lima_clone_failed' });

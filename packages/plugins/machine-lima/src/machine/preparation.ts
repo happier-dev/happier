@@ -3,7 +3,7 @@ import { posix } from 'node:path';
 import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { changeLimaPower, deleteLimaInstance, execLimaGuest, putLimaGuestFile, runLimaCommand, type LimaExecutor } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
-import { createLimaProvider, inspectLimaPreparation, limaAcquisitionResource, limaPreparationMessage, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID } from './provider.js';
+import { createLimaProvider, inspectLimaPreparation, limaPreparationMessage, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID } from './provider.js';
 import { LimaLaunchSchema, type LimaLaunch } from './schemas.js';
 import { LimaNativeCommandError } from './nativeExecutor.js';
 
@@ -53,7 +53,7 @@ export function createLimaPreparationClient(executor: LimaExecutor, provider: Pi
       if (acquired.kind === 'rejected' && acquired.code === 'resource_mismatch') return { kind: 'refused', code: 'lima_preparation_exists' };
       if (acquired.kind !== 'bound') return { kind: 'unknown', code: acquired.kind === 'unknown' ? acquired.recovery.reason : acquired.code,
         nativeOperationRef: reference(operation) };
-      const resource = limaAcquisitionResource({ ...operation.launch, mounts: [] }, `prepare:${operation.operationId}`);
+      const resource = acquired.resource.value;
       const command = async (argv: readonly string[], input?: string) => {
         const result = await execLimaGuest({ executor, ...resource, argv, ...(input === undefined ? {} : { input }) });
         if (result.exitCode !== 0) throw nativeError('lima_preparation_setup_failed');

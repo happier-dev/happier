@@ -9,6 +9,7 @@ export type LimaInstanceOptions = LimaIdentity & Readonly<{ executor: LimaExecut
 
 // Public declarations name only the injected native IO contract. The shared
 // adapter remains the sole owner of Lima commands, identity and observations.
+export const limaAcquisitionIdentity: typeof native.limaAcquisitionIdentity = native.limaAcquisitionIdentity;
 export const validateLimaStore: (value: unknown) => string = native.validateLimaStore;
 export const parseLimaVersion: (output: unknown) => number[] | null = native.parseLimaVersion;
 export const limaVersionAtLeast: (actual: readonly number[] | null, minimum?: readonly number[]) => boolean = native.limaVersionAtLeast;
