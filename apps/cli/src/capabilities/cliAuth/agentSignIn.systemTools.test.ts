@@ -1,8 +1,31 @@
-import { describe, expect, it } from 'vitest';
-import { prepareAgentSignIn } from './agentSignIn';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { prepareAgentSignIn, probeAgentSignInStatus } from './agentSignIn';
+import { readSystemToolAuthentication, probeSystemToolAuthentication } from './systemToolAuthentication';
 import { resolveDaemonTerminalLaunch } from '@/terminal/pty/launch';
 
 describe('machine CLI sign-in declarations', () => {
+  it('distinguishes an absent executable from installed real gh with unknown authentication', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'machine-cli-presence-'));
+    const path = process.env.PATH;
+    try {
+      vi.stubEnv('PATH', directory);
+      const absent = await probeAgentSignInStatus('happier.scm.forge.github/gh');
+      expect(absent).toMatchObject({ status: 'unknown' });
+      expect(absent).toMatchObject({ installed: false });
+      vi.stubEnv('PATH', path);
+      const declaration = readSystemToolAuthentication('happier.scm.forge.github/gh');
+      if (!declaration) throw new Error('Declared GitHub CLI unavailable');
+      expect(await probeSystemToolAuthentication(declaration, null)).toMatchObject({ status: 'unknown', installed: null });
+      // Real gh rejects this declared command. Its failed authentication probe
+      // cannot erase the executable presence established by the launch owner.
+      const unknown = await probeSystemToolAuthentication({ ...declaration, authentication: { ...declaration.authentication,
+        status: { args: ['not-a-real-gh-command'], signedOutExitCodes: [] } } });
+      expect(unknown).toMatchObject({ status: 'unknown', installed: true });
+    } finally { vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }); }
+  });
   it('prepares GitHub CLI sign-in through the existing native and connected owners', () => {
     expect(prepareAgentSignIn({ agentId: 'happier.scm.forge.github/gh', method: 'native', launchId: 'device_code' }))
       .toEqual({ method: 'native', launch: { kind: 'agent_login', agentId: 'happier.scm.forge.github/gh', launchId: 'device_code' } });

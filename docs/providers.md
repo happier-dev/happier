@@ -132,6 +132,11 @@ This field describes selection, not credential availability: an unavailable boun
 account does not fall back to Machine login. Native `status` remains a separate
 observation. The per-Machine `useMachineCliSignIns` hook retains this source on
 `items[].authentication` without reading credential material or adding polling.
+Its separate nullable `installed` fact comes from the canonical runnable-executable
+resolver: absent executables are false, unavailable execution scope is null, and
+an installed CLI can still have unknown authentication. The hook lists only
+installed CLIs; it does not infer presence from login state or credential source.
+An older peer omitting this optional field leaves presence unknown.
 
 Cursor subscription usage reads the DashboardService current-period usage RPC
 with the stored OAuth access token through the existing daemon quota coordinator.

@@ -14,6 +14,8 @@ export const AgentSignInPrepareRequestSchema = lazyZodSchema(() => (<T extends z
 })));
 export const AgentSignInStatusResponseSchema = lazyZodSchema(() => z.strictObject({
   status: z.enum(['signedIn', 'signedOut', 'unknown']),
+  /** Canonical executable presence; null or omission means it could not be established. */
+  installed: z.optional(z.nullable(z.boolean())),
   accountLabel: z.optional(z.nullable(z.string())),
   /** Selected credential route, not an assertion that bound material is available. */
   credentialSource: z.optional(z.nullable(z.enum(['connectedAccount', 'machineLogin', 'none']))),

@@ -1,4 +1,5 @@
 import type { AgentSignInStatusResponse } from '@happier-dev/protocol';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
@@ -38,13 +39,14 @@ export function createSystemToolAuthenticationResolver(declaration: Declaration,
 }
 
 export async function probeSystemToolAuthentication(declaration: Declaration,
-  nativeExecution?: CliAuthNativeExecution | null): Promise<AgentSignInStatusResponse['status']> {
-  if (nativeExecution === null) return 'unknown';
+  nativeExecution?: CliAuthNativeExecution | null): Promise<Pick<AgentSignInStatusResponse, 'status' | 'installed'>> {
+  if (nativeExecution === null) return { status: 'unknown', installed: null };
   const environment = systemToolAuthenticationEnvironment(declaration,
     nativeExecution?.processEnv ?? sessionProcessEnvironment());
   const cwd = nativeExecution?.cwd ?? sessionWorkingDirectory();
   const signal = nativeExecution?.signal ?? new AbortController().signal;
   const tools = createSystemToolAuthenticationResolver(declaration, environment);
+  let installed: boolean | null = null;
   try {
     const exec = createStablePluginExecService({
       ...(nativeExecution ? { agentIsolation: nativeExecution.agentIsolation } : {}),
@@ -55,6 +57,7 @@ export async function probeSystemToolAuthentication(declaration: Declaration,
           throw new Error('Machine CLI authentication requires its declared executable');
         }
         const resolved = await tools.resolve({ toolId: executable.id, purpose: 'Read machine CLI sign-in state', cwd, signal });
+        installed = true;
         return { command: resolved.launch.executablePath, args: resolved.launch.args, env: resolved.launch.env,
           ...(resolved.allowedArguments ? { allowedArguments: resolved.allowedArguments } : {}) };
       },
@@ -64,9 +67,11 @@ export async function probeSystemToolAuthentication(declaration: Declaration,
       args: declaration.authentication.status.args, env: environment,
       timeoutMs: resolveCliSnapshotProbeTimeoutMs(true, environment) });
     const observed = result.termination.observed;
-    if (observed.kind !== 'exit') return 'unknown';
-    return observed.exitCode === 0 ? 'signedIn'
+    const status = observed.kind !== 'exit' ? 'unknown' : observed.exitCode === 0 ? 'signedIn'
       : typeof observed.exitCode === 'number' && declaration.authentication.status.signedOutExitCodes.includes(observed.exitCode)
         ? 'signedOut' : 'unknown';
-  } catch { return 'unknown'; }
+    return { status, installed };
+  } catch (error) {
+    return { status: 'unknown', installed: isPluginError(error) && error.code === 'plugin_exec_system_tool_unavailable' ? false : installed };
+  }
 }

@@ -292,6 +292,8 @@ export type MachineCliSignInRow = Readonly<{
   signIn: MachineAgentSignInSession;
 }>;
 const EMPTY_CLI_SIGN_INS: readonly MachineCliSignInRow[] = Object.freeze([]);
+type CliSignInsSnapshot = Readonly<{ items: readonly MachineCliSignInRow[]; pending: boolean }>;
+const EMPTY_CLI_SIGN_INS_SNAPSHOT: CliSignInsSnapshot = Object.freeze({ items: EMPTY_CLI_SIGN_INS, pending: false });
 const CLI_SIGN_IN_SECTIONS = ['agentsById', 'familiesById.systemTools'] as const;
 
 /** A demanded Machine catalog, with state produced by the existing sign-in Actions and shared process owner. */
@@ -317,7 +319,7 @@ export function useMachineCliSignIns(target: Readonly<{
       boundTarget: { serverId, machineId: target.machineId!, agentId: row.id, lifetime: binding },
     }));
   }, [binding, projection.inputs, serverId, target.machineId]);
-  const held = React.useRef<readonly MachineCliSignInRow[]>(EMPTY_CLI_SIGN_INS);
+  const held = React.useRef<CliSignInsSnapshot>(EMPTY_CLI_SIGN_INS_SNAPSHOT);
   const subscribe = React.useCallback((listener: () => void) => {
     if (!target.presented || !binding) return () => {};
     for (const row of rows) {
@@ -336,12 +338,16 @@ export function useMachineCliSignIns(target: Readonly<{
     };
   }, [binding, rows, target.presented]);
   const read = React.useCallback(() => {
-    if (!binding?.isCurrent()) return EMPTY_CLI_SIGN_INS;
-    return held.current = retainDeep(held.current, rows.map(({ entry, boundTarget: _boundTarget, ...row }) => ({ ...row,
+    if (!binding?.isCurrent()) return EMPTY_CLI_SIGN_INS_SNAPSHOT;
+    const items = rows.map(({ entry, boundTarget: _boundTarget, ...row }) => ({ ...row,
       authentication: entry.authentication, signIn: entry.state,
-    })).filter(row => !row.authentication || row.authentication.nativeLogin !== 'unsupported' || row.authentication.connectedServices.length > 0));
+    })).filter(row => row.authentication?.installed === true
+      && (row.authentication.nativeLogin !== 'unsupported' || row.authentication.connectedServices.length > 0));
+    // Settling an entirely absent catalog must still publish ready with no rows.
+    const pending = rows.some(row => row.entry.authentication === null && row.entry.state.phase !== 'failed');
+    return held.current = retainDeep(held.current, { items, pending });
   }, [binding, rows]);
-  const items = React.useSyncExternalStore(subscribe, read, read);
+  const snapshot = React.useSyncExternalStore(subscribe, read, read);
   const refresh = React.useCallback(async () => {
     if (!target.presented || !target.machineId || projection.phase !== 'ready') return;
     await Promise.all(rows.map(row => execute('machines.agents.signIn.status', { machineId: target.machineId, agentId: row.id })));
@@ -349,7 +355,6 @@ export function useMachineCliSignIns(target: Readonly<{
   React.useEffect(() => { fireAndForget(refresh(), { tag: 'MachineCliSignIns.refresh' }); }, [refresh]);
   const startSignIn = React.useCallback((id: string, choice: Readonly<{ method: 'native' | 'connected'; serviceId?: string }>) =>
     execute('machines.agents.signIn.start', { machineId: target.machineId, agentId: id, ...choice }), [execute, target.machineId]);
-  const phase = projection.phase === 'ready' && items.some(row => row.authentication === null && row.signIn.phase !== 'failed')
-    ? 'loading' : projection.phase;
-  return { phase, items, refresh, start: startSignIn };
+  const phase = projection.phase === 'ready' && snapshot.pending ? 'loading' : projection.phase;
+  return { phase, items: snapshot.items, refresh, start: startSignIn };
 }

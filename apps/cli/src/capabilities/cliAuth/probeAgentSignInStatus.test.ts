@@ -97,7 +97,11 @@ describe('on-demand native sign-in status', () => {
       expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedOut', credentialSource: 'none' });
       expect(await probeAgentSignInStatus('cursor', guestContext)).toMatchObject({ status: 'signedOut', signInScope: 'machineOwner' });
       write('not-json');
-      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'unknown', credentialSource: null });
+      const installedUnknown = await probeAgentSignInStatus('cursor');
+      expect(installedUnknown).toMatchObject({ status: 'unknown', credentialSource: null });
+      expect(installedUnknown).toMatchObject({ installed: true });
+      vi.stubEnv('HAPPIER_CURSOR_PATH', join(dir, 'missing-cursor'));
+      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'unknown', installed: false });
       expect(await probeAgentSignInStatus('cursor', guestContext)).toMatchObject({ status: 'unknown', signInScope: 'machineOwner' });
     } finally {
       await runtime.dispose();

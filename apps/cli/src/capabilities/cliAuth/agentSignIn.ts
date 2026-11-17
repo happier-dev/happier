@@ -27,15 +27,16 @@ export function getAgentSignInServices(agentId: string) {
 export async function probeAgentSignInStatus(agentId: string, nativeExecution?: CliAuthNativeExecution | null): Promise<AgentSignInStatusResponse> {
   const tool = readSystemToolAuthentication(agentId);
   if (tool) {
-    const status = await probeSystemToolAuthentication(tool, nativeExecution);
+    const { status, installed } = await probeSystemToolAuthentication(tool, nativeExecution);
     return {
-      status, credentialSource: nativeCredentialSource(status), accountLabel: null, checkedAt: Date.now(),
+      status, installed, credentialSource: nativeCredentialSource(status), accountLabel: null, checkedAt: Date.now(),
       nativeLogin: tool.authentication.loginLaunches.length ? 'login_terminal' : 'unsupported',
       connectedServices: getAgentSignInServices(agentId).map(({ serviceId, title }) => ({ serviceId, title })),
     };
   }
   const agent = readAgentCatalogSnapshot().agentDefinitionsById.get(agentId);
-  const launch = agent?.runtimeSpec ? resolveAgentCliLaunchSpecForRuntime(agent.runtimeSpec) : null;
+  const launch = agent?.runtimeSpec && nativeExecution !== null ? resolveAgentCliLaunchSpecForRuntime(agent.runtimeSpec,
+    nativeExecution ? { processEnv: nativeExecution.processEnv, cwd: nativeExecution.cwd } : {}) : null;
   // null means this execution user's native probe is unavailable, never a
   // request to retry using the daemon's credentials.
   const auth = launch && nativeExecution !== null ? await detectNativeAgentCliAuthStatus({ agentId,
@@ -43,6 +44,7 @@ export async function probeAgentSignInStatus(agentId: string, nativeExecution?: 
   const status = auth?.state === 'logged_in' ? 'signedIn' : auth?.state === 'logged_out' ? 'signedOut' : 'unknown';
   return {
     credentialSource: nativeCredentialSource(status),
+    installed: nativeExecution === null ? null : Boolean(launch),
     status,
     accountLabel: auth?.accountLabel ?? null,
     checkedAt: auth?.checkedAt ?? Date.now(),

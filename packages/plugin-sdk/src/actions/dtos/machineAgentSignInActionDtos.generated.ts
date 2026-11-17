@@ -149,6 +149,7 @@ export type MachineAgentSignInActionResultById = {
             serviceId: string;
             title: string;
         }[];
+        installed?: boolean | null | undefined;
         accountLabel?: null | string | undefined;
         credentialSource?: 'connectedAccount' | 'machineLogin' | 'none' | null | undefined;
         signInScope?: 'machineOwner' | 'member' | 'sharedAgent' | undefined;
