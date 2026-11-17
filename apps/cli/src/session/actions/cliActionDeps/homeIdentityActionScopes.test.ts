@@ -4,7 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reloadConfiguration } from '@/configuration';
+import type { StoredCredentials } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -19,7 +21,7 @@ import { createCliSettingsDeclarationAction } from '../settingsDeclarationAction
 import { createCliActionDeps } from '../createCliActionDeps';
 import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import { V2SessionByIdResponseSchema, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { V2SessionByIdResponseSchema, createActionExecutor, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { MachineAdminAccessInspectResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 
@@ -51,12 +53,12 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-function params() {
+function params(isCurrent = () => true, accountCredentials: StoredCredentials = credentials) {
   const snapshot = { source: 'network' as const, settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
-    loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: runWithServerHttpBaseUrl(base, () => resolveAccountSettingsScopeKey(credentials)) };
-  return { credentials, serverId: profileId, serverHttpBaseUrl: base,
-    operationContext: runWithServerHttpBaseUrl(base, () => createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
-      serverHttpBaseUrl: base, isCurrent: async () => true })),
+    loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: runWithServerHttpBaseUrl(base, () => resolveAccountSettingsScopeKey(accountCredentials)) };
+  return { credentials: accountCredentials, serverId: profileId, serverHttpBaseUrl: base,
+    operationContext: runWithServerHttpBaseUrl(base, () => createInvocationSavedSecretOperationContextV1({ credentials: accountCredentials, snapshot,
+      serverHttpBaseUrl: base, readSourceSnapshot: () => isCurrent() ? snapshot : null, isCurrent: async () => isCurrent() })),
     callMachineAction: async () => ({ status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [], teamCredentialResources: [] }),
   };
 }
@@ -84,6 +86,66 @@ function sessionDeps() {
 }
 
 describe('Account Action Home identity admission', () => {
+  it.each(['Profile', 'Provider', 'Remote Host'] as const)('preserves typed Account retirement through the public %s Action terminal', async family => {
+    let current = true;
+    const captured = params(() => current);
+    const machine = vi.fn(captured.callMachineAction);
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/entity-rows/remote-hosts') return { status: 200, data: { status: 'present', revision: 1,
+        content: { t: 'plain', v: { v: 1, hosts: [] } } } };
+      throw new Error(`Unexpected retirement control HTTP path: ${path}`);
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      profileActionExecute: createCliProfileActionExecuteV1({ ...captured, callMachineAction: machine }),
+      providerActionExecute: createCliProviderActionExecuteV1({ ...captured, callMachineAction: machine }),
+      remoteHostActionExecute: createCliRemoteHostActionExecuteV1(captured),
+    });
+    // Opening the Profile editor is a client Action; its public CLI surface is intentionally unavailable.
+    const caller = { ...context(), surface: family === 'Profile' ? 'ui' as const : 'cli' as const, authority: 'present_user' as const };
+    const invoke = () => family === 'Profile'
+      ? executor.execute('launch_profiles.edit', { id: 'profile-a', expectedRevision: 1 }, caller)
+      : family === 'Provider'
+        ? executor.execute('providers.models.projection', { machineId: 'worker',
+          agentTargetKey: 'agent:happier.agent.codex/codex', teamCredentialResources: [] }, caller)
+        : executor.execute('remote_hosts.list', {}, caller);
+    expect(await invoke()).toMatchObject({ ok: true, result: family === 'Profile'
+      ? { status: 'unavailable', reason: 'profile_editor_unavailable' }
+      : family === 'Provider' ? { status: 'success' } : { status: 'listed', hosts: [] } });
+    get.mockClear();
+    machine.mockClear();
+    current = false;
+    expect(await invoke()).toMatchObject({ ok: false, errorCode: 'scope-retired' });
+    expect(get).not.toHaveBeenCalled();
+    expect(machine).not.toHaveBeenCalled();
+  });
+
+  it.each(['read', 'mutation'] as const)('preserves the Account override-preparation retirement refusal through the public Role %s Action terminal', async path => {
+    let current = true;
+    const roleCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'role-account' })).toString('base64url')}.signature`, encryption: null };
+    const captured = params(() => current, roleCredentials);
+    const deps = createCliActionDeps({ ...captured, token: roleCredentials.token, sessionId: '', mode: 'plain', ctx: null,
+      savedSecretOperationContext: captured.operationContext });
+    const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Retired Role Account must not reach HTTP'));
+    const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Retired Role Account must not mutate HTTP'));
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute: deps.roleActionExecute });
+    const caller = { ...context(), authority: 'present_user' as const };
+    expect(await executor.execute('roles.get', { roleId: 'builder' }, caller))
+      .toMatchObject({ ok: true, result: { roleId: 'builder' } });
+    get.mockClear();
+    post.mockClear();
+    current = false;
+    const result = path === 'read'
+      ? await executor.execute('roles.get', { roleId: 'builder' }, caller)
+      : await executor.execute('roles.delete', { roleId: 'account-role', expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
+        { ...caller, presentUserConfirmation: { actionId: 'roles.delete' } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'account_role_overrides_unavailable', details: { reason: 'scope-retired' } });
+    expect(get).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it('admits administrator inspection using the captured daemon Home identity without a local client profile', async () => {
     const captured = params();
     const deps = createCliActionDeps({ ...captured, serverId: 'daemon-profile', serverIdentityId: portableHomeId,

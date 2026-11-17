@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios from '@/api/client/credentialAxios';
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -43,7 +44,7 @@ export function createCliRemoteHostStore(input: Readonly<{ credentials: StoredCr
   return createCapturedStore({ ...input, serverHttpBaseUrl: resolveServerHttpBaseUrl(), assertCurrent: () => {
     input.signal?.throwIfAborted();
     if (getActiveAccountSettingsSnapshot()?.scopeKey !== scopeKey || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken) {
-      throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
     }
   } });
 }
@@ -56,9 +57,9 @@ export function createCliRemoteHostStoreForOperation(input: Readonly<{
   return createCapturedStore({ credentials: operationContext.credentials, serverHttpBaseUrl: operationContext.serverHttpBaseUrl,
     operationContext, signal: input.signal, assertCurrent: () => {
       input.signal?.throwIfAborted();
-      if (!scopeKey || operationContext.readSnapshot()?.scopeKey !== scopeKey) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      if (!scopeKey || operationContext.readSnapshot()?.scopeKey !== scopeKey) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
     }, verifyCurrent: async () => {
-      if (!await operationContext.isCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      if (!await operationContext.isCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
     } });
 }
 

@@ -342,8 +342,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
       operationContext: params.savedSecretOperationContext });
     const prepared = await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, prepare) : prepare());
     if (prepared.status === 'unavailable' && prepared.reason === 'scope-retired') {
-      throw Object.assign(new Error('account_role_overrides_unavailable'), {
-        code: 'account_role_overrides_unavailable', reason: 'scope-retired',
+      throw Object.assign(new RoleActionRefusalV1('account_role_overrides_unavailable', { reason: 'scope-retired' }), {
+        reason: 'scope-retired',
       });
     }
   };

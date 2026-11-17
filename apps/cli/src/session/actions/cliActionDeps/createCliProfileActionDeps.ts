@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { LastUsedProfileSchema } from '@happier-dev/protocol/account/authoringMemory';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import type { z } from 'zod/mini';
@@ -60,7 +61,7 @@ export function createCliProfileActionExecuteV1(params: Readonly<{
     const assertCurrent = () => {
       context.signal?.throwIfAborted();
       const active = readSnapshot();
-      if (params.operationContext && !active || active && active.scopeKey !== scopeKey) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      if (params.operationContext && !active || active && active.scopeKey !== scopeKey) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
       store?.assertCurrent();
     };
     const isCurrent = () => { try { assertCurrent(); return true; } catch { return false; } };
@@ -72,7 +73,7 @@ export function createCliProfileActionExecuteV1(params: Readonly<{
       const snapshot = await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking', refresh: 'force',
         publication: 'invocation', honorAccountSettingsModeEnv: false });
       if (snapshot.source !== 'network' || !await params.operationContext.replaceAccountSettings(snapshot)) {
-        throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
       }
     };
     const requestLegacyRpc = async <TSchema extends z.ZodMiniType>(schema: TSchema, operation: 'read' | 'mutation',
@@ -242,7 +243,7 @@ export function createCliProfileActionExecuteV1(params: Readonly<{
         DaemonProviderProfileMigrationConflictConfirmRequestV1Schema.parse(input), RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM),
     });
     try {
-      if (params.operationContext && !await params.operationContext.isCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      if (params.operationContext && !await params.operationContext.isCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
       return await execute(request, context);
     }
     catch (error) {

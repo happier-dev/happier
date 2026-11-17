@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
 import { resolveProviderActionRpcEffectV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
@@ -38,7 +39,7 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
     assertCurrent: context => {
       context.signal?.throwIfAborted();
       const active = params.operationContext ? params.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
-      if (params.operationContext && !active || active && active.scopeKey !== scopeKey) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      if (params.operationContext && !active || active && active.scopeKey !== scopeKey) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
     },
     readSessionMetadata: async ({ sessionId }, context) => {
       const target = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials,
