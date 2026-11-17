@@ -11,6 +11,32 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import * as configured from './configuredHealthResults';
 
 describe('configured saved health public Action bridge', () => {
+    it('preserves the saved source identity for the owning Check page and refreshes it when it changes', async () => {
+        let sourceInstanceId = 'health:first';
+        const kv = { list: async () => ({ items: [{ key: 'health:saved', version: 1, value: {
+            source: { sourceInstanceId, subject: { kind: 'environment', environmentId: 'production' } },
+            current: { v: 1, members: [{ automationId: 'automation', triggerId: 'trigger', triggerRevision: 1, sourceSelectorId: 'selector' }],
+                checks: [{ checkId: 'site', result: { status: 'down', observedAt: 1000,
+                    evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'Failed' }] } } }] },
+        } }] }) };
+        const signal = new AbortController().signal;
+        const first = await configured.readConfiguredHealthResults(kv, signal, { results: new Map(), preceding: false });
+        const key = configured.configuredHealthResultKey('automation', 'trigger');
+        expect(first.results.get(key)?.state).toMatchObject({ kind: 'available', source: {
+            sourceInstanceId: 'health:first', subject: { kind: 'environment', environmentId: 'production' },
+        }, checks: [{ checkId: 'site' }] });
+        expect(configured.configuredHealthCheckAutomationSubject(first.results.get(key)!.state, 'site', 'home')).toEqual({
+            kind: 'healthCheck', serverId: 'home', sourceInstanceId: 'health:first', checkId: 'site',
+        });
+        expect(configured.configuredHealthCheckAutomationSubject(first.results.get(key)!.state, 'absent', 'home')).toBeNull();
+        expect(await configured.readConfiguredHealthResults(kv, signal, first)).toBe(first);
+        sourceInstanceId = 'health:second';
+        const changed = await configured.readConfiguredHealthResults(kv, signal, first);
+        expect(changed.results.get(key)?.state).toMatchObject({ source: { sourceInstanceId: 'health:second' } });
+        expect(configured.configuredHealthCheckAutomationSubject(changed.results.get(key)!.state, 'site', 'home'))
+            .toMatchObject({ sourceInstanceId: 'health:second' });
+        expect(changed).not.toBe(first);
+    });
     it('keeps an old checkpoint available when the same result is read again', async () => {
         const kv = { list: async () => ({ items: [{ key: 'health:saved', version: 1, value: { current: {
             v: 1,
@@ -21,6 +47,8 @@ describe('configured saved health public Action bridge', () => {
         const signal = new AbortController().signal;
         const first = await configured.readConfiguredHealthResults(kv, signal, { results: new Map(), preceding: false });
         expect(first.results.get(configured.configuredHealthResultKey('automation', 'trigger'))?.state.kind).toBe('available');
+        expect(configured.configuredHealthCheckAutomationSubject(first.results.get(configured.configuredHealthResultKey('automation', 'trigger'))!.state,
+            'site', 'home')).toBeNull();
         const second = await configured.readConfiguredHealthResults(kv, signal, first);
         expect(second.results.get(configured.configuredHealthResultKey('automation', 'trigger'))?.state)
             .toMatchObject({ kind: 'available', checks: [{ checkId: 'site', result: { status: 'down', observedAt: 1000 } }] });

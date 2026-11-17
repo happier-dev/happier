@@ -653,6 +653,12 @@ that projection and report never observed; results are joined only to the same
 Automation trigger revision and source selector. This is an unreleased 0.3 direct
 cut: the observer and UI reader load together. Earlier strict development
 checkpoint readers are not a supported rollback target for newly written rows.
+The same unreleased checkpoint and retained-results page accept optional
+`source: { sourceInstanceId, subject }`. New readers preserve legacy rows without
+it; the existing observer fills it on a natural observation. The Check page uses
+that identity with its captured Home and retained check id for Automations,
+without inferring an identity from its Machine or edit seed. Observer, Account
+Action artifact and UI reader reload together for this closed-schema addition.
 The optional `current.checks[].history` daily sample projection follows the same
 0.3 direct cut: observer and UI reader reload together. New readers accept
 existing current results without history; no migration or backfill is required.

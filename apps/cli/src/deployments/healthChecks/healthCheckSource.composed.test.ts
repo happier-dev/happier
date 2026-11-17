@@ -395,6 +395,9 @@ describe('saved health source registration and finite cycles', () => {
             return healthResultProjectionSchema.parse(row.current).checks[0]!;
         };
         f.clock(day); await f.cycle();
+        expect(f.writes.at(-1)).toMatchObject({ source: {
+            sourceInstanceId: definition.sourceInstanceId, subject: source.subject,
+        } });
         expect(current()).toMatchObject({ history: { uptimePercent: 0,
             days: [{ dayStartAt: day, up: 0, down: 1, degraded: 0, unknown: 0 }] } });
         expect(current()).toMatchObject({ recentResults: [{ status: 'down', observedAt: day }],

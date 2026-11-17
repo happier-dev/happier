@@ -10,7 +10,7 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
-import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
+import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultSourceSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
 import { fitHealthResultCheckpoint } from './healthResultCheckpoint.js';
 import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
@@ -19,7 +19,7 @@ const ordinal = defineProtocolNumber({ integer: true, minimum: 0 });
 export const healthTransition = HealthCheckTransitionV1ProtocolSchema;
 const cursorSchema = defineProtocolObject({ basis: defineProtocolString(),
     checks: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), status, ordinal }, { policy: 'closed' })),
-    current: healthResultProjectionSchema.optional(),
+    current: healthResultProjectionSchema.optional(), source: healthResultSourceSchema.optional(),
     pending: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), ordinal,
         result: HealthCheckResultV1ProtocolSchema, receivedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
     }, { policy: 'closed' })).optional(),
@@ -57,7 +57,9 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             const { due, failures, pendingChecks } = state;
             const retained = await storage.get(key, { signal: context.signal });
             const parsed = retained && !('deleted' in retained) ? cursorStoredSchema.parse(retained.value) : undefined;
-            const previous: Cursor = parsed?.basis === basis ? parsed : { basis, checks: [] };
+            const savedSource = { sourceInstanceId: definition.sourceInstanceId, subject: source.subject };
+            const previous: Cursor = { ...(parsed?.basis === basis ? parsed : { basis, checks: [] }), source: savedSource };
+            const sourceChanged = !parsed?.source || createCanonicalJsonSigningInput(parsed.source) !== createCanonicalJsonSigningInput(savedSource);
             let version: number | 'absent' = retained?.version ?? 'absent';
             const time = now();
             const next = new Map(previous.checks.map(value => [value.checkId, value]));
@@ -86,7 +88,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             const currentChanged = current.checks.length > 0 && (!previous.current
                 || healthResultProjectionIdentity(previous.current) !== healthResultProjectionIdentity(current));
             let retainedCurrent = currentChanged ? current : previous.current;
-            if (currentChanged) {
+            if (currentChanged || sourceChanged && current.checks.length > 0) {
                 const checkpoint = fitHealthResultCheckpoint({ ...previous, current });
                 const written = await storage.set(key, checkpoint, { expectedVersion: version, signal: context.signal });
                 retainedCurrent = checkpoint.current;
@@ -161,7 +163,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             return { observations, complete: true,
                 nextEligibleAt: pendingChecks.size ? time : deadlines.length ? Math.min(...deadlines) : null,
                 ...(changed || pending.length ? { checkpoint: { key, expectedVersion: version,
-                    value: { basis, checks: [...next.values()], ...(retainedCurrent ? { current: retainedCurrent } : {}) } } } : {}),
+                    value: { basis, source: previous.source, checks: [...next.values()], ...(retainedCurrent ? { current: retainedCurrent } : {}) } } } : {}),
             };
         },
         async save({ context, definition, checkpoint }) {

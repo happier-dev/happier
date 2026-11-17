@@ -357,13 +357,18 @@ sample starts the reported streak; missing earlier samples remain partial histor
 No additional probe or scheduler produces history.
 The safe Account Action `happier.machine.services/actions/health/results` reads one native
 KV page through `readHealthResultProjections`, the same reader used by the saved
-health UI. It returns `{ items: [{ key, projection }], nextCursor? }`; each
+health UI. It returns `{ items: [{ key, source?, projection }], nextCursor? }`; each
 projection retains its automation/trigger revision and source-selector members
 alongside current results, uptime and recent history. Consumers match those
 members to their current saved source before attributing results. The portable
 `health-account-runtime` artifact needs no Machine or fresh probe. Pass the
 returned cursor to continue; malformed stored projections and deleted rows are
 omitted, and storage failures remain failures rather than empty history.
+In unreleased 0.3 source, the checkpoint also retains `sourceInstanceId` and its
+native health `subject`. The owning Check page combines that source identity,
+the retained `checkId` and its captured Account Home to address attached
+Automations. Older checkpoints remain readable without `source`; the next
+ordinary observation supplies it without an extra probe or inventory read.
 Plugin saved-check controls and core controls share `runSavedHealthCheck`: it
 resolves the saved kind through the public catalog and invokes that kind's public
 Action with the exact saved selector. Core dispatch uses `action.invoke` through

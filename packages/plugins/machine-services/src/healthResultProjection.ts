@@ -1,4 +1,4 @@
-import { HealthCheckResultV1ProtocolSchema, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import { HealthCheckResultV1ProtocolSchema, HealthCheckSubjectV1ProtocolSchema, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
 export { HEALTH_RESULTS_ACTION_ID, HEALTH_RESULTS_ACTION_REF } from './actionIds.js';
 export { runSavedHealthCheck, type SavedHealthCheckRunInput } from './savedHealthCheckRun.js';
@@ -30,8 +30,12 @@ export const healthResultProjectionSchema = defineProtocolObject({
 export type HealthResultProjection = ReturnType<typeof healthResultProjectionSchema.parse>;
 export const healthResultProjectionStoredSchema = createProtocolStoredReadSchema(healthResultProjectionSchema);
 
+export const healthResultSourceSchema = defineProtocolObject({ sourceInstanceId: defineProtocolString({ minLength: 1 }),
+    subject: HealthCheckSubjectV1ProtocolSchema }, { policy: 'closed' });
+const healthResultSourceStoredSchema = createProtocolStoredReadSchema(healthResultSourceSchema);
+
 export const healthResultProjectionPageSchema = defineProtocolObject({
-    items: defineProtocolArray(defineProtocolObject({ key: defineProtocolString(), projection: healthResultProjectionSchema }, { policy: 'closed' })),
+    items: defineProtocolArray(defineProtocolObject({ key: defineProtocolString(), source: healthResultSourceSchema.optional(), projection: healthResultProjectionSchema }, { policy: 'closed' })),
     nextCursor: defineProtocolString().optional(),
 }, { policy: 'closed' });
 export type HealthResultProjectionPage = ReturnType<typeof healthResultProjectionPageSchema.parse>;
@@ -47,7 +51,10 @@ export async function readHealthResultProjections(kv: Pick<AccountKvService, 'li
     for (const row of page.items) {
         if ('deleted' in row || row.value === null || typeof row.value !== 'object' || !('current' in row.value)) continue;
         const parsed = healthResultProjectionStoredSchema.safeParse(row.value.current);
-        if (parsed.success) items.push({ key: row.key, projection: healthResultProjectionAt(parsed.data, at) });
+        if (parsed.success) {
+            const source = 'source' in row.value ? healthResultSourceStoredSchema.safeParse(row.value.source) : undefined;
+            items.push({ key: row.key, ...(source?.success ? { source: source.data } : {}), projection: healthResultProjectionAt(parsed.data, at) });
+        }
     }
     return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
 }

@@ -18,6 +18,7 @@ it('reads retained health history through the public Account Action without prob
     const retained = retainHealthResult(first, 'site', { status: 'down', observedAt: now, evidence });
     const projection = { v: 1, members: [{ automationId: 'automation', triggerId: 'trigger', triggerRevision: 4,
         sourceSelectorId: 'selector' }], checks: [retained] };
+    const source = { sourceInstanceId: 'health:production', subject: { kind: 'environment' as const, environmentId: 'production' } };
     const reads: Array<string | undefined> = [];
     const unused = async (): Promise<never> => { throw new Error('Unexpected probe or storage mutation'); };
     const kv = { get: unused, set: unused, delete: unused, transaction: unused,
@@ -27,7 +28,7 @@ it('reads retained health history through the public Account Action without prob
             return options?.cursor ? { items: [] } : { items: [
                 { key: 'health:deleted', version: 1, deleted: true as const },
                 { key: 'health:invalid', version: 1, value: { current: { ...projection, checks: [{}] } } },
-                { key: 'health:saved', version: 2, value: { current: { ...projection, futureField: true } } },
+                { key: 'health:saved', version: 2, value: { source, current: { ...projection, futureField: true } } },
             ], nextCursor: 'native-next' };
         },
     } satisfies AccountKvService;
@@ -40,7 +41,7 @@ it('reads retained health history through the public Account Action without prob
         module: { activate: plugin.activate, activateAccount }, services });
     try {
         const result = await kit.invokeAction(HEALTH_RESULTS_ACTION_ID, {}, { surface: 'agent' });
-        expect(result).toEqual({ items: [{ key: 'health:saved', projection }], nextCursor: 'native-next' });
+        expect(result).toEqual({ items: [{ key: 'health:saved', source, projection }], nextCursor: 'native-next' });
         expect(await kit.invokeAction(HEALTH_RESULTS_ACTION_ID, { cursor: 'native-next' }, { surface: 'mcp' })).toEqual({ items: [] });
         vi.setSystemTime(now + 31 * 86_400_000);
         expect(await kit.invokeAction(HEALTH_RESULTS_ACTION_ID, {}, { surface: 'cli' })).toMatchObject({
