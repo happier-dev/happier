@@ -5,18 +5,10 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { registerMachineRpcHandlers } from '@/api/machine/rpcHandlers';
-import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
+import { listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
+import { withSetupRpcRegistrations } from '@/testkit/setupRpcRegistrations';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
-import { registerProjectDefinitionHandlers } from './projectDefinitions';
-import { registerProjectFiniteRpcHandlers } from './projects/registerProjectFiniteRpcHandlers';
-import { registerScmHandlers } from './scm';
-import { registerDaemonLocalServicesMachineRpcHandlers } from './daemonLocalServices';
 import {
     REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
     SUBAGENT_RPC_SCOPES,
@@ -74,45 +66,15 @@ describe('ActionSpec-derived RPC registrar', () => {
             ...ACTION_ID_FAMILIES_V1.local_services_actions,
             ...ACTION_ID_FAMILIES_V1.scm_repository,
         ]);
-        const specs = listActionSpecs().filter(spec => actionIds.has(spec.id) && spec.surfaces.rpc);
-        const executor = createActionExecutor(createUnavailableActionTransportDeps());
-        const manager = new RpcHandlerManager({ scopePrefix: 'setup-census', encryptionMode: 'plain' });
-        const localServices = createLocalServicesDaemonRuntime({ machineId: 'setup-census', startLoop: false });
-        const registration = registerMachineRpcHandlers({ rpcHandlerManager: manager,
-            handlers: {
-                spawnSession: async () => ({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Unused process boundary' }),
-                stopSession: async () => true,
-                requestShutdown() {},
-            },
-            deps: { currentMachineId: 'setup-census', currentServerId: 'home',
-                externalAction: { machineId: 'setup-census', currentServerId: 'home',
-                    resolveAccountId: async () => 'account', resolveInstallationId: () => 'installation',
-                    verifyExecutionAuthorization: async () => false, resolveTarget: async () => null, executor },
-            },
-        });
-        try {
-            // Use each production registrar's own Action selection, never hand the
-            // generic registrar the expected catalog rows (which would be tautological).
-            registerProjectDefinitionHandlers({ rpcHandlerManager: manager, machineId: 'setup-census', actionExecutor: executor });
-            registerProjectFiniteRpcHandlers(manager, { machineId: 'setup-census', serverId: 'home' });
-            registerScmHandlers(manager, process.cwd(), { machineId: 'setup-census' });
-            registerDaemonLocalServicesMachineRpcHandlers(manager, {
-                machineId: 'setup-census', serverId: 'home',
-                localServicesInventory: localServices.inventoryRoutes,
-                localServicesLauncher: localServices.launcherRoutes,
-                localServicesPreview: localServices.previewRoutes,
-                localServicesActions: localServices.actionRoutes,
-                resolveLauncherActionExecutor: () => executor,
-            });
-            const missing = specs.flatMap(spec => [spec.bindings?.rpcMethod, ...(spec.bindings?.rpcMethodAliases ?? [])]
-                .filter((method): method is string => Boolean(method))
+        // An RPC-enabled Action may use the generic receiver without declaring a
+        // dedicated method. The catalog owner defines the direct registrations.
+        const specs = listActionSpecRpcRegistrations().filter(spec => actionIds.has(spec.id));
+        await withSetupRpcRegistrations(manager => {
+            const missing = specs.flatMap(spec => [spec.bindings.rpcMethod, ...(spec.bindings.rpcMethodAliases ?? [])]
                 .filter(method => !manager.hasHandler(method))
                 .map(method => ({ actionId: spec.id, method })));
             expect(missing).toEqual([]);
-        } finally {
-            await registration.dispose();
-            await localServices.stop();
-        }
+        });
     });
 
     it('keeps only the declared reachability facts at the Action RPC failure sink', () => {
