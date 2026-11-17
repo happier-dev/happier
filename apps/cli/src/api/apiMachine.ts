@@ -4592,6 +4592,9 @@ export class ApiMachineClient {
             || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
         return OpenProjectResultV1Schema.parse(await this.rpcHandlerManager.invokeLocal(RPC_METHODS.PROJECTS_OPEN, request, {
             ...(context.signal ? { signal: context.signal } : {}), localActionContext: context,
+            // This owner validated the exact admitted root above. Preserve that
+            // decision while the native Project owner selects requester custody.
+            admissionResult: { ok: true },
             rpcContext: { ...input.rpcContext, originalActionEnvelope: envelope },
         }));
     }
