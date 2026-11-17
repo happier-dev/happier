@@ -26,10 +26,12 @@ import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeat
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import {
     buildSessionAccessProjectionSelect,
+    readSessionAccessProjectionContextInTx,
     resolveSessionAccessForRowsInTx,
     resolveEffectiveSessionAccess,
     SESSION_ACCESS_SESSION_BATCH_SIZE,
     type EffectiveSessionAccess,
+    type SessionAccessProjectionContext,
 } from "@/app/session/access/sessionAccess";
 import { createSessionDataKeyEnvelopeViewerSelect } from '@/app/session/encryption/sessionDataKeyEnvelopePersistence';
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
@@ -1165,9 +1167,9 @@ export async function readSessionSystemRecordV1(
     }
 }
 
-function actorRecordSessionSelect(actorUserId: string) {
+function actorRecordSessionSelect(actorUserId: string, context: SessionAccessProjectionContext) {
     return {
-        ...buildSessionAccessProjectionSelect(actorUserId),
+        ...buildSessionAccessProjectionSelect(actorUserId, context),
         ...createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: actorUserId }),
         createdAt: true,
         updatedAt: true,
@@ -1225,7 +1227,8 @@ export async function readActorSessionSystemRecordsV1(
             const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
             try {
                 const { admitted, records } = await captureReadSnapshot(async tx => {
-                    const sessions = await tx.session.findMany({ where: { id: { in: batch } }, select: withSessionContentSelect(actorRecordSessionSelect(params.actorUserId)) }).then(decodeSessionStoredContent);
+                    const sessions = await tx.session.findMany({ where: { id: { in: batch } }, select: withSessionContentSelect(actorRecordSessionSelect(params.actorUserId,
+                        await readSessionAccessProjectionContextInTx(tx, [params.actorUserId]))) }).then(decodeSessionStoredContent);
                     const decisions = await resolveSessionAccessForRowsInTx(tx, { accountId: params.actorUserId,
                         authentication: params.authentication, capability: 'readTranscript' }, sessions);
                     for (const id of batch) results.set(id, { ok: false, code: 'plugin_session_not_found' });

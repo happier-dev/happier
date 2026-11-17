@@ -8,7 +8,7 @@ import { projectSessionInputRepliesFromTurnInTx } from './messages/sessionMessag
 import * as z from 'zod/mini';
 import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer } from "./messages/sessionInputAdmission";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { assertSessionCapabilityInTx, assertSessionOwnerInTx, buildSessionDeliveryAccessSelect, readSessionDeliveryAccessInTx, resolveSessionAccessForOperation, type SessionCapabilityAssertion, type EffectiveSessionAccess, type SessionCapability, type SessionDeliveryAccess } from "@/app/session/access/sessionAccess";
+import { assertSessionCapabilityInTx, assertSessionOwnerInTx, buildSessionDeliveryAccessSelect, readSessionAccessProjectionContextInTx, readSessionDeliveryAccessInTx, resolveSessionAccessForOperation, type SessionCapabilityAssertion, type EffectiveSessionAccess, type SessionCapability, type SessionDeliveryAccess } from "@/app/session/access/sessionAccess";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { resolveCurrentSessionRecipientAccountIdsInTx } from "@/app/session/access/sessionRecipients";
@@ -856,7 +856,8 @@ async function readSessionMutationContextInTx(
     // One Session read (after the Session lock) serves the context, the access decision and the
     // current recipients: the access projection already carries the recipient census's Session facts.
     const row = await tx.session.findUnique({ where: { id: params.sessionId },
-        select: withSessionContentSelect({ ...buildSessionDeliveryAccessSelect([params.actorUserId]), ...contextSelect }) }).then(decodeSessionStoredContent);
+        select: withSessionContentSelect({ ...buildSessionDeliveryAccessSelect([params.actorUserId],
+            await readSessionAccessProjectionContextInTx(tx, [params.actorUserId])), ...contextSelect }) }).then(decodeSessionStoredContent);
     if (!row) return { ok: false, error: "session-not-found" };
     const session = pickSelectedFields(row, contextSelect);
     const admitted: SessionCapabilityAssertion = params.kind === "owner" && !params.admittedAccess

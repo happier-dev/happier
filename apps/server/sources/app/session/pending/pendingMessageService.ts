@@ -18,6 +18,7 @@ import {
     resolveStructuralSessionAccess,
     resolveSessionAccessForOperation,
     buildSessionAccessProjectionSelect,
+    readSessionAccessProjectionContextInTx,
     SESSION_ACCESS_SESSION_BATCH_SIZE,
     type SessionAccessProjectionRow,
     type EffectiveSessionAccess,
@@ -226,9 +227,10 @@ export async function listPendingResetStartsForSource(params: Readonly<{
         if (candidates.length === 0) return { entries: [] };
         const sessionIds = [...new Set(candidates.map(candidate => candidate.row.sessionId))];
         const bySession = new Map<string, SessionAccessProjectionRow>();
+        const projectionContext = await readSessionAccessProjectionContextInTx(tx, [params.actorUserId]);
         for (let offset = 0; offset < sessionIds.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
             const sessionRows = await tx.session.findMany({ where: { id: { in: sessionIds.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
-                select: withSessionContentSelect(buildSessionAccessProjectionSelect(params.actorUserId)) }).then(decodeSessionStoredContent);
+                select: withSessionContentSelect(buildSessionAccessProjectionSelect(params.actorUserId, projectionContext)) }).then(decodeSessionStoredContent);
             for (const row of sessionRows) bySession.set(row.id, row);
         }
         const currentTargets = await readCurrentPendingResetStartTargetsInTx(tx, candidates.map(({ row }) => ({

@@ -6,7 +6,7 @@ import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { getActivePrismaRuntime } from "@/storage/prisma";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createPresentUserSessionAccessAuthentication } from "./sessionAccessAuthentication.testkit";
-import { createSessionMessage, updateSessionReadCursor } from "@/app/session/sessionWriteService";
+import { createSessionMessage, loadSessionOwnerMutationContextInTx, updateSessionReadCursor } from "@/app/session/sessionWriteService";
 import { buildSessionAccessWhere, buildSessionReadableAccountWhereInTx, createApplicableAudienceWhere, buildMembershipHistorySessionAccessWhereInTx, resolveEffectiveSessionAccessWhere } from "./sessionAccessWhere";
 import { resolveSessionAccessCapabilitiesForRowsInTx, assertSessionCapabilityInTx, resolveEffectiveSessionAccess, resolveEffectiveSessionAccessForSessionsInTx, resolveStructuralSessionAccessForAccountsInTx, resolveSessionAccessForOperation, SESSION_CAPABILITY_RULES, type SessionCapability, listCurrentSessionAudienceAccountsInTx, assertSessionTeamReadableGrantInTx, buildSessionAccessProjectionSelect, projectEffectiveSessionAccess } from "./sessionAccess";
 import { inTx, type Tx } from "@/storage/inTx";
@@ -1123,7 +1123,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
     });
 
     it("leaves Team and Group relation filters out of access reads for an Account without Team memberships", async () => {
-        const { actor, session } = await fixture("view");
+        const { owner, actor, session } = await fixture("view");
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Projection") } });
         await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date() } });
@@ -1138,18 +1138,24 @@ describe("Session access owner/direct authority (SQLite)", () => {
             if (request.model === 'Session' && branches) collectiveBranches.push(branches.filter(branch => branch.principalKind !== 'account').length);
         } });
         try {
-            // Single-row, batch and structural owner readers share the projection request shape.
-            const read = () => inTx(async tx => [
-                await resolveEffectiveSessionAccess(tx, { sessionId: session.id, accountId: actor.id, authentication }),
-                (await resolveEffectiveSessionAccessForSessionsInTx(tx, { accountId: actor.id, sessionIds: [session.id], authentication })).get(session.id),
-                (await resolveStructuralSessionAccessForAccountsInTx(tx, { sessionId: session.id, accountIds: [actor.id] })).get(actor.id),
-            ]);
-            for (const access of await read()) expect(access).toMatchObject({ level: "view", sources: [{ kind: "direct" }] });
-            expect(collectiveBranches).toEqual([0, 0, 0]);
+            // Single-row, batch and structural owner readers, and a Session write's mutation
+            // context (its inline locked read), share the projection request shape.
+            const read = (writer: string) => inTx(async tx => {
+                const accesses = [
+                    await resolveEffectiveSessionAccess(tx, { sessionId: session.id, accountId: actor.id, authentication }),
+                    (await resolveEffectiveSessionAccessForSessionsInTx(tx, { accountId: actor.id, sessionIds: [session.id], authentication })).get(session.id),
+                    (await resolveStructuralSessionAccessForAccountsInTx(tx, { sessionId: session.id, accountIds: [actor.id] })).get(actor.id),
+                ];
+                expect(await loadSessionOwnerMutationContextInTx(tx, { actorUserId: writer, sessionId: session.id })).toMatchObject({ ok: true });
+                return accesses;
+            });
+            for (const access of await read(owner.id)) expect(access).toMatchObject({ level: "view", sources: [{ kind: "direct" }] });
+            expect(collectiveBranches).toEqual([0, 0, 0, 0]);
             collectiveBranches.length = 0;
             await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-            for (const access of await read()) expect(access).not.toBeNull();
-            expect(collectiveBranches).toEqual([2, 2, 2]);
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
+            for (const access of await read(owner.id)) expect(access).not.toBeNull();
+            expect(collectiveBranches).toEqual([2, 2, 2, 2]);
         } finally { stop(); }
     });
 
