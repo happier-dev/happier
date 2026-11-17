@@ -4,7 +4,7 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-import { buildTriggerDefinition, createDefaultWhen, type TriggerWhenValue } from './sessionTriggerForm';
+import { buildTriggerDefinition, createDefaultWhen, isSessionLifecycleWhen, type TriggerWhenValue } from './sessionTriggerForm';
 import { TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
@@ -169,12 +169,12 @@ export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhe
     if (id.startsWith('session:')) {
         const kind = id.slice('session:'.length);
         if (!(WORKFLOW_SESSION_EVENT_KINDS as readonly string[]).includes(kind) && kind !== 'sessionStarts') return null;
-        const sourceSessionId = previous && 'sourceSessionId' in previous ? previous.sourceSessionId : undefined;
-        const nextTimeOnly = previous && 'nextTimeOnly' in previous ? previous.nextTimeOnly : undefined;
+        const kept = previous && isSessionLifecycleWhen(previous) ? previous : null;
         return {
             kind: kind as SessionEventKind,
-            ...(sourceSessionId === undefined ? {} : { sourceSessionId }),
-            ...(nextTimeOnly === undefined ? {} : { nextTimeOnly }),
+            ...(kept?.subject === undefined ? {} : { subject: kept.subject }),
+            ...(kept?.nextTimeOnly === undefined ? {} : { nextTimeOnly: kept.nextTimeOnly }),
+            ...(kept?.policy === undefined ? {} : { policy: kept.policy }),
         };
     }
     if (id.startsWith('event:')) {

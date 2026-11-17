@@ -204,10 +204,24 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     expect(
       start('session:needsYou', {
         kind: 'turnEnds',
-        sourceSessionId: 'session-a',
+        subject: { kind: 'session', serverId: 'home', sessionId: 'session-a' },
         nextTimeOnly: true,
       }),
-    ).toEqual({ kind: 'needsYou', sourceSessionId: 'session-a', nextTimeOnly: true });
+    ).toEqual({ kind: 'needsYou', subject: { kind: 'session', serverId: 'home', sessionId: 'session-a' }, nextTimeOnly: true });
+  });
+
+  it.each([
+    { kind: 'session', serverId: 'home', sessionId: 'session-a' },
+    { kind: 'project', serverId: 'home', projectKey: 'project-a' },
+  ] as const)('changes the Event group without losing its $kind subject or retained match budget', subject => {
+    const when = start('session:needsYou', { kind: 'turnEnds',
+      subject,
+      events: ['parentTurnFailed'], policy: { kind: 'nextMatches', count: 2 } });
+    const draft = commitWorkflowTriggerWhen({ draft: EMPTY_WORKFLOW_TRIGGER_DRAFT,
+      row: { kind: 'new', clientId: 'retained-project' }, when, enabled: true });
+    expect(draft?.adds[0]?.trigger).toEqual({ kind: 'sessionLifecycle', enabled: true,
+      subject,
+      events: ['userActionRequired'], policy: { kind: 'nextMatches', count: 2 } });
   });
 
   it('How often "Next time" writes the first-match policy and reads back as it was written', () => {
