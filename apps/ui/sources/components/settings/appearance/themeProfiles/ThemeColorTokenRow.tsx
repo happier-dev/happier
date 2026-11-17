@@ -1,11 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from '@/components/ui/lists/Item';
-import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
-import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { ThemeColorPicker } from '@/components/ui/forms/color/ThemeColorPicker';
 import { t } from '@/text';
@@ -37,62 +35,46 @@ export const ThemeColorRow = React.memo(function ThemeColorRow(props: Readonly<{
     highlighted?: boolean;
 }>) {
     const styles = stylesheet;
-    const resetActionId = `reset-${props.rowId}`;
-    const fixActionId = `fix-contrast-${props.rowId}`;
-    const onReset = props.onReset;
-    const actions: ItemAction[] = props.changed && onReset && !props.readonly ? [{
-        id: resetActionId,
-        title: t('settingsAppearance.themeProfiles.resetToken'),
-        icon: 'arrow-clockwise',
-        inlineTestID: `settings-theme-color-reset-${props.rowId}`,
-        onPress: onReset,
-    }] : [];
-    if (props.warning && props.onFixContrast && !props.readonly) actions.unshift({
-        id: fixActionId,
-        title: t('settingsAppearance.themeProfiles.fixContrast'),
-        icon: 'magic-wand',
-        inlineTestID: `settings-theme-contrast-fix-${props.rowId}`,
-        onPress: props.onFixContrast,
-    });
-    const fixAction = actions.find(action => action.id === fixActionId);
-    const resetAction = actions.find(action => action.id === resetActionId);
+    const canReset = props.changed && props.onReset !== undefined && !props.readonly;
+    const canFix = Boolean(props.warning) && props.onFixContrast !== undefined && !props.readonly;
 
     return (
         <View testID={`settings-theme-color-token-${props.rowId}`} style={props.highlighted ? styles.highlighted : null}>
             <Item
                 title={props.title}
                 subtitle={props.subtitle}
+                // Reset sits with the fact it undoes ("Changed"), in the row's text, never beside the field.
+                subtitleAccessory={canReset ? (
+                    <TextLinkButton testID={`settings-theme-color-reset-${props.rowId}`} size="meta" tone="quiet"
+                        label={t('settingsAppearance.themeProfiles.resetToken')} onPress={props.onReset!} />
+                ) : undefined}
                 mode="info"
                 accessoryLayout="adaptive"
-                // The contrast warning belongs to this row: it reads under the row's description, never between rows.
+                // The contrast warning belongs to this row: under its description, naming the pair, with its fix.
                 bottomElement={props.warning ? (
-                    <Text testID={`settings-theme-contrast-warning-${props.rowId}`} variant="meta" style={styles.warningText}>
-                        {props.warning}
-                    </Text>
+                    <View style={styles.warningLine}>
+                        <Text testID={`settings-theme-contrast-warning-${props.rowId}`} variant="meta" style={styles.warningText}>
+                            {props.warning}
+                        </Text>
+                        {canFix ? (
+                            <TextLinkButton testID={`settings-theme-contrast-fix-${props.rowId}`} size="meta" tone="strong"
+                                label={t('settingsAppearance.themeProfiles.fixContrast')} onPress={props.onFixContrast!} />
+                        ) : null}
+                    </View>
                 ) : undefined}
                 bottomElementInset="text"
+                bottomElementOutsidePressable
+                // Every row's control is the colour alone, so swatches and fields stand on one column.
                 rightElement={(
-                    // Fixed slots on every row (fix contrast before the colour, reset after it), so each row's
-                    // swatch and field stand on the same column whatever actions a row offers.
-                    <View style={styles.controls}>
-                        <View style={styles.actionSlot}>
-                            {fixAction ? <ItemRowActions title={props.title} actions={[fixAction]} compactActionIds={[fixAction.id]}
-                                pinnedActionIds={[fixAction.id]} overflowTriggerTestID={`settings-theme-color-fix-${props.rowId}`} /> : null}
-                        </View>
-                        <ThemeColorPicker
-                            value={props.value}
-                            inputTestID={`settings-theme-color-input-${props.rowId}`}
-                            previewTestID={`settings-theme-color-swatch-${props.rowId}`}
-                            recentColors={props.recentColors}
-                            disabled={props.readonly}
-                            onChange={props.onChange}
-                            onValidityChange={(isValid) => props.onInvalidChange(!isValid)}
-                        />
-                        <View style={styles.actionSlot}>
-                            {resetAction ? <ItemRowActions title={props.title} actions={[resetAction]} compactActionIds={[resetAction.id]}
-                                pinnedActionIds={[resetAction.id]} overflowTriggerTestID={`settings-theme-color-actions-${props.rowId}`} /> : null}
-                        </View>
-                    </View>
+                    <ThemeColorPicker
+                        value={props.value}
+                        inputTestID={`settings-theme-color-input-${props.rowId}`}
+                        previewTestID={`settings-theme-color-swatch-${props.rowId}`}
+                        recentColors={props.recentColors}
+                        disabled={props.readonly}
+                        onChange={props.onChange}
+                        onValidityChange={(isValid) => props.onInvalidChange(!isValid)}
+                    />
                 )}
             />
             {props.invalid ? (
@@ -147,11 +129,6 @@ export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: 
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    controls: {
-        alignItems: 'center',
-        flexDirection: 'row',
-        gap: theme.space.s12,
-    },
     feedbackText: {
         color: theme.colors.state.warning.foreground,
         paddingHorizontal: theme.space.s16,
@@ -163,9 +140,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     warningText: {
         color: theme.colors.state.warning.foreground,
     },
-    actionSlot: {
-        width: HAPPIER_ICON_BUTTON_SIZE,
+    warningLine: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
         alignItems: 'center',
+        columnGap: theme.space.s8,
     },
 }));
 
