@@ -446,6 +446,12 @@ importers:
       '@happier-dev/plugins-custom-acp':
         specifier: 0.0.0
         version: link:../../packages/plugins/custom-acp
+      '@happier-dev/plugins-database-capture':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/database-capture
+      '@happier-dev/plugins-database-workbench':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/database-workbench
       '@happier-dev/plugins-deepseek':
         specifier: 0.0.0
         version: link:../../packages/plugins/deepseek

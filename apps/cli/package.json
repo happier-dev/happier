@@ -109,6 +109,7 @@
     "@happier-dev/brand",
     "@happier-dev/cli-common",
     "@happier-dev/database-protocol",
+    "@happier-dev/databases",
     "@happier-dev/deployment-protocol",
     "@happier-dev/deployments",
     "@happier-dev/channels-protocol",
@@ -146,6 +147,8 @@
     "@happier-dev/plugins-copilot",
     "@happier-dev/plugins-cursor",
     "@happier-dev/plugins-custom-acp",
+    "@happier-dev/plugins-database-capture",
+    "@happier-dev/plugins-database-workbench",
     "@happier-dev/plugins-deepseek",
     "@happier-dev/plugins-deploy-cloudflare",
     "@happier-dev/plugins-deploy-vercel",
@@ -448,7 +451,9 @@
     "@happier-dev/plugins-machine-services": "0.0.0",
     "@happier-dev/plugins-devcontainer": "0.0.0",
     "@happier-dev/plugins-muse": "0.0.0",
-    "@happier-dev/plugins-outbound-notify": "0.0.0"
+    "@happier-dev/plugins-outbound-notify": "0.0.0",
+    "@happier-dev/plugins-database-capture": "0.0.0",
+    "@happier-dev/plugins-database-workbench": "0.0.0"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "0.91.1",
