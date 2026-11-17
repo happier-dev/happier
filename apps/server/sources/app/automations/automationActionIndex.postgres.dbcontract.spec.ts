@@ -19,6 +19,7 @@ import { eventRouter, type ClientConnection, type UpdatePayload } from '@/app/ev
 import type { Socket } from 'socket.io';
 import { updateArtifact } from '@/app/artifacts/artifactWriteService';
 import { applyArtifactRecipientKeyEnvelopesInTx, removeArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
+import { automationActionIndexSelect, projectAutomationActionIndexRows } from './automationActionIndex';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index seed (PostgreSQL)', () => {
     let ownerId: string;
@@ -238,6 +239,53 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index se
             await apply({ ...entry, encryptedDataKey: privacyKit.encodeBase64(wrap(recipient.contentPublicKey!)) });
             expect(updates).toEqual([]);
         } finally { eventRouter.removeConnection(recipient.id, observer); }
+    });
+
+    it('keeps inline managed Action tuples own-only without a shared Workflow audience or cursor', async () => {
+        const accountId = (await db.account.create({ data: { encryptionMode: 'plain' } })).id;
+        accounts.push(accountId);
+        const subject = { kind: 'machine' as const, serverId: randomUUID(), machineId: randomUUID() };
+        const definition = await db.automation.create({ data: { id: randomUUID(), accountId,
+            name: 'inline managed Action', templateVersion: 4, templateCiphertext: 'private inline Workflow',
+            triggers: { create: { id: randomUUID(), kind: 'action', actionIdsJson: JSON.stringify(['session.stop']),
+                phase: 'after', definitionEnvelope: 'private inline definition', reachesOthers: true,
+                subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject) } },
+        }, select: automationActionIndexSelect });
+        expect(definition.workflowDefinitionId).toBeNull();
+        const artifactCursorsBefore = await db.accountChange.count({ where: { kind: 'artifact' } });
+        const updates: UpdatePayload[] = [];
+        const observer: ClientConnection = { connectionType: 'machine-scoped', userId: accountId,
+            machineId: subject.machineId, socket: { emit(event: string, payload: UpdatePayload) {
+                if (event === 'update') updates.push(payload);
+            } } as unknown as Socket };
+        eventRouter.addConnection(accountId, observer);
+        const app = createAuthenticatedTestApp();
+        registerAutomationActionIndexRoutes(app);
+        try {
+            await inTx(tx => markAutomationChangedTx(tx, { accountId, automationId: definition.id,
+                publication: { previous: null, current: definition } }));
+            expect(updates.map(update => update.body)).toEqual([expect.objectContaining({ t: 'automation-upsert',
+                actionIndex: { automationId: definition.id, rows: [expect.objectContaining({
+                    automationId: definition.id, workflowId: definition.id, workflowRevision: 4, reachesOthers: true,
+                })] },
+            })]);
+            expect(projectAutomationActionIndexRows(definition, new Map(), true)).toEqual([]);
+            expect(await db.accountChange.count({ where: { kind: 'artifact' } })).toBe(artifactCursorsBefore);
+            const seed = await app.inject({ method: 'GET', url: '/v1/automations/actions/index',
+                headers: { 'x-test-user-id': accountId } });
+            expect(seed.statusCode).toBe(200);
+            expect(seed.json().rows).toEqual([expect.objectContaining({ automationId: definition.id,
+                workflowId: definition.id, workflowRevision: 4, reachesOthers: true })]);
+            const foreignSeed = await app.inject({ method: 'GET', url: '/v1/automations/actions/index',
+                headers: { 'x-test-user-id': actorId } });
+            expect(foreignSeed.statusCode).toBe(200);
+            expect(foreignSeed.json().rows).not.toEqual(expect.arrayContaining([
+                expect.objectContaining({ automationId: definition.id }),
+            ]));
+        } finally {
+            eventRouter.removeConnection(accountId, observer);
+            await app.close();
+        }
     });
 
     it('selects changed scopes through indexed public facts among unrelated private definitions', async () => {
