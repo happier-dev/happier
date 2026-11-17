@@ -20,6 +20,10 @@ export function isMachineSetupCombinedActionIdV1(actionId: string): actionId is 
 export const MACHINE_SETUP_REMOVE_ACTION_ID_V1 = 'machines.setup.remove';
 export const MANAGED_RESIZE_ACTION_ID_V1 = 'machines.managed.resize';
 export const MANAGED_DELETE_ACTION_ID_V1 = 'machines.managed.delete';
+export const MANAGED_REFERENCES_GET_ACTION_ID_V1 = 'machines.managed.references.get' as const;
+export function isManagedReferenceCensusActionIdV1(actionId: string): boolean {
+  return actionId === MANAGED_REFERENCES_GET_ACTION_ID_V1 || actionId === MANAGED_DELETE_ACTION_ID_V1;
+}
 export const MANAGED_RETIRE_ACTION_ID_V1 = 'machines.managed.retire';
 export const MANAGED_CONTROL_ACTION_IDS_V1 = ['machines.managed.power.set', 'machines.managed.rebuild', MANAGED_RESIZE_ACTION_ID_V1,
   'machines.managed.retention.update', MANAGED_DELETE_ACTION_ID_V1, 'machines.managed.controller.update', MANAGED_RETIRE_ACTION_ID_V1] as const;
@@ -108,7 +112,7 @@ export const MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 = 'machines.managed.bootstrap.
 export const MANAGED_ACQUIRE_ACTION_ID_V1 = 'machines.managed.acquire';
 export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
-  MANAGED_ACQUIRE_ACTION_ID_V1, 'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', 'machines.managed.references.get',
+  MANAGED_ACQUIRE_ACTION_ID_V1, 'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', MANAGED_REFERENCES_GET_ACTION_ID_V1,
   'machines.managed.inspect', MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
   'machines.managed.credentials.install',
   'machines.managed.setup.skip', 'machines.setup.plan', MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1,
@@ -138,7 +142,7 @@ export function isManagedCreationMutationActionIdV1(actionId: string): actionId 
  */
 export const MANAGED_CREATOR_ACTION_IDS_V1 = [
   'machines.managed.bootstrap.respond', MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
-  'machines.managed.setup.skip', MACHINE_SETUP_APPLY_ACTION_ID_V1, 'machines.managed.references.get', 'machines.managed.delete',
+  'machines.managed.setup.skip', MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_REFERENCES_GET_ACTION_ID_V1, 'machines.managed.delete',
 ] as const;
 export function isManagedCreatorActionIdV1(actionId: string): actionId is typeof MANAGED_CREATOR_ACTION_IDS_V1[number] {
   return MANAGED_CREATOR_ACTION_IDS_V1.some(id => id === actionId);

@@ -34,6 +34,7 @@ import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerE
 import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
@@ -157,6 +158,33 @@ it('names the refusing reviewed-purpose check without changing admission', async
       expected: Readonly<{ admitted: true } | { admitted: false; phase: string }>,
     ]
   > = [
+    ['sessions.external.candidates.list', { machineId: machine.id, agentId: 'codex', source: { kind: 'codexHome', home: 'user' }, limit: 10 },
+      'GET', '/v1/account/encryption/currentness', undefined, { admitted: true }],
+    ['sessions.external.candidates.list', { machineId: machine.id, agentId: 'codex', source: { kind: 'codexHome', home: 'user' }, limit: 10 },
+      'POST', '/v2/sessions/lookup-by-tags', { tags: ['candidate'], matchExternalIdentity: true }, { admitted: true }],
+    ['sessions.external.candidates.list', { machineId: machine.id, agentId: 'codex', source: { kind: 'codexHome', home: 'user' }, limit: 10 },
+      'POST', '/v2/sessions', {}, { admitted: false, phase: 'verification_purpose' }],
+    ['machines.list', { serverId: homeId }, 'GET', '/v1/machines', undefined, { admitted: true }],
+    ['machines.list', { serverId: homeId }, 'GET', '/v1/elsewhere', undefined, { admitted: false, phase: 'verification_purpose' }],
+    ['machines.replacement.set', { ...machineTarget, replacementMachineId: 'replacement' }, 'POST', `${machinePath}/replacement`,
+      { replacementMachineId: 'replacement' }, { admitted: true }],
+    ['machines.replacement.set', { ...machineTarget, replacementMachineId: 'replacement' }, 'POST', '/v1/machines/another-machine/replacement',
+      { replacementMachineId: 'replacement' }, { admitted: false, phase: 'verification_purpose' }],
+    ['machines.replacement.clear', machineTarget, 'DELETE', `${machinePath}/replacement`, undefined, { admitted: true }],
+    ['machines.remove', machineTarget, 'POST', `${machinePath}/revoke`, {}, { admitted: true }],
+    ['machines.remove', machineTarget, 'POST', '/v1/machines/another-machine/revoke', {}, { admitted: false, phase: 'verification_purpose' }],
+    ['machines.reboot', { ...machineTarget, expectedInstallationId: machine.installationId }, 'GET', machinePath, undefined, { admitted: true }],
+    ['machines.reboot', { ...machineTarget, expectedInstallationId: machine.installationId }, 'GET',
+      `/v1/deployments/machine-references?homeId=${encodeURIComponent(homeId)}&machineId=${encodeURIComponent(machine.id)}`,
+      undefined, { admitted: true }],
+    ['machines.reboot', { ...machineTarget, expectedInstallationId: machine.installationId }, 'GET',
+      `/v1/deployments/machine-references?homeId=${encodeURIComponent(homeId)}&machineId=another-machine`,
+      undefined, { admitted: false, phase: 'verification_purpose' }],
+    ['machines.managed.references.get', target, 'POST', '/v1/machines/managed/actions/get', target, { admitted: true }],
+    ['machines.managed.references.get', target, 'POST', machinePoolActionEndpointPathV1('machines.pools.list'), {}, { admitted: true }],
+    ['machines.managed.references.get', target, 'GET',
+      `/v1/deployments/machine-references?homeId=${encodeURIComponent(homeId)}&machineId=${encodeURIComponent(machine.id)}`,
+      undefined, { admitted: true }],
     ['machines.managed.birth.get', target, 'POST', '/v1/machines/managed/actions/birth.get', target, { admitted: true }],
     ['machines.managed.birth.get', target, 'POST', '/v2/sessions', {}, { admitted: false, phase: 'managed_machine_purpose' }],
     ['machines.managed.acquire', { homeId }, 'POST', '/v2/sessions', {}, { admitted: false, phase: 'managed_acquire_resource' }],

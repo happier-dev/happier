@@ -1,3 +1,10 @@
+import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_REMOVE_ACTION_ID_V1, MACHINE_REPLACEMENT_SET_ACTION_ID_V1, MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
+import { isManagedReferenceCensusActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MachineDeploymentReferencesInputV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolListInputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { isProjectSessionDefaultsPreparationReadActionIdV1, isSessionSpawnHomeDefaultsReadEffectV1 } from '@happier-dev/protocol/actions/actionIds';
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as collectionSharingIds,
@@ -1957,6 +1964,18 @@ async function readSetupReceiverSigner(binding: ExternalActionExecutionAuthoriza
     // Mint admitted Manage for every selected receiver. This signed finite
     // preparation retains that admission and the receiver's current installation.
     return receiver.id;
+}
+
+function isMachineDeploymentReferenceHttpPurpose(binding: ExternalActionExecutionAuthorizationV1['binding'],
+    effectActionId: string, proof: ExternalActionExecutionRequestProof): boolean {
+    if (effectActionId !== binding.actionId || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    const url = new URL(proof.path, 'http://localhost');
+    if (url.pathname !== '/v1/deployments/machine-references') return false;
+    const selection = MachineDeploymentReferencesInputV1Schema.safeParse(Object.fromEntries(url.searchParams));
+    if (!selection.success || selection.data.homeId !== binding.serverIdentityId) return false;
+    return isManagedReferenceCensusActionIdV1(binding.actionId)
+        || MACHINE_REBOOT_ACTION_IDS.some(id => id === binding.actionId)
+            && binding.target.kind === 'machine' && selection.data.machineId === binding.target.machineId;
 }
 
 function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string; path: string; body?: unknown }>): boolean {
@@ -4110,9 +4129,35 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if ((managedBoundSessionPurpose = await readManagedBoundSessionHttpPurpose(
         verified.binding, verified.effectActionId, proof)) !== null) {
         if (!managedBoundSessionPurpose) return refuse('managed_bound_session_setup');
+    } else if (verified.binding.actionId === MACHINE_LIST_ACTION_ID_V1) {
+        if (verified.effectActionId !== verified.binding.actionId || proof.method.toUpperCase() !== 'GET'
+            || proof.body !== undefined || proof.path.split('?')[0] !== '/v1/machines') return refuse('verification_purpose');
+    } else if (verified.binding.actionId === MACHINE_REPLACEMENT_SET_ACTION_ID_V1
+        || verified.binding.actionId === MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1
+        || verified.binding.actionId === MACHINE_REMOVE_ACTION_ID_V1) {
+        const transport = getActionSpec(verified.binding.actionId).serverTransport;
+        const target = verified.binding.target;
+        const method = verified.binding.actionId === MACHINE_REMOVE_ACTION_ID_V1 ? 'POST' : transport?.method;
+        const path = verified.binding.actionId === MACHINE_REMOVE_ACTION_ID_V1
+            ? '/v1/machines/:machineId/revoke' : transport?.path;
+        if (verified.effectActionId !== verified.binding.actionId || target.kind !== 'machine'
+            || proof.method.toUpperCase() !== method
+            || proof.path !== path?.replace(':machineId', encodeURIComponent(target.machineId))) return refuse('verification_purpose');
+    } else if (verified.binding.actionId === EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1) {
+        const lookup = proof.method.toUpperCase() === 'POST' && proof.path === '/v2/sessions/lookup-by-tags'
+            ? SessionLookupByTagsRequestV2Schema.safeParse(proof.body) : null;
+        if (verified.effectActionId !== verified.binding.actionId
+            || !isAccountEncryptionCurrentnessHttpRead(proof) && !(lookup?.success && lookup.data.matchExternalIdentity === true)) return refuse('verification_purpose');
+    } else if (isMachineDeploymentReferenceHttpPurpose(verified.binding, verified.effectActionId, proof)) {
+        // The native deployment read route owns requester access to each reference.
     } else if (managedRoot.success) {
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();
+        const referencePurpose = isManagedReferenceCensusActionIdV1(verified.binding.actionId)
+            && verified.effectActionId === verified.binding.actionId
+            && (isMachineDeploymentReferenceHttpPurpose(verified.binding, verified.effectActionId, proof)
+                || method === 'POST' && path === machinePoolActionEndpointPathV1('machines.pools.list')
+                    && MachinePoolListInputV1Schema.safeParse(proof.body).success);
         const recovery = isExternalActionManagedResourceAction(verified.binding.actionId) ? verified.binding.managedAdmission : undefined;
         const parsedControl = isManagedControlAdmissionActionIdV1(verified.binding.actionId)
             ? ExternalActionManagedControlAdmissionV1Schema.safeParse(verified.binding.managedAdmission) : undefined;
@@ -4121,7 +4166,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             ? proof.body as Readonly<Record<string, unknown>> : null;
         const continuation = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
         const childManagedId = continuation.success ? continuation.data.managedContinuation?.managedId : undefined;
-        if (control) {
+        if (control && !referencePurpose) {
             const admittedControl = method === 'POST' && path === '/v1/machines/managed/controller/admit-control';
             if (admittedControl ? body?.action !== control.actionId || body.requestId !== verified.binding.requestId
                 || !sameManagedInput(body.input, control.input)
@@ -4184,7 +4229,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             verified.binding, verified.effectActionId, proof);
         const guestPath = method === 'GET' ? /^\/v1\/machines\/([^/]+)$/u.exec(path) : null;
         const guestPurpose = guestPath && await readCurrentManagedGuestActivityInTx(db, verified.binding, guestPath[1]);
-        if (!controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose && !boundSetupPurpose
+        if (!referencePurpose && !controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose && !boundSetupPurpose
             && !setupHostReviewPurpose && !setupWorkflowPurpose && !setupAppReadPurpose && !connectorGrantReadPurpose) return refuse('managed_machine_purpose');
         if (guestPurpose) managedGuestActivity = guestPurpose;
     } else if (rootMachineAction.success || effectMachineAction.success) {
