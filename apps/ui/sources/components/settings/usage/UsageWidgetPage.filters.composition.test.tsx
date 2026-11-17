@@ -1003,6 +1003,85 @@ describe('mounted Usage page scope commands', () => {
         expect(screen.findByType(UsageFilterBar).props.metric).toBe('cost');
     });
 
+    it('admits the captured Plans All Sources selections through the canonical widget queries', async () => {
+        const [{ UsageCapacityWidget }, { UsageProjectionsWidget }, { UsageResetPlannerWidget }, { UsagePlanFitWidget }] = await Promise.all([
+            import('./widgets/UsageCapacityWidget'), import('./widgets/UsageProjectionsWidget'),
+            import('./widgets/UsageResetPlannerWidget'), import('./widgets/UsagePlanFitWidget'),
+        ]);
+        // B2-R198-SETTLED-SCOPE-MISMATCH: these exact source IDs, All, Plans,
+        // cost/auto and otherwise empty scope. Synthetic scoped amounts deliberately
+        // differ from the inventory rows: choices cannot supply the selected total.
+        const sources = ['claude-sdk-result', 'pi-session-stats'];
+        const [{ encodeBase64 }, { createAccountEncryptionCurrentnessFixtureForCredentials }] = await Promise.all([
+            import('@/encryption/base64'), import('@/dev/testkit/fixtures/accountEncryptionCurrentness'),
+        ]);
+        const credentials = { token: createServedHomeAccountToken('account-a'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        const reads: ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>[] = [];
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'e2ee' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-plans-sources.test', accountId: 'account-a',
+            credentials, accountMode: 'e2ee', encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') {
+                    const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+                    reads.push(query);
+                    const selected = query.filters?.sources ?? [];
+                    const amount = selected.length ? selected.includes(sources[0]!) ? 2 : 0.5 : 4;
+                    return Response.json({ ...accounting,
+                        totals: { ...totals, cost: { ...totals.cost, reportedUsd: amount } },
+                        breakdowns: { source: sources.filter(key => !selected.length || selected.includes(key)).map(key => ({ key, ...totals,
+                            cost: { ...totals.cost, reportedUsd: selected.length ? amount : key === sources[0] ? 3 : 1 } })) },
+                    });
+                }
+                return artifacts.handle(request.path + request.url.search, { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        let routeSources: readonly string[] = [];
+        function RoutedPlans() {
+            const [filters, setFilters] = React.useState<NonNullable<React.ComponentProps<typeof UsageWidgetPage>['initialFilters']>>({
+                layoutId: 'plans', period: 'all', metric: 'cost', costMode: 'auto', focus: null,
+                queryOverrides: { includeAccounting: true, includeContributions: false, includeComparison: true, includeQuotaHistory: true, includeSessionEvidence: true, includeTranscriptEvidence: true, includeWorkEvidence: true, workProjection: "detail", modelIds: [], workspaceIds: [], backendModes: [], population: "all_personal_history", granularity: "month", timeZoneOffsetMinutes: 60, includeSeries: true, includeInsights: true, includeActivity: true, includeLeaders: true, includeModelTimeline: true, includeMessageStats: true, activityResolution: "both", topLimit: 20 },
+            });
+            return <UsageWidgetPage initialFilters={filters} onFiltersChange={next => {
+                routeSources = next.scope?.sources ?? [];
+                setFilters(current => ({ ...current, ...next }));
+            }} />;
+        }
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><RoutedPlans />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const bodies = () => [UsageCapacityWidget, UsageProjectionsWidget, UsageResetPlannerWidget, UsagePlanFitWidget]
+            .flatMap(component => screen.findAllByType(component));
+        const sourceFilter = () => screen.findAllByType(SelectionListFilterChip)
+            .find(node => node.props.filter.id === 'sources')!.props.filter;
+        await waitForHomeGovernance(() => {
+            expect(bodies()).toHaveLength(4);
+            expect(bodies().every(node => node.props.slice.pending === false)).toBe(true);
+            expect(screen.findByType(UsagePlanFitWidget).props.slice.accounting?.totals.cost.reportedUsd).toBe(4);
+        });
+        for (const [index, source] of sources.entries()) {
+            if (index) await act(async () => { await sourceFilter().onChange(sourceFilter().options[0].id); });
+            await waitForHomeGovernance(() => expect(sourceFilter().options.some((option: { id: string }) => option.id === source)).toBe(true));
+            await act(async () => { await sourceFilter().onChange(source); });
+            await waitForHomeGovernance(() => {
+                expect(routeSources).toEqual([source]);
+                expect(bodies().map(node => node.props.query.sources)).toEqual([[source], [source], [source], [source]]);
+                expect(bodies().every(node => node.props.slice.pending === false)).toBe(true);
+                expect(screen.findByType(UsagePlanFitWidget).props.slice.accounting?.totals.cost.reportedUsd).toBe(index === 0 ? 2 : 0.5);
+            });
+            expect(reads.some(query => query.filters?.sources?.includes(source))).toBe(true);
+        }
+    });
+
     it('retains Cost across acknowledged E2EE widget input publications', async () => {
         const [{ encodeBase64 }, { createAccountEncryptionCurrentnessFixtureForCredentials }] = await Promise.all([
             import('@/encryption/base64'), import('@/dev/testkit/fixtures/accountEncryptionCurrentness'),
