@@ -25,5 +25,3 @@ export function resolveAccountThemeProfilesSnapshot(input: AccountThemeProfilesI
 export function resolveAccountThemeProfiles(input: AccountThemeProfilesInput): ThemeProfilesLocalStateV1 {
     return resolveAccountThemeProfilesSnapshot(input).themeProfiles;
 }
-
-export { encodeThemeProfileSelection } from '@/theme/profiles/themeProfilePersistence';

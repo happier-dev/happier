@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
-import { encodeThemeProfileSelection, resolveAccountThemeProfiles, resolveAccountThemeProfilesSnapshot } from './themeProfiles';
+import { resolveAccountThemeProfiles, resolveAccountThemeProfilesSnapshot } from './themeProfiles';
 
 const legacy = { profiles: [], activeProfileIds: { light: 'paperLight', dark: 'premiumDark' } };
 describe('account theme library composition', () => {
@@ -22,14 +22,6 @@ it('follows a selected legacy origin when its id collides with a later account p
     const input = { profiles: [profile], legacy: { profiles: [{ ...profile, name: 'Device' }], activeProfileIds: { light: null, dark: null } }, legacyScope: null, scope: null };
     const selection = { light: { legacyProfileId: 'theme_ocean' }, dark: null };
     expect(resolveAccountThemeProfiles({ ...input, selection }).activeProfileIds.light).toBe('theme_ocean_2');
-});
-
-it('encodes only selections originating in the displayed legacy library', () => {
-    const local = { profiles: [{ ...profile, name: 'Device' }], activeProfileIds: { light: 'theme_ocean', dark: null } };
-    const selectedBeforeAccountRead = encodeThemeProfileSelection([], local, local.activeProfileIds);
-    expect(selectedBeforeAccountRead.light).toEqual({ legacyProfileId: 'theme_ocean' });
-    expect(resolveAccountThemeProfiles({ profiles: [profile], legacy: local, selection: selectedBeforeAccountRead, legacyScope: null, scope: null }).activeProfileIds.light).toBe('theme_ocean_2');
-    expect(encodeThemeProfileSelection([profile], local, local.activeProfileIds).light).toBe('theme_ocean');
 });
 
 it('captures legacy row origins once while keeping account-owned deduplicated rows canonical', () => {
