@@ -8,12 +8,15 @@ import { WindowsTerminalWindowNameSchema } from '../metadata/windowsTerminalWind
 import { SessionAuthoringTerminalV1Schema } from './creationFieldsV1.js';
 import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 
+import { ProjectSessionDefaultsContextSelectionV1Schema } from '../../projects/projectSessionDefaultsSelectionV1.js';
+
 /** Shared selection schemas stay below the catalog: a catalogued birth trigger contains a Workflow. */
 export const SessionAuthoringSelectionFieldsV1 = {
   ...AgentSessionToolPolicyShapeV1,
   agentTarget: z.nullable(AgentExecutionTargetV1Schema),
   profileId: z.nullable(z.string()),
   approvalProfileId: z.nullable(ApprovalProfileIdV1Schema),
+  projectContext: z.nullable(ProjectSessionDefaultsContextSelectionV1Schema),
   permissionMode: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   acpSessionModeId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   sessionConfigOptionOverrides: z.nullable(AcpConfigOptionOverridesV1Schema),

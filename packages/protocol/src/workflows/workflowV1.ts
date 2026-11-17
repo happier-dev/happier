@@ -201,7 +201,7 @@ export const WorkflowStepExecutionSelectionSchema = lazyZodSchema(() => (<T exte
   // New Session choices reuse the Session spawn selection's own fields and schemas,
   // so the New Session chips write exactly these keys (WORKFLOW_SESSION_LAUNCH_FIELD_IDS).
   ...z.pick(SessionSpawnNewSelectionV2BaseSchema, { title: true, organizationPlacement: true, primaryTeamId: true,
-    memoryEnabled: true, secretReferenceOverlay: true, teamCredentialBindings: true,
+    memoryEnabled: true, secretReferenceOverlay: true, teamCredentialBindings: true, projectContext: true,
   } as const satisfies Record<WorkflowSessionLaunchFieldId, true>).shape,
 })));
 export type WorkflowStepExecutionSelection = z.infer<typeof WorkflowStepExecutionSelectionSchema>;
@@ -213,7 +213,7 @@ export type WorkflowStepExecutionSelection = z.infer<typeof WorkflowStepExecutio
  * Run's Machine), so `placementOrigin` and managed-target placement are not step choices.
  */
 export const WORKFLOW_SESSION_LAUNCH_FIELD_IDS = Object.freeze([
-  'title', 'organizationPlacement', 'primaryTeamId', 'memoryEnabled', 'secretReferenceOverlay', 'teamCredentialBindings',
+  'title', 'organizationPlacement', 'primaryTeamId', 'memoryEnabled', 'secretReferenceOverlay', 'teamCredentialBindings', 'projectContext',
 ] as const satisfies readonly (keyof SessionSpawnNewSelectionV2)[]);
 export type WorkflowSessionLaunchFieldId = (typeof WORKFLOW_SESSION_LAUNCH_FIELD_IDS)[number];
 
@@ -229,7 +229,7 @@ export const WORKFLOW_AGENT_STEP_ONLY_SELECTION_FIELD_IDS = Object.freeze([
 export const WORKFLOW_DETACHED_RUN_UNSUPPORTED_SELECTION_FIELD_IDS = Object.freeze([
   'environmentVariables', 'providerSessionResume', 'transcriptStorage', 'terminal',
   'windowsRemoteSessionLaunchMode', 'windowsRemoteSessionConsole', 'windowsTerminalWindowName',
-  ...WORKFLOW_SESSION_LAUNCH_FIELD_IDS.filter(field => field !== 'secretReferenceOverlay'),
+  ...WORKFLOW_SESSION_LAUNCH_FIELD_IDS.filter(field => field !== 'secretReferenceOverlay' && field !== 'projectContext'),
 ] as const satisfies readonly (keyof WorkflowStepExecutionSelection)[]);
 
 /** Whether a resolved leaf selection carries a choice its execution target cannot honour. */

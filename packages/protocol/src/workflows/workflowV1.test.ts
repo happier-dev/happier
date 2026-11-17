@@ -50,6 +50,17 @@ function codesOf(result: ReturnType<typeof validateWorkflowDefinition>): string[
 }
 
 describe('workflow input option sources', () => {
+  it.each(['session', 'detached_run'] as const)('retains qualified Project context in saved Workflow %s launches', (kind) => {
+    const projectContext = { projectRef: { serverId: 'home', projectKey: 'repository' },
+      sourceRef: { serverId: 'home', sourceId: 'source' } };
+    const authored = { version: 1, defaults: { agentTarget: CLAUDE_AGENT_TARGET, projectContext }, blocks: [
+      textStep('work', 'Work', { execution: { executionTarget: { kind }, projectContext } }),
+    ] };
+    expect(validateWorkflowDefinition(authored)).toMatchObject({ valid: true });
+    const definition = WorkflowDefinitionSchema.parse(authored);
+    expect(WorkflowDefinitionSchema.parse(JSON.parse(JSON.stringify(definition))))
+      .toMatchObject({ defaults: { projectContext }, blocks: [{ execution: { projectContext } }] });
+  });
   it('round-trips Workflow defaults and step approval references without copying profile rules', () => {
     const definition = WorkflowDefinitionSchema.parse({ version: 1, defaults: { approvalProfileId: 'profile:default' },
       blocks: [textStep('review', 'Review', { execution: { approvalProfileId: null } }),
