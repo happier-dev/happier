@@ -54,6 +54,8 @@ test('sibling inherited configs retain source preparation only with the complete
   for (const [body, expected] of [
     ['...base, test: { ...base.test, globalSetup: [] }', 'source-test'],
     ['...base, plugins: [...(base.plugins ?? []), { name: "extra" }]', 'source-test'],
+    // QA-RUNS-A 2026-11-17: forwarding the base resolver after another plugin list keeps it.
+    ['...base, plugins: [...(extraHooks().plugins ?? []), ...(base.plugins ?? [])]', 'source-test'],
     ['...base, plugins: []', 'runtime'],
     ['...base, test: { ...base.test, globalSetup: chooseSetup() }', 'runtime'],
   ]) {
@@ -62,6 +64,17 @@ test('sibling inherited configs retain source preparation only with the complete
     const policy = probe(fixture.root, 'apps/cli', 'vitest.future.config.ts');
     assert.equal(policy.kind, expected, body);
     assert.equal(policy.workspaceLock, expected === 'source-test' ? '' : '.project/tmp/cli-dist-build.lock', body);
+  }
+  // The source integration shape: packaged integration options with the unit
+  // resolver forwarded behind another plugin list and the source-only setup.
+  await writeFile(fixture.path('apps/cli/vitest.composed.config.ts'),
+    `import integration from './vitest.integration.config'; import source from './vitest.config';
+     export default { ...integration, plugins: [...(extraHooks().plugins ?? []), ...(source.plugins ?? [])],
+       test: { ...integration.test, globalSetup: ['./src/test-setup.unit.ts'] } };`);
+  for (const skipBuild of ['', '1']) {
+    const composed = probe(fixture.root, 'apps/cli', 'vitest.composed.config.ts', { skipBuild });
+    assert.equal(composed.kind, 'source-test', `composed source integration (skip=${skipBuild || 'unset'})`);
+    assert.equal(composed.workspaceLock, '');
   }
   // A plugin with the right name at another path is not the canonical resolver.
   await writeFile(fixture.path('apps/cli/vitest.replaced.config.ts'),

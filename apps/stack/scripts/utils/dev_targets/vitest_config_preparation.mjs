@@ -1,6 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
+// The `plugins: [...]` list text with nested brackets balanced (`?? []` inside
+// an element must not end the list).
+function pluginListText(source) {
+  const start = /\bplugins\s*:\s*\[/u.exec(source);
+  if (!start) return null;
+  let depth = 0;
+  for (let index = start.index + start[0].length - 1; index < source.length; index += 1) {
+    if (source[index] === '[') depth += 1;
+    else if (source[index] === ']' && --depth === 0) return source.slice(start.index + start[0].length, index);
+  }
+  return null;
+}
+
 /** Read resolver declarations without evaluating configs or running global setup. */
 export function readVitestSourcePreparation(repoRoot, configPath) {
   const sourceResolver = resolve(repoRoot, 'scripts/testing/vitestWorkspacePackageResolution.ts');
@@ -37,8 +50,8 @@ export function readVitestSourcePreparation(repoRoot, configPath) {
       throw error;
     }
     const hasPlugins = /\bplugins\s*:/u.test(source);
-    const pluginList = /\bplugins\s*:\s*\[([\s\S]*?)\]/u.exec(source);
-    const directResolver = pluginList && [...pluginList[1].matchAll(/\b(\w+)\b/gu)]
+    const pluginList = pluginListText(source);
+    const directResolver = pluginList !== null && [...pluginList.matchAll(/\b(\w+)\b/gu)]
       .some(match => hasSourcePlugin(path, source, match[1]));
     let inherited;
     if (!directResolver) {
@@ -46,7 +59,8 @@ export function readVitestSourcePreparation(repoRoot, configPath) {
         const baseName = new RegExp(`\\bconst\\s+(\\w+)\\s*=\\s*${match[1]}(?:\\s+as\\s+[^;]+)?;`, 'u').exec(source)?.[1] ?? match[1];
         // Forwarding the complete plugin list preserves the source resolver
         // without inheriting the base config's test/globalSetup options.
-        if (new RegExp(`\\bplugins\\s*:\\s*(?:${baseName}\\.plugins\\s*[,}]|\\[\\s*\\.\\.\\.\\(?${baseName}\\.plugins\\b)`, 'u').test(source)) {
+        if (new RegExp(`\\bplugins\\s*:\\s*${baseName}\\.plugins\\s*[,}]`, 'u').test(source)
+          || pluginList !== null && new RegExp(`\\.\\.\\.\\(?${baseName}\\.plugins\\b`, 'u').test(pluginList)) {
           const base = read(resolve(dirname(path), `${match[2]}.ts`));
           if (base && !base.buildsDist) { inherited = base; break; }
         }
