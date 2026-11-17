@@ -197,6 +197,7 @@ export const DeploymentReceiptMetadataV1Schema = lazyZodSchema(() => z.strictObj
   actionOperationId: DeploymentIdentifierV1Schema,
   acceptedExecution: z.optional(DeploymentAcceptedExecutionV1Schema),
   predecessorDeploymentId: z.optional(DeploymentIdentifierV1Schema), rollbackOfDeploymentId: z.optional(DeploymentIdentifierV1Schema),
+  restoreBackupId: z.optional(DeploymentIdentifierV1Schema),
   promotedFromDeploymentId: z.optional(DeploymentIdentifierV1Schema),
   cancelRequestedAtMs: z.optional(DeploymentTimestampV1Schema),
   requestedAtMs: DeploymentTimestampV1Schema, startedAtMs: z.optional(DeploymentTimestampV1Schema), settledAtMs: z.optional(DeploymentTimestampV1Schema),

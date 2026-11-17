@@ -50,6 +50,7 @@ export function projectDeploymentReceiptHeader(row: Receipt) {
         actionOperationId: row.actionOperationId, ...deploymentContentReference(row),
         ...(acceptedExecution ? { acceptedExecution } : {}),
         ...(row.predecessorDeploymentId ? { predecessorDeploymentId: row.predecessorDeploymentId } : {}),
+        ...(row.restoreBackupId ? { restoreBackupId: row.restoreBackupId } : {}),
         ...(row.rollbackOfDeploymentId ? { rollbackOfDeploymentId: row.rollbackOfDeploymentId } : {}),
         ...(row.promotedFromDeploymentId ? { promotedFromDeploymentId: row.promotedFromDeploymentId } : {}),
         ...(row.cancelRequestedAt ? { cancelRequestedAtMs: row.cancelRequestedAt.getTime() } : {}),
@@ -121,6 +122,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     const removeEnvironment = operation === 'teardown' && 'removeEnvironment' in input && input.removeEnvironment === true;
     if (removeEnvironment && !loaded.admission.canManage) return deploymentFailure('deployment_access_denied');
     const rollbackOfDeploymentId = 'deploymentId' in input ? input.deploymentId : null;
+    const restoreBackupId = 'restoreBackupId' in input ? input.restoreBackupId ?? null : null;
     const promotedFromDeploymentId = 'sourceDeploymentId' in input ? input.sourceDeploymentId : null;
     const repeated = await tx.deployment.findUnique({ where: { environmentId_requestKey: { environmentId: input.environmentId, requestKey: input.requestKey } } });
     if (repeated) {
@@ -130,6 +132,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
             || removeEnvironment !== DeploymentTeardownDispositionV1Schema.safeParse(repeated.teardownProof).success
             || (operation !== 'teardown' && (repeated.actionOperationId !== input.actionOperationId || repeated.requestedByAccountId !== actorAccountId))
             || repeated.contentArtifactId !== input.contentArtifactId || repeated.rollbackOfDeploymentId !== rollbackOfDeploymentId
+            || repeated.restoreBackupId !== restoreBackupId
             || repeated.promotedFromDeploymentId !== promotedFromDeploymentId) {
             return deploymentFailure('deployment_conflict');
         }
@@ -236,7 +239,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
                 .map(member => ({ machineId: member.machineId, installationId: member.installationId })) } : {}),
             ...(removeEnvironment ? { removeEnvironment: true } : {}),
         } } : {}),
-        predecessorDeploymentId: link.activeDeploymentId, rollbackOfDeploymentId,
+        predecessorDeploymentId: link.activeDeploymentId, rollbackOfDeploymentId, restoreBackupId,
         ...(promotedFromDeploymentId ? { promotedFromDeploymentId } : {}), ...deploymentContentReference(input),
     } });
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, admittedEnvironment.revision, undefined, false, accountIds);

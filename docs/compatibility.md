@@ -9235,6 +9235,13 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 receipt metadata accepts optional `restoreBackupId`, retaining the
+opaque backup selected at rollback admission. Existing receipts without it remain
+valid; the additive nullable Deployment column leaves historical rows unset.
+Emitting this field requires matching development server, Protocol, UI and daemon
+readers because receipt schemas are closed. There is no released wire change or
+mixed-development adapter.
+
 Unreleased 0.3 requester registry reads may carry the private
 `registryThemeContent` operand in the original Account envelope. E2EE requests
 keep it inside the encrypted payload; the receiving daemon opens it into host

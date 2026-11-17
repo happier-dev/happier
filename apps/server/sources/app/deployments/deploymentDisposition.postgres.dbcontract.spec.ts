@@ -107,3 +107,42 @@ it('serializes competing deletes at the Environment lock and preserves the revis
         expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).revision).toBe(2);
     } finally { await app.close(); }
 });
+
+
+it('persists the selected restore backup with rollback lineage through receipt readback', async () => {
+    const f = await fixture();
+    await db.deploymentEnvironment.update({ where: { id: f.environment.id },
+        data: { buildMachineId: f.environment.controllerMachineId } });
+    const artifact = await createArtifact({ actorUserId: f.owner.id, artifactId: crypto.randomUUID(),
+        header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-receipt.v1', title: 'Restore' })),
+        body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ snapshot: 'retained-release' })),
+        dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+    if (!artifact.ok) throw new Error(artifact.error);
+    const reference = { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const retained = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
+        operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), requestedByAccountId: f.owner.id,
+        actionOperationId: crypto.randomUUID(), ...reference } });
+    await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: retained.id } });
+    const app = createAuthenticatedTestApp();
+    registerDeploymentRoutes(app);
+    await app.ready();
+    try {
+        const payload = { ...f.input, ...reference, targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
+            deploymentId: retained.id, actionOperationId: crypto.randomUUID(), restoreBackupId: 'retained-backup' };
+        const url = `/v1/deployments/environments/${f.environment.id}/rollback`;
+        const response = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': f.owner.id }, payload });
+        expect(response.statusCode, response.body).toBe(200);
+        const result = response.json<{ deploymentId: string }>();
+        expect(await db.deployment.findUniqueOrThrow({ where: { id: result.deploymentId } }))
+            .toMatchObject({ restoreBackupId: payload.restoreBackupId, predecessorDeploymentId: retained.id,
+                rollbackOfDeploymentId: retained.id });
+        const read = await app.inject({ method: 'GET',
+            url: `/v1/deployments/receipts/${result.deploymentId}?serverId=${serverId}`,
+            headers: { 'x-test-user-id': f.owner.id } });
+        expect(read.statusCode, read.body).toBe(200);
+        expect(read.json()).toMatchObject({ ok: true, deployment: { restoreBackupId: payload.restoreBackupId } });
+        const conflict = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': f.owner.id },
+            payload: { ...payload, restoreBackupId: 'different-backup' } });
+        expect(conflict.statusCode, conflict.body).toBe(409);
+    } finally { await app.close(); }
+});

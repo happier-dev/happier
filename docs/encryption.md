@@ -7,6 +7,13 @@ the server routes that accept/emit these values.
 
 For transport and event shapes, see `protocol.md`. For HTTP endpoints, see `api.md`.
 
+## Restore receipt identity (unreleased 0.3)
+
+`Deployment.restoreBackupId` retains the opaque backup selector supplied at
+rollback admission as server-visible non-content metadata beside receipt lineage.
+Receipt reads project the same optional id. Backup configuration, credentials and
+backup payloads remain in their existing private content and storage paths.
+
 ## Link preparation routing (unreleased 0.3)
 
 An encrypted Link request exposes its Environment id as routing metadata through

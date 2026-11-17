@@ -3866,6 +3866,7 @@ model Deployment {
     predecessorDeploymentId String?
     predecessorDeployment Deployment? @relation("DeploymentPredecessor", fields: [predecessorDeploymentId], references: [id], onDelete: Restrict)
     successors Deployment[] @relation("DeploymentPredecessor")
+    restoreBackupId String?
     rollbackOfDeploymentId String?
     rollbackOfDeployment Deployment? @relation("DeploymentRollback", fields: [rollbackOfDeploymentId], references: [id], onDelete: Restrict)
     rollbacks Deployment[] @relation("DeploymentRollback")
