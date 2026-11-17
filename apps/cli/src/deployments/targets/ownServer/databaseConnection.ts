@@ -41,7 +41,6 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
     let ownsScope = true;
     try {
         if (target.database !== undefined && scope.definition.database !== target.database) return refuse('target_mismatch');
-        if (write && scope.definition.engine !== 'postgresql') return refuse('unsupported_action');
         const keys = await scope.handle.readNativeEffectKeys?.({ signal: input.signal });
         if (!keys || !scope.handle.readNativeDocker) return refuse('service_admission_unavailable');
         let opened!: (connection: NativeConnection) => void;

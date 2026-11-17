@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OwnServerDataQueryNative } from './dataQueryNative';
-import { assertOwnServerDataQuerySupportedEngine, ownServerReadOnlyRoleGuardSql, type OwnServerDataEngine } from './dataRoleGuard';
+import { assertOwnServerDataQuerySupportedEngine, ownServerReadOnlyRoleGuardSql, ownServerWriteRoleGuardSql, type OwnServerDataEngine } from './dataRoleGuard';
 import { postgresqlWriteRoleGuardSql } from '@happier-dev/deployment-protocol';
 
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
@@ -97,9 +97,8 @@ ${exists === 'absent' ? `GRANT SELECT, SHOW VIEW ON ${mysqlIdentifier(input.data
 export async function bootstrapOwnServerWriteDataRoleForHost(input: Readonly<{
     engine: OwnServerDataEngine; database: string; port?: number; password: string; signal: AbortSignal;
 }>, native: OwnServerDataQueryNative): Promise<void> {
-    if (input.engine !== 'postgresql') {
-        return refuse('unsupported_action');
-    }
+    assertOwnServerDataQuerySupportedEngine(input.engine);
+    if (input.engine === 'mysql') return bootstrapMysqlWriteRole({ ...input, engine: 'mysql' }, native);
     const passwordBase64 = Buffer.from(input.password).toString('base64');
     const port = String(input.port ?? 5432);
     const database = `dbname='${input.database.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
@@ -147,6 +146,49 @@ COMMIT;
         env: { PGPASSWORD: input.password, PGHOSTADDR: '', PGCLIENTENCODING: 'UTF8',
             PGOPTIONS: '-c standard_conforming_strings=on', LC_ALL: 'C' },
         signal: input.signal,
+    });
+    if (ready.exitCode !== 0 || ready.stdoutTruncated || ready.stdout.trim() !== '1') return refuse('write_role_unavailable');
+}
+
+/** MySQL `happier_rw`: DML and SHOW VIEW on the selected database only, created locked and
+ * unlocked only after the shared guard proves that is all it holds (account DDL is not transactional). */
+async function bootstrapMysqlWriteRole(input: Readonly<{ engine: 'mysql'; database: string; port?: number; password: string;
+    signal: AbortSignal }>, native: OwnServerDataQueryNative): Promise<void> {
+    const port = String(input.port ?? 3306);
+    const run = async (sql: string) => {
+        const result = await native.run({ argv: ['sh', '-c',
+            'MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-${MARIADB_ROOT_PASSWORD:-}}" exec mysql --user=root --host=127.0.0.1 --database="$1" --port="$2" --batch --raw --skip-column-names',
+            'happier-data-role', input.database, port], stdin: Buffer.from(sql), env: {}, signal: input.signal });
+        if (result.stdoutTruncated) return refuse('write_role_unavailable');
+        if (result.exitCode !== 0) return refuse(result.exitCode === 127 ? 'unsupported_action' : 'write_role_unavailable');
+        return result.stdout.trim();
+    };
+    const account = "'happier_rw'@'127.0.0.1'";
+    const verifyRole = async () => {
+        const authorized = await run(`${ownServerWriteRoleGuardSql('mysql', { database: input.database })}\nSELECT @happier_query_authorized;`);
+        if (authorized !== '1') return refuse('write_role_unavailable');
+    };
+    const exists = await run(`SELECT IF(EXISTS(SELECT 1 FROM mysql.user WHERE User='happier_rw' AND Host='127.0.0.1'),'exists','absent');`);
+    if (exists !== 'exists' && exists !== 'absent') return refuse('write_role_unavailable');
+    if (exists === 'exists') await verifyRole();
+    // QUOTE owns the engine's password literal; no caller value is SQL syntax.
+    await run(`SET SESSION sql_mode='';
+SET @role_password=CONVERT(FROM_BASE64('${Buffer.from(input.password).toString('base64')}') USING utf8mb4);
+SET @role_statement=CONCAT('${exists === 'exists' ? 'ALTER' : 'CREATE'} USER ${account.replaceAll("'", "''")} IDENTIFIED BY ',QUOTE(@role_password),'${exists === 'absent' ? ' ACCOUNT LOCK' : ''}');
+PREPARE happier_role_setup FROM @role_statement;
+EXECUTE happier_role_setup;
+DEALLOCATE PREPARE happier_role_setup;
+${exists === 'absent' ? `GRANT SELECT, INSERT, UPDATE, DELETE, SHOW VIEW ON ${mysqlIdentifier(input.database)}.* TO ${account};` : ''}
+`);
+    if (exists === 'absent') {
+        await verifyRole();
+        await run(`ALTER USER ${account} ACCOUNT UNLOCK;`);
+    }
+    const ready = await native.run({
+        argv: ['mysql', '--no-defaults', '--binary-mode', '--batch', '--raw', '--skip-column-names', '--protocol=TCP',
+            '--host=127.0.0.1', '--user=happier_rw', `--database=${input.database}`, `--port=${port}`],
+        stdin: Buffer.from('START TRANSACTION;\nSELECT 1;\nROLLBACK;\n'),
+        env: { MYSQL_PWD: input.password, LC_ALL: 'C' }, signal: input.signal,
     });
     if (ready.exitCode !== 0 || ready.stdoutTruncated || ready.stdout.trim() !== '1') return refuse('write_role_unavailable');
 }

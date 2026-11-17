@@ -5,6 +5,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { bootstrapOwnServerWriteDataRoleForHost } from './dataRoleBootstrap';
 import type { OwnServerDataQueryNative } from './dataQueryNative';
 import { createNativePostgresqlFixture, nativePostgresqlAvailable } from './nativePostgresql.testkit';
+import { createNativeDatabaseContainerFixture, nativeMysqlImage } from './nativeDatabaseContainer.testkit';
 
 describe('native write-role bootstrap (P3 R14)', () => {
     it.skipIf(!nativePostgresqlAvailable)('bootstraps a bounded PostgreSQL writer for superuser- and member-owned apps', async () => {
@@ -50,4 +51,36 @@ describe('native write-role bootstrap (P3 R14)', () => {
             } finally { await postgres.close(); }
         });
     });
+});
+
+const docker = process.env.HAPPIER_TEST_NATIVE_DATABASE_DOCKER_COMMAND ?? 'docker';
+
+describe('native MySQL write-role bootstrap (P3 R14)', () => {
+    it.skipIf(!nativeMysqlImage)('bootstraps a bounded MySQL writer and refuses tampered authority', async () => {
+        const mysql = await createNativeDatabaseContainerFixture('mysql', nativeMysqlImage!);
+        try {
+            // Docker exec is the container boundary; the engine, grants and login stay real.
+            const native: OwnServerDataQueryNative = { run: async request => {
+                const env = Object.entries(request.env).flatMap(([key, value]) => ['--env', `${key}=${value}`]);
+                const result = spawnSync(docker, ['exec', '-i', ...env, mysql.name, ...request.argv],
+                    { input: request.stdin, encoding: 'utf8' });
+                return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr, stdoutTruncated: false };
+            } };
+            await mysql.execute('CREATE TABLE native_fixture.items(id INT PRIMARY KEY, note TEXT); INSERT INTO native_fixture.items VALUES (1, NULL)');
+            const input = { engine: 'mysql' as const, database: 'native_fixture', password: 'write-password', signal: new AbortController().signal };
+            await bootstrapOwnServerWriteDataRoleForHost(input, native);
+            const writer = (sql: string) => spawnSync(docker, ['exec', '--env', 'MYSQL_PWD=write-password', mysql.name, 'mysql',
+                '--protocol=TCP', '--host=127.0.0.1', '--user=happier_rw', '--database=native_fixture', '--batch', '--skip-column-names', '-e', sql],
+            { encoding: 'utf8' });
+            // G1: the writer commits a row.
+            expect(writer("UPDATE items SET note = 'written' WHERE id = 1; SELECT note FROM items WHERE id = 1").stdout.trim()).toBe('written');
+            expect(writer("CREATE USER 'escalated'@'%'").status).not.toBe(0);
+            expect(writer('CREATE TABLE unwanted(id INT)').status).not.toBe(0);
+            expect((await mysql.execute("SELECT PRIVILEGE_TYPE FROM information_schema.USER_PRIVILEGES WHERE GRANTEE = \"'happier_rw'@'127.0.0.1'\"")).stdout.trim()).toBe('USAGE');
+            await mysql.execute("GRANT FILE ON *.* TO 'happier_rw'@'127.0.0.1'");
+            await expect(bootstrapOwnServerWriteDataRoleForHost({ ...input, password: 'replacement' }, native))
+                .rejects.toMatchObject({ code: 'write_role_unavailable' });
+            expect(writer('SELECT 1').stdout.trim()).toBe('1');
+        } finally { await mysql.close(); }
+    }, 180_000);
 });
