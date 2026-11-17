@@ -15,6 +15,7 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { ProjectSourceV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -111,6 +112,7 @@ describe('Project readiness through the public Action', () => {
   });
   it('keeps admitted backup and secret facts when the health source transport fails', async () => {
     const f = readinessFixture();
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     f.detail.content.backup = { notNeeded: true };
     f.detail.secretScope = { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 0, missingGrantCount: 0 };
     // The HTTP boundary fails; the saved-source reader and composite stay real.
@@ -125,6 +127,9 @@ describe('Project readiness through the public Action', () => {
       expect.objectContaining({ kind: 'secrets', status: 'ready', reason: 'secret_scope_current' }),
     ]) } });
     expect(JSON.stringify(result)).not.toContain('PRIVATE-TRANSPORT');
+    expect(diagnostic.mock.calls.map(([message]) => JSON.parse(message))).toContainEqual(expect.objectContaining({
+      event: 'workflow_action_failure', originalCode: 'ECONNRESET',
+    }));
     expect(f.nativeReads).toEqual([]);
   });
   it('spends one retained Account source census for two selected Environments on the admitted controller', async () => {
