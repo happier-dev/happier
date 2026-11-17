@@ -1,4 +1,5 @@
 import * as zMini from '../zodRuntimePolicy.js';
+import { AutomationSubjectV1Schema } from './automationSubjectV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
@@ -660,6 +661,7 @@ export const AutomationEventTriggerDefinitionStoredPayloadV1Schema = lazyZodSche
   v: z.literal(1),
   /** Current observation-only labels; omitted by retained 0.2 Event payloads. */
   automationDisplay: zMini.optional(AutomationDefinitionDisplayV1Schema),
+  subject: zMini.optional(AutomationSubjectV1Schema),
   sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
   webhookRoutingSourceInstanceId: zMini.optional(AutomationEventSourceInstanceIdV1Schema),
   sourceConfig: asProtocolZod(AutomationEventSourceConfigV1Schema),

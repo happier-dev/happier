@@ -1,6 +1,7 @@
 import { AutomationEventAdmitHttpRequestV1Schema, AutomationEventTriggerDefinitionStoredPayloadV1Schema, evaluateAutomationEventFilterV1, isAutomationEventObservationFreshV1, isSameAutomationEventDeclarationReleaseV1, type AutomationEventAdmitHostEvidenceV1 } from '@happier-dev/protocol/automations/event';
 import { AutomationEventAdmitHttpResultV1Schema, type AutomationEventAdmitContinuationV1, type AutomationEventAdmitHttpInputV1, type AutomationEventAdmitItemResultV1, type AutomationEventAdmitHttpResultV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { AutomationStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
+import { automationSubjectMatchesV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { AutomationTriggerIdSchema, type AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { buildAutomationPluginEventOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1, type AutomationOccurrenceKeyV1, type AutomationPluginEventOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
@@ -1161,13 +1162,15 @@ export async function admitAutomationEventV1(params: Readonly<{
                 assignGroupResult(results, group, skipped("outsideFreshness"));
                 continue;
             }
-            if (!evaluateAutomationEventFilterV1(triggerDefinition.data.filter, input.payload)) {
+            if (!automationSubjectMatchesV1(triggerDefinition.data.subject, input.subjectContexts ?? [])
+                || !evaluateAutomationEventFilterV1(triggerDefinition.data.filter, input.payload)) {
                 assignGroupResult(results, group, skipped("filtered"));
                 continue;
             }
 
             const frozenTriggerEvidence = {
                 ...evidence,
+                ...(input.subjectContexts === undefined ? {} : { subjectContexts: input.subjectContexts }),
                 sourceInstanceId: triggerDefinition.data.sourceInstanceId,
                 sourceContractVersion,
                 observationReceivedAt: input.observationReceivedAt,

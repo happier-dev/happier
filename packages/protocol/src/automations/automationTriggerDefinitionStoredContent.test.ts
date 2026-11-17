@@ -6,11 +6,16 @@ import {
   type AccountScopedCryptoMaterial,
 } from '../crypto/accountScopedCipher.js';
 import {
+  createAutomationPluginEventTriggerDefinitionV1,
   AutomationTriggerDefinitionBindingV1Schema,
   isAutomationTriggerDefinitionCiphertextV1,
   openAutomationTriggerDefinitionStoredEnvelopeV1,
+  sealAutomationPluginEventTriggerInputV1,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
 } from './automationTriggerDefinitionStoredContent.js';
+import { AutomationPluginEventDefinitionTriggerSchema } from './automationTriggerDefinition.js';
+import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from './automationEventV1.js';
+import { automationSubjectKeyV1 } from './automationSubjectV1.js';
 
 const material: AccountScopedCryptoMaterial = {
   type: 'dataKey',
@@ -37,6 +42,35 @@ const definition = {
 } as const;
 
 describe('Automation trigger-definition stored content', () => {
+  it.each(['plain', 'e2ee'] as const)('retains the authored Event subject in the %s definition envelope', mode => {
+    const subject = { kind: 'machine', serverId: 'home-1', machineId: 'machine-1' } as const;
+    const authored = AutomationPluginEventDefinitionTriggerSchema.parse({
+      kind: 'pluginEvent', eventRef: binding.eventRef, sourceInstanceId: definition.sourceInstanceId,
+      sourceContractVersion: 1, sourceConfig: definition.sourceConfig, displayLabel: definition.displayLabel,
+      observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+        machineId: 'observer-1', pluginId: binding.eventRef.pluginId, materializationId: 'observer-materialization',
+      } }, filter: null, maximumObservationAgeMs: null, subject,
+    });
+    const stored = createAutomationPluginEventTriggerDefinitionV1(authored);
+    let envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ binding, definition: stored,
+      mode, material, randomBytes: length => new Uint8Array(length).fill(8) });
+    if (mode === 'e2ee') {
+      const sealed = sealAutomationPluginEventTriggerInputV1({ binding, trigger: { ...authored, enabled: true },
+        seal: input => {
+          const sealedEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ ...input, mode, material,
+            randomBytes: length => new Uint8Array(length).fill(8) });
+          if (sealedEnvelope.t !== 'encrypted') throw new Error('Expected encrypted Event definition');
+          return sealedEnvelope;
+        } });
+      expect(sealed).toMatchObject({ subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject) });
+      expect(JSON.stringify(sealed)).not.toContain('"machineId":"machine-1"');
+      envelope = sealed.triggerDefinitionEnvelope;
+    }
+    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode, binding, envelope, material });
+    expect(opened.kind).toBe('available');
+    if (opened.kind !== 'available') throw new Error(opened.kind);
+    expect(AutomationEventTriggerDefinitionStoredPayloadV1Schema.parse(opened.definition).subject).toEqual(subject);
+  });
   it('opens unknown stored binding fields without giving them routing authority', () => {
     const envelope = { t: 'plain', extra: true, v: { v: 1, extra: true,
       binding: { ...binding, extra: true, eventRef: { ...binding.eventRef, extra: true } }, definition } };

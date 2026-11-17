@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { automationSubjectMatchesV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
 import { AutomationEventAdmitHttpRequestV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, evaluateAutomationEventFilterV1, isAutomationEventObservationFreshV1, isSameAutomationEventDeclarationReleaseV1 } from '@happier-dev/protocol/automations/event';
 import { AutomationEventAdmitInputV1Schema, AutomationEventSourceDefinitionV1Schema, AutomationEventSourcesListInputV1Schema, AutomationEventSourcesListResultV1Schema, MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE, isAutomationEventSourcesListPageProgressingV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
@@ -1373,7 +1374,8 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           if (!isValidPluginJsonSchemaValue(selectedDefinition.payloadValidator!, admissionInput.payload)) {
             return { ...base, outcome: { kind: 'skipped', reason: 'occurrenceRejected' } };
           }
-          if (!evaluateAutomationEventFilterV1(definition.filter, admissionInput.payload)) {
+          if (!automationSubjectMatchesV1(definition.subject, admissionInput.subjectContexts ?? [])
+            || !evaluateAutomationEventFilterV1(definition.filter, admissionInput.payload)) {
             return { ...base, outcome: { kind: 'skipped', reason: 'filtered' } };
           }
 
@@ -1382,6 +1384,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             randomBytes: request.randomBytes,
             evidence: {
               ...evidence,
+              ...(admissionInput.subjectContexts === undefined ? {} : { subjectContexts: admissionInput.subjectContexts }),
               sourceInstanceId: definition.sourceInstanceId,
               sourceContractVersion: definition.sourceContractVersion,
               observationReceivedAt: admissionInput.observationReceivedAt,

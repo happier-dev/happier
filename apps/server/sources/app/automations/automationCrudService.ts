@@ -33,6 +33,8 @@ import { isAccountScopedBlobCiphertextForKind } from '@happier-dev/protocol/cryp
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema, validateAutomationEventFilterAgainstPayloadSchemaV1, validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/automations/event';
 import { AutomationPullRequestTriggerSchema, type AutomationSessionLifecycleTrigger, type AutomationTriggerDefinition, type AutomationTriggerDefinitionInput, type AutomationPluginEventDefinitionTriggerInput, type AutomationPluginEventEncryptedDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import { readAutomationEventSubjectKindsV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import { projectAutomationSubjectStructuralV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AutomationOccurrenceEvidenceEqualityTagV1Schema, AutomationOccurrenceEvidenceV1ReadSchema, AutomationOccurrenceEvidenceV1Schema, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { automationRunExecutionTargetTypeV1, parseAutomationStoredDefinitionExecutionRecipeV1, serializeAutomationStoredDefinitionExecutionRecipeV1, parseAutomationRunExecutionRecipeV1, validateAutomationStoredDefinitionExecutionRecipeOuterV1, type AutomationStoredActionDefinitionRecipeV1, type AutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
@@ -417,13 +419,8 @@ type AutomationPlainPluginEventWriteInput = Exclude<
 
 type NormalizedAutomationPluginEventWriteBase = Readonly<{
     eventRef: AutomationPlainPluginEventWriteInput["eventRef"];
-    automationDisplay?: AutomationPlainPluginEventWriteInput["automationDisplay"];
-    sourceInstanceId: string;
     sourceContractVersion: number;
-    sourceConfig: AutomationPlainPluginEventWriteInput["sourceConfig"];
-    displayLabel: string;
-    filter: AutomationPlainPluginEventWriteInput["filter"];
-    maximumObservationAgeMs: number | null;
+    definition: ReturnType<typeof createAutomationPluginEventTriggerDefinitionV1>;
 }>;
 
 /**
@@ -464,11 +461,11 @@ function durablePushObservationEligibilityFingerprint(
 ): string {
     return createCanonicalJsonSigningInput({
         eventRef: event.eventRef,
-        sourceInstanceId: event.sourceInstanceId,
+        sourceInstanceId: event.definition.sourceInstanceId,
         sourceContractVersion: event.sourceContractVersion,
-        sourceConfig: event.sourceConfig,
-        filter: event.filter,
-        maximumObservationAgeMs: event.maximumObservationAgeMs,
+        sourceConfig: event.definition.sourceConfig,
+        filter: event.definition.filter,
+        maximumObservationAgeMs: event.definition.maximumObservationAgeMs,
         webhookEndpointId: event.webhookEndpointId,
         webhookRoutingSourceInstanceId: event.webhookRoutingSourceInstanceId,
     });
@@ -555,6 +552,10 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
             `Automation Event declaration does not support ${transport.kind} observation`,
         );
     }
+    if (params.input.subject !== undefined
+        && !readAutomationEventSubjectKindsV1(contribution.automation).includes(params.input.subject.kind)) {
+        throw new AutomationValidationError('Automation Event declaration does not support the selected subject kind');
+    }
     let validatesSourceConfig: ReturnType<typeof compilePluginJsonSchema>;
     try {
         validatesSourceConfig = compilePluginJsonSchema(
@@ -579,13 +580,8 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
     }
     const base = {
         eventRef: params.input.eventRef,
-        ...(params.input.automationDisplay === undefined ? {} : { automationDisplay: params.input.automationDisplay }),
-        sourceInstanceId: params.input.sourceInstanceId,
         sourceContractVersion: params.input.sourceContractVersion,
-        sourceConfig: params.input.sourceConfig,
-        displayLabel: params.input.displayLabel,
-        filter: params.input.filter,
-        maximumObservationAgeMs: params.input.maximumObservationAgeMs,
+        definition: createAutomationPluginEventTriggerDefinitionV1(params.input),
     } as const;
     if (transport.kind === "checkpointedPull" || transport.kind === "socket") {
         return {
@@ -646,6 +642,8 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
 }>): Promise<Readonly<{
     sourceSelectorId: string;
     sourceContractVersion: number;
+    subjectKind: string | null;
+    subjectKey: string | null;
     observationTransport: "checkpointedPull" | "durablePush" | "socket";
     webhookEndpointId: string | null;
     observationStartsAt: Date | null;
@@ -731,10 +729,16 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
     if (!contribution.automation.source.supportedObservationTransports.includes(transport.kind)) {
         throw new AutomationValidationError("Automation Event declaration does not support the selected transport");
     }
+    if (params.input.subjectKind !== undefined
+        && !readAutomationEventSubjectKindsV1(contribution.automation).some(kind => kind === params.input.subjectKind)) {
+        throw new AutomationValidationError('Automation Event declaration does not support the selected subject kind');
+    }
     if (transport.kind === "checkpointedPull" || transport.kind === "socket") {
         return {
             sourceSelectorId: params.input.sourceSelectorId,
             sourceContractVersion: params.input.sourceContractVersion,
+            subjectKind: params.input.subjectKind ?? null,
+            subjectKey: params.input.subjectKey ?? null,
             observationTransport: transport.kind,
             webhookEndpointId: null,
             observationStartsAt: null,
@@ -767,6 +771,8 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
     return {
         sourceSelectorId: params.input.sourceSelectorId,
         sourceContractVersion: params.input.sourceContractVersion,
+        subjectKind: params.input.subjectKind ?? null,
+        subjectKey: params.input.subjectKey ?? null,
         observationTransport: "durablePush",
         webhookEndpointId: correspondence.webhookEndpointId,
         observationStartsAt: params.now,
@@ -836,20 +842,6 @@ function sealPlainAutomationPluginEventDefinition(params: Readonly<{
     const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
         params.sourceSelectorId,
     );
-    const definition = AutomationEventTriggerDefinitionStoredPayloadV1Schema.parse({
-        v: 1,
-        ...(params.event.automationDisplay === undefined ? {} : { automationDisplay: params.event.automationDisplay }),
-        sourceInstanceId: params.event.sourceInstanceId,
-        // The generic endpoint-routing source instance is retained privately
-        // and stays separate from the provider's canonical source identity.
-        ...(params.event.observationTransport === "durablePush"
-            ? { webhookRoutingSourceInstanceId: params.event.webhookRoutingSourceInstanceId }
-            : {}),
-        sourceConfig: params.event.sourceConfig,
-        displayLabel: params.event.displayLabel,
-        filter: params.event.filter,
-        maximumObservationAgeMs: params.event.maximumObservationAgeMs,
-    });
     return JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
         mode: "plain",
         binding: {
@@ -861,7 +853,7 @@ function sealPlainAutomationPluginEventDefinition(params: Readonly<{
             eventRef: params.event.eventRef,
             sourceSelectorId,
         },
-        definition,
+        definition: params.event.definition,
     }));
 }
 
@@ -4548,7 +4540,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     const sameSourceIdentity = params.existing?.kind === "pluginEvent"
         && params.existing.eventPluginId === event.eventRef.pluginId
         && params.existing.eventLocalId === event.eventRef.localId
-        && previousDefinition?.sourceInstanceId === event.sourceInstanceId;
+        && previousDefinition?.sourceInstanceId === event.definition.sourceInstanceId;
     const sourceSelectorId = sameSourceIdentity
         ? AutomationSourceSelectorIdV1Schema.parse(params.existing?.sourceSelectorId)
         : AutomationSourceSelectorIdV1Schema.parse(randomUUID());
@@ -4568,12 +4560,8 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
                     pluginId: params.existing.eventPluginId ?? "",
                     localId: params.existing.eventLocalId ?? "",
                 },
-                sourceInstanceId: previousDefinition.sourceInstanceId,
+                definition: previousDefinition,
                 sourceContractVersion: params.existing.sourceContractVersion ?? 0,
-                sourceConfig: previousDefinition.sourceConfig,
-                filter: previousDefinition.filter,
-                maximumObservationAgeMs:
-                    previousDefinition.maximumObservationAgeMs,
                 webhookEndpointId: params.existing.webhookEndpointId ?? "",
                 webhookRoutingSourceInstanceId:
                     previousDefinition.webhookRoutingSourceInstanceId ?? "",
@@ -4590,6 +4578,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
             eventLocalId: event.eventRef.localId,
             sourceSelectorId,
             sourceContractVersion: event.sourceContractVersion,
+            ...projectAutomationSubjectStructuralV1(event.definition.subject),
             ...automationPluginEventTransportColumns(
                 event,
                 params.now,

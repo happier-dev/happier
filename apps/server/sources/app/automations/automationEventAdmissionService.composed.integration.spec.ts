@@ -48,6 +48,7 @@ import {
     HealthCheckTransitionV1ProtocolSchema,
 } from "@happier-dev/protocol/deployments/healthCheckSourceV1";
 import { createHealthCheckSourceInstanceIdV1 } from "@happier-dev/protocol/deployments/healthCheckSubjectV1";
+import type { AutomationSubjectV1, AutomationSubjectContextV1 } from "@happier-dev/protocol/automations/automationSubjectV1";
 
 import { eventRouter } from "@/app/events/eventRouter";
 import { registerAutomationEventRoutes } from "@/app/api/routes/automations/registerAutomationEventRoutes";
@@ -790,6 +791,7 @@ function triggerDefinitionEnvelope(params: Readonly<{
     sourceSelectorId?: AutomationSourceSelectorIdV1;
     sourceInstanceId?: string;
     webhookRoutingSourceInstanceId?: string;
+    subject?: AutomationSubjectV1;
 }> = {}): string {
     return JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
         mode: "plain",
@@ -804,6 +806,7 @@ function triggerDefinitionEnvelope(params: Readonly<{
         },
         definition: {
             v: 1,
+            ...(params.subject === undefined ? {} : { subject: params.subject }),
             sourceInstanceId: params.sourceInstanceId ?? "repository-happier-example",
             ...(params.webhookRoutingSourceInstanceId === undefined
                 ? {}
@@ -1055,7 +1058,8 @@ function encryptedHostEvidence(params: Readonly<{
                 material: params.snapshot.material,
                 evidence: {
                     ...evidence,
-                    sourceInstanceId: params.sourceInstanceId ?? "repository-happier-example",
+                    ...(params.subject === undefined ? {} : { subject: params.subject }),
+            sourceInstanceId: params.sourceInstanceId ?? "repository-happier-example",
                     sourceContractVersion: 1,
                     observationReceivedAt: event.observationReceivedAt,
                     filter: { version: null, result: "matched" as const },
@@ -1635,6 +1639,37 @@ describe("Automation Event admission", () => {
             lease: { leaseId, revision: 1 },
         } as const;
     }
+
+    it.each([
+        { label: 'any visible source', subject: undefined, machineId: 'other-machine', serverId: SERVER_IDENTITY_ID, matched: true },
+        { label: 'matching source Machine', subject: { kind: 'machine', serverId: SERVER_IDENTITY_ID, machineId: 'source-machine' },
+            machineId: 'source-machine', serverId: SERVER_IDENTITY_ID, matched: true },
+        { label: 'another source Machine', subject: { kind: 'machine', serverId: SERVER_IDENTITY_ID, machineId: 'source-machine' },
+            machineId: 'other-machine', serverId: SERVER_IDENTITY_ID, matched: false },
+        { label: 'same local identity on another Home', subject: { kind: 'machine', serverId: SERVER_IDENTITY_ID, machineId: 'source-machine' },
+            machineId: 'source-machine', serverId: 'another-home', matched: false },
+    ] satisfies ReadonlyArray<Readonly<{ label: string; subject: AutomationSubjectV1 | undefined;
+        machineId: string; serverId: string; matched: boolean }>>)('admits Event subjects using $label', async testCase => {
+        await seed();
+        await db.automationTrigger.update({ where: { id: TRIGGER_ID }, data: {
+            definitionEnvelope: triggerDefinitionEnvelope({ subject: testCase.subject }),
+        } });
+        const subjectContexts: AutomationSubjectContextV1[] = [{ role: 'context', subject: {
+            kind: 'machine', serverId: testCase.serverId, machineId: testCase.machineId,
+        } }];
+        const result = await admitAutomationEventV1({ accountId: ACCOUNT_ID, caller,
+            input: { ...input(), subjectContexts }, hostEvidence: await plainHostEvidence() });
+        expect(result.results).toMatchObject([testCase.matched ? { kind: 'admitted' } : { kind: 'skipped', reason: 'filtered' }]);
+        expect(await db.automationRun.count({ where: { automationId: AUTOMATION_ID } })).toBe(testCase.matched ? 1 : 0);
+        if (testCase.matched) {
+            const run = await db.automationRun.findFirstOrThrow({ where: { automationId: AUTOMATION_ID },
+                select: { executionInputEnvelope: true } });
+            const frozen = parseAutomationRunExecutionRecipeV1(run.executionInputEnvelope);
+            if (frozen.kind !== 'available') throw new Error('Expected the admitted Run recipe');
+            expect(frozen.recipe.triggerEvidence)
+                .toMatchObject({ t: 'plain', v: { subjectContexts } });
+        }
+    });
 
     it.each(["checkpointedPull", "durablePush"] as const)("admits %s Event delivery to a contributed Action with frozen payload", async transport => {
         await seed({ supportedObservationTransports: [transport] });

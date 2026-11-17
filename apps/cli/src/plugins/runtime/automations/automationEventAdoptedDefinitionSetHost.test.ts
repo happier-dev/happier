@@ -3,8 +3,10 @@ import {
   AutomationEventStoredDefinitionsReadResultV1Schema,
   AutomationSourceSelectorIdV1Schema,
   AutomationTriggerIdSchema,
+  AUTOMATION_TRIGGER_EVIDENCE_ACCOUNT_SCOPED_BLOB_KIND_V1,
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   createAccountScopedCryptoMaterialSnapshotV1,
+  openAccountScopedBlobCiphertext,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
   type AccountEncryptionCurrentnessResponse,
   type AutomationEventStoredDefinitionProjectionV1,
@@ -41,6 +43,7 @@ import { readAdoptedHealthCheckBatch } from '@/deployments/healthChecks/readAdop
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import type { AutomationSubjectContextV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
 const credentials = {
   token: 'token_test',
@@ -203,6 +206,70 @@ async function collectPreparedAdmissionRequests(
 }
 
 describe('Automation Event adopted-definition host factory', () => {
+  it.each([
+    { observedMachineId: 'private-source-machine', observedHome: 'home-1', matched: true },
+    { observedMachineId: 'different-machine', observedHome: 'home-1', matched: false },
+    { observedMachineId: 'private-source-machine', observedHome: 'other-home', matched: false },
+  ])('matches encrypted Event subjects at the host for $observedMachineId on $observedHome', async testCase => {
+    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+      material: { type: 'legacy', secret: credentials.encryption.secret } });
+    const definition = storedDefinition();
+    definition.storedDefinitionEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+      mode: 'e2ee', material: snapshot.material, randomBytes: length => new Uint8Array(length).fill(4),
+      binding: { v: 1, automationId: definition.automationId, triggerId, triggerRevision,
+        triggerKind: 'pluginEvent', eventRef: definition.eventRef, sourceSelectorId },
+      definition: { v: 1, sourceInstanceId: 'repository-1', sourceConfig: {}, displayLabel: 'Repository',
+        filter: null, maximumObservationAgeMs: null,
+        subject: { kind: 'machine', serverId: 'home-1', machineId: 'private-source-machine' } },
+    });
+    const owner = createAutomationEventAdoptedDefinitionSetHostV1({ credentials, caller, occurrenceId, sourceCustody,
+      transport: { kind: 'checkpointedPull' }, occurrenceSignal: new AbortController().signal,
+      isOccurrenceCurrent: () => true, revalidateCallerMaterialization: async () => true,
+      revalidateCallerOccurrence: async () => true,
+      readStoredDefinitions: async () => ({ kind: 'page', revision: '9', eventDeclarationRelease,
+        definitions: [definition], nextCursor: null }),
+      resolveAccountEncryptionCurrentness: async () => ({ mode: 'e2ee', version: 8,
+        signingKeyFingerprint: 'aemk1_signing', contentKeyFingerprint:
+          convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint),
+        updatedAt: 9, recipientEnvelopeReadiness: { status: 'available' } }),
+      resolveAccountEncryptionMaterial: async () => snapshot,
+    });
+    expect(await owner.refresh()).toEqual({ kind: 'adopted', revision: '9' });
+    const subjectContexts: AutomationSubjectContextV1[] = [{ role: 'context', subject: {
+      kind: 'machine', serverId: testCase.observedHome, machineId: testCase.observedMachineId,
+    } }];
+    const input = { eventRef: definition.eventRef, occurrenceId: 'subject-delivery-1', occurredAt: 1,
+      observationReceivedAt: 2, payload: {},
+      definitions: [{ automationId: definition.automationId, triggerId, triggerRevision, sourceSelectorId }] };
+    const beforeEnrichment = await collectPreparedAdmissionRequests(await owner.prepareAdmission({
+      accountId: 'account-1', caller: actionCaller, input,
+      randomBytes: length => new Uint8Array(length).fill(5),
+    }));
+    const requests = await collectPreparedAdmissionRequests(await owner.prepareAdmission({
+      accountId: 'account-1', caller: actionCaller,
+      input: { ...input, subjectContexts },
+      randomBytes: length => new Uint8Array(length).fill(5),
+    }));
+    expect(requests).toHaveLength(1);
+    const request = requests[0]!;
+    if ('input' in request) throw new Error('Expected encrypted admission');
+    const priorRequest = beforeEnrichment[0]!;
+    if ('input' in priorRequest) throw new Error('Expected encrypted admission before enrichment');
+    expect(priorRequest.hostEvidence.definitions[0]!.outcome).toEqual({ kind: 'skipped', reason: 'filtered' });
+    expect(request.hostEvidence.definitions[0]!.occurrenceKey)
+      .toBe(priorRequest.hostEvidence.definitions[0]!.occurrenceKey);
+    expect(request.hostEvidence.definitions[0]!.occurrenceEvidenceEqualityTag)
+      .toBe(priorRequest.hostEvidence.definitions[0]!.occurrenceEvidenceEqualityTag);
+    expect(request.hostEvidence.definitions[0]!.outcome).toEqual(testCase.matched
+      ? { kind: 'matched' } : { kind: 'skipped', reason: 'filtered' });
+    if (testCase.matched) {
+      expect(openAccountScopedBlobCiphertext({
+        kind: AUTOMATION_TRIGGER_EVIDENCE_ACCOUNT_SCOPED_BLOB_KIND_V1, material: snapshot.material,
+        ciphertext: request.hostEvidence.definitions[0]!.triggerEvidenceEnvelope.c,
+      })).toMatchObject({ value: { subjectContexts } });
+    }
+    expect(JSON.stringify(request)).not.toContain('private-source-machine');
+  });
   it('lends one admitted saved health batch without another stored-source scan', async () => {
     const sourceConfig = { v: 1, subject: { kind: 'machineService', machineId: 'service-machine', serviceId: 'service-a' },
       checks: ['first', 'second'].map(checkId => ({ checkId,

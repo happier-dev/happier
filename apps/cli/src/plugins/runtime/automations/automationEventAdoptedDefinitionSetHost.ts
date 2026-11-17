@@ -151,6 +151,7 @@ async function projectStoredDefinition(params: Readonly<{
     sourceSelectorId: params.storedDefinition.sourceSelectorId,
     sourceContractVersion: params.storedDefinition.sourceContractVersion,
     sourceConfig: payload.data.sourceConfig,
+    ...(payload.data.subject === undefined ? {} : { subject: payload.data.subject }),
     observationTransport: params.storedDefinition.observationTransport,
     filter: payload.data.filter,
     maximumObservationAgeMs: payload.data.maximumObservationAgeMs,

@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { AutomationSubjectV1Schema, AutomationSubjectStructuralV1Schema, checkAutomationSubjectStructuralV1 } from './automationSubjectV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
 export { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
@@ -102,6 +103,7 @@ export const AutomationPluginEventDefinitionTriggerSchema = lazyZodSchema(() => 
   kind: z.literal('pluginEvent'),
   /** Account-private Automation label carried by the incumbent Event definition envelope. */
   automationDisplay: z.optional(AutomationDefinitionDisplayV1Schema),
+  subject: z.optional(AutomationSubjectV1Schema),
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
@@ -145,13 +147,14 @@ export type AutomationPullRequestTriggerInput = z.infer<typeof AutomationPullReq
  * stored-content envelope.
  */
 export const AutomationPluginEventEncryptedDefinitionTriggerSchema = lazyZodSchema(() => z.strictObject({
+  ...AutomationSubjectStructuralV1Schema.shape,
   kind: z.literal('pluginEvent'),
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   sourceSelectorId: AutomationSourceSelectorIdV1Schema,
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
   observationTransport: AutomationPluginEventObservationTransportInputSchema,
   triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
-}));
+}).check(z.superRefine(checkAutomationSubjectStructuralV1)));
 export type AutomationPluginEventEncryptedDefinitionTrigger = z.infer<
   typeof AutomationPluginEventEncryptedDefinitionTriggerSchema
 >;

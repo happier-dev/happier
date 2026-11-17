@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { projectAutomationSubjectStructuralV1 } from './automationSubjectV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
@@ -75,6 +76,7 @@ export function createAutomationPluginEventTriggerDefinitionV1(
   return {
     v: 1,
     ...(definition.automationDisplay === undefined ? {} : { automationDisplay: definition.automationDisplay }),
+    ...(definition.subject === undefined ? {} : { subject: definition.subject }),
     sourceInstanceId: definition.sourceInstanceId,
     ...(definition.observationTransport.kind === 'durablePush' ? {
       webhookRoutingSourceInstanceId: definition.observationTransport.webhookRoutingSourceInstanceId,
@@ -100,6 +102,7 @@ export function sealAutomationPluginEventTriggerInputV1(params: Readonly<{
   return {
     kind: 'pluginEvent',
     enabled: definition.enabled,
+    ...projectAutomationSubjectStructuralV1(definition.subject),
     eventRef: definition.eventRef,
     sourceSelectorId: params.binding.sourceSelectorId,
     sourceContractVersion: definition.sourceContractVersion,

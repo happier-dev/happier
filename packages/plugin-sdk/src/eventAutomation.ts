@@ -3,6 +3,7 @@ import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionError
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { PluginActionInputById, PluginActionResultById } from './actions/index.js';
+import type { AutomationSubjectContextV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { JsonValue, PluginContributionRef } from './identity.js';
 import type { PluginInvocationContext } from './invocation.js';
 import { projectProtocolValue } from './protocol/projectProtocolValue.js';
@@ -57,6 +58,8 @@ export type PluginEventObservationV1 = Readonly<{
     /** One only for the first durable observation attempt; retries report zero. */
     observedDelta: 0 | 1;
     payload: JsonValue;
+    /** Already-admitted factual identities projected once by the native source owner. */
+    subjectContexts?: readonly AutomationSubjectContextV1[];
 }>;
 
 export type PluginEventDispositionV1 = Readonly<{
@@ -379,6 +382,7 @@ export async function admitPluginEventObservationUnderScopeV1(
         occurredAt: observation.occurredAt,
         observationReceivedAt: observation.observationReceivedAt,
         payload: observation.payload,
+        ...(observation.subjectContexts === undefined ? {} : { subjectContexts: [...observation.subjectContexts] }),
         definitions: matchingDefinitions.map((definition) => ({
             automationId: definition.automationId,
             triggerId: definition.triggerId,

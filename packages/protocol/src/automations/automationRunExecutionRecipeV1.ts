@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { AutomationSubjectContextV1Schema } from './automationSubjectV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
@@ -175,6 +176,7 @@ export function sealAutomationStoredActionDefinitionTemplateV1(params: Readonly<
  */
 export const AutomationRunPluginEventTriggerEvidenceV1Schema =
   lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationPluginEventOccurrenceEvidenceV1Schema, {
+    subjectContexts: z.optional(z.array(AutomationSubjectContextV1Schema)),
     payload: asProtocolZod(AutomationEventPayloadV1Schema),
     sourceInstanceId: AutomationEventSourceInstanceIdV1Schema,
     sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,

@@ -1,5 +1,6 @@
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { AutomationSubjectKindV1Schema, type AutomationSubjectKindV1 } from './automationSubjectV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
@@ -54,6 +55,8 @@ export type AutomationObservationTransportKindV1 = z.infer<
 export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   eligible: z.literal(true),
+  /** Native adapter identities; plugin support is derived from its validated subject projections. */
+  subjectKinds: z.optional(z.array(AutomationSubjectKindV1Schema.check(z.refine(kind => kind !== 'plugin')))),
   source: z.strictObject({
     sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
     /** Neutral lifecycle role consumed by deployment preview enrollment. */
@@ -128,3 +131,10 @@ export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.st
 export type PluginEventAutomationDeclarationV1 = z.infer<
   typeof PluginEventAutomationDeclarationV1Schema
 >;
+
+/** The declaration owner supplies the supported subject kinds to every authoring surface. */
+export function readAutomationEventSubjectKindsV1(
+  declaration: PluginEventAutomationDeclarationV1 | undefined,
+): readonly AutomationSubjectKindV1[] {
+  return declaration?.subjectKinds ?? [];
+}

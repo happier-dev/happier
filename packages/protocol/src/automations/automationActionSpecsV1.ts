@@ -1,4 +1,5 @@
 import * as zMini from '../zodRuntimePolicy.js';
+import { AutomationSubjectV1Schema, AutomationSubjectContextV1Schema } from './automationSubjectV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
@@ -78,6 +79,7 @@ export type AutomationEventSourceObservationTransportV1 = z.infer<
 >;
 
 export const AutomationEventSourceDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
+  subject: z.optional(AutomationSubjectV1Schema),
   observationOnly: z.optional(AutomationObservationOnlyIntentV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
@@ -296,6 +298,7 @@ export type AutomationEventAdmitDefinitionSelectorV1 = z.infer<
 // Built inside the lazy schema factories: the event declaration schemas sit
 // behind an import cycle and are not initialized when this module loads.
 const automationEventAdmitInputFieldsV1 = () => ({
+  subjectContexts: z.optional(z.array(AutomationSubjectContextV1Schema)),
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   occurrenceId: AutomationEventSourceOrOccurrenceIdV1Schema,
   occurredAt: AutomationOccurredAtV1Schema,
