@@ -4,6 +4,7 @@ import type { ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/pr
 import { resolveInheritedManagedSessionDefaults, type ManagedDefaultSourceNamesV1,
     type ManagedSessionDefaultsContext, type ResolvedInheritedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import type { ProjectSourceIdentityV1 } from '@happier-dev/protocol/projects/sources/projectSourceIdentityV1';
+import { withApprovalProfile } from '@/components/settings/teams/defaults/memberDefaults';
 
 /** The whole shared editor writes through its selected scope; every pick is one edit. */
 export type ProjectSessionDefaultsSectionInput = Readonly<{
@@ -17,6 +18,7 @@ export type ProjectSessionDefaultsSectionInput = Readonly<{
 }>;
 
 export type ProjectSessionDefaultsInheritance = Readonly<{
+    approvalProfileId: ResolvedInheritedManagedSessionDefaults['approvalProfileId'];
     agentTarget: ResolvedInheritedManagedSessionDefaults['agentTarget'];
     placement: ResolvedInheritedManagedSessionDefaults['placement'];
     forAgent: (target: AgentExecutionTargetV1) => ResolvedInheritedManagedSessionDefaults;
@@ -34,6 +36,7 @@ export function useProjectSessionDefaultsSectionAdapter(input: ProjectSessionDef
     const inheritance = React.useMemo<ProjectSessionDefaultsInheritance>(() => {
         const inherited = resolveInheritedManagedSessionDefaults({ ...input.context, scope: input.scope, names });
         return {
+            approvalProfileId: inherited.approvalProfileId,
             agentTarget: inherited.agentTarget,
             placement: inherited.placement,
             forAgent: agentTarget => resolveInheritedManagedSessionDefaults({ ...input.context, scope: input.scope, names, agentTarget }),
@@ -47,5 +50,8 @@ export function useProjectSessionDefaultsSectionAdapter(input: ProjectSessionDef
         const { defaultAgentTarget: _previous, ...rest } = defaults;
         save(target ? { ...rest, defaultAgentTarget: target } : rest);
     }, [defaults, save]);
-    return { save, selectAgent, error, inheritance };
+    const selectApprovalProfile = React.useCallback((id: string | null | undefined) => {
+        save(withApprovalProfile(defaults, id));
+    }, [defaults, save]);
+    return { save, selectAgent, selectApprovalProfile, error, inheritance };
 }

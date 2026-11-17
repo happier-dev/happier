@@ -40,6 +40,17 @@ function stored(overrides: Partial<ManagedDefaultsV1> = {}): ManagedDefaultsV1 {
 }
 
 describe('member defaults', () => {
+  it('reports disagreeing Group profiles without making a Team profile an explicit choice', () => {
+    const defaults: ManagedDefaultsV1 = {
+      team: { approvalProfileId: 'team-profile' },
+      groups: { design: { approvalProfileId: 'design-profile' }, platform: { approvalProfileId: null } },
+    };
+    expect(memberDefaultsConflicts(defaults, { kind: 'team' }, '')).toMatchObject({ approvalProfile: true });
+    expect(memberDefaultsConflicts(defaults, { kind: 'group', groupId: 'design' }, '')).toMatchObject({ approvalProfile: true });
+    expect(memberDefaultsConflicts({ ...defaults, groups: { design: defaults.groups.design } }, { kind: 'team' }, ''))
+      .toMatchObject({ approvalProfile: false });
+  });
+
   it('saves a Team edit as a whole Team replacement that keeps every Group default', () => {
     const current = stored();
     const next = withPlacement(

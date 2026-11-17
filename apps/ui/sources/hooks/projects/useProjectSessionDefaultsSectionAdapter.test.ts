@@ -11,6 +11,26 @@ const agent = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', loc
 const placement = { kind: 'machine', target: { serverId: 'home-a', machineId: 'machine-a' } } as const;
 
 describe('project defaults whole-editor adapter', () => {
+    it('shows the inherited profile and preserves explicit None independently of other project defaults', async () => {
+        const writes: (ProjectSessionDefaultsV1 | null)[] = [];
+        const input: ProjectSessionDefaultsSectionInput = { defaults: { defaultAgentTarget: agent, approvalProfileId: 'own-profile' },
+            save: async next => { writes.push(next); }, scope: 'personal-project', context: {
+                personalProjectDefaults: { approvalProfileId: 'own-profile' },
+                projectDefaults: { approvalProfileId: 'project-profile' },
+                teamDefaults: { team: { approvalProfileId: 'team-profile' }, groups: {} },
+            } };
+        const hook = await renderHook(useProjectSessionDefaultsSectionAdapter, { initialProps: input });
+        expect(hook.getCurrent().inheritance).toMatchObject({ approvalProfileId: {
+            value: 'project-profile', source: 'project', teamOrGroupDerived: true,
+        } });
+        await act(async () => { hook.getCurrent().selectApprovalProfile(null); });
+        expect(writes.at(-1)).toEqual({ defaultAgentTarget: agent, approvalProfileId: null });
+        await act(async () => { hook.getCurrent().selectApprovalProfile(undefined); });
+        expect(writes.at(-1)).toEqual({ defaultAgentTarget: agent });
+        await hook.rerender({ ...input, scope: 'project' });
+        expect(hook.getCurrent().inheritance).toMatchObject({ approvalProfileId: { value: 'team-profile', source: 'team' } });
+    });
+
     it('projects the next inherited scope through the defaults resolver', async () => {
         const input: ProjectSessionDefaultsSectionInput = { defaults: { placement }, save: async () => {}, scope: 'personal-project',
             teamName: 'Acme', source: { id: 'source-a', revision: 1, name: 'acme/web' }, projectName: 'local alias',

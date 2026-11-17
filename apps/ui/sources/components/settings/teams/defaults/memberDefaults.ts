@@ -86,6 +86,15 @@ export function withPlacement(
   return placement === undefined ? rest : { ...rest, placement };
 }
 
+/** Undefined restores inheritance; null deliberately selects no profile at this layer. */
+export function withApprovalProfile(
+  defaults: ManagedSessionDefaultsV1,
+  approvalProfileId: string | null | undefined,
+): ManagedSessionDefaultsV1 {
+  const { approvalProfileId: _previous, ...rest } = defaults;
+  return approvalProfileId === undefined ? rest : { ...rest, approvalProfileId };
+}
+
 export function withPermissionMode(
   defaults: ManagedSessionDefaultsV1,
   agentTargetKey: string,
@@ -176,6 +185,7 @@ export function memberDefaultsAccess(
 }
 
 export type MemberDefaultsConflicts = Readonly<{
+  approvalProfile: boolean;
   placement: boolean;
   permissionMode: boolean;
   model: boolean;
@@ -202,6 +212,7 @@ export function memberDefaultsConflicts(
           .filter((id) => id !== scope.groupId)
           .map((other) => [scope.groupId, other]);
   let placement = false;
+  let approvalProfile = false;
   let permissionMode = false;
   let model = false;
   const connectedServices = new Set<string>();
@@ -213,6 +224,7 @@ export function memberDefaultsConflicts(
       agentTargetKey,
     });
     placement ||= resolved.placement.groupConflict;
+    approvalProfile ||= resolved.approvalProfileId.groupConflict;
     permissionMode ||= resolved.permissionMode.groupConflict;
     model ||= resolved.model.groupConflict;
     // The reader answers one decision per purpose, in sorted purpose-key order over the
@@ -229,5 +241,5 @@ export function memberDefaultsConflicts(
       if (decision.groupConflict && key) connectedServices.add(key);
     });
   }
-  return { placement, permissionMode, model, connectedServices };
+  return { approvalProfile, placement, permissionMode, model, connectedServices };
 }

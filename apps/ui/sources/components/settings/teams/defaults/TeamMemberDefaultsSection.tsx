@@ -650,7 +650,7 @@ const ConnectedServiceDefaultRows = React.memo(
 );
 
 const NO_CONFLICTS: MemberDefaultsConflicts = Object.freeze({
-  placement: false, permissionMode: false, model: false, connectedServices: new Set<string>(),
+  approvalProfile: false, placement: false, permissionMode: false, model: false, connectedServices: new Set<string>(),
 });
 
 /** The Agent a project's new sessions start with: an exact execution target, never an id parsed from a label. */
