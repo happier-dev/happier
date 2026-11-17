@@ -39,6 +39,8 @@ export type { HealthCheckKindCatalogV1 } from './healthCheckKinds.js';
 export { HealthCheckKindCatalogV1ProtocolSchema } from './healthCheckKinds.js';
 export type { HealthCheckSourceSelectorV1 } from './healthCheckKinds.js';
 export { HealthCheckSourceSelectorV1ProtocolSchema } from './healthCheckKinds.js';
+export type { SavedHealthTransitionSourceV1 } from './healthCheckKinds.js';
+export { SavedHealthTransitionSourceV1ProtocolSchema, createSavedHealthTransitionSourceInstanceIdV1 } from './healthCheckKinds.js';
 export type { HealthCheckDomainSetupIntentV1 } from './healthCheckKinds.js';
 export { HealthCheckDomainSetupIntentV1ProtocolSchema } from './healthCheckKinds.js';
 export type { HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1 } from './healthCheckKinds.js';

@@ -11,6 +11,23 @@ import type { AutomationPluginEventTrigger } from '../automations/automationTrig
 import { isLoopbackHostname } from '../server/urls/loopbackHostname.js';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from './healthCheckV1.js';
 import type { DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthCheckV1.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
+
+/** A listener reads saved transitions; it does not enroll or execute a probe. */
+export const SavedHealthTransitionSourceV1Schema = lazyZodSchema(() => z.strictObject({
+    v: z.literal(1), serverId: z.string().check(z.minLength(1)),
+    observingSince: z.number().check(z.int(), z.nonnegative()),
+    nativeSourceInstanceId: z.optional(AutomationEventSourceInstanceIdV1Schema),
+}));
+export type SavedHealthTransitionSourceV1 = z.infer<typeof SavedHealthTransitionSourceV1Schema>;
+export const SavedHealthTransitionSourceV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SavedHealthTransitionSourceV1Schema));
+
+export function createSavedHealthTransitionSourceInstanceIdV1(
+    eventLocalId: string, source: SavedHealthTransitionSourceV1,
+): string {
+    return `health-saved:${computeCanonicalDomainSeparatedDigest('happier.health.saved-source.v1',
+        [source.serverId, eventLocalId, String(source.observingSince), ...(source.nativeSourceInstanceId ? [source.nativeSourceInstanceId] : [])])}`;
+}
 
 /** Syntax-only projection shared by saved HTTP/certificate probes and their settings display. Admission remains with the host. */
 export function readHealthCheckHttpTargetV1(target:

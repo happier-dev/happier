@@ -3,6 +3,15 @@ import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-de
 import type { HealthChecksService, HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1, HealthCheckSourceConfigV1 } from '@happier-dev/plugin-sdk';
 import { plugin } from './manifest.js';
 
+it('chooses saved health transitions without configuring another probe', async () => {
+    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+    try {
+        const selected = await kit.invokeAction('health-check-failed/setup', { v: 1, serverId: 'home' }, { surface: 'agent' });
+        expect(selected).toMatchObject({ v: 1, sourceContractVersion: 1, sourceConfig: { v: 1, serverId: 'home' } });
+        expect(selected).not.toHaveProperty('sourceConfig.checks');
+    } finally { await kit.dispose(); }
+});
+
 // The SDK host transport prepares config; preview is exercised with the real CLI host separately.
 type SaveSetup = Parameters<HealthChecksService['setup']>[0];
 function prepareSetup(request: Readonly<{ sourceInstanceId: string; sourceConfig: HealthCheckSetupPreviewInputV1 }>): Promise<HealthCheckSetupPreviewResultV1>;

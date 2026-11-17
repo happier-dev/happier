@@ -518,8 +518,9 @@ parses only the canonical Save result. A contributed
 producer uses that source to resolve its exact saved `checkId`, rather than
 accepting replacement endpoint or monitor configuration from the caller. P30 admits
 the live service reference and the existing HTTP owner retains network/cancel
-policy. Its cursor retains effective status and pending first-observation
-evidence, not a tick history. Equal results emit and persist nothing. The current
+policy. Its cursor retains effective status, the latest transition per check and
+pending first-observation evidence. Repeated observations in the same failed
+condition share one transition occurrence. The current
 health result continues to refresh on the saved check's existing due
 schedule while Event admission is pending. Replays retain the first Event's
 result, occurrence identity and observation clock; fresh probes do not replace
@@ -533,10 +534,23 @@ In development source, the same saved observer contributes selectable
 Events through the ordinary plugin Event catalog and admission path. Their closed
 payload contains only `sourceInstanceId`, `subject`, `checkId`, `transition` and
 `observedAt`; probe evidence and endpoints stay on the daemon. Down and degraded
-are one failed condition. The existing source configuration, failure threshold,
-pending checkpoint and occurrence identity govern both Events, so equal failed
-observations and restart replay do not create another run. The incumbent
-`health-status` enrollment remains supported by that same producer. Certificate
+are one failed condition. The existing native source configuration, failure
+threshold, pending checkpoint and occurrence identity govern both Events, so
+equal failed observations and restart replay do not create another run.
+Each Event's setup Action selects saved Account transitions from the selection
+time without configuring another probe. One demanded reader shares the native
+checkpoints across these selectors: it seeds the health prefix, reloads it for
+full Account invalidations or reconnect, and reads individual keys when the
+Account hint names them. The opaque plugin Account envelope currently publishes
+full invalidations. Each observation carries the saved Check as its operand and
+its Environment or Machine as context. An omitted subject matches any saved
+Check in that Account through ordinary Event admission; an explicit subject
+uses that same admission owner's matching rule.
+The incumbent `health-status` enrollment remains supported by that same
+producer and owns native check setup. Existing native failed/recovered source
+configurations remain readable by the same adapter. A migrated retained listener
+pins its original probe with `nativeSourceInstanceId`; new Account-wide selectors
+omit it. Certificate
 and Domain-bound checks use these Events too; they have no second alert sampler.
 Observation-only enrollment retains its existing marker. Executable enrollment
 uses an ordinary Workflow target and the existing per-Action approval policy.

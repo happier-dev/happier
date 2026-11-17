@@ -17,6 +17,7 @@ import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion, embedProtocolJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { savedHealthActions, HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT,
     healthTransition, runHealthCheckObserver } from './healthObserver.js';
+import { savedHealthTransitionActions, savedHealthTransitionSourceSchema } from './healthSavedTransitions.js';
 import { deploymentEvents, deploymentEventActions, deploymentEventBackgroundServices } from './deploymentEvents.js';
 import { managedSetupEvents, managedSetupEventActions, managedSetupEventBackgroundServices } from './managedSetupEvents.js';
 import { mcpUpdateEvents, mcpUpdateEventActions, mcpUpdateEventBackgroundServices } from './mcpUpdateEvents.js';
@@ -43,7 +44,7 @@ export const plugin = definePlugin({
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
-    actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...retainedHealthActions, ...savedHealthActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
+    actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...retainedHealthActions, ...savedHealthActions, ...savedHealthTransitionActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
             title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
             placementBindings: [],
@@ -127,11 +128,11 @@ export const plugin = definePlugin({
         title: { key: `machineServices.events.${key}.title`, fallback: title },
         description: { key: `machineServices.events.${key}.description`, fallback: description },
         payloadSchema: healthTransition.jsonSchema,
-        automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
+        automation: { v: 1, eligible: true, subjectKinds: ['healthCheck', 'environment', 'machine'], source: { sourceContractVersion: 1,
             observationOnly: { kind: 'observationOnly' },
-            supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema: HealthCheckSourceConfigV1ProtocolSchema.jsonSchema,
-            setupActionRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/setup' },
-            setupSurface: { renderer: 'health-setup' } } },
+            supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema: id === HEALTH_STATUS_EVENT ? HealthCheckSourceConfigV1ProtocolSchema.jsonSchema : savedHealthTransitionSourceSchema.jsonSchema,
+            setupActionRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: id === HEALTH_STATUS_EVENT ? 'health/setup' : `${id}/setup` },
+            ...(id === HEALTH_STATUS_EVENT ? { setupSurface: { renderer: 'health-setup' } } : {}) } },
     } }])) },
     // Machine roles (OWNER-RULINGS 2026-11-12): local service health and events belong to the Deployments role.
     machineRoles: { services: { title: 'Machine services', description: 'Saved health checks and service events on this Machine.', partOf: 'deployments',

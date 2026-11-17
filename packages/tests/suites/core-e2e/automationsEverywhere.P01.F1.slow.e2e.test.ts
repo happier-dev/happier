@@ -18,6 +18,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
+import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
 let setup: Awaited<ReturnType<typeof startAutomationsEverywhereDeploymentFixture>> | undefined;
 let endpoint: ReturnType<typeof createServer> | undefined;
@@ -35,6 +36,7 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   const testDir = await mkdtemp(join(tmpdir(), 'automations-p01-f1-'));
   setup = await startAutomationsEverywhereDeploymentFixture(testDir);
   const { fixture, actor, machine, deployInput } = setup;
+  await fixture.assertKnownGoodSessionControl(actor, machine);
   type Actor = typeof actor;
   type Machine = typeof machine;
   const catalog = await actor.execute('workflow.events.list', machine.target);
@@ -77,7 +79,7 @@ it('P01.F1 health failure opens diagnose Session', async () => {
       binding: { kind: 'healthCheck' }, config: { endpoint: `http://127.0.0.1:${address.port}/other`, expectStatus: 200 },
       periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] });
   const transport = observationTransport(machine);
-  const enrolled = await actor.execute('workflow.trigger.add', { observationOnly: { kind: 'observationOnly' },
+  const enrolled = await actor.executeAsPerson('workflow.trigger.add', { observationOnly: { kind: 'observationOnly' },
     trigger: { kind: 'pluginEvent', enabled: true, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
       sourceInstanceId: saved.sourceInstanceId, sourceContractVersion: saved.sourceContractVersion,
       sourceConfig: saved.sourceConfig, displayLabel: saved.displayLabel,
@@ -86,9 +88,8 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   // This subscribes to committed saved transitions, independently of their probe
   // configuration. An omitted subject must not become a specific probe selector.
   const selection = await invoke('health-check-failed/setup', { v: 1, serverId: fixture.serverId });
-  const addListener = async (name: string, owner = actor, observer = machine, selected = selection, subject?: AutomationSubjectV1) => {
-    const trigger = await owner.execute('workflow.trigger.add', {
-    name,
+  const addListener = async (owner = actor, observer = machine, selected = selection, subject?: AutomationSubjectV1) => {
+    const trigger = await owner.executeAsPerson('workflow.trigger.add', {
     target: { kind: 'inline', definition: { version: 1,
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'diagnose', document: { text: 'Diagnose the saved health failure.', references: [], attachments: [] },
@@ -104,8 +105,8 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   if (!trigger.ok) throw new Error(trigger.errorCode);
     return WorkflowTriggerWriteResultV1Schema.parse(trigger.result);
   };
-  const linked = await addListener('Diagnose any saved health failure');
-  const exact = await addListener('Diagnose only the first saved check', actor, machine, selection,
+  const linked = await addListener();
+  const exact = await addListener(actor, machine, selection,
     { kind: 'healthCheck', serverId: fixture.serverId, sourceInstanceId: saved.sourceInstanceId, checkId: 'external' });
   const runs = async (link = linked, owner = actor) => {
     const response = await fetchJson<unknown>(`${fixture.server.baseUrl}/v3/automations/${encodeURIComponent(link.set.automationId)}/runs`, {
@@ -113,6 +114,15 @@ it('P01.F1 health failure opens diagnose Session', async () => {
         ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) } });
     expect(response.status).toBe(200);
     return AutomationV3RunListResponseSchema.parse(response.data).runs;
+  };
+  const diagnosisSessionIds = new Map<string, string>();
+  const hasDiagnosisSession = async (runId: string, owner = actor) => {
+    if (diagnosisSessionIds.has(runId)) return true;
+    const session = await readWorkflowChildSession({ execute: owner.execute,
+      serverBaseUrl: fixture.server.baseUrl, token: owner.credentials.token, runId, blockId: 'diagnose' });
+    if (!session) return false;
+    diagnosisSessionIds.set(runId, session.id);
+    return true;
   };
   const addSavedSource = async (owner: Actor, observer: Machine, label: string, path: string) => {
     const invokeOwner = async (actionId: ActionId, input: unknown) => {
@@ -133,7 +143,7 @@ it('P01.F1 health failure opens diagnose Session', async () => {
     const source = await invoke('health/setup', { v: 1, subject: { kind: 'environment', environmentId: environment.environmentId },
       checks: [{ checkId: 'external', kind: { pluginId: event.event.identity.pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
         config: { endpoint: `http://127.0.0.1:${address.port}${path}`, expectStatus: 200 }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] }, owner, observer);
-    const enrolled = await owner.execute('workflow.trigger.add', { observationOnly: { kind: 'observationOnly' },
+    const enrolled = await owner.executeAsPerson('workflow.trigger.add', { observationOnly: { kind: 'observationOnly' },
       trigger: { kind: 'pluginEvent', enabled: true, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
         sourceInstanceId: source.sourceInstanceId, sourceContractVersion: source.sourceContractVersion, sourceConfig: source.sourceConfig,
         displayLabel: source.displayLabel, observationTransport: observationTransport(observer), filter: null, maximumObservationAgeMs: null } });
@@ -151,7 +161,7 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   await registerObserver(foreign, foreignMachine);
   const foreignSource = await addSavedSource(foreign, foreignMachine, 'Private foreign resource', '/foreign');
   const foreignSelection = await invoke('health-check-failed/setup', { v: 1, serverId: fixture.serverId }, foreign, foreignMachine);
-  const foreignLinked = await addListener('Diagnose foreign Account saved failures', foreign, foreignMachine, foreignSelection);
+  const foreignLinked = await addListener(foreign, foreignMachine, foreignSelection);
   const retainedCheck = async (sourceInstanceId: string, status: 'up' | 'down', after = 0, owner = actor, observer = machine) => {
     let cursor: string | undefined;
     do {
@@ -166,7 +176,7 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   await waitFor(() => retainedCheck(second.sourceInstanceId, 'up'), { context: 'Second resource probe is saved before its failure' });
   healthy.set('/first', false);
   await waitFor(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
-    return current.length === 1 && typeof current[0]!.producedSessionId === 'string';
+    return current.length === 1 && await hasDiagnosisSession(current[0]!.id);
   }, { failFast: true, context: 'One saved transition starts the ordinary cause-bound diagnosis Session' });
   expect((await runs())[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
     triggerId: linked.triggerId, evidence: { eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed } });
@@ -179,14 +189,17 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   healthy.set('/first', true);
   await waitFor(() => retainedCheck(saved.sourceInstanceId, 'up'), { context: 'Recovery is retained without replaying the failure' });
   healthy.set('/second', false);
-  await waitFor(async () => { const current = await runs(); return current.length === 2 && current.every(run => typeof run.producedSessionId === 'string');
-  }, { context: 'Omitted subject also matches the second saved resource' });
+  await waitFor(async () => { const current = await runs();
+    return current.length === 2 && (await Promise.all(current.map(run => hasDiagnosisSession(run.id)))).every(Boolean);
+  }, { failFast: true, context: 'Omitted subject also matches the second saved resource' });
   expect(await runs(exact)).toHaveLength(1);
   expect(await runs(foreignLinked, foreign)).toEqual([]);
   healthy.set('/foreign', false);
-  await waitFor(async () => { const current = await runs(foreignLinked, foreign); return current.length === 1 && typeof current[0]!.producedSessionId === 'string';
-  }, { context: 'Foreign saved health failure stays within its Account' });
+  await waitFor(async () => { const current = await runs(foreignLinked, foreign);
+    return current.length === 1 && await hasDiagnosisSession(current[0]!.id, foreign);
+  }, { failFast: true, context: 'Foreign saved health failure stays within its Account' });
   expect(await runs()).toHaveLength(2);
   expect(await runs(exact)).toHaveLength(1);
+  expect(new Set(diagnosisSessionIds.values()).size).toBe(3);
   expect(await retainedCheck(foreignSource.sourceInstanceId, 'down', 0, foreign, foreignMachine)).toBe(true);
 }, 0);

@@ -3,34 +3,25 @@ import { HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSch
     computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, arePluginMachineMaterializationRefsEqual,
     type HealthCheckSourceConfigV1, type HealthCheckResultV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
-import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject,
-    defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
-import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultSourceSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
+import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
 import { fitHealthResultCheckpoint } from './healthResultCheckpoint.js';
 import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
-const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
-const ordinal = defineProtocolNumber({ integer: true, minimum: 0 });
+import { healthTransitionCursorSchema as cursorSchema, healthTransitionCursorStoredSchema as cursorStoredSchema,
+    createSavedHealthTransitionReader, savedHealthTransitionSourceSchema, type SavedHealthTransitionSource,
+    type SavedHealthTransitionCheckpoint } from './healthSavedTransitions.js';
 export const healthTransition = HealthCheckTransitionV1ProtocolSchema;
-const cursorSchema = defineProtocolObject({ basis: defineProtocolString(),
-    checks: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), status, ordinal }, { policy: 'closed' })),
-    current: healthResultProjectionSchema.optional(), source: healthResultSourceSchema.optional(),
-    pending: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), ordinal,
-        result: HealthCheckResultV1ProtocolSchema, receivedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
-    }, { policy: 'closed' })).optional(),
-}, { policy: 'closed' });
 type Cursor = ReturnType<typeof cursorSchema.parse>;
-const cursorStoredSchema = createProtocolStoredReadSchema(cursorSchema);
 type Candidate = Readonly<{ key: string; expectedVersion: number | 'absent'; value: Cursor }>;
 
 /** The shared SDK runner owns lifecycle/adoption/wakes/admission. This finite
  * adapter owns only due times, incomplete live streaks and transition custody. */
-export function createHealthCheckSourceAdapter(now: () => number = Date.now,
+function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
     host?: BackgroundServiceContext['services']['events']['host'],
     pluginEvents?: BackgroundServiceContext['services']['events']['plugin']): PluginCheckpointedEventSourceAdapterV1<HealthCheckSourceConfigV1, Candidate> {
     const live = new Map<string, { basis: string; source: HealthCheckSourceConfigV1;
@@ -135,7 +126,10 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                 pending.push({ checkId: check.checkId, ordinal: nextOrdinal, result, receivedAt: time });
             }
             if (!replaying && pending.length) {
-                const checkpoint = fitHealthResultCheckpoint({ basis, source: previous.source, checks: [...next.values()], pending, ...(retainedCurrent ? { current: retainedCurrent } : {}) });
+                const transitions = new Map((previous.transitions ?? []).map(value => [value.checkId, value]));
+                for (const value of pending) transitions.set(value.checkId, value);
+                const checkpoint = fitHealthResultCheckpoint({ ...previous, checks: [...next.values()], pending, transitions: [...transitions.values()],
+                    ...(retainedCurrent ? { current: retainedCurrent } : {}) });
                 const written = await storage.set(key, checkpoint,
                     { expectedVersion: version, signal: context.signal });
                 retainedCurrent = checkpoint.current;
@@ -163,7 +157,8 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             return { observations, complete: true,
                 nextEligibleAt: pendingChecks.size ? time : deadlines.length ? Math.min(...deadlines) : null,
                 ...(changed || pending.length ? { checkpoint: { key, expectedVersion: version,
-                    value: { basis, source: previous.source, checks: [...next.values()], ...(retainedCurrent ? { current: retainedCurrent } : {}) } } } : {}),
+                    value: { ...previous, checks: [...next.values()], transitions: [...new Map([...(previous.transitions ?? []), ...pending].map(value => [value.checkId, value])).values()],
+                        ...(retainedCurrent ? { current: retainedCurrent } : {}) } } } : {}),
             };
         },
         async save({ context, definition, checkpoint }) {
@@ -171,7 +166,8 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             // The runner serializes this acknowledgement with observations, but
             // current health may have advanced while its Event awaited approval.
             const stored = state?.basis === checkpoint.value.basis ? state.stored : undefined;
-            const value = fitHealthResultCheckpoint({ ...checkpoint.value, ...(stored?.current ? { current: stored.current } : {}) });
+            const { pending: _pending, ...acknowledged } = checkpoint.value;
+            const value = fitHealthResultCheckpoint({ ...acknowledged, ...(stored?.current ? { current: stored.current } : {}) });
             const written = await requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv.set(checkpoint.key, value,
                 { expectedVersion: stored?.version ?? checkpoint.expectedVersion, signal: context.signal });
             if (state && stored) state.stored = { version: written.version, current: value.current };
@@ -229,6 +225,50 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             if (isPluginError(error) && !error.retryable) return null;
             const parsed = HealthCheckSourceConfigV1ProtocolSchema.safeParse(definition?.sourceConfig);
             return parsed.success ? time + Math.min(...parsed.data.checks.map(check => check.periodMs)) : null;
+        },
+    };
+}
+
+type HealthSource = HealthCheckSourceConfigV1 | SavedHealthTransitionSource;
+type HealthCheckpoint = { kind: 'probe'; value: Candidate } | { kind: 'saved'; value: SavedHealthTransitionCheckpoint };
+
+/** Saved probes and saved-transition selection share the incumbent observer lifecycle. */
+export function createHealthCheckSourceAdapter(now: () => number = Date.now,
+    host?: BackgroundServiceContext['services']['events']['host'],
+    pluginEvents?: BackgroundServiceContext['services']['events']['plugin']): PluginCheckpointedEventSourceAdapterV1<HealthSource, HealthCheckpoint> {
+    const probe = createNativeHealthCheckSourceAdapter(now, host, pluginEvents);
+    const saved = createSavedHealthTransitionReader(host);
+    return {
+        observeWhileAdmissionPending: true,
+        decode(definition) {
+            if (definition.eventRef.pluginId !== MACHINE_SERVICES_PLUGIN_ID) return null;
+            if (definition.eventRef.localId === HEALTH_CHECK_FAILED_EVENT || definition.eventRef.localId === HEALTH_CHECK_RECOVERED_EVENT) {
+                const parsed = savedHealthTransitionSourceSchema.safeParse(definition.sourceConfig);
+                if (parsed.success) return parsed.data;
+            }
+            return probe.decode(definition);
+        },
+        async observe(input) {
+            if ('checks' in input.source) {
+                const { checkpoint, ...result } = await probe.observe({ ...input, source: input.source });
+                return { ...result, ...(checkpoint ? { checkpoint: { kind: 'probe' as const, value: checkpoint } } : {}) };
+            }
+            const { checkpoint, ...result } = await saved.observe(input.context, input.definition, input.source);
+            return { ...result, ...(checkpoint ? { checkpoint: { kind: 'saved' as const, value: checkpoint } } : {}) };
+        },
+        async save(input) {
+            if (input.checkpoint.kind === 'saved') saved.save(input.checkpoint.value);
+            else if ('checks' in input.source) await probe.save({ ...input, source: input.source, checkpoint: input.checkpoint.value });
+        },
+        async retire(input) {
+            saved.retire(input.definitions);
+            return await probe.retire!(input);
+        },
+        retryAt(input) { return probe.retryAt(input); },
+        subscribeWake(wake) {
+            const native = probe.subscribeWake!(wake);
+            const transitions = saved.subscribeWake(wake);
+            return { dispose() { native.dispose(); transitions.dispose(); } };
         },
     };
 }

@@ -147,7 +147,7 @@ it('loads default alerts through the actual mounted Health Event Action RPC', as
             expectedContributorOccurrenceId: occurrenceId, executionSurface: 'ui',
             input: { v: 1, mode: 'preview', subject: draft.subject },
             invocation: { kind: 'mountedPluginSurface', mountedBinding: { pluginId: plugin.manifest.id,
-                contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.failed.localId,
+                contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.status.localId,
                 occurrenceId, sourceCustody, materializationRef } },
         }, { signal: new AbortController().signal, callerAuthority: 'present_user' });
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { mode: 'preview',

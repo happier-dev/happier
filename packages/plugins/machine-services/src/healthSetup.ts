@@ -24,7 +24,7 @@ export const MachineServiceHealthSetupOpenInputV1Schema = defineProtocolObject({
 
 export function createMachineServiceHealthSetupSeedV1(input: ReturnType<typeof MachineServiceHealthSetupOpenInputV1Schema.parse>) {
     return {
-        eventRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: HEALTH_CHECK_FAILED_EVENT },
+        eventRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: HEALTH_STATUS_EVENT },
         sourceInstanceId: createHealthCheckSourceInstanceIdV1(input.subject),
         ...(input.monitoringMachineId ? { monitoringMachineId: input.monitoringMachineId } : {}),
         setupInput: { v: 1 as const, subject: input.subject, ...(input.domain ? { domain: input.domain } : {}) },

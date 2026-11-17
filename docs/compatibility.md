@@ -9058,7 +9058,13 @@ Machine services declares `health-check-failed`, `health-check-recovered`,
 catalog. Health payloads contain structural subject/check identity, transition
 and observation time; endpoint results and evidence stay at the daemon. The
 incumbent `health-status` subscription uses the same producer and cursor.
-The saved-health source configuration and cursor format are unchanged.
+Native health source configurations remain readable through that probe adapter.
+New failed/recovered setup Actions select saved Account transitions with
+`{ v: 1, serverId, observingSince }` instead of configuring another probe. The
+optional `nativeSourceInstanceId` preserves the original saved probe when a
+retained listener migrates; ordinary Account-wide selection omits it. The
+optional latest-transition checkpoint projection follows the unreleased 0.3
+observer/reader reload contract above.
 Deployment Events project the existing terminal receipt, including its recorded
 failure phase, and wake through the existing receipt account-change stream.
 Their configured observation start survives restart; occurrence identity and

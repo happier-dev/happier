@@ -20,6 +20,10 @@ import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storag
 import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { PluginAccountStorageMutationRequestV1Schema } from '@happier-dev/protocol';
+import { createAccountPluginDataStorageHost } from '@/plugins/runtime/context/accountPluginDataStorage';
+import { PluginAccountStorageRowV1Schema } from '@happier-dev/protocol/plugins/data/accountKvV1';
+import { healthTransitionCursorStoredSchema } from '../../../../../packages/plugins/machine-services/src/healthSavedTransitions';
 
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
 const source: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
@@ -51,6 +55,7 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
     const sourceReports = new Set<() => void>();
     const kv = {
         async get(key: string) { return rows.get(key) ?? null; },
+        async list() { return { items: [...rows].map(([key, entry]) => ({ key, ...entry })) }; },
         async set(key: string, value: JsonValue, options: { expectedVersion: number | 'absent' }) {
             normalizePluginAccountStorageJsonValueV1(value);
             const previous = rows.get(key);
@@ -114,6 +119,9 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
         async invalidate(payload: JsonValue) {
             for (const listener of hostListeners.get('@happier/automation/event-sources-invalidated') ?? []) await listener({ payload });
         },
+        async accountChange(payload: JsonValue) {
+            for (const listener of hostListeners.get('@happier/account/entities-invalidated') ?? []) await listener({ payload });
+        },
         onSourceReport(listener: () => void) { sourceReports.add(listener); },
         configure(next: HealthCheckSourceConfigV1) { configuredSource = next; revision += 1; },
         safe(value: boolean) { safe = value; }, remove() { active = false; revision += 1; },
@@ -126,6 +134,78 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
+    it.each(['current', 'pending', 'acknowledgement'] as const)('recovers on its chosen probe period after a %s write loses the Account row CAS', async phase => {
+        // The HTTP boundary retains the opaque Account row and implements only
+        // server CAS. Both logical writes use the real Account KV owner.
+        let revision: number | 'absent' = 'absent';
+        let content: unknown;
+        let interleave = true;
+        const host = createAccountPluginDataStorageHost({ contracts: [],
+            readCredentials: async () => ({ token: 'health-test', encryption: null }),
+            isCurrentAccount: () => true, resolveAccountScopeKey: () => 'health-cas',
+            resolveBaseUrl: () => 'https://health.example.test',
+            resolveAccountEncryptionCurrentness: async () => ({ mode: 'plain', version: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }),
+            http: {
+                async get() { return { status: 200, data: revision === 'absent' ? { status: 'absent' }
+                    : { status: 'present', revision, content } }; },
+                async post(_url, body) {
+                    const request = PluginAccountStorageMutationRequestV1Schema.parse(JSON.parse(body));
+                    const row = request.content?.t === 'plain' ? PluginAccountStorageRowV1Schema.parse(request.content.v) : undefined;
+                    const entry = Object.entries(row?.values ?? {}).find(([key]) => key !== 'health:other-source')?.[1];
+                    const cursor = entry && !('deleted' in entry) ? healthTransitionCursorStoredSchema.parse(entry.value) : undefined;
+                    const selectedPhase = cursor?.pending?.length ? 'pending' : cursor?.checks.length ? 'acknowledgement' : 'current';
+                    if (interleave && cursor && selectedPhase === phase) {
+                        interleave = false;
+                        await competing.kv.set('health:other-source', { probe: 'up' }, { expectedVersion: 'absent' });
+                    }
+                    if (request.expectedRevision !== revision) return { status: 200,
+                        data: { status: 'conflict', revision: revision === 'absent' ? 0 : revision } };
+                    revision = revision === 'absent' ? 0 : revision + 1;
+                    content = request.content;
+                    return { status: 200, data: { status: 'updated', revision } };
+                },
+            },
+        });
+        const binding = { pluginId: materialization.pluginId, signal: new AbortController().signal, isOccurrenceCurrent: () => true };
+        const account = host.bind({ ...binding, occurrenceId: 'observer' })!;
+        const competing = host.bind({ ...binding, occurrenceId: 'other-observer' })!;
+        const f = fixture({ ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) });
+        const controller = new AbortController();
+        const context = { ...f.context, signal: controller.signal, services: { ...f.context.services, storage: { account } } };
+        const reports = () => vi.mocked(f.context.services.actions.execute).mock.calls
+            .filter(([id]) => id === 'automation.event.source.status.report').map(([, input]) => input);
+        let backoffClock: number | undefined;
+        f.onSourceReport(() => {
+            const report = reports().at(-1);
+            if (report && typeof report === 'object' && 'state' in report && report.state === 'backingOff') backoffClock = f.now();
+            if (report && typeof report === 'object' && 'state' in report
+                && (report.state === 'attention' || !interleave && report.state === 'observing')) controller.abort();
+        });
+        await runCheckpointedPluginEventObserverV1({ context, source: f.adapter, now: f.now,
+            sleep: async delayMs => { f.clock(f.now() + delayMs); } });
+        expect(interleave).toBe(false);
+        expect(reports()).toContainEqual(expect.objectContaining({ state: 'backingOff', code: 'plugin_account_kv_conflict' }));
+        const backoff = reports().find(report => report && typeof report === 'object' && 'state' in report && report.state === 'backingOff');
+        expect(backoff).toMatchObject({ nextRetryAt: backoffClock! + source.checks[0]!.periodMs });
+        expect(await competing.kv.get('health:other-source')).toMatchObject({ value: { probe: 'up' } });
+        expect(f.admissions).toHaveLength(phase === 'acknowledgement' ? 2 : 1);
+        expect(new Set(f.admissions.map(admission => admission.occurrenceId)).size).toBe(1);
+        expect(f.admissions.filter(admission => admission.observedDelta === 1)).toHaveLength(1);
+        expect(f.admissions[0]?.payload).toMatchObject({ transition: 'failed' });
+        const own = (await account.kv.list({ prefix: 'health:' })).items.find(row => row.key !== 'health:other-source');
+        const saved = own && !('deleted' in own) ? healthTransitionCursorStoredSchema.parse(own.value) : undefined;
+        expect(saved).toMatchObject({ checks: [{ checkId: 'http', status: 'down', ordinal: 1 }] });
+        expect(saved).not.toHaveProperty('pending');
+        expect(saved?.current?.checks[0]?.result.observedAt).toBeGreaterThan(1000);
+    });
+
+    it.each(['plugin_account_data_unavailable', 'health_check_storage_unavailable'])('keeps permanent %s failures parked', code => {
+        const f = fixture();
+        expect(f.adapter.retryAt({ definition, now: 1000, error: new PluginError({ code, message: 'Unavailable' }) })).toBeNull();
+    });
+
     it('retains saved source identity while a threshold transition awaits admission', async () => {
         const f = fixture();
         f.safe(false);
@@ -136,6 +216,103 @@ describe('saved health source registration and finite cycles', () => {
             source: { sourceInstanceId: definition.sourceInstanceId, subject: source.subject },
             pending: [{ checkId: 'http' }],
         });
+    });
+    it('consumes saved transitions across source identities with one seed and changed-key reads, without another probe', async () => {
+        const f = fixture({ ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) });
+        await f.cycle();
+        const listenerDefinition = { ...definition, sourceInstanceId: 'health-saved:account',
+            eventRef: { ...definition.eventRef, localId: 'health-check-failed' },
+            sourceConfig: { v: 1, serverId: 'home', observingSince: 0 } };
+        const adapter = createHealthCheckSourceAdapter(f.now, f.context.services.events.host);
+        const selected = adapter.decode(listenerDefinition);
+        expect(selected).not.toBeNull();
+        if (!selected) throw Error('Expected saved transition selector');
+        const list = vi.spyOn(f.kv, 'list');
+        const get = vi.spyOn(f.kv, 'get');
+        const subscription = adapter.subscribeWake?.(async () => {});
+        const input = { context: f.context, definition: listenerDefinition, definitions: [listenerDefinition], source: selected, isCurrent: async () => true };
+        try {
+            const failure = await adapter.observe(input);
+            expect(failure.observations).toMatchObject([{ sourceInstanceId: 'health-saved:account',
+                payload: { sourceInstanceId: definition.sourceInstanceId, checkId: 'http', transition: 'failed' },
+                subjectContexts: [{ role: 'operand', subject: { kind: 'healthCheck', serverId: 'home',
+                    sourceInstanceId: definition.sourceInstanceId, checkId: 'http' } },
+                    { role: 'context', subject: { kind: 'machine', serverId: 'home', machineId: 'subject' } }] }]);
+            if (failure.checkpoint) await adapter.save({ ...input, checkpoint: failure.checkpoint });
+            expect(f.read).toHaveBeenCalledTimes(1);
+            expect(list).toHaveBeenCalledTimes(1);
+            expect(get).toHaveBeenCalledTimes(0);
+            await f.accountChange({ entityIds: ['unrelated'], dataKvChanges: [{ pluginDomain: 'dataKv', pluginId: materialization.pluginId, keys: ['other:value'] }] });
+            expect((await adapter.observe(input)).observations).toEqual([]);
+            expect(list).toHaveBeenCalledTimes(1);
+            expect(get).toHaveBeenCalledTimes(0);
+            f.tick('up'); await f.cycle();
+            get.mockClear();
+            await f.accountChange({ entityIds: [], dataKvChanges: [{ pluginDomain: 'dataKv', pluginId: materialization.pluginId, keys: [...f.rows.keys()] }] });
+            expect((await adapter.observe(input)).observations).toEqual([]);
+            expect(list).toHaveBeenCalledTimes(1);
+            expect(get).toHaveBeenCalledTimes(1);
+            expect(f.read).toHaveBeenCalledTimes(2);
+            const recoveredDefinition = { ...listenerDefinition, sourceInstanceId: 'health-saved:recovery',
+                eventRef: { ...listenerDefinition.eventRef, localId: 'health-check-recovered' } };
+            const recoveredSource = adapter.decode(recoveredDefinition);
+            if (!recoveredSource) throw Error('Expected saved recovery selector');
+            const recoveredInput = { ...input, definition: recoveredDefinition, definitions: [recoveredDefinition], source: recoveredSource };
+            const recovery = await adapter.observe(recoveredInput);
+            expect(recovery.observations).toMatchObject([{ sourceInstanceId: 'health-saved:recovery',
+                payload: { sourceInstanceId: definition.sourceInstanceId, checkId: 'http', transition: 'recovered' } }]);
+            if (recovery.checkpoint) await adapter.save({ ...recoveredInput, checkpoint: recovery.checkpoint });
+            expect((await adapter.observe(recoveredInput)).observations).toEqual([]);
+            expect(list).toHaveBeenCalledTimes(1);
+            expect(get).toHaveBeenCalledTimes(1);
+            expect(f.read).toHaveBeenCalledTimes(2);
+            f.tick('down'); await f.cycle();
+            get.mockClear();
+            await f.invalidate({ pluginIds: ['unrelated.plugin'] });
+            expect((await adapter.observe(input)).observations).toEqual([]);
+            expect(list).toHaveBeenCalledTimes(1);
+            // A live cursor reset carries the existing empty source invalidation,
+            // without a changed-key page or a transport reconnect.
+            await f.invalidate({});
+            const reset = await adapter.observe(input);
+            expect(reset.observations).toMatchObject([{ payload: { transition: 'failed', observedAt: f.now() } }]);
+            expect(list).toHaveBeenCalledTimes(2);
+            expect(get).toHaveBeenCalledTimes(0);
+            expect(f.read).toHaveBeenCalledTimes(3);
+        } finally { subscription?.dispose(); }
+    });
+    it('keeps a migrated native-source listener exact while an omitted selector spans saved sources', async () => {
+        const configured = { ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) };
+        const f = fixture(configured);
+        const otherSource = { ...configured, subject: { kind: 'machineService' as const, machineId: 'other-machine', serviceId: 'other-service' } };
+        const other = fixture(otherSource, ['health-status'], 1, { ...definition,
+            sourceInstanceId: 'health:other', sourceConfig: otherSource });
+        await f.cycle();
+        await other.cycle();
+        for (const [key, row] of other.rows) f.rows.set(key, row);
+        const adapter = createHealthCheckSourceAdapter(f.now, f.context.services.events.host);
+        const listener = { ...definition, sourceInstanceId: 'health-saved:migrated',
+            eventRef: { ...definition.eventRef, localId: 'health-check-failed' },
+            sourceConfig: { v: 1, serverId: 'home', observingSince: 0, nativeSourceInstanceId: definition.sourceInstanceId } };
+        const selected = adapter.decode(listener);
+        expect(selected).not.toBeNull();
+        if (!selected) throw Error('Expected migrated exact saved selector');
+        const exact = await adapter.observe({ context: f.context, definition: listener, definitions: [listener],
+            source: selected, isCurrent: async () => true });
+        expect(exact.observations.map(value => value.payload)).toEqual([
+            expect.objectContaining({ sourceInstanceId: definition.sourceInstanceId, transition: 'failed' }),
+        ]);
+        const any = { ...listener, sourceInstanceId: 'health-saved:any', sourceConfig: { v: 1, serverId: 'home', observingSince: 0 } };
+        const anySource = adapter.decode(any);
+        if (!anySource) throw Error('Expected Account-wide saved selector');
+        const all = await adapter.observe({ context: f.context, definition: any, definitions: [any],
+            source: anySource, isCurrent: async () => true });
+        expect(all.observations.map(value => value.payload)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sourceInstanceId: definition.sourceInstanceId }), expect.objectContaining({ sourceInstanceId: 'health:other' }),
+        ]));
+        expect(all.observations).toHaveLength(2);
+        expect(f.read).toHaveBeenCalledTimes(1);
+        expect(other.read).toHaveBeenCalledTimes(1);
     });
     it('reads additive nested checkpoint diagnostics without accepting invalid known fields', async () => {
         const f = fixture();
