@@ -100,6 +100,7 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
             ...(modelSelectionInput && modelRef ? { modelSelection: { v: 1, ref: modelRef, updatedAt: modelSelectionInput.updatedAt } } : {}),
             ...(configuration ? { configuration } : {}), ...(connectedServices ? { connectedServices } : {}),
         });
+        context.onSessionCreationPrepared?.({ agentTarget: exact.agentTarget, executionTarget: exact.executionTarget });
         return { input: projectSessionSpawnNewActionInputV2(exact), defaults: { context: defaultsContext, authoredChoices,
             ...(managedPresetAcquisition ? { managedPresetAcquisition } : {}),
             ...(managedPresetControllerAccess ? { managedPresetControllerAccess } : {}) } };

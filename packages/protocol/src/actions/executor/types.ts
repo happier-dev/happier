@@ -935,6 +935,9 @@ export type ActionExecutorContext = Readonly<{
   /** Invocation-private original placement from admitted host preparation; never requester or wire authority. */
   admittedMachineTarget?: ActionPreparedMachineTargetV1;
 
+  /** Host-local presentation of this invocation's prepared choice; never Action/RPC input or authority. */
+  onSessionCreationPrepared?: (selection: Readonly<Pick<SessionSpawnNewInputV2, 'agentTarget' | 'executionTarget'>>) => void;
+
   /** One creation-owner context load, retained within this invocation only. */
   sessionCreationDefaults?: Readonly<{
     context: import('../../teams/managedDefaults.js').ManagedSessionDefaultsContext;

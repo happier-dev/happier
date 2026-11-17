@@ -1,6 +1,7 @@
 import type { PendingDeliveryFailureV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import type { SessionSpawnNewIncompatibleTargetV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema, type SessionSpawnNewIncompatibleTargetV1, type SessionSpawnNewInitialInputDispositionV1, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -15,6 +16,15 @@ import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/se
 import { t } from '@/text';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import type { SessionSpawnNewActionResult } from './sessionSpawnNewAction';
+
+/** Read the creation owner's refusal directly or inside its Action settlement. */
+export function readSessionSpawnNewFailure(result: unknown): Extract<SessionSpawnNewResultV1, { type: 'error' }> | null {
+    const value = isRecord(result) && result.type !== 'error'
+        ? result.ok === true ? result.result : result.details
+        : result;
+    const parsed = SessionSpawnNewActionResultV1Schema.safeParse(value);
+    return parsed.success && parsed.data.type === 'error' ? parsed.data : null;
+}
 
 export type SessionSpawnNewActionFailurePresentation =
     | 'update_required'

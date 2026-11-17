@@ -5,7 +5,7 @@ import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSes
 import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
+import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type { VoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
 
 export function jsonOk(payload?: Record<string, unknown>): string {
@@ -55,8 +55,8 @@ function getNestedActionFailure(actionId: ActionId, value: unknown): { errorCode
 
 /** Remove this serializer's spoken spawn context before the canonical Action wire check. */
 export function projectVoiceActionExecutionResult(actionId: ActionId, value: unknown): unknown {
-  if (!isSessionSpawnNewActionIdV1(actionId) || !isRecord(value) || value.ok !== true
-    || !isRecord(value.result) || value.result.type !== 'error') return value;
+  if (!isSessionSpawnNewActionIdV1(actionId) || !isRecord(value)) return value;
+  if (value.ok !== false && (value.ok !== true || !isRecord(value.result) || value.result.type !== 'error')) return value;
   const { agentTarget: _agentTarget, alternativeAgent: _alternativeAgent, errorMessage: _errorMessage, ...execution } = value;
   return execution;
 }
@@ -70,18 +70,30 @@ export function serializeVoiceActionExecuteResult(
     canonicalResult?: boolean;
     agentTarget?: AgentExecutionTargetV1;
     alternativeAgent?: VoiceSpawnAlternative;
+    spawnFailure?: Extract<SessionSpawnNewActionResultV1, { type: 'error' }> | null;
   }>,
 ): string {
-  if (options?.canonicalResult && !result.ok) return JSON.stringify(result);
+  const spawnFailure = isSessionSpawnNewActionIdV1(actionId)
+    ? options?.spawnFailure === undefined ? readSessionSpawnNewFailure(result) : options.spawnFailure
+    : null;
+  const alternative = options?.alternativeAgent;
+  const spawnContext = spawnFailure ? {
+    ...(options?.agentTarget ? { agentTarget: options.agentTarget } : {}),
+    ...(alternative ? { alternativeAgent: alternative } : {}),
+    errorMessage: `${options?.agentTarget ? `${options.agentTarget.identity.localId}: ` : ''}${resolveSessionSpawnNewResultFailureMessage(spawnFailure)}${
+      alternative ? ` ${alternative.label} is ready on this Machine. Would you like to use ${alternative.label} instead?` : ''}`,
+  } : undefined;
+  if (options?.canonicalResult && !result.ok) return JSON.stringify({ ...result, ...spawnContext });
   if (!result.ok) {
     const details = isRecord(result.details) ? result.details : {};
     const errorDetail = normalizeSpawnSessionErrorDetail(details.errorDetail);
-    return jsonError(result.errorCode, options?.agentTarget
-      ? `${options.agentTarget.identity.localId}: ${result.errorCode}` : result.errorCode, {
+    return jsonError(result.errorCode, spawnContext?.errorMessage ?? (options?.agentTarget
+      ? `${options.agentTarget.identity.localId}: ${result.errorCode}` : result.errorCode), {
       actionId,
       ...(result.failureCause ? { failureCause: result.failureCause } : {}),
       ...(result.details === undefined ? {} : { details: result.details }),
       ...(options?.agentTarget ? { agentTarget: options.agentTarget } : {}),
+      ...spawnContext,
       // The Action-input owner has already projected these content-free repair facts.
       ...(typeof details.sessionId === 'string' ? { sessionId: details.sessionId } : {}),
       ...(errorDetail ? { errorDetail } : {}),
@@ -90,16 +102,10 @@ export function serializeVoiceActionExecuteResult(
   }
 
   const domainResult = isRecord(result.result) ? result.result : {};
-  if (isSessionSpawnNewActionIdV1(actionId) && domainResult.type === 'error' && options?.agentTarget) {
+  if (spawnContext) {
     // The Action owner validated this settlement; presentation adds the bound
     // Agent without changing the domain result or inferring a startup cause.
-    const failure = result.result as Extract<SessionSpawnNewActionResultV1, { type: 'error' }>;
-    const alternative = options.alternativeAgent;
-    const context = { agentTarget: options.agentTarget,
-      ...(alternative ? { alternativeAgent: alternative } : {}),
-      errorMessage: `${options.agentTarget.identity.localId}: ${resolveSessionSpawnNewResultFailureMessage(failure)}${
-        alternative ? ` ${alternative.label} is ready on this Machine. Would you like to use ${alternative.label} instead?` : ''}` };
-    return options.canonicalResult ? JSON.stringify({ ...result, ...context }) : jsonOk({ ...domainResult, ...context });
+    return options?.canonicalResult ? JSON.stringify({ ...result, ...spawnContext }) : jsonOk({ ...domainResult, ...spawnContext });
   }
   if (domainResult.ok === false && domainResult.status === 'partial') {
     return JSON.stringify(options?.canonicalResult ? result : domainResult);

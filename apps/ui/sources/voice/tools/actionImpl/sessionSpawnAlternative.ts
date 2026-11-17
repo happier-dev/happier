@@ -1,3 +1,6 @@
+import type { SessionSpawnNewActionAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import type { AgentsBackendsListOutput } from '@happier-dev/protocol/actions/agentBackendInventory';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -33,4 +36,25 @@ export function resolveVoiceSpawnAlternative(params: Readonly<{
   if (!preferred) return undefined;
   const preferredKey = buildBackendTargetKeyV2(preferred);
   return candidates.find(item => item.targetKey === preferredKey);
+}
+
+/** Offer diagnostics for the authored or creation-owner-prepared choice without resolving defaults. */
+export async function readVoiceSpawnAlternative(input: Pick<SessionSpawnNewActionAuthoringInputV2, 'agentTarget' | 'executionTarget'>,
+  execute: FrontDoorActionExecute, signal?: AbortSignal,
+): Promise<VoiceSpawnAlternative | undefined> {
+  if (!input.agentTarget || !input.executionTarget) return undefined;
+  try {
+    const scope = await resolveServerCredentialAccountScope(input.executionTarget.serverId);
+    if (scope.kind !== 'bound') return undefined;
+    const lifetime = captureServerCredentialAccountScopeLifetime(scope);
+    const listed = await execute('agents.backends.list', { machineId: input.executionTarget.machineId }, {
+      surface: 'voice', serverId: input.executionTarget.serverId, ...(signal ? { signal } : {}),
+    });
+    if (!listed.ok || !lifetime.isCurrent()) return undefined;
+    return resolveVoiceSpawnAlternative({ inventory: listed.result as AgentsBackendsListOutput,
+      selectedTarget: input.agentTarget, lifetime, machineId: input.executionTarget.machineId });
+  } catch {
+    // An optional recovery offer cannot replace the canonical creation failure.
+    return undefined;
+  }
 }

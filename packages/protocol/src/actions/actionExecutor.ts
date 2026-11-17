@@ -2292,7 +2292,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const inheritedCaller = hostInternal ? childContext : ordinaryChildContext(childContext);
       // A child is a new authored invocation. Only transport of the same spawn
       // retains its captured creation context.
-      const { sessionCreationDefaults: _parentCreationDefaults, ...caller } = inheritedCaller;
+      const { sessionCreationDefaults: _parentCreationDefaults,
+        onSessionCreationPrepared: _parentCreationPresentation, ...caller } = inheritedCaller;
       const parentRequestId = normalizeId(caller.actionRequestId);
       const derivedContext = parentRequestId ? { ...caller,
         actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,

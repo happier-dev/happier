@@ -1,8 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { resolveSpokenActionOutcome } from './spokenActionOutcome';
+import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { projectVoiceActionExecutionResult, serializeVoiceActionExecuteResult } from '@/voice/tools/voiceActionResult';
 
 describe('spoken Action owner outcomes', () => {
+  it.each([
+    { canonicalResult: false, boundAgent: false }, { canonicalResult: false, boundAgent: true },
+    { canonicalResult: true, boundAgent: false }, { canonicalResult: true, boundAgent: true },
+  ])('retains spawn recovery without changing a refused Action into success (canonical=$canonicalResult, bound=$boundAgent)', ({ canonicalResult, boundAgent }) => {
+    const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+      launchError: { kind: 'launch_error' as const, code: 'agent_startup_failed', message: 'Agent startup failed',
+        failureCause: { phase: 'client_start' as const, failureReason: 'unclassified_provider_error' as const,
+          providerErrorMessage: 'Claude is signed out on the selected machine' } } };
+    const settled = completeSpawnActionResult(refusal);
+    const presented = JSON.parse(serializeVoiceActionExecuteResult('session.spawn_new', settled, {
+      canonicalResult,
+      ...(boundAgent ? {
+        agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        alternativeAgent: { targetKey: 'agent:codex', label: 'Codex',
+          agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      } : {}),
+    }));
+    expect(presented).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: refusal });
+    if (boundAgent) expect(presented).toMatchObject({
+      alternativeAgent: { label: 'Codex' }, errorMessage: expect.stringContaining('Codex') });
+    else expect(presented).not.toHaveProperty('alternativeAgent');
+    const spoken = resolveSpokenActionOutcome({ t: canonicalResult ? 'action_execute' : 'spawnSession',
+      args: canonicalResult ? { actionId: 'session.spawn_new', input: {} } : {}, result: presented });
+    expect(spoken).toMatch(/Claude.*signed out/i);
+    if (boundAgent) expect(spoken).toContain('Codex');
+    if (canonicalResult) {
+      expect(UiActionDispatchResultV1Schema.parse({ v: 1,
+        execution: projectVoiceActionExecutionResult('session.spawn_new', presented) }).execution).toEqual(settled);
+    }
+  });
+
   it.each([
     { t: 'requestVoiceBrief', args: {}, result: { ok: true, status: 'waiting', attemptId: 'attempt' } },
     { t: 'action_execute', args: { actionId: 'ui.voice_global.brief.request', input: {} },

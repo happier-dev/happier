@@ -726,7 +726,7 @@ describe('callMachineRpc', () => {
     expect(socket.emit).not.toHaveBeenCalled();
   });
 
-  it.each(['human', 'nested-human', 'disabled', 'unbound-agent', 'declined', 'undisclosed', 'notification-only'] as const)('preserves public CLI requester spawn authority for %s', async (callerKind) => {
+  it.each(['human', 'human-deferred', 'nested-human', 'disabled', 'unbound-agent', 'declined', 'undisclosed', 'notification-only'] as const)('preserves public CLI requester spawn authority for %s', async (callerKind) => {
     const disclosures: unknown[] = [];
     const effects: string[] = [];
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
@@ -745,6 +745,7 @@ describe('callMachineRpc', () => {
       ? { ...input, discussionParticipant: { discussionId: 'discussion', participantSlotId: input.creationKey }, initialTriggers: [] }
       : input;
     axiosRequest.mockImplementation(async (request: { url: string; method: string }) => {
+      if (request.url.endsWith('/v1/home/governance/get')) return { status: 200, data: { homeDefaults: null } };
       if (request.url.endsWith('/v1/discussions/discussion') && request.method === 'GET') return { status: 200, data: { discussion: {
         id: 'discussion', ownerAccountId: 'bob', encryptionMode: 'plain', anchor: null, access: 'owner', keyReadiness: true,
         dataEncryptionKey: null, creationLocalId: 'opinion', titleContent: { t: 'plain', v: { v: 1, title: 'Review' } },
@@ -796,6 +797,10 @@ describe('callMachineRpc', () => {
         installationPrivateKey: installation.secretKey, includeInvocation: true,
       })).toMatchObject({ invocation: { sessionCreationDefaults } });
       expect(JSON.stringify(request)).not.toContain(token);
+      if (callerKind === 'human-deferred') return { status: 200, data: { v: 1, actionId: 'session.spawn_new',
+        requestId: request.envelope.requestId, execution: { ok: true, result: {
+          kind: 'approval_request_created', artifactId: 'deferred-spawn-approval', actionId: 'session.spawn_new',
+        } } } };
       return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
         execution: { ok: true, result: { type: 'success', disposition: 'created', sessionId: 'bob-session',
           executionTarget: input.executionTarget, organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } } } };
@@ -818,8 +823,10 @@ describe('callMachineRpc', () => {
       callerKind === 'nested-human' ? nestedInput : input, callerKind !== 'unbound-agent'
       ? { surface: 'cli', authority: 'present_user', ...(callerKind === 'human' ? { sessionCreationDefaults } : {}) } : { surface: 'agent', causalPermissionAuthority: null,
         actionCaller: { kind: 'host' } });
-    if (callerKind === 'human' || callerKind === 'nested-human') {
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: callerKind === 'human'
+    if (callerKind === 'human' || callerKind === 'human-deferred' || callerKind === 'nested-human') {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: callerKind === 'human-deferred'
+        ? { kind: 'approval_request_created', artifactId: 'deferred-spawn-approval', actionId: 'session.spawn_new' }
+        : callerKind === 'human'
         ? { type: 'success', disposition: 'created', sessionId: 'bob-session' }
         : { modelParticipant: { sessionId: 'bob-session' }, sessionStart: { type: 'success', disposition: 'created', sessionId: 'bob-session' } } });
       expect(socket.emit).not.toHaveBeenCalled();

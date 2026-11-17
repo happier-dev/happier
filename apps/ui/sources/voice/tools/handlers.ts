@@ -48,7 +48,8 @@ import {
 import { jsonError, jsonOk, serializeVoiceActionExecuteResult } from './voiceActionResult';
 import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
 import { bindVoiceSessionSpawnInput } from './actionImpl/bindSessionSpawnInput';
-import { resolveVoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
+import { readVoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
+import { readSessionSpawnNewFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 import { VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
 import { classifyVoiceMachineError, type VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
@@ -419,26 +420,24 @@ export function createVoiceToolHandlers(
       actionInput = { ...input, machineId: deps.currentExecutionTarget.machineId };
     }
     let spawnAgentTarget: AgentExecutionTargetV1 | undefined;
-    let spawnSelection: Extract<Awaited<ReturnType<typeof bindVoiceSessionSpawnInput>>, { ok: true }> | undefined;
+    let spawnSelection: Parameters<typeof readVoiceSpawnAlternative>[0] | undefined;
     if (actionId === 'session.spawn_new') {
-      const bound = await bindVoiceSessionSpawnInput(actionInput, actionExecute, ctx?.signal);
+      const bound = await bindVoiceSessionSpawnInput(actionInput);
       if (!bound.ok) {
-        if (bound.errorCode === VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE) {
-          const error = classifyVoiceMachineError(Object.assign(new Error(bound.errorCode), { code: bound.errorCode }));
-          if (!ctx?.signal?.aborted) deps.onSetupRequired?.(error);
-          return serializeVoiceActionExecuteResult(actionId, { ...bound, errorCode: error.kind,
-            details: { reason: error.reason, recoveryAction: error.recoveryAction } }, { canonicalResult });
-        }
         return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
       }
       actionInput = bound.input;
       spawnAgentTarget = bound.input.agentTarget;
-      spawnSelection = bound;
+      spawnSelection = bound.input;
     }
     let res: Awaited<ReturnType<typeof actionExecute>>;
     try {
       res = await executeSpokenAction(actionExecute, actionId, actionInput, {
         surface: 'voice',
+        ...(actionId === 'session.spawn_new' ? { onSessionCreationPrepared: (selection: Parameters<typeof readVoiceSpawnAlternative>[0]) => {
+          spawnAgentTarget = selection.agentTarget;
+          spawnSelection = selection;
+        } } : {}),
         ...(deps.readVoiceAgentHandle?.()?.accountLifetime.scope.accountId
           ? { expectedAccountId: deps.readVoiceAgentHandle()?.accountLifetime.scope.accountId } : {}),
         defaultSessionId: boundAddress?.sessionId ?? await deps.resolveSessionId(null),
@@ -454,6 +453,12 @@ export function createVoiceToolHandlers(
       // propagate to their owner.
       if (ctx?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
       throw error;
+    }
+    if (!res.ok && actionId === 'session.spawn_new' && res.errorCode === VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE) {
+      const error = classifyVoiceMachineError(Object.assign(new Error(res.errorCode), { code: res.errorCode }));
+      if (!ctx?.signal?.aborted) deps.onSetupRequired?.(error);
+      res = { ...res, errorCode: error.kind,
+        details: { reason: error.reason, recoveryAction: error.recoveryAction } };
     }
     // Preserve the canonical effect disposition after dispatch. Reads remain
     // delivery-cancellable; effects may already have committed or be pending.
@@ -476,13 +481,10 @@ export function createVoiceToolHandlers(
         }).then(requireActionSuccess), { tag: 'VoiceTools.openCreatedSession' });
       }
     }
-    const spawnFailure = actionId === 'session.spawn_new' && res.ok
-      ? res.result as SessionSpawnNewActionResultV1 : null;
-    const alternativeAgent = spawnFailure?.type === 'error' && spawnFailure.code === 'spawn_failed'
-      && spawnSelection?.inventory && spawnSelection.accountLifetime
-      ? resolveVoiceSpawnAlternative({ inventory: spawnSelection.inventory, selectedTarget: spawnSelection.input.agentTarget,
-        lifetime: spawnSelection.accountLifetime, machineId: spawnSelection.input.executionTarget.machineId }) : undefined;
-    const resultOptions = { canonicalResult, agentTarget: spawnAgentTarget, alternativeAgent };
+    const spawnFailure = actionId === 'session.spawn_new' ? readSessionSpawnNewFailure(res) : null;
+    const alternativeAgent = spawnFailure?.code === 'spawn_failed' && spawnSelection
+      ? await readVoiceSpawnAlternative(spawnSelection, actionExecute, ctx?.signal) : undefined;
+    const resultOptions = { canonicalResult, agentTarget: spawnAgentTarget, alternativeAgent, spawnFailure };
     if (canonicalResult) return serializeVoiceActionExecuteResult(actionId, res, resultOptions);
     if (res.ok && actionId === 'session.list') {
       const awareness = parseSessionAwarenessListResultV1(res.result);

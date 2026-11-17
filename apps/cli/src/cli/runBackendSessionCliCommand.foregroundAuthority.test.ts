@@ -57,7 +57,7 @@ type ForegroundAuthorityCase = Readonly<{
   prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
   providerConnectionId?: string;
-  policyHandoff?: boolean | 'attach';
+  policyHandoff?: boolean | 'approval' | 'attach';
   nativeForkPolicy?: 'directly' | 'sandbox';
   modelSelection?: 'native' | 'provider';
   diagnosticDebug?: Readonly<{ host: string | undefined; session: string | undefined }>;
@@ -69,6 +69,7 @@ describe('foreground CLI runner authority scope', () => {
     { prior: undefined, definitionId: undefined, missingCli: false, nativeForkPolicy: 'sandbox' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: true },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'attach' },
+    { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'approval' },
     { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: false },
     { prior: '', definitionId: undefined, missingCli: false },
     { prior: 'previous-invocation', definitionId: undefined, missingCli: false },
@@ -171,6 +172,9 @@ describe('foreground CLI runner authority scope', () => {
           const root = JSON.parse(text);
           if (root.actionId !== 'session.spawn_new') throw new Error('Expected canonical Session spawn');
           policySpawnInput = root.input;
+          if (policyHandoff === 'approval') return respond(200, { ok: true, result: {
+            kind: 'approval_request_created', artifactId: 'foreground-spawn-approval', actionId: 'session.spawn_new',
+          } });
           if (policyHandoff === 'attach') return respond(200, { ok: true, result: {
             type: 'success', disposition: 'created', sessionId: 'cforegroundpolicysession01',
             executionTarget: { serverId: 'foreground-fixture', machineId: 'policy-machine' },
@@ -301,6 +305,7 @@ describe('foreground CLI runner authority scope', () => {
         startedWithCliVersion: resolveComparableCliVersion({ fallbackVersion: configuration.currentCliVersion,
           projectRootPath: projectPath(), readFileSyncImpl: readFileSync }) });
       vi.spyOn(console, 'error').mockImplementation(() => {});
+      const presentation = vi.spyOn(console, 'log').mockImplementation(() => {});
       let nativeForkArgs: string[] = [];
       if (nativeForkPolicy) {
         const runtimeDescriptor = { v: 1 as const, agentId, agent: { providerSessionId: 'native-parent' } };
@@ -335,7 +340,7 @@ describe('foreground CLI runner authority scope', () => {
       const run = hosted ? runAddedHostedSession({ environment: { ...process.env, NODE_ENV: 'test',
         ...(diagnosticDebug ? { DEBUG: diagnosticDebug.session } : {}) },
         workingDirectory: directory, end: code => { endCodes.push(code); } }, invoke) : invoke();
-      if (hosted) await run;
+      if (hosted || policyHandoff === 'approval') await run;
       else await expect(run).rejects.toThrow('foreground-command-exit');
       expect(boundaryErrors).toEqual([]);
       if (nativeForkPolicy === 'sandbox') {
@@ -353,7 +358,10 @@ describe('foreground CLI runner authority scope', () => {
         if (policyHandoff === 'attach') {
           expect(requests.some(path => path.startsWith('/v2/sessions/cforegroundpolicysession01'))).toBe(true);
         }
-        expect(processExit).toHaveBeenCalledWith(1);
+        if (policyHandoff === 'approval') {
+          expect(presentation.mock.calls.flat().join(' ')).toContain('foreground-spawn-approval');
+          expect(processExit).not.toHaveBeenCalled();
+        } else expect(processExit).toHaveBeenCalledWith(1);
         return;
       }
       if (diagnosticDebug) {

@@ -57,6 +57,8 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
       return parseActionExecuteFailure(entry.result)?.errorCode === 'outcome_unknown'
         ? t('session.askRecord.unsure') : t('session.askRecord.notSent');
     }
+    if (owner === SESSION_SPAWN_NEW_ACTION_ID_V1 && typeof envelope?.errorMessage === 'string'
+      && envelope.errorMessage.trim()) return envelope.errorMessage.trim();
     return resolveActionExecutionFailureMessage(entry.result, unknown) ?? unknown;
   }
   // Direct tools flatten the envelope; action_execute retains it. Neither

@@ -9,7 +9,6 @@ import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/a
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { FeatureDecisionSchema } from '@happier-dev/protocol/features/decision';
 
@@ -17,7 +16,7 @@ import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
-import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
+import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 import { resolvePluginSurfaceStaleReasonMessage, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { getUiFeatureDefinition } from '@/sync/domains/features/featureRegistry';
@@ -118,8 +117,8 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     const record = asRecord(value);
     if (!record) return null;
     if (record.type === 'error') {
-        const spawn = SessionSpawnNewActionResultV1Schema.safeParse(record);
-        return spawn.success && spawn.data.type === 'error' ? resolveSessionSpawnNewResultFailureMessage(spawn.data) : null;
+        const spawn = readSessionSpawnNewFailure(record);
+        return spawn ? resolveSessionSpawnNewResultFailureMessage(spawn) : null;
     }
     const pluginError = isPluginError(value);
     // Resource snapshots retain adapter diagnostics in `message`; only an
@@ -136,9 +135,9 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
 
 /** Host code copy is the fallback when the author supplied no reason. */
 function readFailureFallbackMessage(record: Record<string, unknown>, options?: FailurePresentationOptions): string | null {
-    const childSession = SessionSpawnNewActionResultV1Schema.safeParse(record.details);
-    if (childSession.success && childSession.data.type === 'error') {
-        return resolveSessionSpawnNewResultFailureMessage(childSession.data);
+    const childSession = readSessionSpawnNewFailure(record);
+    if (childSession) {
+        return resolveSessionSpawnNewResultFailureMessage(childSession);
     }
     const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
     const stalePluginViewMessage = typeof code === 'string' ? resolvePluginSurfaceStaleReasonMessage(code) : null;

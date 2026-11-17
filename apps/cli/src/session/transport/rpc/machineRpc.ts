@@ -32,6 +32,7 @@ import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, rea
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { readHostReviewedChildOperationV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -169,6 +170,8 @@ export async function dispatchRequesterSessionSpawnNewRpc(params: Readonly<{
     ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
     ...(signal ? { signal } : {}) });
   if (!execution.ok) return execution;
+  const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
+  if (approval.success) return { ...execution, result: approval.data };
   const output = SessionSpawnNewActionResultV1Schema.safeParse(execution.result);
   return output.success ? { ok: true, result: readSessionSpawnNewActionResultV1(output.data) }
     : { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };

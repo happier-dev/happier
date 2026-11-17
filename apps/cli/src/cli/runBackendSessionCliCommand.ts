@@ -46,6 +46,7 @@ import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { createForegroundAdmissionError, DirectProviderLaunchError } from './foregroundAdmissionFailure';
+import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import {
   buildScopedProcessEnv,
   normalizeUnsetEnvKeys,
@@ -561,6 +562,9 @@ Provider CLI Options:
                 target: { kind: 'machine', machineId: admission.sessionSpawnRequired.machineId } },
               { ...(params.context.signal ? { signal: params.context.signal } : {}) });
               if (!execution.ok) throw Object.assign(new Error(execution.error), { code: execution.errorCode });
+              if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json: false, result: execution.result })) {
+                throw foregroundHandoffComplete;
+              }
               const result = SessionSpawnNewActionResultV1Schema.parse(execution.result);
               if (result.type !== 'success') throw Object.assign(new Error(result.type === 'error' ? result.code : 'session_spawn_pending'),
                 { code: result.type === 'error' ? result.code : 'outcome_unknown' });

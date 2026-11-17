@@ -229,6 +229,8 @@ describe('requester credential disclosure at the human Action front door', () =>
     it.each([
         { surface: 'ui', response: 'accepted' },
         { surface: 'voice', response: 'accepted' },
+        { surface: 'ui', response: 'approval' },
+        { surface: 'voice', response: 'approval' },
         { surface: 'ui', response: 'withheld' },
         { surface: 'ui', response: 'ack-lost' },
         { surface: 'ui', response: 'refused' },
@@ -238,6 +240,7 @@ describe('requester credential disclosure at the human Action front door', () =>
             serverIdentityId: homeId, accountId: 'bob', currentAccount: true });
         const home = harness.findByServerUrl('https://requester-send.test');
         if (!home?.token) throw new Error('Missing original requester credential');
+        harness.answer(serverId, '/v1/home/governance/get', { body: { homeDefaults: null } });
         harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'session.spawn_new': [surface] } },
         } }, version: 1 } });
@@ -282,6 +285,10 @@ describe('requester credential disclosure at the human Action front door', () =>
             if (response === 'ack-lost') return { status: 502 };
             if (response === 'refused') return { body: { v: 1, actionId: 'session.spawn_new',
                 requestId: carried.envelope.requestId, execution: refusal } };
+            if (response === 'approval') return { body: { v: 1, actionId: 'session.spawn_new',
+                requestId: carried.envelope.requestId, execution: { ok: true, result: {
+                    kind: 'approval_request_created', artifactId: 'deferred-spawn-approval', actionId: 'session.spawn_new',
+                } } } };
             return { body: { v: 1, actionId: 'session.spawn_new', requestId: carried.envelope.requestId,
                 execution: { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } } } };
         } });
@@ -318,11 +325,13 @@ describe('requester credential disclosure at the human Action front door', () =>
             ? result.result.type : result.ok ? 'other_success' : result.errorCode;
         expect(requesterConsent, JSON.stringify({ ok: result.ok, outcome, reachedRequesterSender })).not.toHaveBeenCalled();
         expect(reachedRequesterSender, JSON.stringify(result)).toBe(true);
-        expect(result).toEqual(response === 'refused' ? refusal : { ok: true, result: SessionSpawnNewResultV1Schema.parse({
+        expect(result).toEqual(response === 'refused' ? { ...refusal, requestId: userAttemptId } : response === 'approval' ? { ok: true, result: {
+            kind: 'approval_request_created', artifactId: 'deferred-spawn-approval', actionId: 'session.spawn_new',
+        } } : { ok: true, result: SessionSpawnNewResultV1Schema.parse({
             type: 'pending', retryWithSameCreationKey: true, outcome: response === 'accepted' ? 'accepted' : 'unknown',
         }) });
-        expect(machineDispatch.mock.calls.map(([request]) => request.method))
-            .toEqual([RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT]);
+        // The receiving Home owns foreign spawn preparation; the app forwards once.
+        expect(machineDispatch).not.toHaveBeenCalled();
     });
 
     // P03 R11 ruling: the rare review→confirm path re-dispatches as a fresh invocation and may re-read
