@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { deriveApprovalRequestSourceIdFromIdentityV1 } from '@happier-dev/protocol/approvals/creation';
+import { deriveApprovalRequestSourceIdFromIdentityV1, resolveApprovalRequestIdentityActionIdV1 } from '@happier-dev/protocol/approvals/creation';
 import { deriveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { observeAccountChanges } from '@/api/observeAccountChanges';
@@ -10,6 +10,7 @@ import { executeLiveCliApprovalRequest, type CliApprovalRequestedHandler } from 
 /** Home retains the original private result; Account pushes expose only its existing Ask. */
 export async function executeOriginalAccountCliApprovalRequest(options: Readonly<{
   actionId: string;
+  input: unknown;
   requestId: string;
   homeId: string;
   accountId: string;
@@ -23,7 +24,8 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
 }>): Promise<ActionExecuteResult | null> {
   const artifactId = deriveAccountScopedArtifactIdV1(options.accountId, deriveApprovalRequestSourceIdFromIdentityV1({
     homeId: options.homeId, accountId: options.accountId, requesterId: options.accountId,
-    requestId: options.requestId, actionId: options.actionId, target: options.target,
+    requestId: options.requestId, actionId: resolveApprovalRequestIdentityActionIdV1(options.actionId, options.input),
+    target: options.target,
   }));
   return await executeLiveCliApprovalRequest({ ...options, run: async (invocationSignal, notify) => {
     const lifetime = new AbortController();
@@ -48,8 +50,10 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
           const { request } = ApprovalRequestGetResultV1Schema.parse(observed.result);
           if (request.status === 'open') {
             // Deferred proposals are presented after the original HTTP returns.
-            // Only a blocking flow needs its person prompted while HTTP waits.
-            if ('approval' in request && request.approval.flow === 'blocking') {
+            // Only an Ask that holds the live invocation needs its person prompted
+            // while HTTP waits: a blocking flow, or a target's live-only operands.
+            if ('kind' in request ? request.approvalInputCustody === 'live_only'
+              : 'approval' in request && request.approval.flow === 'blocking') {
               notify({ kind: 'approval_request_created', artifactId, actionId: options.actionId });
             }
             await observation.dispose();
