@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { attributeRollingRange, commitPackageTypecheckRefuses, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { attributeRollingRange, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -328,4 +328,22 @@ test('a git index lock left in the warm worktree by a killed check does not stop
   const next = await rollingHeadTypecheckPass(options);
   assert.equal(next.head, c1);
   assert.equal(readFileSync(join(state, 'rolling-head'), 'utf8').trim(), c1);
+});
+
+// P03-TYPECHECK-DEBT 2026-11-17: packages attribution waited ~1 h behind the apps/ui baseline compile. With HEAD moving
+// during every pass, packages runs before each app pass, and the app scopes take turns so none is starved.
+test('the rolling loop runs packages before every app pass and rotates the app scopes', () => {
+  const order = [];
+  let lastApp, lastScope;
+  for (let pass = 0; pass < 8; pass++) {
+    // HEAD moved during the previous pass, so every scope is behind again.
+    const scope = nextRollingScope({ pending: ['packages', 'apps/server', 'apps/cli', 'apps/ui'], lastScope, lastApp });
+    order.push(scope);
+    lastScope = scope;
+    if (scope !== 'packages') lastApp = scope;
+  }
+  assert.deepEqual(order, ['packages', 'apps/server', 'packages', 'apps/cli', 'packages', 'apps/ui', 'packages', 'apps/server']);
+  assert.equal(nextRollingScope({ pending: ['apps/ui', 'apps/server'], lastScope: 'packages', lastApp: 'apps/server' }), 'apps/ui');
+  assert.equal(nextRollingScope({ pending: ['packages'], lastScope: 'packages' }), 'packages');
+  assert.equal(nextRollingScope({ pending: [], lastApp: 'apps/ui' }), undefined);
 });

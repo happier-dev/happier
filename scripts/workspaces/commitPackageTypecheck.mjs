@@ -564,6 +564,15 @@ function admittedCommand(repo, payload, cached, projects) {
     ...(projects ? [`--projects=${projects}`] : []), '--exec-admitted', '--', ...payload];
 }
 
+/** The next scope a rolling pass compiles: packages (minutes) whenever it is behind and did not run last, so its
+ * verdict never waits behind more than one hour-long app compile (P03-TYPECHECK-DEBT 2026-11-17); otherwise the behind
+ * app after `lastApp`, in turn, so a HEAD that moves during every pass still reaches each app. */
+export function nextRollingScope({ pending, lastScope, lastApp }) {
+  if (pending.includes('packages') && (lastScope !== 'packages' || pending.length === 1)) return 'packages';
+  const start = ROLLING_APP_SCOPES.indexOf(lastApp) + 1;
+  return [...ROLLING_APP_SCOPES.slice(start), ...ROLLING_APP_SCOPES.slice(0, start)].find(scope => pending.includes(scope));
+}
+
 async function rolling(repo) {
   const state = commitPackageTypecheckStateDir(repo);
   const worktree = join(state, 'worktree');
@@ -575,10 +584,16 @@ async function rolling(repo) {
   for (;;) {
     try {
       await withWorkspaceBundleLock(async () => {
-        // Packages first (fast, blocking-relevant), then each app; HEAD is re-read after every pass.
-        for (let pending = behind(); pending.length; pending = behind()) {
-          let progressed = false;
-          for (const scope of pending) {
+        // One scope per pass (nextRollingScope), HEAD re-read after every pass. A scope that recorded nothing waits for
+        // the next HEAD move; when nothing behind can progress, the round ends.
+        const stalled = new Set();
+        let lastApp, lastScope;
+        for (;;) {
+          const pending = behind().filter(scope => !stalled.has(`${scope}@${head()}`));
+          const scope = nextRollingScope({ pending, lastScope, lastApp });
+          lastScope = scope;
+          if (!scope) { if (behind().length) return; break; }
+          {
             const before = recorded(scope);
             ensureWorktree(repo, worktree);
             const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_ROLLING: '1', HAPPIER_COMMIT_TYPECHECK_REPO: repo,
@@ -589,11 +604,11 @@ async function rolling(repo) {
             const command = admittedCommand(repo, payload, idle, scope === 'packages' ? undefined : scope);
             const result = spawnSync(command[0], command.slice(1), { cwd: worktree, env, stdio: 'inherit' });
             if (result.error) throw result.error;
-            if (recorded(scope) === before) console.error(`[rolling-head-typecheck] ${scope} pass exit=${result.status} recorded nothing; waiting for the next HEAD move`);
-            else progressed = true;
+            if (recorded(scope) === before) {
+              console.error(`[rolling-head-typecheck] ${scope} pass exit=${result.status} recorded nothing; waiting for the next HEAD move`);
+              stalled.add(`${scope}@${current}`);
+            } else if (scope !== 'packages') lastApp = scope;
           }
-          // A round that could record nothing must not spin on the same HEAD; the next commit kicks again.
-          if (!progressed) return;
         }
         // Every scope has its verdict for the newest HEAD; attribute recorded RED ranges now. A HEAD
         // move meanwhile is picked up by the outer loop, verdicts first again.
