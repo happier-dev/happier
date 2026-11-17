@@ -25,6 +25,7 @@ import { registerDaemonContributionRegistryProjectionHandler } from './daemonCon
 import { createDeferred } from '@/testkit/async/deferred';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { invokeAccountMachineSourceAction } from '@/plugins/runtime/invocation/actions/accountMachineActionTransport';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
     it('refuses unbound raw Machine Actions and correlates composer requests without replacing execution identity', async () => {
@@ -40,7 +41,7 @@ describe('mounted caller admission through the real contributed Action RPC', () 
         }] });
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         // The local file sink is the OS boundary; registered ingress and plugin execution stay real.
-        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
         try {
             const handlers = new Map<string, RpcHandler>();
             registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
@@ -292,7 +293,7 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                 try {
                     const sourceCustody = fixture.registry.readPluginSourceCustody?.('com.acme.machine-source');
                     if (!sourceCustody) throw new Error('Missing admitted source custody');
-                    const relayed = await invokeAccountMachineSourceAction({
+                    const relay = (reviewed: boolean) => invokeAccountMachineSourceAction({
                         credentials: { token: accountToken, encryption: null }, serverUrl: 'http://account-caller.test',
                         machineId: 'reading-machine', callerManifest: manifest,
                         callerSourceCustody: clientActionBinding.sourceCustody,
@@ -300,10 +301,17 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                             occurrenceId: targetOccurrence, sourceCustody },
                         request: { action: { pluginId: 'com.acme.machine-source', localId: 'write' }, input: {},
                             surface: 'plugin', originSurface: 'ui', presentUserIntent: 'confirmed',
+                            ...(reviewed ? { approvalContext: { hostReviewedChild: createHostReviewedChildPortV1({
+                                actionId: 'action.invoke', reviewAdmitted: true, context: {},
+                                input: { action: { pluginId: 'com.acme.machine-source', localId: 'write' }, input: {} },
+                            }) } } : {}),
                             caller: { kind: 'plugin', pluginId, contribution: { id: contributionLocalId,
                                 qualifiedId: `${pluginId}/${contributionLocalId}` }, occurrenceId: clientActionBinding.occurrenceId,
                                 sourceCustody: clientActionBinding.sourceCustody, originSurface: 'ui' }, signal: lifetime.signal },
                     });
+                    expect(await relay(false)).toMatchObject({ status: 'failed', code: 'plugin_action_current_intent_unavailable',
+                        actionHandlerInvocation: 'notStarted' });
+                    const relayed = await relay(true);
                     expect(relayed, JSON.stringify(relayed)).toMatchObject({ status: 'executed', value: { writes: 1 } });
                 } finally { transport.mockRestore(); }
                 expect(await run(clientActionBinding, { uncertain: true }, 'write', 'confirmed'))
@@ -360,7 +368,7 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             }],
             runtimeOptions: { resolveCurrentMachineId: () => 'external-machine' },
         });
-        const stages = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const stages = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
         const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
         try {
             const handlers = new Map<string, RpcHandler>();

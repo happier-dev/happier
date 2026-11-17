@@ -428,6 +428,7 @@ describe('bundled daemon contribution describe cost', () => {
             expect(admission.projection.familiesById).toEqual({
                 connectedAccounts: full.projection.familiesById.connectedAccounts,
                 machineProvisioners: full.projection.familiesById.machineProvisioners,
+                accessProviders: full.projection.familiesById.accessProviders,
             });
             // A fresh build must agree with the retained descriptive response.
             invalidateDaemonContributionRegistryProjectionCache();
@@ -440,7 +441,13 @@ describe('bundled daemon contribution describe cost', () => {
                 composerSurfaceCatalogBytes: byteSize(full.composerSurfaceCatalog ?? null) }));
             expect(Object.keys(full.projection.actionsById).length).toBeGreaterThan(0);
             expect(selected.projection.agentsById).toEqual(full.projection.agentsById);
-            expect(JSON.stringify(full).includes('"bytesBase64"')).toBe(false);
+            const artifactBytes: string[] = [];
+            JSON.stringify(full, (key, value) => {
+                // A schema may declare this property; only a string value carries bytes.
+                if (key === 'bytesBase64' && typeof value === 'string') artifactBytes.push(value);
+                return value;
+            });
+            expect(artifactBytes).toEqual([]);
             // Automation setup Actions still carry the schemas their forms
             // consume. Only the general Action catalog uses targeted reads.
             expect(Object.values(full.projection.actionsById).some(action => (
