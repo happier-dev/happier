@@ -193,9 +193,8 @@ import {
   buildSessionOrganizationProjections,
   type SessionOrganizationProjection,
 } from '../domains/session/organization';
-import type { MachinePresenceCounts } from '@/utils/sessions/machineUtils';
 import { getSettledMachineDisplayName, isMachineDisplayHydrating, readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
-import { useMachinePresenceSummary, useMachinePresenceSummaries, useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { useMachinePresenceSummary, useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import {
   buildSessionRealtimeScmScopeFromSnapshot,
@@ -2462,17 +2461,6 @@ export function useAllMachines(select?: (machines: Machine[]) => unknown) {
       return select ? select(machines) : machines;
     })
   );
-}
-
-/**
- * This Home's observed and unknown presence, for always-mounted chrome (the rail's Machines tooltip,
- * the Settings Machines row). Shared presence membership owns recovery and grace expiry;
- * stable verdict counts keep heartbeat and metadata-only changes quiet.
- */
-export function useMachinePresenceCounts(): MachinePresenceCounts {
-  const scope = useActiveServerAccountScope();
-  const membership = useMachinePresenceMembership(scope?.serverId ?? null);
-  return membership.counts;
 }
 
 /** Whether this Home has any machine at all, online or offline; a boolean, so presence churn stays quiet. */

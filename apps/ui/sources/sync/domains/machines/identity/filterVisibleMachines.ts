@@ -65,8 +65,3 @@ export function selectMachineFleetFromRecord<T extends MachineSelectionVisibilit
     fleetRecordSelections.set(machines, selected);
     return selected;
 }
-
-/** Work is proportional to Homes on repeat reads, never fleet size per surface. */
-export function countMachineFleet(groups: readonly Readonly<{ machines: readonly MachineSelectionVisibilityFacts[] }>[]): number {
-    return groups.reduce((count, group) => count + selectMachineFleet(group.machines).length, 0);
-}

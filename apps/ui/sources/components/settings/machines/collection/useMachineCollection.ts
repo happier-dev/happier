@@ -13,7 +13,7 @@ import { actionOperationStore } from '@/sync/domains/actionOperations/actionOper
 import { actionOperationSelectors, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { readManagedInstallationPrompt } from '../managed/managedCreationPresentation';
-import { useManagedMachineInventory } from '../managed/useManagedMachineInventory';
+import { useHomeManagedMachineMembershipSource, type ManagedMachineMembershipInput } from '../managed/useManagedMachineInventory';
 
 import { buildMachineCollection, reconcileMachineCollection, managedMachineConsentKey, machineCollectionRowKey, selectMachineCollectionMembership, type MachineCollection, type MachineCollectionRow } from './machineCollectionModel';
 
@@ -98,24 +98,27 @@ type CollectionPresenceSource = Omit<CollectionPresenceGroup, 'machines'> & {
 
 function useMachineCollectionPresence(
     sources: readonly CollectionPresenceSource[],
-    managedByServerId: Parameters<typeof buildMachineCollection>[0]['managedByServerId'],
-    managedFirstAnswerPending: boolean,
+    readManaged: (serverId: string) => ManagedMachineMembershipInput,
+    subscribeToMembership?: (listener: () => void) => () => void,
 ) {
     const readMembership = React.useMemo(() => {
-        const readers = (managedFirstAnswerPending ? [] : sources).map(source => {
+        const readers = sources.map(source => {
             let previous: { machines: CollectionPresenceGroup['machines']; enrolled: CollectionPresenceGroup['machines'];
+                managed: ManagedMachineMembershipInput['machines'];
                 accountScope: CollectionPresenceSource['accountScope']; count: number } | undefined;
             return () => {
+                const managed = readManaged(source.serverId);
+                if (managed.firstAnswerPending) return [];
                 const machines = source.readMachines();
-                if (previous?.machines === machines) return previous;
-                const selected = selectMachineCollectionMembership(machines, managedByServerId?.[source.serverId]);
-                previous = { machines, enrolled: selectMachineFleet(selected.currentEnrolled),
+                if (previous?.machines === machines && previous.managed === managed.machines) return [previous];
+                const selected = selectMachineCollectionMembership(machines, managed.machines);
+                previous = { machines, managed: managed.machines, enrolled: selectMachineFleet(selected.currentEnrolled),
                     accountScope: source.accountScope, count: selected.count };
-                return previous;
+                return [previous];
             };
         });
-        return () => readers.map(read => read());
-    }, [sources, managedByServerId, managedFirstAnswerPending]);
+        return () => readers.flatMap(read => read());
+    }, [sources, readManaged]);
     const readMachines = React.useCallback(() => readMembership().flatMap(home => home.enrolled), [readMembership]);
     const readSnapshot = React.useCallback((nowMs: number) => {
         let total = 0;
@@ -130,12 +133,12 @@ function useMachineCollectionPresence(
         // Retained history and standalone creations have no current connection to classify.
         return { online, offline, unknown: total - online - offline };
     }, [readMembership]);
-    const targets = React.useMemo((): readonly MachinePresenceTarget[] => managedFirstAnswerPending ? [] : sources.map(source => ({
+    const targets = React.useMemo((): readonly MachinePresenceTarget[] => sources.map(source => ({
         serverId: source.serverId, machineIds: source.machineIds,
-    })), [sources, managedFirstAnswerPending]);
+    })), [sources]);
     const areEqual = React.useCallback((left: ReturnType<typeof readSnapshot>, right: ReturnType<typeof readSnapshot>) =>
         left.online === right.online && left.offline === right.offline && left.unknown === right.unknown, []);
-    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areEqual);
+    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areEqual, undefined, subscribeToMembership);
 }
 
 /** Badge reachability is a projection of the same membership as the collection. */
@@ -148,15 +151,16 @@ export function useMachineFleetPresence(
         serverId: group.serverId, accountScope: group.accountScope,
         readMachines: () => group.machines, machineIds: group.machines.map(machine => machine.id),
     })), [groups]);
-    return useMachineCollectionPresence(sources, managedByServerId, managedFirstAnswerPending);
+    const readManaged = React.useCallback((serverId: string) => ({
+        machines: managedByServerId?.[serverId], firstAnswerPending: managedFirstAnswerPending,
+    }), [managedByServerId, managedFirstAnswerPending]);
+    return useMachineCollectionPresence(sources, readManaged);
 }
 
 /** This Home's badges need membership and reachability without building collection rows. */
 export function useHomeMachineCollectionPresence() {
     const scope = useActiveServerAccountScope();
-    const serverId = scope?.serverId;
-    const serverIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
-    const inventory = useManagedMachineInventory(serverIds, undefined, undefined, true);
+    const membership = useHomeManagedMachineMembershipSource(scope?.serverId);
     const store = getStorage();
     // The closed rail and Settings leaf subscribe to the count, so metadata and heartbeat-only
     // changes cannot redraw them. Resolve the same exact Home for both enrollment and managed inventory.
@@ -164,5 +168,5 @@ export function useHomeMachineCollectionPresence() {
         serverId: scope.serverId, accountScope: scope,
         readMachines: () => selectVisibleMachineInventory(resolveMachinesForActiveServerFromState(store.getState(), scope)),
     }] : [], [scope, store]);
-    return useMachineCollectionPresence(sources, inventory.machinesByServerId, inventory.firstAnswerPending);
+    return useMachineCollectionPresence(sources, membership.read, membership.subscribe);
 }

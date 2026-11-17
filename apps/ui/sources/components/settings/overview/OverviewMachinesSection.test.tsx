@@ -6,8 +6,11 @@ vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 vi.mock('react-native', async () => {
     const { createReactNativeAppStateEmitter, createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -26,23 +29,53 @@ const { machineResourceStore } = await import('@/sync/domains/machines/resources
 const { recordMachineRequestFailed, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 let releaseInventoryRead: (() => void) | null = null;
 
-beforeEach(async () => {
-    const { serverId } = await account.restore();
-    await account.publishMachines(serverId, []);
-    const pending = createDeferred<void>();
-    releaseInventoryRead = pending.resolve;
-    // Hold unsolicited Sync census reads; the cases below exercise real store transitions.
-    account.home.answer(serverId, '/v1/machines', { respondAfter: pending.promise, body: [] });
-});
-afterEach(async () => {
-    releaseInventoryRead?.();
-    releaseInventoryRead = null;
-    standardCleanup();
-    clearMachineRequestReachabilityForTest();
-    await account.reset();
+describe('Settings › Overview Machines', () => {
+    it('leaves an ended creation out of the desktop Overview offline count', async () => {
+        const homeId = 'srv_overview_machines_home';
+        const archived: ManagedMachineV1 = {
+            id: 'archived-creation', homeId, custodianAccountId: 'account-a',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Old build box', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' },
+            allocation: 'confirmed-absent', creationState: 'active', desired: 'delete', desiredWhen: 'now',
+            intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            enrolledMachineId: 'retained-enrollment', archivedAt: 1,
+        };
+        const homes = await serveAccountHomes({
+            homes: [{ key: 'a', serverUrl: 'https://overview-machines.test', serverIdentityId: homeId, accountId: 'account-a' }],
+            route: request => request.path === '/v1/machines/managed/actions/list'
+                ? Response.json({ machines: request.body && typeof request.body === 'object' && 'archived' in request.body ? [archived] : [] }) : undefined,
+        });
+        try {
+            await publishMachineInventoryForTest({ serverId: homes.homes.a!.id, accountId: 'account-a' },
+                ['current', 'retained-enrollment'].map(id => createMachineFixture({ id, active: false, activeAt: 1 })));
+            const screen = await renderScreen(<OverviewMachinesSection testID="overview" />);
+            try {
+                await vi.waitFor(() => expect(screen.getTextContent()).toContain('machines.widgets.body.fleet.oneOffline'));
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            await homes.dispose();
+        }
+    });
 });
 
-describe('Settings › Overview Machines', () => {
+describe('Machine fleet without managed inventory', () => {
+    beforeEach(async () => {
+        const { serverId } = await account.restore();
+        await account.publishMachines(serverId, []);
+        const pending = createDeferred<void>();
+        releaseInventoryRead = pending.resolve;
+        // Hold unsolicited Sync census reads; the cases below exercise real store transitions.
+        account.home.answer(serverId, '/v1/machines', { respondAfter: pending.promise, body: [] });
+    });
+    afterEach(async () => {
+        releaseInventoryRead?.();
+        releaseInventoryRead = null;
+        standardCleanup();
+        clearMachineRequestReachabilityForTest();
+        await account.reset();
+    });
     it('keeps a Home-A fleet widget and its demand on A while Home B is focused', async () => {
         const homeA = getActiveServerSnapshot().serverId;
         const machines = (prefix: string) => ['one', 'two'].map(name => createMachineFixture({

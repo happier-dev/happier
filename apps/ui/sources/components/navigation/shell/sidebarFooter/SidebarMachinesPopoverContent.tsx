@@ -104,13 +104,12 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
     // What each machine publishes (plan 20): the sentence title, Needs you first, then everything else.
     const attention = useMachineAttention(model.visibleMachineGroups);
     const needsYouKeys = React.useMemo(() => new Set(selectAttentionSubjects(attention.entries).map(entry => entry.key)), [attention.entries]);
-    // The glance is about machines: archived recovery rows stay in the collection's own list; a machine
-    // listed under Needs you is not listed again below it.
-    const sections = React.useMemo(() => collection.sections.filter(section => !section.archived).map(section => needsYouKeys.size === 0 ? section : {
+    const machineCount = collection.machineCount;
+    // When the last Machine retires, keep its recovery row within reach. Needs you rows appear only once.
+    const sections = React.useMemo(() => collection.sections.filter(section => !section.archived || machineCount === 0).map(section => needsYouKeys.size === 0 ? section : {
         ...section,
         rows: section.rows.filter(row => row.kind !== 'machine' || !needsYouKeys.has(JSON.stringify([row.serverId, row.machineId]))),
-    }), [collection.sections, needsYouKeys]);
-    const machineCount = collection.machineCount;
+    }), [collection.sections, machineCount, needsYouKeys]);
     // Values are live only while the popover is open: one batched demand for the online machines it lists.
     const presenceRows = React.useMemo(() => collection.sections.filter(section => !section.archived).flatMap(section => section.rows), [collection.sections]);
     const demandKeys = React.useMemo(() => presenceRows
@@ -155,8 +154,8 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
     }, [auth.refreshFromActiveServer, router]);
 
     const signedOutGroups = model.visibleMachineGroups.filter(group => group.status === 'signedOut');
-    const loading = (model.isLoadingMachines && machineCount === 0) || collection.firstAnswerPending;
-    const empty = !loading && machineCount === 0 && signedOutGroups.length === 0;
+    const loading = (model.isLoadingMachines && collection.count === 0) || collection.firstAnswerPending;
+    const empty = !loading && collection.count === 0 && signedOutGroups.length === 0;
     const addPool = addOptions.find(option => option.id === 'pool') ?? null;
     const iconColor = theme.colors.text.secondary;
 
@@ -298,9 +297,10 @@ const MachinesPopoverSection = React.memo(function MachinesPopoverSection(props:
     const { section } = props;
     // An empty group is not drawn: the glance lists machines, not the places they could be.
     if (section.rows.length === 0) return null;
+    const title = section.archived ? t('managedCleanup.archiveTitle') : section.title;
     return (
         <>
-            {section.title || props.caption ? <CollectionListGroupLabel title={section.title ?? ''} trailing={props.caption ?? undefined} /> : null}
+            {title || props.caption ? <CollectionListGroupLabel title={title ?? ''} trailing={props.caption ?? undefined} /> : null}
             {/* A fleet-sized roster builds only the rows near its list's viewport (and the prebuild window below
                 it, so Tab always has a built row to move to); the others hold their place by height. */}
             {section.rows.map((row, index) => (

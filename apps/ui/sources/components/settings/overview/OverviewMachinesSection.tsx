@@ -35,7 +35,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 export const OverviewMachinesSection = React.memo(
   function OverviewMachinesSection(props: Readonly<{ testID: string }>) {
     const { theme } = useUnistyles();
-    const { homeLabel, status, settled, refresh, fleet, presence, needs, reportingCount, onlineCount } = useMachineFleetModel();
+    const { homeLabel, status, settled, refresh, fleet, machineCount, presence, needs, reportingCount, onlineCount } = useMachineFleetModel();
     const door = useMachinesDoor();
     const router = useRouter();
     const open = React.useCallback(
@@ -52,10 +52,10 @@ export const OverviewMachinesSection = React.memo(
     );
     const offline = presence.offline;
     const failed = status === 'error' || status === 'signedOut';
-    const reading = !failed && !settled && fleet.length === 0;
-    const summary = reading || (failed && fleet.length === 0)
+    const reading = !failed && !settled && machineCount === 0;
+    const summary = reading || (failed && machineCount === 0)
       ? null
-      : settled && fleet.length === 0
+      : settled && machineCount === 0
           ? t('machines.widgets.body.fleet.noMachines')
           // The Overview's own sentence for the machines online ("Nothing on the 2 machines online needs you."), then
           // who is offline; never a count of "calm" machines (RU2).
@@ -64,7 +64,7 @@ export const OverviewMachinesSection = React.memo(
     const tone = resolveMachineAttentionWordColor(theme.colors);
     return (
       <ItemGroup title={t('machines.widgets.machine_fleet')} description={homeLabel}>
-        {fleet.length > 0 && (failed || status === 'loading') ? (
+        {machineCount > 0 && (failed || status === 'loading') ? (
           <SurfaceFreshnessLine testID={`${props.testID}.freshness`} busy={status === 'loading'}
             reason={t(status === 'loading' ? 'machines.widgets.body.common.loading' : 'machines.widgets.body.common.readFailed')}
             action={failed ? { testID: `${props.testID}.retry`, label: t('common.retry'), onPress: refresh } : undefined} />
@@ -102,13 +102,13 @@ export const OverviewMachinesSection = React.memo(
           );
         })}
         {reading ? <SurfaceStateCard testID={`${props.testID}.loading`} kind="loading" size="line"
-          title={t('machines.widgets.body.common.loading')} /> : failed && fleet.length === 0 ? (
+          title={t('machines.widgets.body.common.loading')} /> : failed && machineCount === 0 ? (
           <SurfaceStateCard testID={`${props.testID}.error`} kind="error" size="line"
             title={t('machines.widgets.body.common.readFailed')} action={{ testID: `${props.testID}.retry`, label: t('common.retry'), onPress: refresh }} />
         ) : <Item
           testID={`${props.testID}.all`}
           title={
-            settled && fleet.length === 0
+            settled && machineCount === 0
               ? t('machines.widgets.body.fleet.addMachine')
               : t('machines.widgets.body.activity.allMachines')
           }

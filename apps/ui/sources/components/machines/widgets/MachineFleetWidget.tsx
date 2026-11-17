@@ -58,6 +58,8 @@ import { useIsMachineListSettled, useMachineListStatusForServer, useMachineListF
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { selectMachineCollectionMembership } from '@/components/settings/machines/collection/machineCollectionModel';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { useMachinesCapabilitySnapshots } from '@/updates/machineCapabilitySnapshots';
@@ -165,28 +167,36 @@ export function useMachineFleetModel(owningServerId?: string) {
   const allMachines = useMachineListForServer(serverId) ?? EMPTY_FLEET;
   // App data can arrive before this Home's machine list: until the list has been read, an empty fleet
   // means "still reading", never "no machines" (the same readiness owner as the Setup checklist).
-  const settled = useIsMachineListSettled(serverId);
-  const status = useMachineListStatusForServer(serverId);
+  const machineListSettled = useIsMachineListSettled(serverId);
+  const machineListStatus = useMachineListStatusForServer(serverId);
+  const managedServerIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
+  const managed = useManagedMachineInventory(managedServerIds, undefined, undefined, true);
+  const managedMachines = managed.machinesByServerId[serverId];
+  const membership = React.useMemo(() => managed.firstAnswerPending ? null
+    : selectMachineCollectionMembership(allMachines, managedMachines), [allMachines, managedMachines, managed.firstAnswerPending]);
+  const enrolled = React.useMemo(() => membership ? selectMachineFleet(membership.currentEnrolled) : EMPTY_FLEET, [membership]);
+  const settled = machineListSettled && !managed.firstAnswerPending;
+  const status = managed.firstAnswerPending && machineListStatus === 'idle' ? 'loading' : machineListStatus;
   const refresh = React.useCallback(() => {
     fireAndForget(sync.refreshMachines({ serverId }), { tag: 'MachineFleet.refresh' });
   }, [serverId]);
-  const nowMs = useMachinePresenceNowMs(allMachines);
+  const nowMs = useMachinePresenceNowMs(enrolled);
   const thisComputerMachineId = useThisComputerMachineId();
   const fleet = React.useMemo(() => {
-    const visible = selectMachineFleet(allMachines).map(machine => ({ machine, fleetPresence: resolveMachineFleetPresence(accountScope, machine, nowMs) }));
+    const visible = enrolled.map(machine => ({ machine, fleetPresence: resolveMachineFleetPresence(accountScope, machine, nowMs) }));
     const names = resolveMachineDisplayNames(visible.map(entry => entry.machine));
     return orderFleetMachines(visible.map(({ machine, fleetPresence }) => {
       return { key: JSON.stringify([serverId, machine.id]), serverId, machine,
         name: names.get(machine.id) ?? machine.id, fleetPresence, online: fleetPresence.online, thisComputer: machine.id === thisComputerMachineId };
     }));
-  }, [accountScope, allMachines, nowMs, reachabilityRevision, serverId, thisComputerMachineId]);
+  }, [accountScope, enrolled, nowMs, reachabilityRevision, serverId, thisComputerMachineId]);
   const attention = useMachineAttention([{ serverId, accountScope, serverName: '', status,
     machines: fleet.map((entry) => entry.machine) }]);
   const needs = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
   const needsByKey = React.useMemo(() => new Map(needs.map((entry) => [entry.key, entry])), [needs]);
   const presence = React.useMemo(() => partitionMachineFleetPresence(fleet, entry => entry.fleetPresence), [fleet]);
   // How many machines report resources and are online: the Overview summary owner's inputs (`describeFleetDescription`).
-  return { serverId, homeLabel, status, settled, refresh, fleet, presence, needs, needsByKey,
+  return { serverId, homeLabel, status, settled, refresh, fleet, machineCount: membership?.count ?? 0, presence, needs, needsByKey,
     reportingCount: attention.reportingCount, onlineCount: attention.onlineCount };
 }
 

@@ -6,7 +6,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createDeferred, createMachineFixture, createRenderCommitCounter, flushHookEffects, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
-import { useMachineCollection } from '../collection/useMachineCollection';
+import { useHomeMachineCollectionPresence, useMachineCollection } from '../collection/useMachineCollection';
 import { machineCollectionRowKey, type MachineCollectionRow } from '../collection/machineCollectionModel';
 import { upsertAndActivateServer, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
@@ -44,6 +44,59 @@ function managedUiApprovalSettings(actionIds: readonly ('machines.managed.list' 
 }
 
 describe('managed Machine inventory', () => {
+    it('keeps Home presence badges quiet through managed name edits and updates them on archival', async () => {
+        const homeId = 'srv_chrome_counts';
+        const accountId = 'owner';
+        const machine = createMachineFixture({ id: 'enrollment', active: false, activeAt: 1 });
+        let current = ManagedMachineV1Schema.parse({
+            id: 'created-machine', homeId, custodianAccountId: accountId, enrolledMachineId: machine.id,
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        });
+        const homes = await serveAccountHomes({
+            homes: [{ key: 'a', serverUrl: 'https://chrome-counts.test', serverIdentityId: homeId, accountId }],
+            route: request => {
+                if (request.path === '/v1/machines/managed/actions/get') return Response.json(current);
+                if (request.path !== '/v1/machines/managed/actions/list') return undefined;
+                const archive = Boolean(request.body && typeof request.body === 'object' && 'archived' in request.body && request.body.archived);
+                return Response.json({ machines: archive === (current.archivedAt !== undefined) ? [current] : [] });
+            },
+        });
+        const serverId = homes.homes.a!.id;
+        try {
+            await publishMachineInventoryForTest({ serverId, accountId }, [machine]);
+            const commits = createRenderCommitCounter();
+            const counts = await renderHook(() => {
+                useRenderCommitCounter(commits);
+                return useHomeMachineCollectionPresence();
+            });
+            const detail = await renderHook(() => useManagedMachineInventory([serverId], undefined, undefined, true));
+            try {
+                await waitForHomeGovernance(() => {
+                    expect(detail.getCurrent().entries[serverId]?.status).toBe('ready');
+                    expect(counts.getCurrent()).toEqual({ online: 0, offline: 1, unknown: 0 });
+                });
+                commits.reset();
+                for (const name of ['Alpha', 'Beta', 'Gamma']) {
+                    current = { ...current, launch: { ...current.launch, name } };
+                    await act(async () => publishHomeAccountChange(serverId, [current.id]));
+                    await waitForHomeGovernance(() => expect(detail.getCurrent().machinesByServerId[serverId]?.[0]?.launch.name).toBe(name));
+                }
+                expect(commits.read().renders).toBe(0);
+                current = { ...current, allocation: 'confirmed-absent', desired: 'delete', archivedAt: 1 };
+                await act(async () => publishHomeAccountChange(serverId, [current.id]));
+                await waitForHomeGovernance(() => expect(counts.getCurrent()).toEqual({ online: 0, offline: 0, unknown: 0 }));
+                expect(commits.read().renders).toBe(1);
+            } finally {
+                await detail.unmount();
+                await counts.unmount();
+            }
+        } finally {
+            await homes.dispose();
+        }
+    });
+
     it('publishes changed admitted inventory without a third output admission and rejects malformed HTTP rows', async () => {
         const homeId = 'srv_inventory_admission_cost';
         const native = defineProtocolObject(Object.fromEntries(Array.from({ length: 64 }, (_, index) =>

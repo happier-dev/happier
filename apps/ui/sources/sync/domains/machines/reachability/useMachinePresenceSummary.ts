@@ -401,6 +401,7 @@ export function createMachinePresenceSnapshotSource<T>(
     areEqual?: (left: T, right: T) => boolean,
     readDemandedInputs?: (nowMs: number) => readonly unknown[],
     previous?: Readonly<{ value: T }> | null,
+    subscribeToMembership?: (listener: () => void) => () => void,
 ) {
     const store = getStorage();
     let published = previous;
@@ -452,10 +453,13 @@ export function createMachinePresenceSnapshotSource<T>(
     const attach = (listener: () => void) => {
         const token = {};
         let inputs = readInputs(store.getState());
+        let observedMachines: ReturnType<typeof readMachines> = [];
         let stopActivity = () => {};
-        const refresh = (rebindActivity = false) => {
-            const machines = readMachines();
-            if (rebindActivity) observeActivity(machines);
+        const refresh = (rebindActivity = false, machines = readMachines()) => {
+            if (rebindActivity) {
+                observedMachines = machines;
+                observeActivity(machines);
+            }
             let nextDeadline: number | null = null;
             const nowMs = Date.now();
             for (const machine of machines) {
@@ -502,11 +506,16 @@ export function createMachinePresenceSnapshotSource<T>(
         };
         const stopHome = subscribeActiveServer(rebind);
         const stopProfiles = subscribeServerProfiles(rebind);
+        const stopMembership = subscribeToMembership?.(() => {
+            revision += 1;
+            const machines = readMachines();
+            refresh(!samePresenceInputs(observedMachines, machines), machines);
+        });
         // A request or activity may move after React's render read but before
         // subscription (or while unsubscribed). Re-sample once after attaching.
         revision += 1;
         refresh(true);
-        return () => { stopStore(); stopRequests(); stopActivity(); stopClock(); stopHome(); stopProfiles(); };
+        return () => { stopMembership?.(); stopStore(); stopRequests(); stopActivity(); stopClock(); stopHome(); stopProfiles(); };
     };
     return { getSnapshot, subscribe };
 }
@@ -519,11 +528,13 @@ export function useMachinePresenceSnapshot<T>(
     areEqual?: (left: T, right: T) => boolean,
     /** Select demanded source facts before running a more expensive projection. */
     readDemandedInputs?: (nowMs: number) => readonly unknown[],
+    subscribeToMembership?: (listener: () => void) => () => void,
 ): T {
     const store = getStorage();
     const published = React.useRef<Readonly<{ value: T }> | null>(null);
     const source = React.useMemo(() => createMachinePresenceSnapshotSource(readMachines, readSnapshot, targets,
-        areEqual, readDemandedInputs, published.current), [store, readMachines, readSnapshot, targets, areEqual, readDemandedInputs]);
+        areEqual, readDemandedInputs, published.current, subscribeToMembership),
+    [store, readMachines, readSnapshot, targets, areEqual, readDemandedInputs, subscribeToMembership]);
     const getSnapshot = React.useCallback(() => {
         const value = source.getSnapshot();
         published.current = { value };

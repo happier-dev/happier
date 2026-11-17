@@ -11,8 +11,8 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { storage, useMachinePresenceCounts } from '@/sync/domains/state/storage';
-import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { storage } from '@/sync/domains/state/storage';
+import { useMachinePresenceMembership, useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../server/sources/testkit/lightSqliteHarness';
 import { db } from '../../../../server/sources/storage/db';
 import { createMachinePresenceDeadlineOwner, resolvePresenceTimeoutConfig } from '../../../../server/sources/app/presence/timeout';
@@ -76,7 +76,7 @@ it('consumes the server deadline push as offline and transport withdrawal as unk
     storage.getState().applyMachines([createMachineFixture({ id: row.id, active: true, activeAt, presenceProtocolVersion: 1 })], true, options);
     storage.getState().markMachineListSettled(home.serverId);
     const onlineControlId = 'online-through-transport-loss';
-    const hook = await renderHook(() => ({ counts: useMachinePresenceCounts(),
+    const hook = await renderHook(() => ({ counts: useMachinePresenceMembership(home.serverId).counts,
         summary: useMachinePresenceSummary(home.serverId, row.id),
         onlineControl: useMachinePresenceSummary(home.serverId, onlineControlId) }));
     const deadlines = createMachinePresenceDeadlineOwner();

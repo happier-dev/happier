@@ -1,6 +1,6 @@
 import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 import * as React from 'react';
-import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal, type LayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
@@ -8,7 +8,7 @@ import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralS
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { useServerCredentialAccountScopeStates, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeBinding, useServerCredentialAccountScopeStates, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
@@ -482,6 +482,51 @@ export function useAdmittedManagedMachineRow(serverId: string, managedId: string
     return React.useSyncExternalStore(subscribe, snapshot, () => undefined);
 }
 
+function subscribePresentedInventory(signal: LayoutPresentationSignal, start: (presented: boolean) => (() => void) | void) {
+    let current = signal.get();
+    let stop = start(current);
+    const unsubscribe = signal.subscribe(() => {
+        if (signal.get() === current) return;
+        current = signal.get();
+        stop?.();
+        stop = start(current);
+    });
+    return () => { unsubscribe(); stop?.(); };
+}
+
+export type ManagedMachineMembershipInput = Readonly<{
+    machines: readonly ManagedMachineV1[] | undefined;
+    firstAnswerPending: boolean;
+}>;
+
+/** The collection's selected snapshots can read the shared receipt without subscribing React to the full entry. */
+export function useHomeManagedMachineMembershipSource(serverId: string | undefined) {
+    const presented = useLayoutPresentationSignal();
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
+    const homeId = serverId && getServerProfileById(serverId)?.serverIdentityId;
+    return React.useMemo(() => {
+        const demand = inventoryDemand(execute);
+        const key = inventoryKey(serverId ?? '', binding?.accountId, homeId, undefined, true);
+        const read = (): ManagedMachineMembershipInput => {
+            if (!homeId || !binding?.isCurrent()) {
+                return { machines: undefined, firstAnswerPending: Boolean(homeId && resolution.kind === 'resolving') };
+            }
+            const reader = demand.readers.get(key);
+            const live = reader?.isCurrent() ? reader.get() : undefined;
+            const lifetime = live ? null : captureActiveServerAccountScopeLifetime();
+            const entry = live ?? (lifetime?.isCurrent() ? demand.retained.get(lifetime)?.get(key) : undefined);
+            return { machines: entry?.machines,
+                firstAnswerPending: entry?.asOf === undefined && (!entry || entry.status === 'loading') };
+        };
+        const subscribe = (listener: () => void) => subscribePresentedInventory(presented, visible => {
+            if (!visible || !serverId || !homeId || !binding?.isCurrent()) return;
+            const reader = getInventoryReader(serverId, binding.accountId, homeId, undefined, true, execute);
+            return reader.subscribe(binding, listener);
+        });
+        return { read, subscribe };
+    }, [binding, homeId, presented, resolution.kind, serverId]);
+}
+
 /** A demanded projection of the canonical server inventory, with no persisted UI resource state. */
 export function useManagedMachineInventory<TExecute extends InventoryExecute = FrontDoorActionExecute>(serverIds: readonly string[], managedId?: string,
     requestedExecuteAction?: TExecute, includeArchived = false, enrolledMachineId?: string) {
@@ -527,15 +572,7 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
             // Entry updates are projections, not new demand. Only binding/target changes reacquire a reader.
             // eslint-disable-next-line react-hooks/exhaustive-deps
         };
-        let current = presentedSignal.get();
-        let stop = start(current);
-        const unsubscribe = presentedSignal.subscribe(() => {
-            if (presentedSignal.get() === current) return;
-            current = presentedSignal.get();
-            stop?.();
-            stop = start(current);
-        });
-        return () => { unsubscribe(); stop?.(); };
+        return subscribePresentedInventory(presentedSignal, start);
     }, [bindings, ids, managedId, includeArchived, enrolledMachineId, executeAction, presentedSignal]);
 
     const currentEntries = React.useMemo(() => {

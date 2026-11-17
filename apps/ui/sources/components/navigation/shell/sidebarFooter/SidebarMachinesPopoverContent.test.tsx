@@ -208,6 +208,20 @@ describe('SidebarMachinesPopoverContent', () => {
         expect(screen.findByTestId(`settings.machinePools.row.${HOME}.${pool.pool.id}`)).toBeTruthy();
     });
 
+    it('keeps the recovery row accessible after the last active creation moves to Archive', async () => {
+        state.groups = [{ serverId: HOME, serverName: 'Home A', accountScope: SCOPE, status: 'idle', machines: [] }];
+        state.pools = [];
+        state.source = source([]);
+        const screen = await renderPopover();
+        const row = `sidebar-machines-row-window.managed:${HOME}:${pending.id}`;
+        expect(screen.findByTestId(row)).toBeTruthy();
+        const { SidebarMachinesPopoverContent } = await import('./SidebarMachinesPopoverContent');
+        state.managed = { [HOME]: [{ ...pending, allocation: 'confirmed-absent', desired: 'delete', archivedAt: 1 }] };
+        await screen.update(<SidebarMachinesPopoverContent close={() => {}} maxHeight={520} />);
+        expect(screen.findByTestId(row)).toBeTruthy();
+        expect(await labels(screen)).toContain('managedCleanup.archiveTitle');
+    });
+
     it("says what each machine is doing from the Activity classifier's per-machine count", async () => {
         const screen = await renderPopover();
         const { Item } = await import('@/components/ui/lists/Item');
