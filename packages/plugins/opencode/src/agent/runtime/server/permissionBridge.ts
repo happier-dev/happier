@@ -129,12 +129,9 @@ export function buildOpenCodePermissionApprovalRequest(
     subject: {
       kind: 'tool',
       name: toolName,
-      input: AgentRuntimeJsonValueSchema.parse({
-        providerSessionId: ask.providerSessionId,
-        permission: ask.permission,
-        patterns: ask.patterns,
-        ...(ask.metadata ? { metadata: ask.metadata } : {}),
-      }),
+      // The native permission envelope owns routing and reply identity. Host
+      // tool policy and presentation consume its operands, not that envelope.
+      input: AgentRuntimeJsonValueSchema.parse(ask.metadata ?? { patterns: ask.patterns }),
     },
     allowSessionPersistence: true,
     nativeChoices: {

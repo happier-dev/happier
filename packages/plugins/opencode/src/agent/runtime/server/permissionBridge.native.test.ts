@@ -13,6 +13,7 @@ import {
 } from './permissionBridge.js';
 import { normalizeOpenCodeV2PermissionRequest } from './openCodeV2Wire.js';
 import { buildOpenCodeSessionMcpProjection } from './mcpRegistration.js';
+import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 const ASK = {
   requestId: 'permission-1',
@@ -23,6 +24,12 @@ const ASK = {
 } as const;
 
 describe('OpenCode native tool approval bridge', () => {
+  it('presents native tool operands through the shared permission summary', () => {
+    const request = buildOpenCodePermissionApprovalRequest(ASK);
+    if (request.subject.kind !== 'tool') throw new Error('Expected a tool approval subject');
+    expect(formatPermissionRequestSummary({ toolName: request.subject.name, toolInput: request.subject.input }))
+      .toBe('Run: git status');
+  });
   it('translates native MCP aliases to the exact open-request server key', () => {
     const projection = buildOpenCodeSessionMcpProjection('session-a', {
       'docs.team__prod': { command: '/fixture/mcp' },
@@ -50,12 +57,7 @@ describe('OpenCode native tool approval bridge', () => {
       subject: {
         kind: 'tool',
         name: 'bash',
-        input: {
-          providerSessionId: 'provider-session-1',
-          permission: 'bash',
-          patterns: ['git status'],
-          metadata: { command: 'git status' },
-        },
+        input: { command: 'git status' },
       },
       allowSessionPersistence: true,
       nativeChoices: {
