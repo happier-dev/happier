@@ -181,20 +181,6 @@ export function DeploymentStepLogs(
     [],
   );
 
-  if (!props.readLogs || !rows.some((row) => row.log)) {
-    // A receipt that recorded no steps and no log has nothing here: the block is left out (lab d3).
-    if (steps.length === 0) return null;
-    return (
-      <ItemGroup
-        testID={props.testID}
-        title={props.title}
-        description={props.outcome ?? props.machineName}
-        surface="none"
-      >
-        <StepRows steps={steps} running={props.running} />
-      </ItemGroup>
-    );
-  }
   // A receipt with no steps and one log is that log: no row to open, nothing else to choose.
   const lone = stepless && rows.length === 1 ? rows[0]! : null;
   const download = async () => {
@@ -218,6 +204,20 @@ export function DeploymentStepLogs(
     })),
     execution: Object.fromEntries(visible.flatMap((row) => row.step ? [[row.id, stepExecution(row.step, props.running)]] : [])),
   }), [visible, renderLog, props.running]);
+  if (!props.readLogs || !rows.some((row) => row.log)) {
+    // A receipt that recorded no steps and no log has nothing here: the block is left out (lab d3).
+    if (steps.length === 0) return null;
+    return (
+      <ItemGroup
+        testID={props.testID}
+        title={props.title}
+        description={props.outcome ?? props.machineName}
+        surface="none"
+      >
+        <StepRows steps={steps} running={props.running} />
+      </ItemGroup>
+    );
+  }
   return (
     <View ref={root} style={styles.section}>
       <ItemGroup

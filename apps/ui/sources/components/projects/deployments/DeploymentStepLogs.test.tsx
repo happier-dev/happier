@@ -4,7 +4,8 @@ import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protoco
 import { projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -27,7 +28,7 @@ afterEach(() => {
 const { DeploymentStepLogs } = await import('./DeploymentStepLogs');
 
 describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', () => {
-  it('shows the platform deploy log beside a step that recorded no stage log, without a Machine', async () => {
+  it('keeps the mounted receipt readable when its Machine-less platform log arrives and disappears', async () => {
     const receipt: DeploymentReceiptDetailV1 = createDeploymentReceiptDetailV1();
     receipt.content.ownServer = undefined;
     receipt.content.platform = {
@@ -66,7 +67,18 @@ describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', (
     ] as typeof receipt.content.steps;
     const facts = projectDeploymentReceiptFactsV1(receipt);
     expect(facts.logs[0]?.reference.machineId).toBeUndefined();
-    const screen = await renderScreen(
+    const noLogFacts = projectDeploymentReceiptFactsV1({ ...receipt, content: { ...receipt.content,
+      platform: { ...receipt.content.platform, observation: { ...receipt.content.platform.observation,
+        providerDeploymentId: undefined } },
+    } });
+    expect(noLogFacts.logs).toEqual([]);
+    const readLogs: NonNullable<React.ComponentProps<typeof DeploymentStepLogs>['readLogs']> = async input => ({
+      ok: true, kind: 'build', environmentId: input.environmentId, deploymentId: input.deploymentId,
+      targetLinkId: input.targetLinkId, machineId: input.machineId, installationId: input.installationId,
+      logs: { kind: 'page', page: { sourceRevision: 'source-a', text: 'build output', truncated: false,
+        nextCursor: { sourceRevision: 'source-a', token: '12' } } },
+    });
+    const renderLogs = (currentFacts: typeof facts) => (
       <DeploymentStepLogs
         testID="logs"
         title="Deploy"
@@ -74,14 +86,22 @@ describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', (
         machineNames={{}}
         machineId={undefined}
         steps={receipt.content.steps}
-        facts={facts}
+        facts={currentFacts}
         running={false}
         serverId="home-a"
-        readLogs={null}
+        readLogs={readLogs}
         fileStem="deploy"
-      />,
+      />
     );
+    const screen = await renderScreen(renderLogs(noLogFacts));
+    expect(screen.getTextContent()).toContain('Build');
+    expect(screen.findByTestId('logs.toolbar')).toBeNull();
+    await screen.update(renderLogs(facts));
     // The recorded step keeps its row; the platform's Machine-less operation log no longer crashes the dedupe.
     expect(screen.getTextContent()).toContain('Build');
+    expect(screen.findByTestId('logs.toolbar')).not.toBeNull();
+    await screen.update(renderLogs(noLogFacts));
+    expect(screen.getTextContent()).toContain('Build');
+    expect(screen.findByTestId('logs.toolbar')).toBeNull();
   });
 });
