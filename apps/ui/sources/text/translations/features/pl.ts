@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "Usługi do zatrzymania",
     "writerReviewRequired": "Nie udało się zidentyfikować usług zapisujących u źródła. Sprawdź usługi i ich stan, a potem spróbuj ponownie.",
     "noRunningWriter": "Uruchom usługi aplikacji, które mają używać przeniesionej bazy, a potem ponownie sprawdź przenoszenie.",
+    "noConnectedServices": "Żadna usługa w tym środowisku nie łączy się z tą bazą danych.",
     "stopped": "Już zatrzymana · pozostanie zatrzymana",
     "menu": "Przenieś na inną maszynę…",
     "title": "Przenieś na inną maszynę",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "Do",
     "run": "Uruchom przepływ przenoszenia"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "pl">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "pl">;
 
 return { deploymentMoveTranslations };
 })();

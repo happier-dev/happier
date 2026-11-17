@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "要停止的服务",
     "writerReviewRequired": "无法确定源端的写入服务。请检查源服务及其运行状态，然后重试。",
     "noRunningWriter": "请先启动应使用迁移后数据库的应用服务，然后重新检查迁移。",
+    "noConnectedServices": "此环境中没有服务连接到此数据库。",
     "stopped": "已停止 · 保持停止",
     "menu": "移至另一台机器…",
     "title": "移至另一台机器",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "目标",
     "run": "启动迁移工作流"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "zh-Hans">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "zh-Hans">;
 
 return { deploymentMoveTranslations };
 })();

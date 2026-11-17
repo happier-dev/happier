@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "Servizi da arrestare",
     "writerReviewRequired": "Non è stato possibile identificare i servizi che scrivono all’origine. Controlla i servizi e il loro stato, poi riprova.",
     "noRunningWriter": "Avvia i servizi dell’app che useranno il database spostato, poi controlla di nuovo lo spostamento.",
+    "noConnectedServices": "Nessun servizio di questo ambiente si connette a questo database.",
     "stopped": "Già arrestato · resta arrestato",
     "menu": "Sposta su un’altra macchina…",
     "title": "Sposta su un’altra macchina",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "A",
     "run": "Avvia il workflow di spostamento"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "it">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "it">;
 
 return { deploymentMoveTranslations };
 })();

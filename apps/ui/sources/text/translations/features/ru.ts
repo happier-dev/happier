@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "Службы для остановки",
     "writerReviewRequired": "Не удалось определить службы, записывающие в источник. Проверьте службы и их состояние, затем повторите попытку.",
     "noRunningWriter": "Запустите службы приложения, которые будут использовать перенесённую базу, затем проверьте перенос снова.",
+    "noConnectedServices": "Ни одна служба в этом окружении не подключается к этой базе данных.",
     "stopped": "Уже остановлена · останется остановленной",
     "menu": "Перенести на другую машину…",
     "title": "Перенести на другую машину",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "Куда",
     "run": "Запустить процесс переноса"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "ru">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "ru">;
 
 return { deploymentMoveTranslations };
 })();

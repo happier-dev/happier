@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "Serveis que s’aturaran",
     "writerReviewRequired": "No s’han pogut identificar els processos que escriuen a l’origen. Revisa els serveis i el seu estat i torna-ho a provar.",
     "noRunningWriter": "Inicia els serveis de l’aplicació que han d’utilitzar la base de dades traslladada i revisa el trasllat de nou.",
+    "noConnectedServices": "Cap servei d’aquest entorn es connecta a aquesta base de dades.",
     "stopped": "Ja aturat · continuarà aturat",
     "menu": "Mou a una altra màquina…",
     "title": "Mou a una altra màquina",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "A",
     "run": "Inicia el flux de trasllat"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "ca">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "ca">;
 
 return { deploymentMoveTranslations };
 })();

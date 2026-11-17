@@ -316,6 +316,7 @@ const deploymentMoveTranslations = {
     "writers": "Anzuhaltende Dienste",
     "writerReviewRequired": "Die schreibenden Quelldienste konnten nicht bestimmt werden. Prüfe die Dienste und ihren Laufzustand und versuche es erneut.",
     "noRunningWriter": "Starte die App-Dienste, die die verschobene Datenbank verwenden sollen, und prüfe den Umzug erneut.",
+    "noConnectedServices": "Kein Dienst in dieser Umgebung verbindet sich mit dieser Datenbank.",
     "stopped": "Bereits gestoppt · bleibt gestoppt",
     "menu": "Auf einen anderen Rechner verschieben…",
     "title": "Auf einen anderen Rechner verschieben",
@@ -326,7 +327,7 @@ const deploymentMoveTranslations = {
     "destination": "Nach",
     "run": "Umzugs-Workflow starten"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "de">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "de">;
 
 return { deploymentMoveTranslations };
 })();

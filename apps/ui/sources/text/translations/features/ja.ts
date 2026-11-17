@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "停止するサービス",
     "writerReviewRequired": "移動元の書き込みサービスを特定できませんでした。サービスと実行状態を確認してから、もう一度お試しください。",
     "noRunningWriter": "移動したデータベースを使用するアプリサービスを起動してから、移動を再確認してください。",
+    "noConnectedServices": "この環境には、このデータベースに接続するサービスがありません。",
     "stopped": "停止済み · 停止を維持",
     "menu": "別のマシンに移動…",
     "title": "別のマシンに移動",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "移動先",
     "run": "移動ワークフローを開始"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "ja">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "ja">;
 
 return { deploymentMoveTranslations };
 })();

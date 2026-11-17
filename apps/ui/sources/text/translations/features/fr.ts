@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "Services à arrêter",
     "writerReviewRequired": "Les services source qui écrivent n’ont pas pu être identifiés. Vérifiez les services et leur état, puis réessayez.",
     "noRunningWriter": "Démarrez les services de l’application qui utiliseront la base déplacée, puis vérifiez à nouveau le déplacement.",
+    "noConnectedServices": "Aucun service de cet environnement ne se connecte à cette base de données.",
     "stopped": "Déjà arrêté · reste arrêté",
     "menu": "Déplacer vers une autre machine…",
     "title": "Déplacer vers une autre machine",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "Vers",
     "run": "Démarrer le workflow de déplacement"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "fr">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "fr">;
 
 return { deploymentMoveTranslations };
 })();

@@ -322,6 +322,7 @@ const deploymentMoveTranslations = {
     "writers": "要停止的服務",
     "writerReviewRequired": "無法識別來源端的寫入服務。請檢查來源服務及其執行狀態，然後重試。",
     "noRunningWriter": "請先啟動應使用移轉後資料庫的應用程式服務，然後重新檢查移轉。",
+    "noConnectedServices": "此環境中沒有服務連線至此資料庫。",
     "stopped": "已停止 · 保持停止",
     "menu": "移至另一台機器…",
     "title": "移至另一台機器",
@@ -332,7 +333,7 @@ const deploymentMoveTranslations = {
     "destination": "目標",
     "run": "啟動移轉工作流程"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, "zh-Hant">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "zh-Hant">;
 
 return { deploymentMoveTranslations };
 })();

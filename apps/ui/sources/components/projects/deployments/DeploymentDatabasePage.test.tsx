@@ -151,6 +151,7 @@ async function renderDatabase(
     noBackup?: boolean;
     /** The Environment's Compose file is stored in Happier (shareable from Settings), not in its repository. */
     storedDefinition?: boolean;
+    databaseOnly?: boolean;
     restore?: React.ComponentProps<typeof DeploymentDatabasePage>['restore'];
     setBindings?: React.ComponentProps<typeof DeploymentDatabasePage>['setBindings'];
     /** The Environment shares the database on a private network (its saved export). */
@@ -206,10 +207,10 @@ async function renderDatabase(
       ...base.content,
       ...(input.noBackup ? { backup: undefined } : { backup }),
       ...(input.storedDefinition ? { definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
-        document: input.moveDestination
+        document: input.moveDestination && !input.databaseOnly
           ? 'services:\n  app:\n    image: shop:1\n    environment:\n      DATABASE_URL: postgres://shop:password@postgres:5432/shop\n    depends_on: [postgres]\n  postgres:\n    image: postgres:17\n'
-          : 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: input.moveDestination ? ['app', 'postgres'] : ['postgres'],
-        primaryService: input.moveDestination ? 'app' : 'postgres' } } : {}),
+          : 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: input.moveDestination && !input.databaseOnly ? ['app', 'postgres'] : ['postgres'],
+        primaryService: input.moveDestination && !input.databaseOnly ? 'app' : 'postgres' } } : {}),
       ...(input.shared ? { ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true, serviceExports: [
         { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork' as const,
           privateNetwork: 'shop-net' },
@@ -520,7 +521,8 @@ async function renderDatabase(
         ok: true,
         value: { items: [
           { environment: detail.environment, title: 'Shop database' },
-          { environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-web', revision: 4 }), title: 'Shop web' },
+          { environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-web', revision: 4,
+            serverId, projectSourceId: detail.environment.projectSourceId }), title: 'Shop web' },
           ...(input.moveDestination ? [{ environment: moved.environment, title: 'Dedicated Postgres' }] : []),
         ], nextCursor: null },
       }),
@@ -712,6 +714,27 @@ describe('Environment → Database → Workbench', () => {
 });
 
 describe('Environment → Database → Move', () => {
+  it('explains that a database-only Environment has no connected services without admitting a Move', async () => {
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const { t } = await import('@/text');
+    const view = await renderDatabase({ moveDestination: true, storedDefinition: true, databaseOnly: true });
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
+      await view.screen.pressByTestIdAsync('project-deployments.move.copy');
+      expect(await view.settle('project-deployments.move.refused')).not.toBeNull();
+      const refusal = view.screen.findAllByType(SurfaceStateCard)
+        .find(card => card.props.testID === 'project-deployments.move.refused');
+      expect(refusal?.props.diagnosticCode).toBe('no_connected_services');
+      expect(refusal?.props.reason).toBe(t('projects.deployments.move.noConnectedServices'));
+      expect(view.screen.findByTestId('project-deployments.move.save')).toBeNull();
+      expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
+    } finally { await view.dispose(); }
+  });
+
   it('uses the data owner’s single-Machine prerequisite instead of leaving other source writers running', async () => {
     const view = await renderDatabase({ moveDestination: true, storedDefinition: true, sourceMultiMachine: true });
     try {

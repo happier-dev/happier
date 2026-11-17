@@ -6,6 +6,7 @@ export const deploymentMoveTranslations = {
     "writers": "Services to stop",
     "writerReviewRequired": "The source writers could not be identified. Review the source services and their running state, then try again.",
     "noRunningWriter": "Start the app services that should use the moved database, then review Move again.",
+    "noConnectedServices": "No service in this Environment connects to this database.",
     "stopped": "Already stopped · stays stopped",
     "menu": "Move to another Machine…",
     "title": "Move to another Machine",
@@ -16,4 +17,4 @@ export const deploymentMoveTranslations = {
     "destination": "To",
     "run": "Start Move Workflow"
   },
-} satisfies Pick<Record<SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>, 'en'>;
+} satisfies Pick<Record<SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, 'en'>;

@@ -9,7 +9,7 @@ export type DatabaseMoveCutoverSelection = Readonly<{
     username: string; database: string; password: DeploymentSecretBindingSourceV1;
 }>;
 type Unavailable = Readonly<{ kind: 'unavailable';
-    reason: 'repository_definition' | 'non_machine_rewritable_dsn'; variable?: string }>;
+    reason: 'repository_definition' | 'non_machine_rewritable_dsn' | 'no_connected_services'; variable?: string }>;
 type EnvironmentPatch = NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>;
 type CutoverBindings = NonNullable<EnvironmentPatch['bindings']>;
 type CutoverPatch = Readonly<{ definition: NonNullable<EnvironmentPatch['definition']>;
@@ -89,7 +89,7 @@ export function authorDatabaseMoveCutoverPatch(content: DeploymentEnvironmentCon
         }
     }
     if (refusal) return refusal;
-    if (!rewritten) return unavailable('DATABASE_URL');
+    if (!rewritten) return { kind: 'unavailable', reason: 'no_connected_services' };
     services.delete(selection.sourceService);
     const reference = { kind: 'reference' as const, environmentId: selection.destinationEnvironmentId,
         export: selection.exportKey, via: 'auto' as const };

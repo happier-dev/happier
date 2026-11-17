@@ -141,7 +141,8 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
         reason={destinationRefusal === 'unsupported' ? deploymentActionRefusalRemedy(destinationRefusal) : undefined} /> : null}
       {refusal ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
         title={t('projects.deployments.databaseMoveUnavailable')} diagnosticCode={refusal.code} reason={refusal.variable ?? (refusal.code === 'writer_review_required' ? t('projects.deployments.move.writerReviewRequired')
-          : refusal.code === 'noRunningWriter' ? t('projects.deployments.move.noRunningWriter') : deploymentActionRefusalRemedy(refusal.code))} /> : null}
+          : refusal.code === 'noRunningWriter' ? t('projects.deployments.move.noRunningWriter')
+          : refusal.code === 'no_connected_services' ? t('projects.deployments.move.noConnectedServices') : deploymentActionRefusalRemedy(refusal.code))} /> : null}
       {setChrome ? null : footer}
     </View>
   </ListPresentationProvider>;
