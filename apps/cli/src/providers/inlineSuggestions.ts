@@ -41,7 +41,7 @@ export type ProviderInlineSuggestionDependencies = Readonly<{
   resolveSharedGateway?: ResolveSharedManagedProviderGatewayBinding;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
   openHttp?: PinnedHttpStreamTransport;
-  getServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot>;
+  getServerFeaturesSnapshot?: () => Promise<CliServerFeaturesSnapshot | undefined>;
   serverUrl?: string;
 }>;
 
