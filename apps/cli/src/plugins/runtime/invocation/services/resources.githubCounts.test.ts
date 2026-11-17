@@ -4,6 +4,7 @@ import type { Disposable } from '@happier-dev/plugin-sdk';
 import { readPluginActionReadObserver } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol';
 import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingStore } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createTargetActionHostBindingResolver, createTargetActionHostPolicyResolver } from '../../hostAccess/resolve';
 import { resolveManifestHostAccessRequests } from '../../hostAccess/manifestRequests';
@@ -81,11 +82,15 @@ describe('registered daemon GitHub count Resource', () => {
         let credentialRevision = 'csr_abcdefghijklmnopqrstuv';
         let configurationRevision = 'configuration-one';
         const materializedAccounts: string[] = [];
+        const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({ defaultModeId: 'token', modes: [{
+            id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }],
+        }] });
         const connectedOwner = createConnectedAccountPurposeBindingOwner({ store,
             selectTarget: async () => { throw new Error('Observation cannot prompt'); },
             resolveTarget: async target => {
                 if (target.kind !== 'account') throw new Error('Only exact test accounts are configured');
-                return { account: target.account, displayName, observation: { profiles: [{ ref: target.account,
+                return { account: target.account, displayName, observation: { authentication, profiles: [{ ref: target.account,
                     revisionSemantics: 'revisioned', credentialRevision, configurationRevision,
                     authenticationModeId: 'token', configurationReady: true, status: 'connected', scopes: ['repo'], displayName }] } };
             },
@@ -115,7 +120,7 @@ describe('registered daemon GitHub count Resource', () => {
             activationTargets: [{ pluginId, manifest, provenance: 'external', source: { kind: 'path' },
                 manifestPath: `${sourceSpec.locator}/plugin.json`, daemonEntryPath: null, sourceSpec }],
         });
-        const createServiceBinding = (occurrence: PluginRuntimeOccurrenceId, id: string) =>
+        const createServiceBinding = (occurrence: string, id: string) =>
             createPluginInvocationServiceBinding(occurrence, id);
         const actionRegistry = buildTargetActionInvocationRegistry({ contributes,
             targetRegistrations: [{ pluginId, occurrenceId,

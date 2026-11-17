@@ -2755,8 +2755,8 @@ describe('managed-services SVC09 owner', () => {
         ['durable keep-count below minimum', {
             durableLog: { enabled: true, keepCount: 0 },
         }],
-        ['durable keep-count above maximum', {
-            durableLog: { enabled: true, keepCount: 51 },
+        ['durable keep-count unsafe integer', {
+            durableLog: { enabled: true, keepCount: Number.MAX_SAFE_INTEGER + 1 },
         }],
     ] as const)(
         'rejects the public %s neighbor before request auth, credentials, files, allocation, or spawn',
