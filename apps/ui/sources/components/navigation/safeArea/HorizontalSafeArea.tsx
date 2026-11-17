@@ -129,7 +129,10 @@ export function ScreenSafeAreaFrame(props: Readonly<{
  */
 export function useScreenSafeAreaBackdrop(color: string): void {
     const register = React.useContext(ScreenBackdropContext)?.register;
-    React.useLayoutEffect(() => (register ? register(color) : undefined), [color, register]);
+    // A passive effect: a retained split pane suspends its body (`RetainedPanelSurface suspendWhenHidden`), which
+    // disconnects layout effects but keeps passive ones. A layout registration there unregisters and re-registers
+    // its frame's state on every retry, and maximizing a split pane spun that into an endless commit loop.
+    React.useEffect(() => (register ? register(color) : undefined), [color, register]);
 }
 
 /**
