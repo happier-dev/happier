@@ -164,7 +164,6 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
      * from the launch decision, or an already attached child).
      */
     sessionHolder?: AgentSessionHolderLaunch | null
-        | Readonly<{ kind: 'spawn'; executablePath: string; socketPath: string }>
         | Readonly<{ kind: 'adopt'; child: SessionHolderChild }>;
 }>;
 
