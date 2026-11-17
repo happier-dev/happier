@@ -21,13 +21,11 @@ describe('buildWorkflowAgentAuthoringSeed', () => {
         expect(seed.currentUiContext?.entity?.summary).toContain('workflow.validate');
     });
 
-    it('Edit shows no raw id, revision or tool name to the person; the agent context names them', () => {
-        const seed = buildWorkflowAgentAuthoringSeed({
-            kind: 'edit',
-            name: 'Morning digest',
-            definitionId: '2e17b7b7-1977-4b5b-9957-781ec43c5b54',
-            revision: { headerVersion: 4, bodyVersion: 7 },
-        });
+    it('opens Edit in the composer with a continuable lead and exact Workflow context kept out of the text', () => {
+        const scope = Object.freeze({ serverId: 'server-a', accountId: 'account-a' });
+        const draftId = '00000000-0000-4000-8000-000000000042';
+        const seed = buildWorkflowAgentAuthoringSeed({ kind: 'edit', name: 'Morning digest',
+            definitionId: '2e17b7b7-1977-4b5b-9957-781ec43c5b54', revision: { headerVersion: 4, bodyVersion: 7 } });
         expect(seed.prompt).toBe('Help me change Morning digest: ');
         expect(seed.prompt).not.toMatch(/2e17b7b7|workflow\.|revision/u);
         expect(seed.currentUiContext?.entity).toMatchObject({
@@ -35,14 +33,8 @@ describe('buildWorkflowAgentAuthoringSeed', () => {
             reference: { definitionId: '2e17b7b7-1977-4b5b-9957-781ec43c5b54', revision: { headerVersion: 4, bodyVersion: 7 } },
         });
         expect(seed.currentUiContext?.entity?.summary).toContain('workflow.definition.edit');
-    });
-
-    it('the composer opens with the lead and its trailing space, so typing continues the sentence', () => {
-        const scope = Object.freeze({ serverId: 'server-a', accountId: 'account-a' });
-        const draftId = '00000000-0000-4000-8000-000000000042';
         const outcome = seedAndOpenNewSession({
-            seed: buildWorkflowAgentAuthoringSeed({ kind: 'edit', name: 'Morning digest',
-                definitionId: '2e17b7b7-1977-4b5b-9957-781ec43c5b54', revision: { headerVersion: 4, bodyVersion: 7 } }),
+            seed,
             scope, isCurrent: () => true, navigateToNewSession: () => undefined, createDraftId: () => draftId,
         });
         expect(outcome.kind).toBe('opened');
