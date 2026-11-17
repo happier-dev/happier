@@ -249,8 +249,10 @@ test('a scope without a recorded baseline compiles its whole scope instead of re
   const result = await rollingHeadTypecheckPass({ repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state }, scope: 'apps/cli',
     compile, bootstrap: () => {}, post: () => {}, boardPaths: [], log: () => {} });
   assert.deepEqual(result.packages, ['apps/cli']);
-  assert.ok(compiled.includes('apps/cli'), `apps/cli was not compiled: ${compiled}`);
-  assert.doesNotMatch(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-skipped/u);
+  // The baseline is HEAD itself: with nothing recorded, comparing against HEAD^ costs a second full
+  // compile (apps/cli 66 min on 2026-11-17) and can't attribute anything older anyway.
+  assert.deepEqual(compiled, ['apps/cli']);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-BASELINE scope=apps\/cli /u);
 });
 
 test('apps/server, apps/cli and apps/ui are selected when the range touches the app or a package it depends on', async t => {

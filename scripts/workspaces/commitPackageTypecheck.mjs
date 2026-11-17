@@ -463,6 +463,13 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const { rowsAt } = treeTypechecker({ repo, state, env, log, compile, bootstrap });
   const headTree = treeOf(head);
   const headRows = rowsAt(headTree, packages, 'head');
+  // No recorded baseline: HEAD's own diagnostics become it. Comparing against HEAD^ would cost a second
+  // full compile (apps/cli: 66 min) for a one-commit range nobody has asked about.
+  if (!recorded) {
+    result.incomplete = packages.filter(dir => !headRows.get(dir));
+    record(result.incomplete.length ? 'INCOMPLETE' : 'BASELINE');
+    return result;
+  }
   const compared = freshBetween(git, treeOf(base), headTree, packages, rowsAt(treeOf(base), packages, 'base'), headRows);
   result.incomplete = compared.incomplete;
   result.unavailable = compared.unavailable;
