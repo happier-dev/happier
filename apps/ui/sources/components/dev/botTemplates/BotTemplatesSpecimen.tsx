@@ -16,6 +16,7 @@ import {
   createBotTemplateEditorBuffer,
   type BotTemplateSave,
 } from '@/components/sessions/bots/templates/botTemplateEditorBuffer';
+import { SavedSkillCardSpecimen } from '@/components/dev/pluginUi/SavedSkillCardSpecimen';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import {
@@ -38,7 +39,7 @@ const DRAFT_TOOL: ToolCall = {
 
 /**
  * Dev-only: the Bot template surfaces through their real components on the round-2 lab's content,
- * for side-by-side lab comparison without an Agent turn. `?frame=card|pane|page|preview|info|update|update-conflict|update-done`.
+ * for side-by-side lab comparison without an Agent turn. `?frame=card|pane|page|preview|info|update|update-conflict|update-done|saved-skill`.
  * Never linked from product surfaces; nothing here writes.
  */
 export function BotTemplatesSpecimen(
@@ -49,6 +50,15 @@ export function BotTemplatesSpecimen(
   if (frame === 'pane' || frame === 'page')
     return <EditorFrame serverId={serverId} presentation={frame} />;
   if (frame === 'preview') return <PreviewFrame serverId={serverId} />;
+  // The skill a Bot saves in its own turn, in a transcript-width column (lab r2 skills-states).
+  if (frame === 'saved-skill')
+    return (
+      <ScrollView contentContainerStyle={styles.transcript}>
+        <View style={styles.column}>
+          <SavedSkillCardSpecimen />
+        </View>
+      </ScrollView>
+    );
   if (frame === 'update' || frame === 'update-conflict' || frame === 'update-done') return <UpdateFrame key={frame} frame={frame} />;
   if (frame === 'info')
     return (

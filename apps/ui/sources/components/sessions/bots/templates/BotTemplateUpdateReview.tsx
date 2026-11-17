@@ -197,7 +197,7 @@ export function BotTemplateUpdateForm({ review, update, ready, setup, isCurrent 
                 fold into one row, and the whole resulting document waits behind its own disclosure. */}
             <ItemGroup title={t('botTemplates.instructions')} description={conflicts > 0 ? t('botTemplates.changedLinesYouEdited') : undefined}>
                 {review.instructions ? <>
-                    <TextConflictChoices title={t('botTemplates.instructions')} comparison={review.instructions.comparison} choices={instructions} onChange={setInstructions}
+                    <TextConflictChoices comparison={review.instructions.comparison} choices={instructions} onChange={setInstructions}
                         testID="bot-template-update:instructions" disabled={busy} />
                     <TakenChanges comparison={review.instructions.comparison} />
                     <Disclosure testID="bot-template-update:preview-disclosure" title={t('botTemplateRecipient.resultPreview')}>
@@ -249,8 +249,11 @@ function textOptions(both: boolean) {
         ...(both ? [{ id: 'both' as const, label: t('botTemplateRecipient.both') }] : [])];
 }
 
+const CHOICE_CONSEQUENCE = { mine: 'botTemplateRecipient.keepMineConsequence', theirs: 'botTemplateRecipient.takeTheirsConsequence',
+    both: 'botTemplateRecipient.bothConsequence' } as const satisfies Record<ThreeWayTextChoiceV1, string>;
+
 function TextConflictChoices(props: Readonly<{ comparison: ThreeWayTextComparisonV1; choices: TextChoices;
-    onChange: (choices: TextChoices) => void; testID: string; title: string; disabled: boolean }>) {
+    onChange: (choices: TextChoices) => void; testID: string; disabled: boolean }>) {
     const author = React.useContext(AuthorNameContext);
     // The line both people changed, each side by name with only their own changed words marked, then the choice.
     return <>{props.comparison.segments.filter(segment => segment.kind === 'conflict').map(segment => {
@@ -262,7 +265,8 @@ function TextConflictChoices(props: Readonly<{ comparison: ThreeWayTextCompariso
                 <DiffViewer mode="text" face="prose" oldText={segment.base} newText={segment.mine} filePath="instructions.md"
                     prose={{ by: t('botTemplateRecipient.you'), kept: choice === 'theirs' ? 'old' : null }} testID={`${props.testID}:${segment.index}:mine`} />
             </SectionContentRow>
-            <SegmentedChoiceItem title={props.title} value={choice}
+            {/* Beside the choice, what it does to this line; the section or file name above already says which document. */}
+            <SegmentedChoiceItem title={t(CHOICE_CONSEQUENCE[choice])} value={choice}
                 options={textOptions(true)} disabled={props.disabled} testIDPrefix={`${props.testID}:${segment.index}`}
                 onChange={next => props.onChange({ ...props.choices, [segment.index]: next })} />
         </React.Fragment>;
@@ -306,7 +310,9 @@ function UpdateSkill(props: Readonly<{ skill: BotTemplateUpdateDiffResultV1['ski
         : skill.status === 'added' || skill.status === 'deleted' ? [{ id: 'skip' as const, label: t('common.skip') },
             { id: 'take' as const, label: t('common.add'), disabled: !skill.canTake,
                 ...(!skill.canTake ? { unavailableReason: t('botTemplates.unavailable') } : {}) }]
-            : [{ id: 'keep' as const, label: t('capabilities.skillDetail.instructions.keepMine') }, { id: 'take' as const, label: t('capabilities.skillDetail.instructions.takeTheirs') }];
+            // An updated skill is kept whole or updated; which side of each changed line wins is asked beneath it, so this
+            // row never says "Take theirs" above a line that keeps yours.
+            : [{ id: 'keep' as const, label: t('capabilities.skillDetail.instructions.keepMine') }, { id: 'take' as const, label: t('common.update') }];
     // One row per skill inside the review's single Skills section, saying what it is for (its own front matter); a new
     // skill is that row alone, an updated one is followed by the lines that changed.
     const skillDocument = skill.files.find(file => file.path === 'SKILL.md')?.theirs;
@@ -329,23 +335,25 @@ function UpdateSkillFile(props: Readonly<{ file: SkillUpdateFileV1; choice?: Thr
     onChange: (choice: ThreeWayTextChoiceV1) => void; testID: string; hunkChoices?: TextChoices;
     onHunkChange: (choices: TextChoices) => void }>) {
     const { file } = props;
+    const author = React.useContext(AuthorNameContext);
     const binary = file.mine?.contentKind === 'binary' || file.theirs?.contentKind === 'binary';
     // A file's name heads its lines only where they ask for a choice; taken changes fold into their own row.
     const asks = file.comparison?.segments.some(segment => segment.kind === 'conflict') ?? false;
     if (file.comparison && !binary) return <>
         {asks ? <Item title={file.path} mode="info" showChevron={false} /> : null}
-        <TextConflictChoices title={file.path} comparison={file.comparison} choices={props.hunkChoices ?? {}}
+        <TextConflictChoices comparison={file.comparison} choices={props.hunkChoices ?? {}}
             onChange={props.onHunkChange} testID={props.testID} disabled={props.disabled} />
         <TakenChanges comparison={file.comparison} />
     </>;
     return <>
         <SegmentedChoiceItem title={file.path} value={props.choice ?? 'mine'} options={textOptions(false)}
             disabled={props.disabled} testIDPrefix={props.testID} onChange={props.onChange} />
+        {/* A whole file is chosen as a whole: each side by name, the author first and then You, as the changed lines read. */}
         <SectionContentRow>{binary ? <>
-            {file.mine ? <><Text variant="label" style={styles.ink}>{t('capabilities.skillDetail.instructions.yours')}</Text>
-                <BotTemplateFilePreview file={file.mine} testID={`${props.testID}:mine`} /></> : null}
-            {file.theirs ? <><Text variant="label" style={styles.ink}>{t('capabilities.skillDetail.instructions.theirs')}</Text>
+            {file.theirs ? <><Text variant="meta" style={styles.side}>{author}</Text>
                 <BotTemplateFilePreview file={file.theirs} testID={`${props.testID}:theirs`} /></> : null}
+            {file.mine ? <><Text variant="meta" style={styles.side}>{t('botTemplateRecipient.you')}</Text>
+                <BotTemplateFilePreview file={file.mine} testID={`${props.testID}:mine`} /></> : null}
         </>
             : <DiffViewer mode="text" face="prose" oldText={file.mine ? readSkillText(file.mine.contentBase64) : ''}
                 newText={file.theirs ? readSkillText(file.theirs.contentBase64) : ''} filePath={file.path} wrapLines
@@ -433,6 +441,7 @@ const styles = StyleSheet.create(theme => ({
     note: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s12 },
     noteBody: { flex: 1, minWidth: 0, gap: theme.space.s4 },
     noteBy: { color: theme.colors.text.secondary },
+    side: { color: theme.colors.text.secondary },
     // App Text carries no colour of its own here; body copy takes the theme's ink so it reads in dark.
     ink: { color: theme.colors.text.primary },
 }));

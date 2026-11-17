@@ -230,10 +230,13 @@ function GithubSection({ controller }: Readonly<{ controller: PluginPublishContr
 const NEXT_VERSION_KINDS = ['patch', 'minor', 'major'] as const;
 
 /** The next-version choice reflects the version field: the segment whose suggestion it holds, or none for a typed version. */
-function NextVersionChoice({ controller }: Readonly<{ controller: PluginPublishController }>) {
+export function PluginPublishNextVersionChoice({ controller }: Readonly<{
+    controller: Pick<PluginPublishController, 'draft' | 'pending'> & { inspection: Pick<NonNullable<PluginPublishController['inspection']>,
+        'nextVersions' | 'history'> | null } }>) {
     const version = useStore(controller.draft, state => state.fields.version);
     const next = controller.inspection?.nextVersions;
-    if (!next) return null;
+    // A bump is relative to a published version; before the first one, the version field alone says what ships.
+    if (!next || !controller.inspection?.history?.versions.length) return null;
     const active: string = NEXT_VERSION_KINDS.find(kind => next[kind] === version) ?? '';
     return <SectionContentRow><SegmentedTabBar<string> tabs={NEXT_VERSION_KINDS.map(kind => ({ id: kind, label: copy(kind) }))}
         activeTabId={active} accessibilityLabel={copy('version')} role="radiogroup" disabled={controller.pending !== null}
@@ -259,7 +262,7 @@ function VersionField({ controller }: Readonly<{ controller: PluginPublishContro
 function VersionSection({ controller }: Readonly<{ controller: PluginPublishController }>) {
     return <ItemGroup title={copy('versionAndNotes')}>
         <VersionField controller={controller} />
-        <NextVersionChoice controller={controller} />
+        <PluginPublishNextVersionChoice controller={controller} />
         <PublishField controller={controller} field="changelog" label="settingsPlugins.publish.changelog" multiline />
     </ItemGroup>;
 }

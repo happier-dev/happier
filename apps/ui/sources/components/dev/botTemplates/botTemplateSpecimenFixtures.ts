@@ -251,18 +251,26 @@ const notesBase = new TextDecoder().decode(decodeBase64(SPECIMEN_TEMPLATE_CONTEN
 const notesMine = notesBase.replaceAll('Sharing', 'Acknowledgments');
 const notesAuthor = notesBase.replaceAll('Sharing', 'Breaking changes');
 
+/** A skill's image both people replaced: binary, so it is chosen whole and shown side by side. */
+const banner = (contentBase64: string) => ({ path: 'assets/release-banner.png', contentKind: 'binary' as const, contentBase64 });
+const BANNER_BASE = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAABQCAIAAACoK28rAAAAsElEQVR42u3SQQ0AAAgDsfnEAv6/4GNpUgWXy+xBjUiAocHQYGgwNIYGQ4OhwdBgaAwNhgZDg6HB0BgaDA2GBkODoTE0GBoMDYYGQ2NoMDQYGgwNhsbQYGgwNBgaDI2hwdBgaDA0hgZDg6HB0GBoDA2GBkODocHQGBoMDYYGQ4OhMTQYGgwNhgZDY2gwNBgaDA2GxtBgaDA0GBoMjaHB0GBoMDQYGkODocHQYGgMDR0eUGgJzKgqKNkAAAAASUVORK5CYII=';
+const BANNER_MINE = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAABQCAIAAACoK28rAAAAsElEQVR42u3SAQ0AAAjDsMvDEo6RgY+nSRUsy+1AjUiAocHQYGgwNIYGQ4OhwdBgaAwNhgZDg6HB0BgaDA2GBkODoTE0GBoMDYYGQ2NoMDQYGgwNhsbQYGgwNBgaDI2hwdBgaDA0hgZDg6HB0GBoDA2GBkODocHQGBoMDYYGQ4OhMTQYGgwNhgZDY2gwNBgaDA2GxtBgaDA0GBoMjaHB0GBoMDQYGkODocHQYGgMDR0e0ZWKRXttH3YAAAAASUVORK5CYII=';
+const BANNER_AUTHOR = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAABQCAIAAACoK28rAAAAsElEQVR42u3SAQ0AAAjDsCtCGpqQio+nSRUsy9xCjUiAocHQYGgwNIYGQ4OhwdBgaAwNhgZDg6HB0BgaDA2GBkODoTE0GBoMDYYGQ2NoMDQYGgwNhsbQYGgwNBgaDI2hwdBgaDA0hgZDg6HB0GBoDA2GBkODocHQGBoMDYYGQ4OhMTQYGgwNhgZDY2gwNBgaDA2GxtBgaDA0GBoMjaHB0GBoMDQYGkODocHQYGgMDR0efp6ZZbz7cIMAAAAASUVORK5CYII=';
+/** Published two hours before the specimen loads, so the author's note reads as a real release. */
+const RELEASED_AT_MS = Date.now() - 2 * 60 * 60 * 1000;
+
 /** Same production review, with deliberately overlapping local/author edits; no mutation port. */
 export const SPECIMEN_UPDATE_REVIEW = BotTemplateUpdateDiffResultV1Schema.parse({
   sessionRef: SPECIMEN_SOURCE_SESSION,
   metadataRevision: 3,
   instance: { v: 1, source: SPECIMEN_PREVIEW.source, acceptedVersion: '1.2.0',
     acceptedBase: { serverId: 'specimen', artifactId: '00000000-0000-4000-8000-0000000000b3' },
-    skillIds: { 'release-notes': 'specimen-notes' }, mcpServerIds: {}, follow: true },
+    skillIds: { 'release-notes': 'specimen-notes', 'release-card': 'specimen-card' }, mcpServerIds: {}, follow: true },
   offer: 'available',
   acceptedSuggestions: { firstTask: SPECIMEN_TEMPLATE_CONTENT.firstTask,
     suggestedAgent: SPECIMEN_TEMPLATE_CONTENT.suggestedAgent },
-  upstream: { source: SPECIMEN_PREVIEW.source, revision: { headerVersion: 2, bodyVersion: 2 },
-    release: { ...SPECIMEN_PREVIEW.release, version: '1.3.0',
+  upstream: { source: SPECIMEN_PREVIEW.source, revision: { headerVersion: 2, bodyVersion: 2 }, presentation: SPECIMEN_PREVIEW.presentation,
+    release: { ...SPECIMEN_PREVIEW.release, version: '1.3.0', releasedAtMs: RELEASED_AT_MS,
       changelog: 'Adds breaking-change notes and migration checks. Your local acknowledgments remain yours to keep.',
       content: { ...SPECIMEN_TEMPLATE_CONTENT, instructions: { markdown: instructionAuthor },
         skills: SPECIMEN_TEMPLATE_CONTENT.skills.map(skill => skill.key === 'release-notes'
@@ -274,6 +282,9 @@ export const SPECIMEN_UPDATE_REVIEW = BotTemplateUpdateDiffResultV1Schema.parse(
       base: { path: 'SKILL.md', contentKind: 'utf8', contentBase64: text(notesBase) },
       mine: { path: 'SKILL.md', contentKind: 'utf8', contentBase64: text(notesMine) },
       theirs: { path: 'SKILL.md', contentKind: 'utf8', contentBase64: text(notesAuthor) },
-      comparison: compareThreeWayTextV1(notesBase, notesMine, notesAuthor) }] }],
+      comparison: compareThreeWayTextV1(notesBase, notesMine, notesAuthor) }] },
+  { key: 'release-card', title: 'release-card', status: 'existing', canTake: true, skillId: 'specimen-card', revision: '1',
+    files: [{ path: 'assets/release-banner.png', changed: true,
+      base: banner(BANNER_BASE), mine: banner(BANNER_MINE), theirs: banner(BANNER_AUTHOR) }] }],
   needs: { software: [], connectedAccounts: [], mcpServers: [] },
 });

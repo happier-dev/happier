@@ -15,25 +15,42 @@ const suggestionCopy = {
     'zh-Hant': '僅供參考。目前的Agent和模型不會改變。',
 } satisfies Record<SupportedLanguage, string>;
 
-/** The one promise said above every choice, and the recipient's own label beside the lines they edited (lab r2 update-whatsnew). */
+/**
+ * The one promise said above every choice, the recipient's own label beside the lines they edited, and what the chosen
+ * side does to that line, said beside the choice (lab r2 update-whatsnew).
+ */
 const reviewCopy = {
-    en: { promise: 'Your memory and your own edits are never overwritten. Only what you choose here changes.', you: 'You' },
-    fr: { promise: 'Votre mémoire et vos propres modifications ne sont jamais écrasées. Seul ce que vous choisissez ici change.', you: 'Vous' },
-    de: { promise: 'Dein Gedächtnis und deine eigenen Änderungen werden nie überschrieben. Nur was du hier auswählst, ändert sich.', you: 'Du' },
-    es: { promise: 'Tu memoria y tus propios cambios nunca se sobrescriben. Solo cambia lo que elijas aquí.', you: 'Tú' },
-    it: { promise: 'La tua memoria e le tue modifiche non vengono mai sovrascritte. Cambia solo ciò che scegli qui.', you: 'Tu' },
-    pt: { promise: 'A tua memória e as tuas alterações nunca são substituídas. Só muda o que escolheres aqui.', you: 'Tu' },
-    ca: { promise: 'La teva memòria i els teus canvis mai no se sobreescriuen. Només canvia el que triïs aquí.', you: 'Tu' },
-    ja: { promise: '記憶とあなた自身の編集が上書きされることはありません。ここで選んだものだけが変わります。', you: 'あなた' },
-    ru: { promise: 'Ваша память и ваши правки никогда не перезаписываются. Меняется только то, что вы выберете здесь.', you: 'Вы' },
-    pl: { promise: 'Twoja pamięć i Twoje zmiany nigdy nie są nadpisywane. Zmienia się tylko to, co tu wybierzesz.', you: 'Ty' },
-    'zh-Hans': { promise: '你的记忆和你自己的编辑永远不会被覆盖。只有你在这里选择的内容会改变。', you: '你' },
-    'zh-Hant': { promise: '你的記憶和你自己的編輯永遠不會被覆寫。只有你在這裡選擇的內容會改變。', you: '你' },
-} satisfies Record<SupportedLanguage, Readonly<{ promise: string; you: string }>>;
+    en: { promise: 'Your memory and your own edits are never overwritten. Only what you choose here changes.', you: 'You',
+        keepMine: 'Keep mine leaves your line exactly as it is.', takeTheirs: 'Take theirs replaces your line with the new one.', both: 'Both keeps your line and adds the new one after it.' },
+    fr: { promise: 'Votre mémoire et vos propres modifications ne sont jamais écrasées. Seul ce que vous choisissez ici change.', you: 'Vous',
+        keepMine: 'Garder la mienne laisse votre ligne telle quelle.', takeTheirs: 'Prendre la leur remplace votre ligne par la nouvelle.', both: 'Les deux garde votre ligne et ajoute la nouvelle après.' },
+    de: { promise: 'Dein Gedächtnis und deine eigenen Änderungen werden nie überschrieben. Nur was du hier auswählst, ändert sich.', you: 'Du',
+        keepMine: 'Meine behalten lässt deine Zeile genau so, wie sie ist.', takeTheirs: 'Ihre übernehmen ersetzt deine Zeile durch die neue.', both: 'Beide behält deine Zeile und fügt die neue danach ein.' },
+    es: { promise: 'Tu memoria y tus propios cambios nunca se sobrescriben. Solo cambia lo que elijas aquí.', you: 'Tú',
+        keepMine: 'Conservar la mía deja tu línea tal como está.', takeTheirs: 'Tomar la suya sustituye tu línea por la nueva.', both: 'Ambos conserva tu línea y añade la nueva después.' },
+    it: { promise: 'La tua memoria e le tue modifiche non vengono mai sovrascritte. Cambia solo ciò che scegli qui.', you: 'Tu',
+        keepMine: 'Mantieni la mia lascia la tua riga così com’è.', takeTheirs: 'Prendi la loro sostituisce la tua riga con quella nuova.', both: 'Entrambi mantiene la tua riga e aggiunge la nuova dopo.' },
+    pt: { promise: 'A tua memória e as tuas alterações nunca são substituídas. Só muda o que escolheres aqui.', you: 'Tu',
+        keepMine: 'Manter a minha deixa a tua linha tal como está.', takeTheirs: 'Usar a deles substitui a tua linha pela nova.', both: 'Ambos mantém a tua linha e acrescenta a nova a seguir.' },
+    ca: { promise: 'La teva memòria i els teus canvis mai no se sobreescriuen. Només canvia el que triïs aquí.', you: 'Tu',
+        keepMine: 'Conserva la meva deixa la teva línia tal com és.', takeTheirs: 'Pren la seva substitueix la teva línia per la nova.', both: 'Tots dos conserva la teva línia i afegeix la nova després.' },
+    ja: { promise: '記憶とあなた自身の編集が上書きされることはありません。ここで選んだものだけが変わります。', you: 'あなた',
+        keepMine: '自分のものを保持すると、あなたの行はそのまま残ります。', takeTheirs: '相手のものを採用すると、あなたの行が新しい行に置き換わります。', both: '両方を選ぶと、あなたの行を残し、その後に新しい行を追加します。' },
+    ru: { promise: 'Ваша память и ваши правки никогда не перезаписываются. Меняется только то, что вы выберете здесь.', you: 'Вы',
+        keepMine: '«Оставить моё» сохраняет вашу строку как есть.', takeTheirs: '«Взять их» заменяет вашу строку новой.', both: '«Оба» сохраняет вашу строку и добавляет новую после неё.' },
+    pl: { promise: 'Twoja pamięć i Twoje zmiany nigdy nie są nadpisywane. Zmienia się tylko to, co tu wybierzesz.', you: 'Ty',
+        keepMine: 'Zachowaj moje zostawia Twój wiersz bez zmian.', takeTheirs: 'Weź ich zastępuje Twój wiersz nowym.', both: 'Oba zachowuje Twój wiersz i dodaje nowy po nim.' },
+    'zh-Hans': { promise: '你的记忆和你自己的编辑永远不会被覆盖。只有你在这里选择的内容会改变。', you: '你',
+        keepMine: '保留我的：你的这一行保持原样。', takeTheirs: '采用他们的：用新的一行替换你的这一行。', both: '两者：保留你的这一行，并在其后加上新的一行。' },
+    'zh-Hant': { promise: '你的記憶和你自己的編輯永遠不會被覆寫。只有你在這裡選擇的內容會改變。', you: '你',
+        keepMine: '保留我的：你的這一行保持原樣。', takeTheirs: '採用他們的：用新的一行取代你的這一行。', both: '兩者：保留你的這一行，並在其後加上新的一行。' },
+} satisfies Record<SupportedLanguage, Readonly<{ promise: string; you: string; keepMine: string; takeTheirs: string; both: string }>>;
 
 function copy(words: readonly string[], available: string, review: string, language: SupportedLanguage) {
     return { reviewUpdates: words[0]!, updatesTitle: words[1]!, update: words[2]!, both: words[3]!,
-        resultPreview: words[4]!, updatePromise: reviewCopy[language].promise, you: reviewCopy[language].you, skipVersion: words[6]!, stopFollowing: words[7]!,
+        resultPreview: words[4]!, updatePromise: reviewCopy[language].promise, you: reviewCopy[language].you,
+        keepMineConsequence: reviewCopy[language].keepMine, takeTheirsConsequence: reviewCopy[language].takeTheirs,
+        bothConsequence: reviewCopy[language].both, skipVersion: words[6]!, stopFollowing: words[7]!,
         updated: words[8]!, updateFailed: words[9]!, reviewAgain: words[10]!, currentVersion: words[11]!,
         skippedVersion: words[12]!, stoppedFollowing: words[13]!, updateIdentity: words[14]!, detachedInstructions: words[15]!, appliedChanges: words[16]!, keptChanges: words[17]!, remainingChanges: words[18]!,
         availableVersion: ({ version }: { version: string }) => available.replace('{version}', version), review,
