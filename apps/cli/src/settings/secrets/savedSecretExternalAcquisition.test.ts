@@ -12,7 +12,7 @@ import { acquireSavedSecretMaterializerForOperation } from './savedSecretCatalog
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 describe('external Saved Secret operation acquisition', () => {
-  it('reads only selected distinct fields once per operation, observes rotation next time, and never reads for inline bootstrap', async () => {
+  it('acquires a recipient reference only through the requesting operation, observes rotation next time, and never reads for inline bootstrap', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'saved-secret-source-'));
     const field = join(directory, 'field');
     let nativeReads = 0;
@@ -26,7 +26,7 @@ describe('external Saved Secret operation acquisition', () => {
       source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
       scopeKey: resolveAccountSettingsScopeKeyForToken(token), settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready',
       savedSecretResources: Array.from({ length: 51 }, (_, index) => ({
-        resourceId: index === 0 ? 'selected' : `unselected-${index}`, ownerAccountId: 'owner', relationship: 'owner' as const,
+        resourceId: index === 0 ? 'selected' : `unselected-${index}`, ownerAccountId: 'owner', relationship: 'recipient' as const,
         displayName: 'Vault field', kind: 'password' as const, encryptionMode: 'plain' as const,
         revision: 1, materialStatus: 'ready' as const,
         storedContent: { t: 'plain' as const, v: { v: 2 as const, name: 'Vault field', kind: 'password' as const,

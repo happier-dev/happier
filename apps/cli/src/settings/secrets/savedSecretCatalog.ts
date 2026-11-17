@@ -348,9 +348,6 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
       || content.kind !== resource.kind) {
       return { status: 'corrupt' };
     }
-    if (content.v === 2 && content.source.kind === 'external' && inspected.relationship !== 'owner') {
-      return { status: 'forbidden' };
-    }
     return {
       status: 'ready',
       content,
