@@ -75,6 +75,67 @@ test('a packet joining a cycle whose eager read the base already had is not refu
   assert.deepEqual(commitImportCycles({ repo, base, tree }).findings, []);
 });
 
+// A cached resolution environment is seeded from the previous tree: a specifier that tree left unresolved
+// must be resolved again when the packet adds its producer (consumer committed before producer).
+test('a cached run still sees a producer that resolves an earlier missing import', async t => {
+  const { repo, write, commit } = await scratchRepo(t);
+  const cacheDir = await mkdtemp(join(tmpdir(), 'happier-import-cycles-cache-'));
+  t.after(() => rm(cacheDir, { recursive: true, force: true }));
+  await write('packages/pkg/src/index.ts', ['export const ready = true;']);
+  const empty = commit('empty');
+  await write('packages/pkg/src/a.ts', ["import { B } from './b.js';", 'export const A = 1;', 'export const AB = B;']);
+  const consumer = commit('consumer before producer');
+  assert.deepEqual(commitImportCycles({ repo, base: empty, tree: consumer, cacheDir }).findings, []);
+  await write('packages/pkg/src/b.ts', ["import { A } from './a.js';", 'export const B = 2;', 'export function readA() { return A; }']);
+  const producer = commit('producer closes the cycle');
+  const { findings } = commitImportCycles({ repo, base: consumer, tree: producer, cacheDir });
+  assert.equal(findings.length, 1);
+  assert.match(findings[0], /packages\/pkg\/src\/a\.ts:3 reads B from packages\/pkg\/src\/b\.ts while loading/);
+});
+
+// A tsconfig-only packet changes edges of modules it does not touch: retargeting `@/*` makes the unchanged
+// a.ts import lib/b.ts, which imports a.ts back while a.ts reads B at load.
+test('a packet that only retargets a tsconfig path alias into a cycle is refused', async t => {
+  const { repo, write, commit } = await scratchRepo(t);
+  const cacheDir = await mkdtemp(join(tmpdir(), 'happier-import-cycles-cache-'));
+  t.after(() => rm(cacheDir, { recursive: true, force: true }));
+  await write('packages/pkg/src/b.ts', ['export const B = 2;']);
+  await write('packages/pkg/lib/b.ts', ["import { A } from '../src/a.js';", 'export const B = 2;', 'export function readA() { return A; }']);
+  const empty = commit('leaves');
+  await write('packages/pkg/src/a.ts', ["import { B } from '@/b';", 'export const A = 1;', 'export const AB = B;']);
+  const consumer = commit('consumer through the alias');
+  assert.deepEqual(commitImportCycles({ repo, base: empty, tree: consumer, cacheDir }).findings, []);
+  await write('packages/pkg/tsconfig.json', [JSON.stringify({ compilerOptions: { module: 'esnext', moduleResolution: 'bundler',
+    baseUrl: '.', paths: { '@/*': ['./lib/*'] } }, include: ['src/**/*.ts', 'lib/**/*.ts'] })]);
+  const retarget = commit('retarget the alias');
+  const { findings } = commitImportCycles({ repo, base: consumer, tree: retarget, cacheDir });
+  assert.equal(findings.length, 1);
+  assert.match(findings[0], /packages\/pkg\/src\/a\.ts:3 reads B from packages\/pkg\/lib\/b\.ts while loading/);
+});
+
+// A manifest-only packet: retargeting an `exports` entry changes the edges of an unchanged importer.
+test('a packet that only retargets a package export into a cycle is refused', async t => {
+  const { repo, write, commit } = await scratchRepo(t);
+  const cacheDir = await mkdtemp(join(tmpdir(), 'happier-import-cycles-cache-'));
+  t.after(() => rm(cacheDir, { recursive: true, force: true }));
+  const manifest = target => [JSON.stringify({ name: '@scratch/lib', type: 'module',
+    dependencies: { '@scratch/pkg': '0.0.0' }, exports: { './b': target } })];
+  await write('packages/pkg/package.json', [JSON.stringify({ name: '@scratch/pkg', type: 'module',
+    dependencies: { '@scratch/lib': '0.0.0' }, exports: { './a': './src/a.ts' } })]);
+  await write('packages/lib/package.json', manifest('./src/b.ts'));
+  await write('packages/lib/src/b.ts', ['export const B = 2;']);
+  await write('packages/lib/src/b2.ts', ["import { A } from '@scratch/pkg/a';", 'export const B = 2;', 'export function readA() { return A; }']);
+  const leaves = commit('leaves');
+  await write('packages/pkg/src/a.ts', ["import { B } from '@scratch/lib/b';", 'export const A = 1;', 'export const AB = B;']);
+  const consumer = commit('consumer through the export');
+  assert.deepEqual(commitImportCycles({ repo, base: leaves, tree: consumer, cacheDir }).findings, []);
+  await write('packages/lib/package.json', manifest('./src/b2.ts'));
+  const retarget = commit('retarget the export');
+  const { findings } = commitImportCycles({ repo, base: consumer, tree: retarget, cacheDir });
+  assert.equal(findings.length, 1);
+  assert.match(findings[0], /packages\/pkg\/src\/a\.ts:3 reads B from packages\/lib\/src\/b2\.ts while loading/);
+});
+
 test('an eager cycle already present at the base is not attributed to a packet touching it', async t => {
   const { repo, write, commit } = await scratchRepo(t);
   await write('packages/pkg/src/a.ts', ["import { B } from './b.js';", 'export const A = 1;', 'export const AB = B;']);
