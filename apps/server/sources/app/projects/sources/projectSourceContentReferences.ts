@@ -6,6 +6,8 @@ import {
 import type { Tx } from '@/storage/inTx';
 import type { ResourceAccessLevelV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
 export interface ProjectSourceContentReference {
     readonly projectSourceId: string;
@@ -16,6 +18,19 @@ export interface ProjectSourceContentReference {
 }
 
 const contentSelect = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
+
+/** Read access never permits widening another person's setup through a Source. */
+export function mayPublishProjectSourceSetupArtifact(actorAccountId: string, artifactOwnerAccountId: string): boolean {
+    return actorAccountId === artifactOwnerAccountId;
+}
+
+/** Setup is selected by its Source id; never reverse-scan the Source JSON catalog. */
+export function projectSourceSetupContentReference(source: ProjectSourceV1): ProjectSourceContentReference | null {
+    const attachment = source.attachments?.find(item => item.purpose === 'setup');
+    return attachment?.purpose === 'setup' ? { projectSourceId: source.id, contentArtifactId: attachment.ref.artifactId,
+        contentHeaderVersion: attachment.contentRevision.headerVersion, contentBodyVersion: attachment.contentRevision.bodyVersion,
+        expectedStoredKind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } : null;
+}
 
 /** Defaults need durable write custody; deployment definitions and receipts require admin custody. */
 export function projectSourceContentTeamCustodyLevels(storedKind: string): ResourceAccessLevelV1[] {
@@ -62,7 +77,7 @@ export async function readProjectSourceContentReferencesInTx(tx: Tx,
 }
 
 export function isProjectSourceContentStoredKind(kind: string | null): boolean {
-    return kind === PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1
+    return kind === PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 || kind === PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1
         || kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 || kind === DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1
         || kind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 || kind === DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1;
 }

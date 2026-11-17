@@ -8,6 +8,7 @@ import { PromptStackEntryV1Schema } from '../prompts/library/promptStacksV1.js';
 import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { ProjectAtmosphereSchema } from '../account/settings/homeAtmosphere.js';
 import { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
+import { ProjectSetupSelectionV1Schema, ProjectSetupContentRefV1Schema } from './projectSetupV1.js';
 export { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
 
 export const PROJECT_ACCOUNT_ROWS_ROUTE_V1 = '/v1/account/project-rows' as const;
@@ -36,6 +37,8 @@ export const ProjectAccountOrganizationV1Schema = lazyDefinition(() => z.strictO
     hidden: z.optional(z.boolean()), pinned: z.optional(z.boolean()),
     label: z.optional(z.string().check(z.minLength(1), z.refine(value => value === value.trim()))),
     environmentBindings: z.optional(SecretReferenceOverlayV1Schema),
+    setupSelection: z.optional(ProjectSetupSelectionV1Schema),
+    setupContent: z.optional(ProjectSetupContentRefV1Schema),
     promptStack: z.optional(z.array(z.strictObject({ ...PromptStackEntryV1Schema.shape,
         ref: z.strictObject({ ...PromptStackEntryV1Schema.shape.ref.shape }),
     }))),

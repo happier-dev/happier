@@ -4,6 +4,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ArtifactCoarseKindV1Schema } from './artifactKindV1.js';
 import { BotTemplateVersionV1Schema } from '../bots/templates/templateVersionV1.js';
+import { ProjectSourcePublicationPatchV1Schema } from '../projects/sources/projectSourceV1.js';
 
 import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
@@ -103,6 +104,8 @@ export type ArtifactAccessRecipientCensusResponseV1 = z.infer<typeof ArtifactAcc
 
 export const ArtifactRecipientKeyEnvelopeCommitInputV1Schema = lazyZodSchema(() => z.extend(ResourceRecipientKeyEnvelopeCommitInputV1Schema, {
   artifactId: z.string().check(z.minLength(1)),
+  projectSourceId: z.optional(z.string().check(z.minLength(1))),
+  projectSourcePatch: z.optional(ProjectSourcePublicationPatchV1Schema),
   expectedProvenanceDataEncryptionKey: z.optional(z.nullable(SessionDataKeyEnvelopeBytesV1Schema)),
   recipientKeyEnvelopes: ArtifactRecipientKeyEnvelopesV1Schema,
 }));

@@ -1,10 +1,11 @@
 import type { ScmHostingRepositorySummary } from '../../scm/repositoryProvisioning.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ProjectSetupContentRevisionV1Schema } from '../projectSetupV1.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema, ScmRepositoryContainedSubdirV1Schema } from '../../scm/repositoryClone.js';
 import { AccountPrincipalRefV1Schema, PrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
-import { PromptArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
+import { PromptArtifactRefV1Schema, PromptDocArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
 import { PromptStackEntryV1Schema, PromptStackEntryAuthoringV1Schema, PromptStackSetEnabledIntentV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { readScmHostingRepositoryIdentity } from '../../scm/hostingRepositoryIdentity.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
@@ -38,11 +39,15 @@ export type ProjectSourceGrantV1 = z.infer<typeof ProjectSourceGrantV1Schema>;
 export const SourceAttachmentV1Schema = lazyZodSchema(() => z.discriminatedUnion('purpose', [
   z.strictObject({ purpose: z.literal('context'), entry: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PromptStackEntryV1Schema, { ref: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PromptArtifactRefV1Schema) })) }),
   z.strictObject({ purpose: z.literal('dashboard'), ref: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PromptArtifactRefV1Schema) }),
+  z.strictObject({ purpose: z.literal('setup'), ref: z.strictObject({ ...PromptArtifactRefV1Schema.shape, kind: z.literal('doc') }), contentRevision: ProjectSetupContentRevisionV1Schema }),
+  z.strictObject({ purpose: z.literal('onboarding_task'), ref: PromptDocArtifactRefV1Schema }),
 ]));
 export type SourceAttachmentV1 = z.infer<typeof SourceAttachmentV1Schema>;
 const SourceAttachmentAuthoringV1Schema = lazyZodSchema(() => z.discriminatedUnion('purpose', [
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SourceAttachmentV1Schema._zod.def.options[0], { entry: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PromptStackEntryAuthoringV1Schema, { ref: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PromptArtifactRefV1Schema) })) })),
   SourceAttachmentV1Schema._zod.def.options[1],
+  SourceAttachmentV1Schema._zod.def.options[2],
+  SourceAttachmentV1Schema._zod.def.options[3],
 ]));
 // Source folders use clone's containment admission, with one canonical root representation.
 const ProjectSourceSubdirV1Schema = lazyZodSchema(() => z.pipe(z.union([
@@ -70,6 +75,8 @@ export const ProjectSourceAttachmentIntentV1Schema = lazyZodSchema(() => z.union
   z.strictObject({ kind: z.literal('attach'), attachment: SourceAttachmentAuthoringV1Schema }),
   z.strictObject({ kind: z.literal('detach'), purpose: z.literal('context'), attachmentId: id }),
   z.strictObject({ kind: z.literal('detach'), purpose: z.literal('dashboard'), ref: (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(PromptArtifactRefV1Schema) }),
+  z.strictObject({ kind: z.literal('detach'), purpose: z.literal('setup'), ref: z.strictObject({ ...PromptArtifactRefV1Schema.shape, kind: z.literal('doc') }) }),
+  z.strictObject({ kind: z.literal('detach'), purpose: z.literal('onboarding_task'), ref: PromptDocArtifactRefV1Schema }),
   z.strictObject({ kind: z.literal('reorder'), attachmentId: id, beforeId: z.nullable(id) }),
   z.strictObject({ kind: z.literal('budget'), attachmentId: id, maxChars: z.nullable(z.number().check(z.int(), z.positive())) }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(PromptStackSetEnabledIntentV1Schema, { entryId: true }), { attachmentId: id })),
@@ -83,6 +90,9 @@ export const ProjectSourcePatchV1Schema = lazyZodSchema(() => z.strictObject({
   audience: z.optional(z.array(ProjectSourceGrantV1Schema)), attachment: z.optional(ProjectSourceAttachmentIntentV1Schema),
 }));
 export const ProjectSourcesUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, sourceId: id, expectedRevision: revision, patch: ProjectSourcePatchV1Schema }));
+/** Prospective sharing audience; the Source owner admits it before recipient preparation. */
+export const ProjectSourcePublicationPatchV1Schema = lazyZodSchema(() => z.pick(ProjectSourcePatchV1Schema, { owner: true, audience: true }));
+export type ProjectSourcePublicationPatchV1 = z.infer<typeof ProjectSourcePublicationPatchV1Schema>;
 export const ProjectSourcesDeleteInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, sourceId: id, expectedRevision: revision }));
 export const ProjectSourcesMoveToTeamInputV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: id, sourceId: id, expectedRevision: revision, teamId: id, requestKey: id,

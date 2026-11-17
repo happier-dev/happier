@@ -30,7 +30,7 @@ import { ArtifactCoarseKindV1Schema, decodeArtifactKindV1, type ArtifactCoarseKi
 import { resolveResourceGrantPageAccessWhere, resourceGrantAccessSqlPredicate } from '@/app/teams/resourceGrantAccess';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { artifactAccessFactsSelect, artifactGrantFacts, artifactGrantStorageAdapter, type ArtifactAccessFacts } from './artifactGrantStorageAdapter';
-import { withArtifactSourceReadersInTx } from './artifactSourceReaders';
+import { withArtifactSourceReadersInTx, readArtifactSourcePublicationReadersInTx } from './artifactSourceReaders';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import { APPROVAL_ARTIFACT_KINDS_V1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import type { DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol';
@@ -39,6 +39,8 @@ import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protoc
 import { projectAdmittedTemplateAcceptedVersionsInTx, writeAdmittedTemplateAcceptedVersionInTx } from './artifactTemplateAcceptedVersionStorage';
 
 import { publishWorkflowActionIndexChangedInTx } from '@/app/automations/automationActionIndex';
+import type { ProjectSourcePublicationPatchV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ProjectSourceContentReference } from '@/app/projects/sources/projectSourceContentReferences';
 
 export type ArtifactAccess = ResourceGrantAccess;
 
@@ -58,11 +60,12 @@ export interface ArtifactMutationTransactionGuard {
 /** Lock every pending reader before the parent, then contain its existing audience. */
 export async function admitArtifactMutationInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string }>,
     guard?: ArtifactMutationTransactionGuard,
-    options: Readonly<{ intent?: AccountAdmissionIntent; additionalGrantPrincipal?: ArtifactAccessGrantSetStorageInputV1['principal'] }> = {},
+    options: Readonly<{ intent?: AccountAdmissionIntent; additionalGrantPrincipal?: ArtifactAccessGrantSetStorageInputV1['principal'];
+        additionalAccountIds?: readonly string[] }> = {},
 ): Promise<ArtifactMutationAdmission | null> {
     const admission = guard ? await guard.admitInTx(tx, input) : { publicationGrants: [] };
     if (!admission) return null;
-    await acquireArtifactPublicationLocksInTx(tx, input.artifactId, [input.actorAccountId], {
+    await acquireArtifactPublicationLocksInTx(tx, input.artifactId, [input.actorAccountId, ...(options.additionalAccountIds ?? [])], {
         ...options,
         publicationGrants: { ownerAccountId: input.actorAccountId, principals: admission.publicationGrants.map(grant => grant.principal) },
     });
@@ -308,23 +311,23 @@ async function recipientEnvelopesInTx(tx: Tx, artifactId: string, actorAccountId
 
 /** Header lists and exact reads share access, mode and the caller's envelope projection. */
 export async function readArtifactHeaderForCallerInTx(tx: Tx, input: Readonly<{
-    actorAccountId: string; artifactId: string;
+    actorAccountId: string; artifactId: string; projectSourceId?: string;
 }>): Promise<ArtifactHeaderReadResult> {
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
         select: artifactReadAdmissionSelect(input.actorAccountId) });
-    return row ? projectArtifactAdmittedHeader((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId)
+    return row ? projectArtifactAdmittedHeader((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId, input.projectSourceId))[0]!, input.actorAccountId)
         : { ok: false, error: "artifact_not_found" };
 }
 
 /** Open only server at-rest Plain content; E2EE stays opaque with the caller's envelope. */
 export function readArtifactForCallerInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string; projection?: never;
-    admittedContent?: ArtifactContentReadAdmission }>):
+    admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string }>):
     Promise<ArtifactFullReadResult>;
 export function readArtifactForCallerInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string; projection?: 'headers';
-    admittedContent?: ArtifactContentReadAdmission }>):
+    admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string }>):
     Promise<Readonly<{ ok: true; artifact: ArtifactListItemForCaller }> | ArtifactReadFailure>;
 export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
-    actorAccountId: string; artifactId: string; projection?: 'headers'; admittedContent?: ArtifactContentReadAdmission;
+    actorAccountId: string; artifactId: string; projection?: 'headers'; admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string;
 }>): Promise<Readonly<{ ok: true; artifact: ArtifactListItemForCaller }> | ArtifactReadFailure> {
     if (input.admittedContent) {
         const { content, requesterAccountId } = input.admittedContent;
@@ -354,8 +357,12 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
         ...artifactReadAdmissionSelect(input.actorAccountId), body: input.projection !== 'headers', bodyVersion: true, provenance: true,
     } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    const header = projectArtifactAdmittedHeader((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
+    const admitted = (await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId, input.projectSourceId))[0]!;
+    const header = projectArtifactAdmittedHeader(admitted, input.actorAccountId);
     if (!header.ok) return header;
+    if (admitted.projectSourceContentReference && admitted.projectSourceContentReference.contentBodyVersion !== row.bodyVersion) {
+        return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
+    }
     const read = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, row) : projectArtifactBody(header.artifact, row);
     if (!read.ok) return read;
     const publication = await tx.publicSessionShare.findUnique({ where: { artifactId: input.artifactId }, select: { expiresAt: true } });
@@ -382,7 +389,7 @@ export async function readArtifactContentAvailabilityForCallerInTx(tx: Tx, input
 }
 
 export async function readArtifactForCaller(input: Readonly<{ actorAccountId: string; artifactId: string;
-    admittedContent?: ArtifactContentReadAdmission }>): Promise<ArtifactFullReadResult> {
+    admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string }>): Promise<ArtifactFullReadResult> {
     return await captureReadSnapshot<ArtifactFullReadResult>(
         tx => readArtifactForCallerInTx(tx, input), { transactionClass: "artifact-read" });
 }
@@ -416,10 +423,13 @@ function projectArtifactHeaderForRecipient(row: Prisma.ArtifactGetPayload<{ sele
 }
 
 function projectArtifactAdmittedHeader(row: Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactReadAdmissionSelect> }>
-    & Pick<ArtifactAccessFacts, 'sourceReaderAccounts'>, actorAccountId: string,
+    & Pick<ArtifactAccessFacts, 'sourceReaderAccounts'> & Readonly<{ projectSourceContentReference?: ProjectSourceContentReference }>, actorAccountId: string,
     recipientReadiness?: AccountRecipientEnvelopeReadiness): ArtifactHeaderReadResult {
     const access = resolveArtifactAccessFromFacts(row, actorAccountId);
     if (!access) return { ok: false, error: 'artifact_not_found' };
+    if (row.projectSourceContentReference && row.projectSourceContentReference.contentHeaderVersion !== row.headerVersion) {
+        return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
+    }
     const read = projectArtifactHeaderForRecipient(row, actorAccountId, access, recipientReadiness);
     return read.ok ? { ok: true, artifact: { ...read.artifact,
         sharedTeamIds: resolveResourceGrantTeamIdsFromFacts(artifactGrantFacts(row), actorAccountId) } } : read;
@@ -967,16 +977,23 @@ export async function removeArtifactAccessGrantInTx(tx: Tx, input: ArtifactAcces
 }
 
 /** Current audience plus verified binding and envelope state for a key-holding host. */
-export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string }>): Promise<AccessResult<ArtifactAccessRecipientCensusResponseV1>> {
+export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string;
+    projectSourceId?: string; projectSourcePatch?: ProjectSourcePublicationPatchV1 }>): Promise<AccessResult<ArtifactAccessRecipientCensusResponseV1>> {
+    if (input.projectSourcePatch && !input.projectSourceId) return { ok: false, error: 'artifact_access_forbidden' };
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId), select: {
         ...artifactAccessFactsSelect(input.actorAccountId), kind: true, dataEncryptionKey: true, provenanceDataEncryptionKey: true,
     } });
     if (!row) return { ok: false, error: "artifact_not_found" };
-    const access = resolveArtifactAccessFromFacts((await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!, input.actorAccountId);
+    const sourceReaders = input.projectSourceId ? await readArtifactSourcePublicationReadersInTx(tx, {
+        ...input, artifact: row, projectSourceId: input.projectSourceId }) : [];
+    if (!sourceReaders) return { ok: false, error: 'artifact_access_forbidden' };
+    const admitted = (await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId))[0]!;
+    const access = resolveArtifactAccessFromFacts({ ...admitted, sourceReaderAccounts: [...admitted.sourceReaderAccounts, ...sourceReaders] }, input.actorAccountId);
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!access.encryptionMode) return { ok: false, error: "artifact_content_unavailable" };
     const inspectAudience = mayInspectArtifactAudience(row.kind, access);
-    const audience = inspectAudience ? await resolveArtifactAudienceInTx(tx, input.artifactId) : [input.actorAccountId];
+    const audience = inspectAudience ? [...new Set([...await resolveArtifactAudienceInTx(tx, input.artifactId),
+        ...sourceReaders.map(reader => reader.accountId)])] : [input.actorAccountId];
     const [accounts, envelopes] = await Promise.all([
         tx.account.findMany({ where: { id: { in: audience } }, select: RECIPIENT_READINESS_SELECT, orderBy: { id: "asc" } }),
         tx.artifactKeyEnvelope.findMany({ where: { artifactId: input.artifactId,
@@ -1022,10 +1039,18 @@ function projectArtifactRecipientCensus(artifactId: string, access: ArtifactAcce
 export async function commitArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: ArtifactRecipientKeyEnvelopeCommitInputV1 & { actorAccountId: string },
     mutationGuard?: ArtifactMutationTransactionGuard,
 ): Promise<AccessResult<ArtifactRecipientKeyEnvelopeCommitResponseV1>> {
-    if (!await admitArtifactMutationInTx(tx, input, mutationGuard, { intent: 'content' })) {
+    if (input.projectSourcePatch && !input.projectSourceId) return { ok: false, error: 'artifact_access_forbidden' };
+    const sourceRow = input.projectSourceId ? await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
+        select: artifactAccessFactsSelect() }) : null;
+    const sourceReaders = input.projectSourceId && sourceRow ? await readArtifactSourcePublicationReadersInTx(tx, {
+        ...input, artifact: sourceRow, projectSourceId: input.projectSourceId }) : [];
+    if (input.projectSourceId && (!sourceRow || !sourceReaders)) return { ok: false, error: 'artifact_access_forbidden' };
+    const sourceFacts = sourceRow && sourceReaders ? artifactGrantFacts({ ...sourceRow, sourceReaderAccounts: sourceReaders }) : undefined;
+    if (!await admitArtifactMutationInTx(tx, input, mutationGuard, { intent: 'content',
+        additionalAccountIds: sourceReaders?.map(reader => reader.accountId) })) {
         return { ok: false, error: 'artifact_access_forbidden' };
     }
-    const access = await resolveArtifactAccessInTx(tx, input);
+    const access = sourceFacts ? resolveResourceGrantAccessFromFacts(sourceFacts, input.actorAccountId) : await resolveArtifactAccessInTx(tx, input);
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (access.encryptionMode === "plain") return { ok: false, error: "data_key_not_required" };
     if (access.encryptionMode !== "e2ee") return { ok: false, error: "artifact_content_unavailable" };
@@ -1051,7 +1076,7 @@ export async function commitArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: Art
             return { ok: false, error: 'artifact_invalid_recipient_envelope' };
         }
     }
-    return { ok: true, value: await applyArtifactRecipientKeyEnvelopesInTx(tx, input) };
+    return { ok: true, value: await applyArtifactRecipientKeyEnvelopesInTx(tx, input, sourceFacts) };
 }
 
 /** Both fenced commits and Account transitions revalidate recipients through this owner. */

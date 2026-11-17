@@ -45,6 +45,8 @@ import type { FastifyRequest } from 'fastify';
 import { createDeploymentCandidateArtifactMutationGuard, isDeploymentCandidatePublicationEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { ArtifactTemplateAcceptedVersionInputV1Schema, ArtifactTemplateAcceptedVersionResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
+import { ProjectSourcePublicationPatchV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+
 const DEFAULT_ARTIFACT_LIST_LIMIT = ARTIFACT_LIST_PAGE_MAX_ITEMS_V1;
 
 /** Only the authentication decorator's verified binding can carry native publication custody. */
@@ -365,6 +367,7 @@ export function artifactsRoutes(app: Fastify) {
             params: z.object({
                 id: z.string()
             }),
+            querystring: z.strictObject({ projectSourceId: z.optional(z.string().check(z.minLength(1))) }),
             response: {
                 200: ArtifactHttpReadV1Schema,
                 404: z.object({
@@ -381,6 +384,7 @@ export function artifactsRoutes(app: Fastify) {
         const { id } = request.params;
 
         const read = await readArtifactForCaller({ actorAccountId: userId, artifactId: id,
+            projectSourceId: request.query.projectSourceId,
             admittedContent: request.externalActionDeploymentChildArtifactRead });
         if (!read.ok) {
             const refusal = projectArtifactHttpReadFailure(read, userId);
@@ -439,9 +443,13 @@ export function artifactsRoutes(app: Fastify) {
     });
     app.get('/v1/artifacts/:id/access/recipients', {
         preHandler: app.authenticate,
-        schema: { params: accessParams, response: { 200: ArtifactAccessRecipientCensusResponseV1Schema, ...accessErrors } },
+        schema: { params: accessParams, querystring: z.strictObject({ projectSourceId: z.optional(z.string().check(z.minLength(1))),
+            projectSourcePatch: z.optional(z.pipe(z.pipe(z.string(), z.transform(value => {
+                try { return JSON.parse(value) as unknown; } catch { return value; }
+            })), ProjectSourcePublicationPatchV1Schema)) }), response: { 200: ArtifactAccessRecipientCensusResponseV1Schema, ...accessErrors } },
     }, async (request, reply) => {
-        const result = await readArtifactRecipientCensus({ actorAccountId: request.userId, artifactId: request.params.id });
+        const result = await readArtifactRecipientCensus({ actorAccountId: request.userId, artifactId: request.params.id,
+            projectSourceId: request.query.projectSourceId, projectSourcePatch: request.query.projectSourcePatch });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
     });
     app.post('/v1/artifacts/:id/access/key-envelopes', {

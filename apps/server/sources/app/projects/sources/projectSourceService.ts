@@ -12,6 +12,7 @@ import {
     type ProjectSourceV1, type ProjectSourceOwnerV1, type ProjectSourceGrantV1, type SourceAttachmentV1,
     type ProjectSourceAttachmentIntentV1, type ProjectSourcesFailureV1,
     type ProjectSourcesReadOutputV1, type ProjectSourcesListOutputV1, type ProjectSourcesDeleteOutputV1,
+    type ProjectSourcePublicationPatchV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { isProjectSourceAttachmentKindV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { applyPromptStackIntentV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
@@ -37,6 +38,8 @@ import {
     resolveEffectiveTeamGroupIdsForAccountInTx, EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE,
 } from '@/app/teams/groups/effectiveGroupMembership';
 import { projectSourceAccessCaptureSql, resolveProjectSourceAccessFromCapture, type ProjectSourceAccessCapture } from './projectSourceReadCapture';
+
+import { mayPublishProjectSourceSetupArtifact } from './projectSourceContentReferences';
 
 const storedAudience = createStoredReadSchema(z.array(ProjectSourceGrantV1Schema));
 type Authentication = Partial<TeamOperationAuthenticationContext>;
@@ -354,7 +357,7 @@ export async function readProjectSourceOwnerInTx(tx: Tx, sourceId: string): Prom
 function exactRef(a: SourceAttachmentV1, b: SourceAttachmentV1, serverId: string): boolean {
     if (a.purpose !== b.purpose) return false;
     if (a.purpose === 'context' && b.purpose === 'context') return a.entry.id === b.entry.id;
-    if (a.purpose !== 'dashboard' || b.purpose !== 'dashboard') return false;
+    if (a.purpose === 'context' || b.purpose === 'context' || a.purpose !== b.purpose) return false;
     return a.ref.artifactId === b.ref.artifactId && a.ref.kind === b.ref.kind
         && (a.ref.serverId ?? serverId) === (b.ref.serverId ?? serverId);
 }
@@ -364,9 +367,13 @@ async function attachAdmissionInTx(tx: Tx, actorAccountId: string, sourceServerI
     const ref = attachment.purpose === 'context' ? attachment.entry.ref : attachment.ref;
     // Qualified foreign refs are admitted by the canonical Account-side Artifact reader, like opaque E2EE kind semantics.
     // This transaction grants no document rights, and a local same-id Artifact is never a substitute for another Home.
-    if (ref.serverId !== undefined && ref.serverId !== sourceServerId) return null;
+    if (ref.serverId !== undefined && ref.serverId !== sourceServerId) return attachment.purpose === 'setup'
+        ? { ok: false, error: 'artifact_unavailable' } : null;
     const opened = await readArtifactHeaderForCallerInTx(tx, { actorAccountId, artifactId: ref.artifactId });
     if (!opened.ok) return { ok: false, error: 'artifact_unavailable' };
+    // Read custody cannot widen another person's executable content through a Source.
+    if (attachment.purpose === 'setup' && !mayPublishProjectSourceSetupArtifact(actorAccountId, opened.artifact.ownerAccountId))
+        return { ok: false, error: 'artifact_unavailable' };
     if (opened.artifact.encryptionMode === 'plain') {
         const header: unknown = decodePlainArtifactStoredContent(privacyKit.encodeBase64(opened.artifact.header));
         if (!isProjectSourceAttachmentKindV1(attachment.purpose, ref.kind, header)) return { ok: false, error: 'artifact_wrong_kind' };
@@ -382,11 +389,21 @@ async function applyAttachmentInTx(tx: Tx, actorAccountId: string, serverId: str
         if (failure) return { ok: false as const, failure };
         const existing = attachments.find(attachment => exactRef(attachment, intent.attachment, serverId));
         if (existing?.purpose === 'context' && !isDeepStrictEqual(existing, intent.attachment)) return { ok: false as const, failure: invalid() };
+        if (intent.attachment.purpose === 'onboarding_task') {
+            return { ok: true as const, attachments: existing ? attachments
+                : [...attachments.filter(item => item.purpose !== 'onboarding_task'), intent.attachment] };
+        }
+        if (intent.attachment.purpose === 'setup') {
+            return { ok: true as const, attachments: [...attachments.filter(item => item.purpose !== 'setup'), intent.attachment] };
+        }
         if (!existing) attachments.push(intent.attachment);
     } else if (intent.kind === 'detach') {
         return { ok: true as const, attachments: attachments.filter(attachment => intent.purpose === 'context'
             ? !(attachment.purpose === 'context' && attachment.entry.id === intent.attachmentId)
-            : !exactRef(attachment, { purpose: 'dashboard', ref: intent.ref }, serverId)) };
+            : !(attachment.purpose === intent.purpose && attachment.purpose !== 'context'
+                && attachment.ref.artifactId === intent.ref.artifactId
+                && attachment.ref.kind === intent.ref.kind
+                && (attachment.ref.serverId ?? serverId) === (intent.ref.serverId ?? serverId))) };
     } else {
         const index = attachments.findIndex(attachment => attachment.purpose === 'context' && attachment.entry.id === intent.attachmentId);
         const attachment = attachments[index];
@@ -458,6 +475,24 @@ export async function readProjectSourceInTx(tx: Tx, actorAccountId: string, inpu
     return loaded.ok ? { ok: true, source: loaded.source, canManage: loaded.canManage } : loaded.failure;
 }
 
+/** Source writes and key preparation admit the same prospective audience and owner. */
+export async function prepareProjectSourcePublicationInTx(tx: Tx, actorAccountId: string,
+    loaded: Readonly<{ source: ProjectSourceV1; owner: ProjectSourceOwnerV1; canManage: boolean; canManageOwner: boolean }>,
+    patch: ProjectSourcePublicationPatchV1, authentication: Authentication = {},
+): Promise<Readonly<{ ok: true; source: ProjectSourceV1; owner: ProjectSourceOwnerV1 }> | ProjectSourcesFailureV1> {
+    if (!loaded.canManage) return denied();
+    const source = loaded.source;
+    if (patch.owner && !isDeepStrictEqual(patch.owner, loaded.owner)) {
+        if (!loaded.canManageOwner || loaded.owner.kind !== 'account' || patch.owner.kind !== 'team') return denied();
+        const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, patch.audience ?? source.audience, authentication, [patch.owner]);
+        if (!admission.canManageOwner(patch.owner)) return denied();
+    }
+    if (patch.audience && !(await validateAudienceInTx(tx, actorAccountId, patch.audience, authentication, source.audience))) return denied();
+    const next = { ...source, ...(patch.owner === undefined ? {} : { owner: patch.owner }),
+        ...(patch.audience === undefined ? {} : { audience: patch.audience }) };
+    return { ok: true, source: next, owner: sourceOwner(next) };
+}
+
 /** Revision CAS protects metadata and exact attachment intents, never document rights or bytes. */
 export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, input: unknown, authentication: Authentication = {}): Promise<ProjectSourcesReadOutputV1> {
     const parsed = ProjectSourcesUpdateInputV1Schema.safeParse(input);
@@ -468,16 +503,9 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
     const source = loaded.source;
     if (source.revision !== parsed.data.expectedRevision) return { ok: false, error: 'source_conflict', current: source };
     const patch = parsed.data.patch;
-    if (patch.owner && !isDeepStrictEqual(patch.owner, loaded.owner)) {
-        // Move only transfers the actor's own Account Source to a Team; owner admission decides whose Account it is.
-        if (!loaded.canManageOwner || loaded.owner.kind !== 'account' || patch.owner.kind !== 'team') return denied();
-        const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, patch.audience ?? source.audience, authentication, [patch.owner]);
-        if (!admission.canManageOwner(patch.owner)) return denied();
-    }
-    if (patch.audience && !(await validateAudienceInTx(tx, actorAccountId, patch.audience, authentication, source.audience))) return denied();
-    const next: ProjectSourceV1 = { ...source, ...(patch.name === undefined ? {} : { name: patch.name }),
-        ...(patch.owner === undefined ? {} : { owner: patch.owner }),
-        ...(patch.audience === undefined ? {} : { audience: patch.audience }) };
+    const publication = await prepareProjectSourcePublicationInTx(tx, actorAccountId, loaded, patch, authentication);
+    if (!publication.ok) return publication;
+    const next: ProjectSourceV1 = { ...publication.source, ...(patch.name === undefined ? {} : { name: patch.name }) };
     if (patch.repository !== undefined) { delete next.repository; if (patch.repository !== null) next.repository = patch.repository; }
     if (patch.defaultRef !== undefined) { delete next.defaultRef; if (patch.defaultRef !== null) next.defaultRef = patch.defaultRef; }
     if (patch.subdir !== undefined) { delete next.subdir; if (patch.subdir !== null) next.subdir = patch.subdir; }

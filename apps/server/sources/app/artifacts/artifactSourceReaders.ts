@@ -5,10 +5,12 @@ import type { AccountStatus } from '@/storage/enums.generated';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { isProjectSourceContentStoredKind, projectSourceContentTeamCustodyLevels,
-    readProjectSourceContentReferencesInTx } from '@/app/projects/sources/projectSourceContentReferences';
+    readProjectSourceContentReferencesInTx, projectSourceSetupContentReference,
+    mayPublishProjectSourceSetupArtifact } from '@/app/projects/sources/projectSourceContentReferences';
+import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { resolveResourceGrantAccessFromFacts } from '@/app/teams/resourceGrantAccess';
 import { artifactGrantFacts, type StoredArtifactAccessFacts } from './artifactGrantStorageAdapter';
-import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ProjectSourceOwnerV1, ProjectSourcePublicationPatchV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ProjectSourceContentReference } from '@/app/projects/sources/projectSourceContentReferences';
 
 type ArtifactIdentity = StoredArtifactAccessFacts;
@@ -33,21 +35,25 @@ export function projectArtifactSourceReadersFromFacts<T extends Readonly<{ accou
     if (source.id !== reference.projectSourceId || artifact.id !== reference.contentArtifactId
         || artifact.kind !== reference.expectedStoredKind || !isProjectSourceContentStoredKind(artifact.kind)) return [];
     const grants = projectResourceGrantRows(artifact.grants);
-    const controls = owner.kind === 'team' ? grants.teamGrants.some(grant => grant.teamId === owner.teamId
+    // Setup's protected parent relation is admitted once by the attachment writer.
+    const controls = artifact.kind === PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 || (owner.kind === 'team' ? grants.teamGrants.some(grant => grant.teamId === owner.teamId
         && projectSourceContentTeamCustodyLevels(reference.expectedStoredKind).includes(grant.accessLevel)
         && grant.team.archivedAt === null)
         : owner.accountId === artifact.accountId || reference.expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1
-            && grants.accountGrants.some(grant => grant.accountId === owner.accountId && grant.accessLevel === 'admin');
+            && grants.accountGrants.some(grant => grant.accountId === owner.accountId && grant.accessLevel === 'admin'));
     return controls ? input.readers : [];
 }
 
 /** Source supplies read access only to its actual, privately held deployment content. */
-export async function withArtifactSourceReadersInTx<T extends ArtifactIdentity>(tx: Tx, rows: readonly T[], actorAccountId?: string) {
+export async function withArtifactSourceReadersInTx<T extends ArtifactIdentity>(tx: Tx, rows: readonly T[], actorAccountId?: string,
+    projectSourceId?: string,
+) {
     // Source audience adds only view access. A caller who already holds direct
     // access gains nothing, so their reads skip the reverse-reference lookup.
-    const content = rows.filter(row => isProjectSourceContentStoredKind(row.kind) && (actorAccountId === undefined
+    const content = rows.filter(row => row.kind !== PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 && isProjectSourceContentStoredKind(row.kind) && (actorAccountId === undefined
         || !resolveResourceGrantAccessFromFacts(artifactGrantFacts({ ...row, sourceReaderAccounts: [] }), actorAccountId)));
     const readersByArtifact = new Map<string, ArtifactSourceReader[]>();
+    let selectedReference: ProjectSourceContentReference | null = null;
     if (content.length) {
         const { readProjectSourcesCustodyInTx, resolveProjectSourcesAccessInTx, resolveProjectSourceAudiencesInTx }
             = await import('@/app/projects/sources/projectSourceService');
@@ -108,5 +114,39 @@ export async function withArtifactSourceReadersInTx<T extends ArtifactIdentity>(
             }));
         }
     }
-    return rows.map(row => ({ ...row, sourceReaderAccounts: readersByArtifact.get(row.id) ?? [] }));
+    if (projectSourceId && actorAccountId && rows.some(row => row.kind === PROJECT_SETUP_ARTIFACT_STORED_KIND_V1)) {
+        const { resolveProjectSourceAccessInTx } = await import('@/app/projects/sources/projectSourceService');
+        const admitted = await resolveProjectSourceAccessInTx(tx, actorAccountId, projectSourceId);
+        if (admitted.ok) {
+            const reference = projectSourceSetupContentReference(admitted.source);
+            selectedReference = reference;
+            for (const artifact of rows) if (reference && artifact.kind === PROJECT_SETUP_ARTIFACT_STORED_KIND_V1) {
+                readersByArtifact.set(artifact.id, projectArtifactSourceReadersFromFacts({ artifact, reference,
+                    admittedSource: admitted, readers: [{ accountId: actorAccountId, account: { status: 'active' as const } }] }).slice());
+            }
+        }
+    }
+    return rows.map(row => ({ ...row, sourceReaderAccounts: readersByArtifact.get(row.id) ?? [],
+        ...(selectedReference?.contentArtifactId === row.id ? { projectSourceContentReference: selectedReference } : {}) }));
+}
+
+/** The sharing owner prepares an owned draft, or content already held by the selected Source. */
+export async function readArtifactSourcePublicationReadersInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; artifact: ArtifactIdentity; projectSourceId: string; projectSourcePatch?: ProjectSourcePublicationPatchV1;
+}>): Promise<readonly ArtifactSourceReader[] | null> {
+    if (input.artifact.kind !== PROJECT_SETUP_ARTIFACT_STORED_KIND_V1) return null;
+    const { resolveProjectSourceAccessInTx, resolveProjectSourceAudiencesInTx, prepareProjectSourcePublicationInTx } = await import('@/app/projects/sources/projectSourceService');
+    const admitted = await resolveProjectSourceAccessInTx(tx, input.actorAccountId, input.projectSourceId);
+    if (!admitted.ok) return null;
+    const attached = projectSourceSetupContentReference(admitted.source);
+    if (attached?.contentArtifactId !== input.artifact.id
+        && (!admitted.canManage || !mayPublishProjectSourceSetupArtifact(input.actorAccountId, input.artifact.accountId))) return null;
+    const publication = input.projectSourcePatch
+        ? await prepareProjectSourcePublicationInTx(tx, input.actorAccountId, admitted, input.projectSourcePatch) : admitted;
+    if (!publication.ok) return null;
+    const [audience = []] = await resolveProjectSourceAudiencesInTx(tx, [publication.source]);
+    const accounts = await tx.account.findMany({ where: { id: { in: audience } }, select: { id: true, status: true } });
+    return projectArtifactSourceReadersFromFacts({ artifact: input.artifact,
+        reference: { projectSourceId: admitted.source.id, contentArtifactId: input.artifact.id, expectedStoredKind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 },
+        admittedSource: publication, readers: accounts.map(account => ({ accountId: account.id, account: { status: account.status } })) });
 }

@@ -2389,7 +2389,7 @@ Source. A changed payload or unavailable recorded row refuses instead of duplica
 Attaching requires independent current Artifact access. Plain Artifact headers
 also receive server-side kind admission; E2EE headers stay opaque and their
 kind is admitted by the Account-side Action client after its real Artifact read.
-For these attachments, Source visibility supplies no Artifact grant, key,
+For context, dashboard and suggested-task attachments, Source visibility supplies no Artifact grant, key,
 content access, or checkout permission. Private deployment content held by a
 Source has a separate parent relation: Artifact access and recipient census
 include the Source's effective audience as readers, while grant management and
@@ -2401,6 +2401,31 @@ Both leave Artifact bytes, grants, and checkout files intact. Qualified foreign 
 retain their exact Home and use the canonical Account-side Artifact reader for
 access and kind admission. The Source transaction never substitutes a same-id
 local Artifact or grants rights at either Home.
+
+The development `setup` attachment uses that protected-content parent audience,
+with an exact Source-id lookup and matching setup Artifact reference; readers do
+not reverse-scan Source JSON. Attachment admission permits the attacher's own
+Artifact, never a borrowed readable Artifact. There is currently no Artifact-to-Source
+birth producer. The Artifact sharing owner accepts the selected `projectSourceId`
+for recipient preparation before attachment, and a closed `projectSourcePatch`
+containing proposed `owner`/`audience` fields when preparing a Source move or
+audience change. The Source writer and preparation reuse the same admission.
+Preparation publishes eligible recipient envelopes without creating Artifact grants;
+Source membership alone supplies no E2EE key.
+On a Team Source, a manager who does not own the setup can widen the Source audience,
+and on Plain Accounts the new audience members can then read the setup.
+A selected read refuses unavailable content when the current Artifact head differs from the attachment's selected
+revision. Detach or Source deletion ends new parent-scoped reads while preserving
+independent Artifact access and already accepted private setup copies.
+
+The development `onboarding_task` attachment identifies a suggested first task by
+qualified prompt-document reference only. It uses the same independent Artifact
+admission and ordinary prompt read as other references; it creates no content-parent
+relationship or recipient grant. The Source writer replaces or removes that one
+suggestion through the existing attachment intent. Background prompt stacks consume
+only `context` attachments. Task content is read on explicit task display, and a
+refused prompt remains unavailable without blocking other setup resources. The
+normal New Session composer receives editable text; joining never submits it.
 
 These are development source contracts; loaded-runtime and released availability
 remain separate evidence.

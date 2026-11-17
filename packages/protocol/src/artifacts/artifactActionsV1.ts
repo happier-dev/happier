@@ -140,7 +140,10 @@ export const ArtifactBodyRevisionV1Schema = lazyZodSchema(() => (<T extends z.Zo
 
 export const ArtifactActionInputSchemasV1 = {
   'artifact.create': ArtifactCreateInputV1Schema,
-  'artifact.get': subject,
+  'artifact.get': lazyZodSchema(() => z.strictObject({ ...subject.shape,
+    /** Select the existing Source parent audience; grants no access by itself. */
+    projectSourceId: z.optional(z.string().check(z.minLength(1))),
+  })),
   'artifact.export': ArtifactExportInputV1Schema,
   'artifact.list': ArtifactListInputV1Schema,
   'artifact.update': ArtifactUpdateInputV1Schema,

@@ -6,11 +6,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import * as privacyKit from 'privacy-kit';
+import tweetnacl from 'tweetnacl';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime/server';
 import { PrismaClient as SqlitePrismaClient } from '../../../../generated/sqlite-client/index.js';
 import { applySqliteMigrations } from '../../../../scripts/prismaMigrations';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
@@ -386,6 +390,114 @@ describe('Source catalog real SQLite owner', () => {
         expect(await inTx(tx => deleteProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: foreignDetached.source.revision }))).toMatchObject({ ok: true });
         expect((await db.artifact.findUniqueOrThrow({ where: { id: b.id } })).body).toEqual(b.body);
         expect(await db.artifactGrant.count({ where: { principalKind: 'account', artifactId: b.id } })).toBe(1);
+    });
+    it('setup attachment admits the author draft and refuses a borrowed readable Artifact', async () => {
+        const [publisher, reader] = await Promise.all([account(), account()]);
+        await makeShareEligibleForTest(publisher.id, reader.id);
+        const row = await source(reader.id);
+        const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: publisher.id,
+            kind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'project_setup.v1', title: 'Setup' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1 } }) })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
+        await db.artifactGrant.create({ data: { artifactId: artifact.id, principalKind: 'account', accountId: reader.id,
+            accessLevel: 'view', createdByAccountId: publisher.id } });
+        const attachment = { purpose: 'setup', ref: { kind: 'doc', artifactId: artifact.id }, contentRevision: { headerVersion: 1, bodyVersion: 1 } };
+        const attach = (actorAccountId: string, sourceId: string, expectedRevision: number) => inTx(tx => updateProjectSourceInTx(tx, actorAccountId,
+            { serverId, sourceId, expectedRevision, patch: { attachment: { kind: 'attach', attachment } } }));
+        expect(await attach(reader.id, row.id, row.revision)).toEqual({ ok: false, error: 'artifact_unavailable' });
+        const ownSource = await source(publisher.id);
+        const preparedSource = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: ownSource.id,
+            expectedRevision: ownSource.revision,
+            patch: { audience: [{ principal: { kind: 'account', accountId: reader.id }, level: 'view' }] } }));
+        if (!preparedSource.ok) throw new Error(preparedSource.error);
+        await db.artifactGrant.deleteMany({ where: { artifactId: artifact.id } });
+        const { readArtifactRecipientCensusInTx } = await import('@/app/artifacts/artifactAccessService');
+        const preparing = { actorAccountId: publisher.id, artifactId: artifact.id, projectSourceId: ownSource.id };
+        const census = await inTx(tx => readArtifactRecipientCensusInTx(tx, preparing));
+        expect(census).toMatchObject({ ok: true, value: { recipients: expect.arrayContaining([
+            expect.objectContaining({ recipientAccountId: reader.id }),
+        ]) } });
+        const attached = await attach(publisher.id, ownSource.id, preparedSource.source.revision);
+        expect(attached).toMatchObject({ ok: true, source: { attachments: [attachment] } });
+        if (!attached.ok) throw new Error(attached.error);
+        await db.artifactGrant.deleteMany({ where: { artifactId: artifact.id } });
+        const shared = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: ownSource.id,
+            expectedRevision: attached.source.revision,
+            patch: { audience: [{ principal: { kind: 'account', accountId: reader.id }, level: 'view' }] } }));
+        expect(shared).toMatchObject({ ok: true });
+        const { readArtifactHeaderForCallerInTx } = await import('@/app/artifacts/artifactAccessService');
+        const selected = { actorAccountId: reader.id, artifactId: artifact.id, projectSourceId: ownSource.id };
+        expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, selected)))
+            .toMatchObject({ ok: true, artifact: { access: 'view' } });
+        expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, { ...selected, projectSourceId: row.id })))
+            .toEqual({ ok: false, error: 'artifact_not_found' });
+        expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, { actorAccountId: reader.id, artifactId: artifact.id })))
+            .toEqual({ ok: false, error: 'artifact_not_found' });
+    });
+    it('prepares setup recipients before attachment without grants and keeps E2EE reads key-bound', async () => {
+        const publisher = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const later = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        await makeShareEligibleForTest(publisher.id, recipient.id);
+        await makeShareEligibleForTest(publisher.id, later.id);
+        const row = await source(publisher.id);
+        const shared = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: row.id,
+            expectedRevision: row.revision, patch: { audience: [{ principal: { kind: 'account', accountId: recipient.id }, level: 'view' }] } }));
+        if (!shared.ok) throw new Error(shared.error);
+        const dataKey = tweetnacl.randomBytes(32);
+        const wrap = (publicKey: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey,
+            recipientPublicKey: publicKey, randomBytes: tweetnacl.randomBytes }));
+        const ownerKey = wrap(publisher.contentPublicKey!);
+        const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: publisher.id,
+            kind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1, header: new Uint8Array([1]), body: new Uint8Array([2]),
+            dataEncryptionKey: ownerKey, headerVersion: 1, bodyVersion: 1 } });
+        const { readArtifactRecipientCensusInTx, commitArtifactRecipientKeyEnvelopesInTx, readArtifactForCallerInTx } =
+            await import('@/app/artifacts/artifactAccessService');
+        const preparing = { actorAccountId: publisher.id, artifactId: artifact.id, projectSourceId: row.id };
+        const census = await inTx(tx => readArtifactRecipientCensusInTx(tx, preparing));
+        if (!census.ok) throw new Error(census.error);
+        const reader = census.value.recipients.find(value => value.recipientAccountId === recipient.id);
+        expect(reader).toMatchObject({ encryptedDataKey: null });
+        const proposedPatch = { audience: [{ principal: { kind: 'account' as const, accountId: later.id }, level: 'view' as const }] };
+        expect(await inTx(tx => readArtifactRecipientCensusInTx(tx, { ...preparing, projectSourcePatch: proposedPatch })))
+            .toMatchObject({ ok: true, value: { recipients: expect.arrayContaining([expect.objectContaining({ recipientAccountId: later.id })]) } });
+        if (!reader?.contentPublicKeyFingerprint) throw new Error('Missing recipient binding');
+        const selected = { actorAccountId: recipient.id, artifactId: artifact.id, projectSourceId: row.id };
+        expect(await inTx(tx => readArtifactForCallerInTx(tx, selected))).toEqual({ ok: false, error: 'artifact_not_found' });
+        const committed = await inTx(tx => commitArtifactRecipientKeyEnvelopesInTx(tx, { ...preparing,
+            expectedDataEncryptionKey: privacyKit.encodeBase64(ownerKey), recipientKeyEnvelopes: [{ recipientAccountId: recipient.id,
+                recipientContentPublicKeyFingerprint: reader.contentPublicKeyFingerprint!,
+                encryptedDataKey: privacyKit.encodeBase64(wrap(recipient.contentPublicKey!)) }] }));
+        expect(committed).toMatchObject({ ok: true, value: { appliedRecipientAccountIds: [recipient.id], skippedRecipientAccountIds: [] } });
+        const attachment = { purpose: 'setup', ref: { kind: 'doc', artifactId: artifact.id }, contentRevision: { headerVersion: 1, bodyVersion: 1 } };
+        const attached = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: row.id,
+            expectedRevision: shared.source.revision, patch: { attachment: { kind: 'attach', attachment } } }));
+        expect(attached.ok).toBe(true);
+        expect(await inTx(tx => readArtifactForCallerInTx(tx, selected))).toMatchObject({ ok: true, artifact: { access: 'view' } });
+        expect(await inTx(tx => readArtifactRecipientCensusInTx(tx, { ...selected, projectSourcePatch: proposedPatch })))
+            .toEqual({ ok: false, error: 'artifact_access_forbidden' });
+        const team = await db.team.create({ data: { name: 'Setup audience' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: publisher.id, role: 'owner' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'member' } });
+        const teamPatch = { owner: { kind: 'team' as const, teamId: team.id }, audience: [] };
+        expect(await inTx(tx => readArtifactRecipientCensusInTx(tx, { ...preparing, projectSourcePatch: teamPatch })))
+            .toMatchObject({ ok: true, value: { recipients: expect.arrayContaining([expect.objectContaining({ recipientAccountId: recipient.id })]) } });
+        const moved = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: row.id,
+            expectedRevision: attached.ok ? attached.source.revision : 0, patch: teamPatch }));
+        if (!moved.ok) throw new Error(moved.error);
+        expect(await inTx(tx => readArtifactForCallerInTx(tx, selected))).toMatchObject({ ok: true, artifact: { access: 'view' } });
+        expect(await db.artifactGrant.count({ where: { artifactId: artifact.id } })).toBe(0);
+        await db.artifact.update({ where: { id: artifact.id }, data: { bodyVersion: 2 } });
+        expect(await inTx(tx => readArtifactForCallerInTx(tx, selected))).toMatchObject({ ok: false, error: 'artifact_content_unavailable' });
+        await db.artifact.update({ where: { id: artifact.id }, data: { bodyVersion: 1 } });
+        await db.artifactKeyEnvelope.deleteMany({ where: { artifactId: artifact.id } });
+        expect(await inTx(tx => readArtifactForCallerInTx(tx, selected))).toMatchObject({ ok: false, error: 'artifact_content_unavailable' });
+        const detached = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: row.id,
+            expectedRevision: moved.source.revision,
+            patch: { attachment: { kind: 'detach', purpose: 'setup', ref: attachment.ref } } }));
+        expect(detached.ok).toBe(true);
+        expect(await inTx(tx => readArtifactForCallerInTx(tx, selected))).toEqual({ ok: false, error: 'artifact_not_found' });
     });
     it('reads stored nested extras canonically and drops them on write; malformed required fields refuse', async () => {
         const owner = await account(); const row = await source(owner.id);

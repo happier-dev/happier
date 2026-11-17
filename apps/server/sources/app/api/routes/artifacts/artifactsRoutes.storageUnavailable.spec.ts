@@ -56,4 +56,34 @@ describe('prompt preparation storage unavailability', () => {
             await app.close();
         }
     });
+
+    it.each(['{', JSON.stringify({ audience: 'team' }), JSON.stringify({ unknown: true })])(
+        'rejects a malformed Source publication patch as invalid parameters: %s', async projectSourcePatch => {
+            const app = createAuthenticatedTestApp();
+            artifactsRoutes(app);
+            try {
+                const response = await app.inject({ method: 'GET',
+                    url: `/v1/artifacts/setup/access/recipients?projectSourcePatch=${encodeURIComponent(projectSourcePatch)}`,
+                    headers: { 'x-test-user-id': 'account-1' } });
+                expect(response.statusCode).toBe(400);
+                expect(response.json()).toEqual({ error: 'invalid-params' });
+            } finally {
+                await app.close();
+            }
+        },
+    );
+
+    it('admits a valid Source publication patch to the existing storage boundary', async () => {
+        const app = createAuthenticatedTestApp();
+        artifactsRoutes(app);
+        try {
+            const response = await app.inject({ method: 'GET',
+                url: `/v1/artifacts/setup/access/recipients?projectSourceId=source&projectSourcePatch=${encodeURIComponent(JSON.stringify({ audience: [] }))}`,
+                headers: { 'x-test-user-id': 'account-1' } });
+            expect(response.statusCode).toBe(503);
+            expect(response.json()).toEqual({ error: 'database_connection_unavailable', statusCode: 503 });
+        } finally {
+            await app.close();
+        }
+    });
 });
