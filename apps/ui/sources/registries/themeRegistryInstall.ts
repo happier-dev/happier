@@ -22,28 +22,35 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
     const matches = (acquired: AcquiredRegistryTheme, listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>) =>
         acquired.item.summary.sourceId === listing.sourceId && acquired.item.summary.itemId === listing.itemId
         && (listing.version === undefined || acquired.item.summary.version === listing.version);
-    const get = async (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions): Promise<AcquiredRegistryTheme> => {
+    const acquire = async (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions): Promise<AcquiredRegistryTheme> => {
         const acquired = await deps.acquire(listing, options);
         const sourced = { ...acquired, item: { ...acquired.item, payload: { ...acquired.item.payload,
             themes: acquired.item.payload.themes.map(face => ({ ...face, document: mergeThemeProfileDocumentEdit(face.document, {
                 source: { kind: 'store', provenance: acquired.provenance, contributionId: face.key },
             }) })),
         } } };
-        opened = { acquired: sourced, expectedScope: options.expectedScope };
         return sourced;
+    };
+    const get = async (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions) => {
+        const acquired = await acquire(listing, options);
+        opened = { acquired, expectedScope: options.expectedScope };
+        return acquired;
+    };
+    const releaseOpened = (listing: ThemeRegistryItemKey, options: ThemeRegistryOperationOptions): void => {
+        if (opened && areAccountSettingsScopesEqual(opened.expectedScope, options.expectedScope) && matches(opened.acquired, listing)) opened = null;
     };
     const prepareStorePreview = (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions) =>
         opened && areAccountSettingsScopesEqual(opened.expectedScope, options.expectedScope) && matches(opened.acquired, listing)
-            ? Promise.resolve(opened.acquired) : get(listing, options);
+            ? Promise.resolve(opened.acquired) : acquire(listing, options);
     const installFaces = (input: Readonly<{
         listing: ThemeRegistryItemKey;
-        acquired?: AcquiredRegistryTheme;
+        acquired: AcquiredRegistryTheme;
         faceIds?: readonly string[];
         selectedFaceId?: string;
     }>, options: ThemeRegistryOperationOptions) => deps.withThemeProfileContext(async context => {
         const library = createThemeProfileLibrary(context);
         const source = createThemeProfileSourceAdapter(context);
-        const acquired = input.acquired ?? await prepareStorePreview(input.listing, options);
+        const acquired = input.acquired;
         const unknownFace = input.faceIds?.some(id => !acquired.item.payload.themes.some(face => face.key === id));
         if (unknownFace || input.selectedFaceId !== undefined && !acquired.item.payload.themes.some(face => face.key === input.selectedFaceId)) {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'theme_not_found' });
@@ -74,7 +81,8 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         }
         return { faces: outcomes, selection };
     }, options);
-    const install = async (input: Parameters<typeof installFaces>[0], options: ThemeRegistryOperationOptions): Promise<ThemeInstallResult> => ({ faces: (await installFaces(input, options)).faces });
+    const install = async (input: Readonly<{ listing: ThemeRegistryItemKey; faceIds?: readonly string[] }>, options: ThemeRegistryOperationOptions): Promise<ThemeInstallResult> =>
+        ({ faces: (await installFaces({ ...input, acquired: await acquire(input.listing, options) }, options)).faces });
     const keepStore = async (snapshot: ThemeTryOnSnapshot, options: ThemeRegistryOperationOptions): Promise<ThemeLibraryMutationResult> => {
         if (snapshot.origin.kind !== 'store' || !snapshot.document || snapshot.document.profile.source?.kind !== 'store') {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'theme_not_found' });
@@ -97,7 +105,7 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         }
         return { removedFaces };
     }, options);
-    return { get, prepareStorePreview, install, uninstall, keepStore };
+    return { get, releaseOpened, prepareStorePreview, install, uninstall, keepStore };
 }
 
 export type ThemeRegistryLifecycle = ReturnType<typeof createThemeRegistryLifecycle>;

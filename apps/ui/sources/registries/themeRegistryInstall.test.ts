@@ -58,50 +58,86 @@ function setup() {
         provenance: { ...listing, format: 'happier-catalog', sourceUrl: 'https://themes.example.test/catalog', ref, importedAt: 0 },
     };
     const reverted: typeof listing[] = [];
+    let upstream = acquired;
     const lifecycle = createThemeRegistryLifecycle({ withThemeProfileContext: operation => operation(context), readMode: () => 'dark',
         acquire: async (key, operation) => {
             acquisitions++;
-            return { ...acquired, item: { ...acquired.item, summary: { ...acquired.item.summary, ...key } },
-                provenance: { ...acquired.provenance, sourceId: key.sourceId, itemId: key.itemId,
+            return { ...upstream, item: { ...upstream.item, summary: { ...upstream.item.summary, ...key } },
+                provenance: { ...upstream.provenance, sourceId: key.sourceId, itemId: key.itemId,
                     ...(operation.expectedScope?.accountId === 'account-b' ? { sourceUrl: 'https://themes.example.test/account-b/catalog' } : {}) } };
         }, revertStorePreview: key => { reverted.push(key); } });
     return { lifecycle, library, rows, listing, options, failed, savedFaces, acquired, selection, reverted,
+        publishVersion: (version: string) => { upstream = { ...acquired,
+            item: { ...acquired.item, summary: { ...acquired.item.summary, version },
+                payload: { ...acquired.item.payload, version, ref: { kind: 'version', version } } },
+            provenance: { ...acquired.provenance, ref: { kind: 'version', version } } }; },
         counts: () => ({ acquisitions, selections, writes: savedFaces.length }) };
 }
 
 describe('Store theme lifecycle through the MODEL library', () => {
-    it('reuses opened content, saves every face with provenance and selects once; a repeat publishes nothing', async () => {
+    it('reuses opened content for preview, installs every face and publishes nothing on an unchanged repeat', async () => {
         const state = setup();
         const acquired = await state.lifecycle.get(state.listing, state.options);
         expect(await state.lifecycle.prepareStorePreview(state.listing, state.options)).toBe(acquired);
-        const result = await state.lifecycle.install({ listing: state.listing, acquired, selectedFaceId: 'light' }, state.options);
+        const result = await state.lifecycle.install({ listing: state.listing }, state.options);
         expect(result.faces.map(face => face.status)).toEqual(['saved', 'saved']);
-        expect(state.counts()).toEqual({ acquisitions: 1, selections: 1, writes: 2 });
-        expect(state.selection.light).not.toBeNull();
+        expect(state.counts()).toEqual({ acquisitions: 2, selections: 1, writes: 2 });
+        expect(state.selection.dark).not.toBeNull();
         for (const row of state.rows.values()) {
             expect(row.document.profile.source).toMatchObject({ kind: 'store', provenance: acquired.provenance });
             expect(row.document.raw.style).toEqual({ futurePresentation: { glow: true } });
         }
-        await state.lifecycle.install({ listing: state.listing, acquired, selectedFaceId: 'light' }, state.options);
-        expect(state.counts()).toEqual({ acquisitions: 1, selections: 1, writes: 2 });
+        await state.lifecycle.install({ listing: state.listing }, state.options);
+        expect(state.counts()).toEqual({ acquisitions: 3, selections: 1, writes: 2 });
     });
 
     it('Store Keep uses its retained package even after another listing opens', async () => {
         const state = setup();
         const acquired = await state.lifecycle.get(state.listing, state.options);
         const face = acquired.item.payload.themes[1]!;
+        state.publishVersion('2.0.0');
         await state.lifecycle.get({ sourceId: 'catalog', itemId: 'another' }, state.options);
         const kept = await state.lifecycle.keepStore({ previewRef: 'preview', document: face.document, mode: face.mode,
             origin: { kind: 'store', listing: state.listing, acquired } }, state.options);
         expect(kept.entry?.source).toMatchObject({ kind: 'store', contributionId: 'dark' });
+        expect(kept.entry?.source).toMatchObject({ provenance: { ref: { kind: 'version', version: '1.0.0' } } });
         expect(state.counts()).toEqual({ acquisitions: 2, selections: 1, writes: 2 });
         expect(kept.undo).toBeDefined();
+    });
+
+    it('explicit Install acquires the latest package after inspecting an older version', async () => {
+        const state = setup();
+        await state.lifecycle.get(state.listing, state.options);
+        state.publishVersion('2.0.0');
+        await state.lifecycle.install({ listing: state.listing }, state.options);
+        expect([...state.rows.values()].map(row => row.document.profile.source)).toMatchObject([
+            { kind: 'store', provenance: { ref: { kind: 'version', version: '2.0.0' } } },
+            { kind: 'store', provenance: { ref: { kind: 'version', version: '2.0.0' } } },
+        ]);
+        expect(state.counts().acquisitions).toBe(2);
+    });
+
+    it('closing an opened listing releases its faces while Keep retains the inspected package', async () => {
+        const state = setup();
+        const acquired = await state.lifecycle.get(state.listing, state.options);
+        const face = acquired.item.payload.themes[1]!;
+        state.lifecycle.releaseOpened({ ...state.listing, itemId: 'another' }, state.options);
+        state.lifecycle.releaseOpened(state.listing, { expectedScope: { serverId: 'server', accountId: 'account-b' } });
+        expect(await state.lifecycle.prepareStorePreview(state.listing, state.options)).toBe(acquired);
+        state.lifecycle.releaseOpened(state.listing, state.options);
+        state.publishVersion('2.0.0');
+        expect((await state.lifecycle.prepareStorePreview(state.listing, state.options)).item.payload.version).toBe('2.0.0');
+        const kept = await state.lifecycle.keepStore({ previewRef: 'preview', document: face.document, mode: face.mode,
+            origin: { kind: 'store', listing: state.listing, acquired } }, state.options);
+        expect(kept.entry?.source).toMatchObject({ kind: 'store', contributionId: 'dark',
+            provenance: { ref: { kind: 'version', version: '1.0.0' } } });
+        expect(state.counts().acquisitions).toBe(2);
     });
 
     it('reports partial failure and retries only requested failed faces without losing the saved face', async () => {
         const state = setup();
         state.failed.add('dark');
-        await expect(state.lifecycle.install({ listing: state.listing, acquired: state.acquired }, state.options)).rejects.toMatchObject({
+        await expect(state.lifecycle.install({ listing: state.listing }, state.options)).rejects.toMatchObject({
             code: 'theme_install_partial', details: { faces: [
                 { faceId: 'light', status: 'saved' }, { faceId: 'dark', status: 'failed', error: { code: 'storage_unavailable' } },
             ] },
@@ -109,10 +145,10 @@ describe('Store theme lifecycle through the MODEL library', () => {
         expect(state.rows.size).toBe(1);
         expect(state.selection.dark).toBeNull();
         state.failed.clear();
-        await state.lifecycle.install({ listing: state.listing, acquired: state.acquired, faceIds: ['dark'] }, state.options);
+        await state.lifecycle.install({ listing: state.listing, faceIds: ['dark'] }, state.options);
         expect(state.savedFaces).toEqual(['light', 'dark']);
         expect(state.rows.size).toBe(2);
-        expect(state.counts()).toEqual({ acquisitions: 0, selections: 1, writes: 2 });
+        expect(state.counts()).toEqual({ acquisitions: 2, selections: 1, writes: 2 });
     });
 
     it('preserves the previous selection when another face fails', async () => {
@@ -120,7 +156,7 @@ describe('Store theme lifecycle through the MODEL library', () => {
         const previous = { kind: 'built-in', presetId: 'premiumDark' } as const;
         await state.library.select({ mode: 'dark', reference: previous });
         state.failed.add('light');
-        await expect(state.lifecycle.install({ listing: state.listing, acquired: state.acquired, selectedFaceId: 'dark' }, state.options))
+        await expect(state.lifecycle.install({ listing: state.listing }, state.options))
             .rejects.toMatchObject({ code: 'theme_install_partial' });
         expect(state.selection.dark).toEqual(previous);
         expect(state.counts().selections).toBe(1);
@@ -129,7 +165,7 @@ describe('Store theme lifecycle through the MODEL library', () => {
 
     it('uninstalls by canonical listing provenance while preserving a user duplicate and siblings', async () => {
         const state = setup();
-        await state.lifecycle.install({ listing: state.listing, acquired: state.acquired }, state.options);
+        await state.lifecycle.install({ listing: state.listing }, state.options);
         const original = (await state.library.list()).find(entry => entry.source.kind === 'store')!;
         const duplicate = await state.library.duplicate({ reference: original.reference });
         const own = await state.library.save({ document: document('own') });
@@ -137,7 +173,7 @@ describe('Store theme lifecycle through the MODEL library', () => {
         expect(result.removedFaces).toEqual(['light', 'dark']);
         expect([...state.rows.keys()].sort()).toEqual([duplicate.entry!.id, own.entry!.id].sort());
         expect(state.reverted).toEqual([state.listing]);
-        expect(state.counts().acquisitions).toBe(0);
+        expect(state.counts().acquisitions).toBe(1);
     });
 
     it('reacquires the same listing for another Account instead of installing retained private content', async () => {
@@ -182,7 +218,7 @@ describe('Store lifecycle at the client Action host', () => {
         state.failed.clear();
         expect(await executor.execute('appearance.themes.install', { listing: state.listing, faceIds: ['dark'] }, context))
             .toMatchObject({ ok: true, result: { faces: [{ faceId: 'dark', status: 'saved' }] } });
-        expect(state.counts()).toEqual({ acquisitions: 1, selections: 1, writes: 2 });
+        expect(state.counts()).toEqual({ acquisitions: 3, selections: 1, writes: 2 });
         expect(await executor.execute('appearance.themes.uninstall', { listing: state.listing }, context))
             .toMatchObject({ ok: true, result: { removedFaces: ['light', 'dark'] } });
         expect(state.rows.size).toBe(0);
