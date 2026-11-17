@@ -1,9 +1,7 @@
 import tweetnacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 
-import {
-  computeContentPublicKeyFingerprint,
-} from '@happier-dev/protocol';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const httpBoundary = vi.hoisted(() => ({

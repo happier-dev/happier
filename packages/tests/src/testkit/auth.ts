@@ -2,10 +2,8 @@ import tweetnacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { randomBytes } from 'node:crypto';
 
-import {
-  deriveAccountMachineKeyFromRecoverySecret,
-  signAccountContentKeyBindingV1,
-} from '@happier-dev/protocol';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { fetchJson } from './http';
 import { createKeyChallengeV2SigningInput, KeyChallengeV2IssueResponseSchema } from '@happier-dev/protocol/auth/keyChallenge';

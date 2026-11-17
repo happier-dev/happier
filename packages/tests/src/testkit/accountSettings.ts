@@ -1,17 +1,20 @@
 import { randomBytes } from 'node:crypto';
 
+import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AccountSettingsPersistedObjectSchema } from '@happier-dev/protocol/account/settings/accountSettingsPersistedObject';
 import {
-  accountSettingsParse,
-  AccountSettingsPersistedObjectSchema,
   AccountSettingsV2GetResponseSchema,
   AccountSettingsV2UpdateResponseSchema,
+} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import {
   buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
   openAccountScopedBlobCiphertext,
   sealAccountScopedBlobCiphertext,
-  type AccountSettings,
   type AccountScopedCryptoMaterial,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import { fetchJson } from './http';
 

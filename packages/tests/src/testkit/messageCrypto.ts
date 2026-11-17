@@ -1,7 +1,7 @@
 import tweetnacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { randomBytes } from 'node:crypto';
-import { parseSerializedJsonValue } from '@happier-dev/protocol';
+import { parseSerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 export function encodeBase64(bytes: Uint8Array): string {
   return privacyKit.encodeBase64(Uint8Array.from(bytes));

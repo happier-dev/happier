@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-  openAccountScopedBlobCiphertext,
   parseAccountStoredContentCompatibilityHttpHeadersV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import { upsertEncryptedAccountSettingsV2, upsertPlainAccountSettingsV2 } from './accountSettings';
 

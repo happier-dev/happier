@@ -3,10 +3,10 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { encodeBase64 } from './messageCrypto';
-import {
-  createServerUrlComparableKey,
-  type HomeConnectionDescriptorV1,
-  type MachineReplacementReason,
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
+import type {
+  HomeConnectionDescriptorV1,
+  MachineReplacementReason,
 } from '@happier-dev/protocol';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import tweetnacl from 'tweetnacl';

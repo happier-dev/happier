@@ -3,10 +3,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import {
-  createServerUrlComparableKey,
-  deriveAccountMachineKeyFromRecoverySecret,
-} from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it } from 'vitest';
 
