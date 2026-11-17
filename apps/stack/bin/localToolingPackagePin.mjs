@@ -14,21 +14,25 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
  * Module URLs stay the checkout's paths, so resolution, node_modules and
  * import.meta.url are unchanged; only the bytes of a pinned module that differ
  * from HEAD are replaced by HEAD's. When HEAD moves, the controller (it has Git)
- * writes HEAD's bytes of every pinned module the checkout changed, then that
- * revision's manifest of blob ids (`manifests/<revision>.json`, written once),
- * then the small `manifest.json` pointer naming it, into `.happier-tooling-pin/`.
- * Only the pointer changes per HEAD move: a large file rewritten at every commit
- * was the most frequent Mutagen transition problem refusing worker dispatch
- * (P03-INFRA-SWEEP 2026-11-17). It also records a
- * module edited after that as it serves it. The source mirror synchronizes the
- * directory to execution hosts, whose tooling reads it without Git.
+ * writes HEAD's bytes of every pinned module the checkout changed, then HEAD's
+ * manifest of blob ids (`manifests/<digest>.json`, content-addressed, written
+ * once), then the small `manifest.json` pointer naming it, into
+ * `.happier-tooling-pin/`. The pointer changes only when HEAD's pinned blob map
+ * does: a file rewritten at every commit was the most frequent Mutagen
+ * transition problem refusing worker dispatch (P03-INFRA-SWEEP 2026-11-17), and
+ * about half of all HEAD moves change no pinned module (P03-TOOLING-4: 905
+ * revisions, 438 distinct blob maps). The controller remembers which manifest
+ * its HEAD selected in the Git directory, which is never synchronized. It also
+ * records a module edited after that as it serves it. The source mirror
+ * synchronizes the directory to execution hosts, whose tooling reads it without Git.
  *
  * `HAPPIER_STACK_TOOLING_PACKAGES=live` loads the checkout's packages instead
  * (tests, and a lane trying its own tooling edit that consumes its own
  * uncommitted package edit before committing the producer).
  */
 export const TOOLING_PIN_DIR = '.happier-tooling-pin';
-const MANIFEST_VERSION = 2;
+const MANIFEST_VERSION = 3;
+const MANIFEST_DIGEST = /^[a-f0-9]{64}$/u;
 const MODULE_EXTENSION = /\.(?:ts|tsx|mts|cts|mjs|js|cjs|json)$/u;
 const NOT_TOOLING_INPUT = /\.(?:test|spec|bench)\.|\/__tests__\/|\/fixtures\/|\/\.happier-plugin\/|^apps\/(?:ui\/sources|docs|website|desktop)\//u;
 // Blobs a running process may still need after HEAD moved; Git re-supplies them on the controller.
@@ -46,6 +50,21 @@ export function isPinnedToolingModule(path) {
 
 export function toolingPackagesMode(env = process.env) {
   return String(env.HAPPIER_STACK_TOOLING_PACKAGES ?? '').trim() === 'live' ? 'live' : 'pinned';
+}
+
+// Node accepts a synchronous load step that leaves CommonJS source to the
+// CommonJS loader (validateLoadSloppy) from these releases; tsx 4.23 moves its
+// own loader to synchronous hooks at the same releases. Before them, a
+// synchronous load hook rejects every import of a CommonJS module
+// (ERR_INVALID_RETURN_PROPERTY_VALUE, mac-host Node 22.22.1 on 2026-11-17) and
+// would run above tsx's asynchronous loader, seeing transformed output. Checked
+// against Node 22.22.2/22.22.3 and 24.11.0/24.11.1 binaries (P03-TOOLING-4).
+const SYNC_LOAD_HOOK_RELEASES = new Map([[22, [22, 3]], [24, [11, 1]], [25, [1, 0]]]);
+export function synchronousLoadHooksSupported(version = process.versions.node) {
+  const [major, minor, patch] = String(version).split('.').map(Number);
+  if (major >= 26) return true;
+  const first = SYNC_LOAD_HOOK_RELEASES.get(major);
+  return Boolean(first) && (minor > first[0] || minor === first[0] && patch >= first[1]);
 }
 
 let stackToolingPin;
@@ -83,25 +102,44 @@ function git(repoDir, args, options = {}) {
   return result.stdout;
 }
 
-/** HEAD's blob ids for every pinned module. The controller writes each revision's manifest once and moves the pointer. */
+/** HEAD's blob ids for every pinned module. The controller writes each distinct manifest once and moves the pointer only when it changes. */
 export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoDir, '.git')), refreshChanged = false }) {
   const pinDir = join(repoDir, TOOLING_PIN_DIR);
   const pointerPath = join(pinDir, 'manifest.json');
-  const revisionPath = revision => join(pinDir, 'manifests', `${revision}.json`);
-  const readRecorded = () => {
+  const manifestPath = digest => join(pinDir, 'manifests', `${digest}.json`);
+  const readManifestFile = digest => {
     try {
-      const pointer = JSON.parse(readFileSync(pointerPath, 'utf8'));
-      if (pointer?.version !== MANIFEST_VERSION || !/^[a-f0-9]{40,64}$/u.test(pointer.revision)) return null;
-      const recorded = JSON.parse(readFileSync(revisionPath(pointer.revision), 'utf8'));
-      return recorded?.revision === pointer.revision ? recorded : null;
+      if (!MANIFEST_DIGEST.test(digest)) return null;
+      const bytes = readFileSync(manifestPath(digest));
+      if (createHash('sha256').update(bytes).digest('hex') !== digest) return null;
+      const recorded = JSON.parse(bytes.toString('utf8'));
+      return recorded?.version === MANIFEST_VERSION && recorded.blobs && typeof recorded.blobs === 'object'
+        ? { ...recorded, digest } : null;
     } catch { return null; }
   };
-  const recorded = readRecorded();
-  if (!hasGit) return recorded ? { ...recorded, hasGit } : null;
-  const revision = String(git(repoDir, ['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8' })).trim();
-  if (recorded?.revision === revision) {
-    if (refreshChanged) writeChangedModuleBlobs({ repoDir, pinDir, blobs: recorded.blobs });
-    return { ...recorded, hasGit };
+  const readPointer = () => {
+    try {
+      const pointer = JSON.parse(readFileSync(pointerPath, 'utf8'));
+      return pointer?.version === MANIFEST_VERSION ? pointer.manifest : null;
+    } catch { return null; }
+  };
+  if (!hasGit) {
+    const recorded = readManifestFile(readPointer());
+    return recorded ? { ...recorded, hasGit } : null;
+  }
+  const [gitDir, revision] = String(git(repoDir, ['rev-parse', '--absolute-git-dir', '--verify', 'HEAD^{commit}'],
+    { encoding: 'utf8' })).trim().split(/\r?\n/u);
+  // Controller-local: which manifest this checkout's HEAD selects. It moves
+  // with every commit, so it lives in the Git directory, never in the mirror.
+  const headRecordPath = join(gitDir, 'happier-tooling-pin.json');
+  let head = null;
+  try { head = JSON.parse(readFileSync(headRecordPath, 'utf8')); } catch { /* absent */ }
+  if (head?.version === MANIFEST_VERSION && head.revision === revision && readPointer() === head.manifest) {
+    const recorded = readManifestFile(head.manifest);
+    if (recorded) {
+      if (refreshChanged) writeChangedModuleBlobs({ repoDir, pinDir, blobs: recorded.blobs });
+      return { ...recorded, revision, hasGit };
+    }
   }
   const blobs = {};
   for (const line of String(git(repoDir, ['ls-tree', '-r', '-z', '--full-tree', revision, '--', 'packages', 'apps'],
@@ -112,15 +150,18 @@ export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoD
     const path = line.slice(tab + 1);
     if (type === 'blob' && mode !== '120000' && isPinnedToolingModule(path)) blobs[path] = id;
   }
-  const manifest = { version: MANIFEST_VERSION, revision, blobs };
+  const bytes = Buffer.from(JSON.stringify({ version: MANIFEST_VERSION, blobs }));
+  const digest = createHash('sha256').update(bytes).digest('hex');
   // HEAD bytes of every pinned module the checkout changed go up front, then the
-  // revision's manifest, then the pointer, so the mirror carries them together.
+  // manifest, then the pointer, so the mirror carries them together. Equal bytes
+  // are never rewritten.
   writeChangedModuleBlobs({ repoDir, pinDir, blobs });
-  writeAtomic(revisionPath(revision), JSON.stringify(manifest));
-  writeAtomic(pointerPath, JSON.stringify({ version: MANIFEST_VERSION, revision }));
+  if (!existsSync(manifestPath(digest))) writeAtomic(manifestPath(digest), bytes);
+  writeAtomic(pointerPath, JSON.stringify({ version: MANIFEST_VERSION, manifest: digest }));
+  writeAtomic(headRecordPath, JSON.stringify({ version: MANIFEST_VERSION, revision, manifest: digest }));
   pruneToolingPinBlobs({ pinDir, blobs });
-  pruneToolingPinManifests({ pinDir, revision });
-  return { ...manifest, hasGit };
+  pruneToolingPinManifests({ pinDir, digest });
+  return { version: MANIFEST_VERSION, blobs, digest, revision, hasGit };
 }
 
 function writeChangedModuleBlobs({ repoDir, pinDir, blobs }) {
@@ -160,12 +201,12 @@ function pruneToolingPinBlobs({ pinDir, blobs, now = Date.now() }) {
   }
 }
 
-function pruneToolingPinManifests({ pinDir, revision, now = Date.now() }) {
+function pruneToolingPinManifests({ pinDir, digest, now = Date.now() }) {
   const manifestDir = join(pinDir, 'manifests');
   let entries = [];
   try { entries = readdirSync(manifestDir); } catch { return; }
   for (const name of entries) {
-    if (name === `${revision}.json` || !/^[a-f0-9]{40,64}\.json$/u.test(name)) continue;
+    if (name === `${digest}.json` || !/^[a-f0-9]{40,64}\.json$/u.test(name)) continue;
     const path = join(manifestDir, name);
     try { if (now - statSync(path).mtimeMs > RETAINED_BLOB_MS) unlinkSync(path); } catch { /* another writer's prune */ }
   }
@@ -184,15 +225,8 @@ function readHeadBlob({ repoDir, manifest, id }) {
 const FORMAT_BY_EXTENSION = { '.ts': 'module-typescript', '.mts': 'module-typescript', '.tsx': 'module-typescript',
   '.cts': 'commonjs-typescript', '.mjs': 'module', '.js': 'module', '.cjs': 'commonjs', '.json': 'json' };
 
-/**
- * Registers the pin around the source runtime. `registerContent` must run before
- * tsx registers (so tsx transforms the bytes this hook supplies); the returned
- * `registerResolution` runs after the source runtime (so a HEAD import of a file
- * deleted in the checkout still resolves to HEAD's bytes).
- */
-export function registerToolingPackagePin({ repoDir, env = process.env, stderr = process.stderr }) {
-  repoDir = resolve(repoDir);
-  if (toolingPackagesMode(env) === 'live' || typeof nodeModule.registerHooks !== 'function') return { registerResolution() {} };
+/** The pin's load decision, shared by the synchronous hook and the asynchronous (older Node) hook. */
+function createToolingPinLoader({ repoDir, stderr }) {
   let manifest;
   const warned = new Set();
   const warn = (key, message) => {
@@ -221,31 +255,63 @@ export function registerToolingPackagePin({ repoDir, env = process.env, stderr =
   };
   const headSource = (rel, id) => {
     const bytes = readHeadBlob({ repoDir, manifest, id });
-    if (!bytes) warn(rel, `HEAD bytes of ${rel} (${manifest.revision.slice(0, 12)}) are not on this host yet; loading the checkout's file`);
+    if (!bytes) warn(rel, `HEAD bytes of ${rel} (${(manifest.revision ?? manifest.digest).slice(0, 12)}) are not on this host yet; loading the checkout's file`);
     return bytes;
   };
-  nodeModule.registerHooks({
-    load(url, context, nextLoad) {
+  return {
+    readManifest,
+    pinnedPath,
+    /** The pinned module a load URL names, or null to pass the load through. */
+    pin(url) {
       const rel = pinnedPath(url);
       const id = rel && readManifest()?.blobs[rel];
-      if (!id) return nextLoad(url, context);
-      let result;
-      try {
-        result = nextLoad(url, context);
-      } catch (error) {
-        if (error?.code !== 'ENOENT') throw error;
-        // Deleted in the checkout, present at HEAD.
-        const source = headSource(rel, id);
-        if (!source) throw error;
-        const extension = rel.slice(rel.lastIndexOf('.'));
-        return { format: context.format ?? FORMAT_BY_EXTENSION[extension], source, shortCircuit: true };
-      }
-      if (result.source == null) return result;
-      if (gitBlobId(Buffer.from(result.source)) === id) return result;
+      return id ? { rel, id } : null;
+    },
+    /** Deleted in the checkout, present at HEAD. */
+    deleted({ rel, id }, context, error) {
+      if (error?.code !== 'ENOENT') throw error;
+      const source = headSource(rel, id);
+      if (!source) throw error;
+      const extension = rel.slice(rel.lastIndexOf('.'));
+      return { format: context.format ?? FORMAT_BY_EXTENSION[extension], source, shortCircuit: true };
+    },
+    loaded({ rel, id }, result) {
+      if (result.source == null || gitBlobId(Buffer.from(result.source)) === id) return result;
       const source = headSource(rel, id);
       return source ? { ...result, source } : result;
     },
-  });
+  };
+}
+
+/**
+ * Registers the pin around the source runtime. `registerContent` must run before
+ * tsx registers (so tsx transforms the bytes this hook supplies); the returned
+ * `registerResolution` runs after the source runtime (so a HEAD import of a file
+ * deleted in the checkout still resolves to HEAD's bytes). Where synchronous
+ * load hooks cannot carry CommonJS (older Node), the content hook registers as
+ * an asynchronous loader instead, which still runs below tsx's.
+ */
+export function registerToolingPackagePin({ repoDir, env = process.env, stderr = process.stderr }) {
+  repoDir = resolve(repoDir);
+  const inactive = { registerResolution() {} };
+  if (toolingPackagesMode(env) === 'live') return inactive;
+  const synchronous = typeof nodeModule.registerHooks === 'function' && synchronousLoadHooksSupported();
+  if (!synchronous && typeof nodeModule.register !== 'function') return inactive;
+  const loader = createToolingPinLoader({ repoDir, stderr });
+  if (synchronous) {
+    nodeModule.registerHooks({
+      load(url, context, nextLoad) {
+        const pin = loader.pin(url);
+        if (!pin) return nextLoad(url, context);
+        let result;
+        try { result = nextLoad(url, context); } catch (error) { return loader.deleted(pin, context, error); }
+        return loader.loaded(pin, result);
+      },
+    });
+  } else {
+    nodeModule.register(import.meta.url, { data: { repoDir } });
+  }
+  if (typeof nodeModule.registerHooks !== 'function') return inactive;
   return {
     registerResolution() {
       nodeModule.registerHooks({
@@ -253,9 +319,9 @@ export function registerToolingPackagePin({ repoDir, env = process.env, stderr =
           try {
             return nextResolve(specifier, context);
           } catch (error) {
-            if (error?.code !== 'ERR_MODULE_NOT_FOUND' || !context.parentURL || !pinnedPath(context.parentURL)
+            if (error?.code !== 'ERR_MODULE_NOT_FOUND' || !context.parentURL || !loader.pinnedPath(context.parentURL)
               || !(specifier.startsWith('./') || specifier.startsWith('../'))) throw error;
-            const blobs = readManifest()?.blobs;
+            const blobs = loader.readManifest()?.blobs;
             const target = resolve(dirname(fileURLToPath(context.parentURL.split('?')[0])), specifier);
             const candidates = [target, ...['.ts', '.tsx', '.mts', '.cts'].map(extension => target.replace(/\.[cm]?jsx?$/u, extension)),
               `${target}.ts`, join(target, 'index.ts')];
@@ -269,6 +335,21 @@ export function registerToolingPackagePin({ repoDir, env = process.env, stderr =
       });
     },
   };
+}
+
+// Asynchronous loader hooks (module.register) for Node releases whose
+// synchronous load chain cannot carry CommonJS; see synchronousLoadHooksSupported.
+let asynchronousLoader;
+export function initialize({ repoDir }) {
+  asynchronousLoader = createToolingPinLoader({ repoDir, stderr: process.stderr });
+}
+
+export async function load(url, context, nextLoad) {
+  const pin = asynchronousLoader?.pin(url);
+  if (!pin) return nextLoad(url, context);
+  let result;
+  try { result = await nextLoad(url, context); } catch (error) { return asynchronousLoader.deleted(pin, context, error); }
+  return asynchronousLoader.loaded(pin, result);
 }
 
 /**

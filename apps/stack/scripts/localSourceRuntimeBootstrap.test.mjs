@@ -86,6 +86,19 @@ test('OS custody runs without loading source tooling or installed dependencies',
   assert.equal(stdout, 'OS_PROBE_OK');
 });
 
+// mac-host ran Node 22.22.1 on 2026-11-17: its synchronous load chain rejects a
+// CommonJS step without source, so the pin must not use synchronous load hooks
+// there (releases checked against the real Node binaries, P03-TOOLING-4).
+test('the tooling pin uses synchronous load hooks only on Node releases whose loader carries CommonJS', async () => {
+  const { synchronousLoadHooksSupported } = await import('../bin/localToolingPackagePin.mjs');
+  for (const version of ['20.19.0', '22.22.1', '22.22.2', '23.11.0', '24.11.0', '25.0.0']) {
+    assert.equal(synchronousLoadHooksSupported(version), false, version);
+  }
+  for (const version of ['22.22.3', '22.23.5', '24.11.1', '24.21.0', '25.1.0', '26.0.0']) {
+    assert.equal(synchronousLoadHooksSupported(version), true, version);
+  }
+});
+
 // P03-TOOLING-ISOLATION: tooling runs live from the shared checkout, but a
 // half-landed product package edit (an import of a missing export, a deleted
 // file still imported at HEAD) must not break every stack start and reload.
@@ -109,7 +122,9 @@ test('checkout tooling loads product packages at the committed revision, on the 
   await write('packages/protocol/src/scm.ts', 'export const ScmRefusal: string = "committed";\n');
   await write('packages/protocol/src/helper.ts', 'export const helper = (value: string): string => `${value}+helper`;\n');
   await write('packages/protocol/src/actions.ts', 'import { ScmRefusal } from "./scm.js";\nimport { helper } from "./helper.js";\nexport const value = helper(ScmRefusal);\n');
-  await write('apps/stack/scripts/probe.mjs', 'const { value } = await import("@happier-dev/protocol/actions");\nprocess.stdout.write(value);\n');
+  // A CommonJS import too: Node 22.22.1's synchronous load chain refused every one.
+  await write('packages/protocol/legacy.cjs', 'module.exports = { suffix: "" };\n');
+  await write('apps/stack/scripts/probe.mjs', 'const { value } = await import("@happier-dev/protocol/actions");\nconst { suffix } = (await import("../../../packages/protocol/legacy.cjs")).default;\nprocess.stdout.write(value + suffix);\n');
   const git = args => {
     const result = spawnSync('git', ['-C', controller, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', ...args], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
@@ -195,6 +210,14 @@ test('checkout tooling loads product packages at the committed revision, on the 
   assert.ok((await stat(join(pinDir, 'manifest.json'))).size < 200, 'the moving pointer stays small');
   refreshPin();
   assert.deepEqual(await pinFiles(), afterMove, 'an unchanged HEAD rewrites nothing');
+  // Most HEAD moves change no pinned module (Stack tooling, docs, plans). The
+  // synchronized pin names HEAD's blob map, not its revision, so those moves
+  // write nothing that the mirror has to stage.
+  await write('apps/stack/scripts/unpinned.mjs', 'export {};\n');
+  git(['add', 'apps/stack/scripts/unpinned.mjs']);
+  git(['commit', '-q', '-m', 'tooling only']);
+  refreshPin();
+  assert.deepEqual(await pinFiles(), afterMove, 'a HEAD move without a pinned module change writes nothing');
   const moved = join(root, 'mirror-after-move');
   await cp(controller, moved, { recursive: true, verbatimSymlinks: true, filter: source => source !== join(controller, '.git') });
   const afterMoveProbe = probe(moved);
