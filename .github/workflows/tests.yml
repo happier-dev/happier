@@ -783,6 +783,96 @@ jobs:
             dist/release-assets/ui-web
           if-no-files-found: error
 
+  # v0.3 pushes run only the journey tests whose import graph reaches the
+  # change (pnpm test:affected, Vitest related mode): e2e-core selects its own
+  # core-e2e files, and this job shards the selected ui-e2e specs. The full
+  # suites run nightly through tests-dispatch.yml on v0.3 (scheduled from the
+  # default branch). Informational: not part of the Gate verdict.
+  journey-select:
+    name: Journeys — select ui-e2e specs reaching the change
+    needs: [gate-prepare]
+    if: ${{ needs.gate-prepare.outputs.packages != '[]' && needs.gate-prepare.outputs.metadata_only != 'true' }}
+    runs-on: ubuntu-24.04
+    # Selection measured 134-170 s on nl1/nl3 (2026-11-16, all 735 packages/tests files).
+    # Hosted runners have 4 cores; until a hosted run is measured, allow 3x that plus the
+    # prepared-workspace restore, doubled. Re-derive from the first complete hosted runs.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ui_matrix: ${{ steps.plan.outputs.ui_matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ needs.gate-prepare.outputs.node_version }}
+      - uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          prepared-artifact: gate-prepared-workspace
+      - name: Select by import graph
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$BASE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git hash-object -t tree /dev/null)"
+          fi
+          plan="$(node --experimental-strip-types scripts/testing/runAffectedTests.ts --journeys --plan --base "$base" | grep '^{' | tail -1)"
+          echo "$plan"
+          node --input-type=module -e '
+            const plan = JSON.parse(process.argv[1]);
+            const matrix = { include: plan.uiShards.map((specs, index) => ({ shard: index + 1, specs: specs.join(",") })) };
+            (await import("node:fs")).appendFileSync(process.env.GITHUB_OUTPUT, `ui_matrix=${JSON.stringify(matrix)}\n`);
+          ' "$plan"
+
+  journey-ui:
+    name: Journeys — ui-e2e reaching the change / shard ${{ matrix.shard }}
+    needs: [gate-prepare, journey-select]
+    if: ${{ needs.journey-select.outputs.ui_matrix != '' && fromJSON(needs.journey-select.outputs.ui_matrix).include[0] != null }}
+    runs-on: ubuntu-24.04
+    # Same per-shard hang guard as the full ui-e2e matrix: shards are sized to its per-shard weight.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.journey-select.outputs.ui_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ needs.gate-prepare.outputs.node_version }}
+      - uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          prepared-artifact: gate-prepared-workspace
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run selected UI E2E
+        env:
+          SPECS: ${{ matrix.specs }}
+        run: |
+          IFS=',' read -r -a specs <<< "$SPECS"
+          pnpm run test:e2e:ui -- "${specs[@]}"
+      - name: Upload UI E2E artifacts (Playwright)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}journey-ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}
+          compression-level: 0
+          path: |
+            packages/tests/.project/logs/e2e/ui-playwright
+            .project/logs/e2e/*ui-e2e*/**/*.log
+          if-no-files-found: ignore
+
   gate:
     name: Gate
     if: ${{ always() && !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
@@ -3034,14 +3124,21 @@ jobs:
           done
 
   e2e-core:
-    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_e2e_core) }}
+    # v0.3 pushes and pull requests run only the core-e2e files (fast and slow)
+    # whose import graph reaches the change; other events run the fast suite.
+    # Dynamic Triage plugin journeys additionally run on real PostgreSQL below.
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_core }}
     needs: [trusted_ref_guard]
-    name: Core E2E (fast, packages/tests, server-light, sqlite)
+    name: Core E2E (selected SQLite + Triage PostgreSQL)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
+    env:
+      AFFECTED_ONLY: ${{ !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: ${{ (!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) && 0 || 1 }}
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -3063,12 +3160,82 @@ jobs:
         with:
           args: --frozen-lockfile
 
+      - name: Select core-e2e files reaching the change
+        id: affected
+        if: ${{ env.AFFECTED_ONLY == 'true' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$BASE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git hash-object -t tree /dev/null)"
+          fi
+          plan="$(node --experimental-strip-types scripts/testing/runAffectedTests.ts --journeys --plan --base "$base" | grep '^{' | tail -1)"
+          echo "$plan"
+          node --input-type=module -e '
+            const plan = JSON.parse(process.argv[1]);
+            const strip = (files) => files.map((file) => file.replace(/^packages\/tests\//, "")).join(" ");
+            (await import("node:fs")).appendFileSync(process.env.GITHUB_OUTPUT, `fast=${strip(plan.coreFast)}\nslow=${strip(plan.coreSlow)}\n`);
+          ' "$plan"
+
       - name: Run core e2e suite
+        if: ${{ env.AFFECTED_ONLY != 'true' || steps.affected.outputs.fast != '' }}
         env:
           CI: "1"
           HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: sqlite
-        run: pnpm run test:e2e:core:fast
+          FILES: ${{ steps.affected.outputs.fast }}
+        run: |
+          read -r -a files <<< "$FILES"
+          if [ "$AFFECTED_ONLY" = true ]; then
+            pnpm --dir packages/tests run test:core:fast "${files[@]}"
+          else
+            pnpm run test:e2e:core:fast
+          fi
+
+      - name: Run selected slow core e2e files
+        if: ${{ !cancelled() && env.AFFECTED_ONLY == 'true' && steps.affected.outputs.slow != '' }}
+        env:
+          CI: "1"
+          HAPPIER_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_DB_PROVIDER: sqlite
+          FILES: ${{ steps.affected.outputs.slow }}
+        run: |
+          read -r -a files <<< "$FILES"
+          pnpm --dir packages/tests exec node scripts/run-vitest-with-heartbeat.mjs --config vitest.core.slow.config.ts "${files[@]}"
+
+      - name: Install browser for Triage regression journeys
+        run: pnpm --dir packages/tests exec playwright install --with-deps chromium
+
+      # Plugin Actions are loaded dynamically, so source-import selection alone
+      # cannot select their regressions. Reuse the real DB runner, one file per call.
+      - name: Run Triage regression journeys (PostgreSQL)
+        env:
+          CI: "1"
+          HAPPIER_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: "1"
+        run: |
+          set -euo pipefail
+          for file in packages/tests/suites/core-e2e/triage.*.slow.e2e.test.ts; do
+            node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode e2e --e2e-file "${file#packages/tests/}"
+          done
+          for file in packages/tests/suites/ui-e2e/triage.*.spec.ts; do
+            node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode ui --ui-file "${file#packages/tests/}"
+          done
+
+      - name: Run FIN Workflow regression journeys (nightly)
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          CI: "1"
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: "1"
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: "1"
+        run: |
+          pnpm --dir packages/tests run test:core:fin-journeys
+          pnpm --dir packages/tests run test:ui:fin-journeys
 
       - name: Upload e2e artifacts (on failure)
         if: failure()
@@ -3130,7 +3297,6 @@ jobs:
           path: .project/logs/e2e
 
   trusted_ref_guard:
-    if: ${{ !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
     name: Trusted workflow ref guard
     permissions:
       contents: read
