@@ -17,6 +17,7 @@ import {
   useAutomationSubjectPicker,
   type AutomationSubjectPickerInput,
 } from '@/sync/domains/workflows/useAutomationSubjectPicker';
+import { readAutomationSubjectPickerSelection } from '@/sync/domains/workflows/automationSubjectPicker';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { t } from '@/text';
 
@@ -98,8 +99,12 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
   }> | null>(null);
   const active = useActiveServerAccountScopeLifetime();
   const serverId = props.serverId ?? active?.scope.serverId ?? null;
+  // A saved Environment or Backup is named by its owner's exact selection read, without opening the list.
+  const saved = props.subject?.kind === 'environment' || props.subject?.kind === 'backup' ? props.subject : null;
+  const savedKey = saved ? automationSubjectKeyV1(saved) : null;
+  const savedUnnamed = savedKey !== null && chosen?.key !== savedKey;
   const accounts = useServerCredentialAccountScopeStates(
-    open && serverId !== null ? [serverId] : [],
+    (open || savedUnnamed) && serverId !== null ? [serverId] : [],
   );
   const binding = accounts.values().next().value?.binding ?? null;
   const lifetime = React.useMemo(
@@ -127,6 +132,20 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     return { ...common, kind } as AutomationSubjectPickerInput;
   }, [lifetime, open, context, kind, declaration]);
   const read = useAutomationSubjectPicker(input);
+  const savedRef = React.useRef(saved);
+  savedRef.current = saved;
+  React.useEffect(() => {
+    const subject = savedRef.current;
+    if (!savedUnnamed || subject === null || lifetime === null) return;
+    const controller = new AbortController();
+    void readAutomationSubjectPickerSelection({ lifetime, subject, signal: controller.signal })
+      .then((option) => {
+        if (option && !controller.signal.aborted) setChosen({ key: automationSubjectKeyV1(subject), label: option.label });
+      })
+      // Unreadable, it keeps reading "This environment"; the open list still names every choice.
+      .catch(() => {});
+    return () => controller.abort();
+  }, [savedKey, savedUnnamed, lifetime]);
   const selectedKey =
     props.subject === undefined ? ANY : automationSubjectKeyV1(props.subject);
   const iconColor = theme.colors.text.secondary;
