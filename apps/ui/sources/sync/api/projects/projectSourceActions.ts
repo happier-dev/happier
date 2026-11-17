@@ -80,6 +80,7 @@ export function createProjectSourceActionDeps(account: SourceAccountPort) {
             const query = new URLSearchParams({ serverId: input.serverId });
             if (input.query !== undefined) query.set('query', input.query);
             if (input.audience) query.set('audience', JSON.stringify(input.audience));
+            if (input.sharedWithTeamId) query.set('sharedWithTeamId', input.sharedWithTeamId);
             if (input.cursor) query.set('cursor', input.cursor);
             if (input.limit !== undefined) query.set('limit', String(input.limit));
             return inSourceHome(input.serverId, () => request(`/v1/projects/sources?${query}`, 'GET', undefined, ProjectSourcesListOutputV1Schema, context));

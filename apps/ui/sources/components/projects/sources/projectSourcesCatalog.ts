@@ -16,7 +16,7 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
     const queries = new Map<string, Query>();
     const sources = new Map<string, Readonly<{ controller: ReturnType<typeof createProjectSourcesController>;
         demand(): () => void; dispose(): void }>>();
-    const defaultKey = JSON.stringify(['', null]);
+    const defaultKey = JSON.stringify(['', null, null]);
     let demand = 0;
     function observe(entry: Query) {
         if (demand > 0 && entry.subscribers > 0 && !entry.stopObserve) entry.stopObserve = observeProjectSources(entry.controller);
@@ -30,11 +30,11 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
         for (const source of sources.values()) source.dispose();
         sources.clear();
     }
-    const read: ReadProjectSourcesCatalog = (query, audience) => {
-        const key = JSON.stringify([query, audience ?? null]);
+    const read: ReadProjectSourcesCatalog = (query, audience, sharedWithTeamId) => {
+        const key = JSON.stringify([query, audience ?? null, sharedWithTeamId ?? null]);
         const existing = queries.get(key);
         if (existing) return existing.catalog;
-        const owner = createProjectSourcesController(lifetime.scope, execute);
+        const owner = createProjectSourcesController(lifetime.scope, execute, undefined, undefined, sharedWithTeamId);
         const catalog: ProjectSourcesCatalog = {
             getSnapshot: owner.getSnapshot,
             subscribe(listener) {
@@ -65,7 +65,7 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
         };
         const stopChanges = owner.subscribe(() => {
             const state = owner.getSnapshot();
-            if (state.status !== 'ready' || !state.coverage.complete || state.catalogQuery !== '' || state.catalogAudience !== undefined) return;
+            if (sharedWithTeamId !== undefined || state.status !== 'ready' || !state.coverage.complete || state.catalogQuery !== '' || state.catalogAudience !== undefined) return;
             const visible = new Map(state.rows.map(source => [source.id, source]));
             // A full authorized inventory settles absence for every filtered projection too.
             for (const query of queries.values()) if (query.controller !== owner) {

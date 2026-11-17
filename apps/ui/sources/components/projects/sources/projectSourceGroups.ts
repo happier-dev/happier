@@ -3,7 +3,8 @@ import { t } from '@/text';
 
 export type ProjectSourceGroup = Readonly<{ id: string; title: string; sources: readonly ProjectSourceV1[] }>;
 
-export function readSourceTeamId(source: Readonly<{ audience?: ProjectSourceV1['audience'] }>): string | null {
+export function readSourceTeamId(source: Readonly<{ owner?: ProjectSourceV1['owner']; audience?: ProjectSourceV1['audience'] }>): string | null {
+    if (source.owner?.kind === 'team') return source.owner.teamId;
     for (const grant of source.audience ?? []) {
         if (grant.principal.kind === 'team' || grant.principal.kind === 'group') return grant.principal.teamId;
     }

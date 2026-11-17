@@ -16,7 +16,8 @@ const repository = { provider: { id: 'github', kind: 'github', displayName: 'Git
     repository: { nameWithOwner: 'owner/repo', visibility: 'private' }, protocol: 'https' } satisfies ProjectSourceRepositorySelectorV1;
 const source = (revision = 1) => ({ id: 'source-a', revision, name: 'Repository', repository,
     audience: [], createdByAccountId: scope.accountId });
-function harness(request: ServerFetch, observeContext?: (context: Parameters<ReturnType<typeof createActionExecutor>['execute']>[2]) => void) {
+function harness(request: ServerFetch, observeContext?: (context: Parameters<ReturnType<typeof createActionExecutor>['execute']>[2]) => void,
+    sharedWithTeamId?: string) {
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
         ...createProjectSourceActionDeps({ ...scope, credentialAuthorityKind: 'account', request,
             assertCurrent() {}, workflowArtifacts: { read: async () => null } }),
@@ -26,13 +27,45 @@ function harness(request: ServerFetch, observeContext?: (context: Parameters<Ret
     return createProjectSourcesController(scope, (id, input, context) => {
         observeContext?.(context);
         return executor.execute(id, input, { ...context, authority: 'present_user', bypassApprovals: true });
-    });
+    }, undefined, undefined, sharedWithTeamId);
 }
 const answer = (body: unknown, status = 200) => new Response(JSON.stringify(
     body && typeof body === 'object' && 'source' in body ? { ...body, canManage: true } : body,
 ), { status });
 
 describe('Project Sources controller through Source Actions', () => {
+    it('keeps Team-filtered coverage separate from the Account catalog and selected details', async () => {
+        const first = { ...source(), id: 'team-source' };
+        const outside = { ...source(), id: 'outside-source' };
+        const execute = createActionExecutor(createActionExecutorBoundaryFixture({
+            ...createProjectSourceActionDeps({ ...scope, credentialAuthorityKind: 'account', assertCurrent() {},
+                workflowArtifacts: { read: async () => null }, request: async path => {
+                    if (path.includes('/outside-source?')) return answer({ ok: true, source: outside });
+                    const team = new URL(path, 'https://home.test').searchParams.get('sharedWithTeamId');
+                    return answer({ ok: true, sources: team === 'team-a' ? [first] : [first, outside],
+                        coverage: { complete: true, nextCursor: null } });
+                } }),
+        }));
+        const dispatch = (id: Parameters<typeof execute.execute>[0], input: unknown,
+            context?: Parameters<typeof execute.execute>[2]) => execute.execute(id, input,
+            { ...context, authority: 'present_user', bypassApprovals: true });
+        const catalog = createProjectSourcesCatalog({ scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) }, dispatch);
+        const account = createProjectSourcesController(scope, dispatch, undefined, catalog.read);
+        const team = createProjectSourcesController(scope, dispatch, undefined, catalog.read, 'team-a');
+        const unsubscribe = [account.subscribe(() => {}), team.subscribe(() => {})];
+        try {
+            await account.load();
+            await account.select(outside.id);
+            await team.load();
+            expect(team.getSnapshot().rows.map(row => row.id)).toEqual([first.id]);
+            expect(account.getSnapshot().rows.map(row => row.id)).toEqual([first.id, outside.id]);
+            expect(account.getSnapshot()).toMatchObject({ detailStatus: 'ready', current: { id: outside.id } });
+            team.acknowledgeCatalog({ ...outside, id: 'new-personal-source' }, true);
+            expect(team.getSnapshot().rows.map(row => row.id)).toEqual([first.id]);
+        } finally {
+            unsubscribe.forEach(stop => stop()); account.dispose(); team.dispose(); catalog.dispose();
+        }
+    });
     it('persists an explicitly cleared repository through the canonical null patch', async () => {
         let current: ProjectSourceV1 = source();
         const updates: unknown[] = [];

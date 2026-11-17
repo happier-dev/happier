@@ -24,15 +24,15 @@ export function useProjectSourceActionExecute() {
 }
 
 /** The screen opts into catalog demand; mounting a closed picker does no work. */
-export function useProjectSources(scope: ServerAccountScope, options: Readonly<{ enabled?: boolean; repositoryFacts?: boolean }> = {}) {
+export function useProjectSources(scope: ServerAccountScope, options: Readonly<{ enabled?: boolean; repositoryFacts?: boolean; sharedWithTeamId?: string }> = {}) {
     const execute = useProjectSourceActionExecute();
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = activeLifetime && areServerAccountScopesEqual(activeLifetime.scope, scope) ? activeLifetime : null;
     const inventoryStatus = useMachineListStatusForServer(scope.serverId);
     const catalog = lifetime ? readProjectSourcesCatalog(lifetime, execute) : null;
     const controller = React.useMemo(() => createProjectSourcesController({ serverId: scope.serverId, accountId: scope.accountId }, execute,
-        () => readProjectSourceAddressMachines(scope.serverId), catalog?.read),
-        [scope.serverId, scope.accountId, execute, catalog]);
+        () => readProjectSourceAddressMachines(scope.serverId), catalog?.read, options.sharedWithTeamId),
+        [scope.serverId, scope.accountId, execute, catalog, options.sharedWithTeamId]);
     const state = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
     const wantsRepositoryFacts = options.enabled !== false && options.repositoryFacts === true;
     const workspaceRefs = useProjectAccountWorkspaceRefs(wantsRepositoryFacts && lifetime !== null);

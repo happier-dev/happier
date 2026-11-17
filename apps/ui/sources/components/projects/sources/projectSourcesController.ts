@@ -54,7 +54,7 @@ export type ProjectSourcesCatalog = Readonly<{
     acknowledgeCatalog(source: ProjectSourceV1, created?: boolean): void;
     removeCatalogSource(sourceId: string, issue: string): void;
 }>;
-export type ReadProjectSourcesCatalog = (query: string, audience: ProjectSourcesListInputV1['audience']) => ProjectSourcesCatalog;
+export type ReadProjectSourcesCatalog = (query: string, audience: ProjectSourcesListInputV1['audience'], sharedWithTeamId?: string) => ProjectSourcesCatalog;
 
 function catalogFields(state: ProjectSourcesState) {
     return { rows: state.rows, coverage: state.coverage, catalogQuery: state.catalogQuery,
@@ -106,11 +106,11 @@ function carryDraft(draft: ProjectSourceDraft, basis: ProjectSourceDraft, source
 /** One demanded catalog/editor, captured under one authenticated Home/Account. */
 export function createProjectSourcesController(scope: ServerAccountScope, execute: Execute,
     readAddressMachines: () => ProjectSourceAddressMachines = () => ({ machines: [], inventoryStatus: 'loading' }),
-    readCatalog?: ReadProjectSourcesCatalog) {
+    readCatalog?: ReadProjectSourcesCatalog, sharedWithTeamId?: string) {
     let state: ProjectSourcesState = { rows: [], query: '', audience: undefined, catalogQuery: '', catalogAudience: undefined, coverage: { complete: false, nextCursor: null }, status: 'initial',
         selectedId: null, current: null, canManage: false, detailStatus: 'initial', draft: null, creationDraft: null, conflict: null,
         mutation: 'idle', issue: null, uncertainCreate: false, addressResolution: { kind: 'idle' }, addressSaveDisabledReason: null };
-    let catalog = readCatalog?.('', undefined);
+    let catalog = readCatalog?.('', undefined, sharedWithTeamId);
     if (catalog) state = { ...state, ...catalogFields(catalog.getSnapshot()) };
     let stopCatalog: (() => void) | null = null;
     const listeners = new Set<() => void>();
@@ -207,7 +207,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
         conflicts.delete(source.id);
         uncertainSources.delete(source.id);
         const listed = state.rows.some((row) => row.id === source.id);
-        if (listed || (created && state.catalogQuery === '' && state.catalogAudience === undefined)) {
+        if (listed || (created && sharedWithTeamId === undefined && state.catalogQuery === '' && state.catalogAudience === undefined)) {
             publish({ rows: listed ? reconcileRows(state.rows.map((row) => row.id === source.id ? source : row))
                 : [...state.rows, source] });
         }
@@ -229,6 +229,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
     }
     const controller = {
         scope: Object.freeze({ ...scope }),
+        sharedWithTeamId,
         getSnapshot: () => state,
         subscribe(listener: () => void) {
             listeners.add(listener); connectCatalog();
@@ -282,7 +283,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
             if (uncertainDraft) { createRetryConfirmed = false; inspectedCreateAbsence = false; publish({ uncertainCreate: true }); }
             if (readCatalog) {
                 publish({ query, audience });
-                const next = readCatalog(query, audience);
+                const next = readCatalog(query, audience, sharedWithTeamId);
                 if (next !== catalog) { stopCatalog?.(); stopCatalog = null; catalog = next; }
                 connectCatalog();
                 await catalog.load(query, cursor, audience);
@@ -301,17 +302,17 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
             publish({ status: 'loading', query, audience, ...(uncertainDraft ? { uncertainCreate: true } : {}),
                 ...(!append && changedFilter ? { coverage: { complete: false, nextCursor: null } } : {}) });
             listSettlement = (async () => { try {
-                const result = ProjectSourcesListOutputV1Schema.parse(await invoke('projects.sources.list', { serverId: scope.serverId, query, ...(cursor ? { cursor } : {}), ...(audience ? { audience } : {}) }, request.signal));
+                const result = ProjectSourcesListOutputV1Schema.parse(await invoke('projects.sources.list', { serverId: scope.serverId, query, ...(cursor ? { cursor } : {}), ...(audience ? { audience } : {}), ...(sharedWithTeamId ? { sharedWithTeamId } : {}) }, request.signal));
                 if (disposed || listRequest !== request || request.signal.aborted) return;
                 if (result.ok) {
                     const rows = reconcileRows(result.sources, append);
-                    if (!cursor && query === '' && audience === undefined && result.coverage.complete) {
+                    if (sharedWithTeamId === undefined && !cursor && query === '' && audience === undefined && result.coverage.complete) {
                         // This server result contains every Source admitted by the
                         // same current read predicate. Filtered/paged absence is not revocation.
                         const visible = new Set(rows.map(row => row.id));
                         for (const sourceId of details.keys()) if (!visible.has(sourceId)) forgetUnavailable(sourceId, 'source_unavailable');
                     }
-                    if (uncertainDraft && query === '' && audience === undefined && result.coverage.complete) {
+                    if (sharedWithTeamId === undefined && uncertainDraft && query === '' && audience === undefined && result.coverage.complete) {
                         const expected = createIdentity(uncertainDraft);
                         inspectedCreateAbsence = !rows.some((row) => createIdentity(draftOf(row)) === expected);
                     }
@@ -411,7 +412,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
             if (state.conflict) acknowledge(state.conflict, state.canManage);
         },
         confirmCreateRetryAfterInspection() {
-            if (!uncertainDraft || !inspectedCreateAbsence || state.status !== 'ready' || !state.coverage.complete || state.catalogQuery !== '' || state.catalogAudience !== undefined) return false;
+            if (sharedWithTeamId !== undefined || !uncertainDraft || !inspectedCreateAbsence || state.status !== 'ready' || !state.coverage.complete || state.catalogQuery !== '' || state.catalogAudience !== undefined) return false;
             createRetryConfirmed = true;
             publish({ uncertainCreate: false, issue: null });
             return true;
@@ -503,12 +504,12 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                 publish({ ...forgetCatalog(), ...catalogFields(next), issue: next.issue });
                 return;
             }
-            if (uncertainDraft && next.status === 'ready' && next.catalogQuery === '' && next.catalogAudience === undefined && next.coverage.complete) {
+            if (sharedWithTeamId === undefined && uncertainDraft && next.status === 'ready' && next.catalogQuery === '' && next.catalogAudience === undefined && next.coverage.complete) {
                 const expected = createIdentity(uncertainDraft);
                 inspectedCreateAbsence = !next.rows.some(row => createIdentity(draftOf(row)) === expected);
             }
             // Complete unfiltered absence is authoritative; paging/filtering is not revocation.
-            if (next.status === 'refused' || (next.status === 'ready' && next.coverage.complete && next.catalogQuery === '' && !next.catalogAudience)) {
+            if (next.status === 'refused' || (sharedWithTeamId === undefined && next.status === 'ready' && next.coverage.complete && next.catalogQuery === '' && !next.catalogAudience)) {
                 const visible = new Set(next.rows.map(row => row.id));
                 for (const id of details.keys()) if (!visible.has(id)) {
                     // Do not publish a removal back to the catalog while observing it.

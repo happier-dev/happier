@@ -100,6 +100,7 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       const query = new URLSearchParams({ serverId: input.serverId });
       if (input.query !== undefined) query.set('query', input.query);
       if (input.audience) query.set('audience', JSON.stringify(input.audience));
+      if (input.sharedWithTeamId) query.set('sharedWithTeamId', input.sharedWithTeamId);
       if (input.cursor) query.set('cursor', input.cursor);
       if (input.limit !== undefined) query.set('limit', String(input.limit));
       return request('projects.sources.list', input.serverId, `/v1/projects/sources?${query}`, 'GET', undefined, ProjectSourcesListOutputV1Schema, context);

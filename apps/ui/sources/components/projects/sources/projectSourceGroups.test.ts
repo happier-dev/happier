@@ -12,4 +12,10 @@ describe('Source audience identity', () => {
     it('retains a declared team identity rather than treating every draft as personal', () => {
         expect(readSourceTeamId({ audience: [{ principal: { kind: 'team', teamId: 'team' }, level: 'view' }] })).toBe('team');
     });
+
+    it('uses a Source owner Team before a different shared audience Team', () => {
+        expect(readSourceTeamId({ owner: { kind: 'team', teamId: 'owner-team' },
+            audience: [{ principal: { kind: 'team', teamId: 'audience-team' }, level: 'view' }] })).toBe('owner-team');
+        expect(readSourceTeamId({ owner: { kind: 'team', teamId: 'owner-team' }, audience: [] })).toBe('owner-team');
+    });
 });
