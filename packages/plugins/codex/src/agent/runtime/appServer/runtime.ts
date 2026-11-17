@@ -3032,6 +3032,7 @@ export function createCodexAppServerRuntime(
         }),
         threadId: activeThreadId,
         input: turnInput,
+        ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
         ...(pendingProviderPrompt.localInputIds[0]
           ? { clientUserMessageId: pendingProviderPrompt.localInputIds[0] }
           : {}),
@@ -3697,6 +3698,7 @@ export function createCodexAppServerRuntime(
       const turnInput: CodexAppServerInput = {
         text,
         ...(structuredInput === undefined ? {} : { structuredInput }),
+        ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
       };
       const resolveStructuredInputRefusal = (error: unknown, method: 'turn/start' | 'turn/steer') => {
         const startRejection = readCodexAppServerStartRejection(error);

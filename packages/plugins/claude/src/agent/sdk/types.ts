@@ -1,6 +1,7 @@
 import type { ClaudeSettingSourceV2 } from '@happier-dev/protocol/agents/claude/settings-policy';
 import type { AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeRemoteAdvancedOptions } from '../../protocol/remoteSettings.js';
+import type { PluginJsonSchemaV2 } from '@happier-dev/plugin-sdk/actions';
 
 export interface SDKMessage {
     type: string;
@@ -68,6 +69,7 @@ export interface SDKResultMessage extends SDKMessage {
     type: 'result';
     subtype: 'success' | 'error_max_turns' | 'error_during_execution';
     result?: string;
+    structured_output?: unknown;
     num_turns: number;
     total_cost_usd: number;
     duration_ms: number;
@@ -103,6 +105,7 @@ export interface GetOAuthTokenCallback {
 export type QueryPrompt = string | AsyncIterable<SDKMessage>;
 
 export interface QueryOptions extends ClaudeRemoteAdvancedOptions {
+    outputFormat?: Readonly<{ type: 'json_schema'; schema: PluginJsonSchemaV2 }>;
     allowedTools?: readonly string[];
     unlistedTools?: 'ask' | 'deny';
     abort?: AbortSignal;

@@ -133,6 +133,7 @@ export type ClaudeRuntimePromptSubmissionOutcome =
 
 export type ClaudeRuntimePromptSendMeta = Readonly<{
   structuredInput?: unknown;
+  outputSchema?: Parameters<AgentSessionRuntime['send']>[0]['input']['outputSchema'];
   localId?: string | null;
   localIds?: readonly string[];
   userMessageSeq?: number | null;

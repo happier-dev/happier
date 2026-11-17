@@ -9,7 +9,7 @@ import type { AgentSessionCatalogChangedEventV1, AgentSessionIdleCompactionPrefe
 import type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 export type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
-import type { JsonValue } from '../identity.js';
+import type { JsonValue, PluginJsonSchema } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { AgentSessionConversationRollbackControl, AgentSessionGoalControl, AgentSessionUsageLimitRecoveryControl } from './controls.js';
@@ -810,6 +810,8 @@ export type AgentSessionOpenRequest =
 export type AgentSessionInput = Readonly<{
   text: string;
   structuredInput?: JsonValue;
+  /** Optional native response shaping; unsupported transports retain prompt-based output. */
+  outputSchema?: PluginJsonSchema;
 }>;
 
 export type AgentSessionSendRequest = {
@@ -817,6 +819,7 @@ export type AgentSessionSendRequest = {
   input: {
     text: string;
     structuredInput?: JsonValue;
+    outputSchema?: PluginJsonSchema;
   };
   delivery:
     | { kind: 'newTurn'; turnId: string }

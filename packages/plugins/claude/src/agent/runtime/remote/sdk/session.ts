@@ -644,7 +644,9 @@ function mapResultTranscriptEvent(params: Readonly<{
     sequence: number;
     turnId: string | null;
 }>): ProviderEventMessage | null {
-    const text = readString(params.message.result);
+    const text = params.message.structured_output === undefined
+        ? readString(params.message.result)
+        : JSON.stringify(params.message.structured_output);
     if (!text) return null;
     return ClaudeProviderEventSchema.parse({
         sessionId: params.sessionId,
@@ -876,6 +878,7 @@ export function createClaudeAgentSdkTurnOperations(
     const supportsEffort = params.supportsEffort !== false;
     let currentEffort: string | null = supportsEffort ? readString(params.initialEffort) : null;
     let currentUltracode = supportsEffort && params.initialUltracode === true;
+    let currentOutputSchema: Parameters<AgentSessionRuntime['send']>[0]['input']['outputSchema'];
 
     /** Keeps a settled query's live process for the next prompt; only the newest live query qualifies. */
     function retainIdleQueryForNextTurn(query: ClaudeSdkQuery, unpublishedLaunchEffort: string | null): boolean {
@@ -1641,7 +1644,7 @@ export function createClaudeAgentSdkTurnOperations(
         }
         publishResultUsage(turn.message, observedAtMs, turn.modelId);
         if ((params.publishTranscriptMessages === true || params.publishSdkMessages === true)
-            && !turn.publishedTranscriptText) {
+            && (!turn.publishedTranscriptText || turn.message.structured_output !== undefined)) {
             const resultTranscriptEvent = mapResultTranscriptEvent({
                 message: turn.message,
                 sessionId: readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk',
@@ -2750,6 +2753,12 @@ export function createClaudeAgentSdkTurnOperations(
                 if (submission.cancelled || runtimeDisposed) {
                     throw new Error('Claude Agent SDK turn was cancelled before provider submission.');
                 }
+                // Native schema constraints are launch options, so a changed or removed
+                // constraint uses the existing Session process-replacement owner.
+                if (JSON.stringify(currentOutputSchema) !== JSON.stringify(meta?.outputSchema)) {
+                    await invalidateRetainedQueryReuse();
+                    currentOutputSchema = meta?.outputSchema;
+                }
                 readLiveRetainedQuery();
                 const retained = retainedIdleQuery;
                 if (retained) {
@@ -2786,7 +2795,8 @@ export function createClaudeAgentSdkTurnOperations(
                 const { options, launchEffort } = buildQueryLaunchOptions(hookPluginDir);
                 const turnQuery = createOwnedQuery({
                     prompt: createPromptStream(promptContent, nativeUserMessageId),
-                    options: { ...options, ...(resumeProviderSessionId ? { resume: resumeProviderSessionId } : {}) },
+                    options: { ...options, ...(resumeProviderSessionId ? { resume: resumeProviderSessionId } : {}),
+                        ...(currentOutputSchema === undefined ? {} : { outputFormat: { type: 'json_schema', schema: currentOutputSchema } }) },
                     onMessageReceived: message => observeSessionQueryMessage(turnQuery, message),
                 }, () => currentTurnId);
                 activeCompletion = completion;

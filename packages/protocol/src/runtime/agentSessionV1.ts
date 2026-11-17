@@ -16,6 +16,7 @@ import { AgentUsageObservedPayloadV1Schema } from './agentUsageObservedPayloadV1
 import { TranscriptPeerSenderV1Schema } from '../sessions/messages/transcriptPeerSenderV1.js';
 import { ProbedCatalogOptionSchema } from '../capabilities/probedCatalogOption.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { AgentSessionRuntimeRetryV1Schema } from './agentSessionRuntimeRetryV1.js';
 
@@ -419,6 +420,7 @@ export const AgentSessionRuntimeEventSchema = AgentSessionRuntimeEventV1Schema;
 
 const AgentSessionInputV1Schema = lazyZodSchema(() => z.strictObject({
   text: z.string(),
+  outputSchema: z.optional(PluginJsonSchemaV2Schema),
   structuredInput: zMini.optional(AgentRuntimeJsonValueV1Schema),
 }));
 

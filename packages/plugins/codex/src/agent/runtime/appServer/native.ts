@@ -780,6 +780,7 @@ function createCodexNativeAppServerConversationRuntime(
       const appServerInput = {
         text: request.input.text,
         ...(structuredInput?.success ? { structuredInput: structuredInput.data } : {}),
+        ...(request.input.outputSchema === undefined ? {} : { outputSchema: request.input.outputSchema }),
       };
       // A steer targets an already accepted turn; its existing output must keep
       // flowing even when the new steer input is refused or has unknown custody.

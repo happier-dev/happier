@@ -162,6 +162,7 @@ export type CodexAppServerEventInput = CodexAppServerEvent extends infer Event
 export type CodexAppServerInput = Readonly<{
   text: string;
   structuredInput?: unknown;
+  outputSchema?: Parameters<AgentSessionRuntime['send']>[0]['input']['outputSchema'];
 }>;
 
 export type CodexAppServerSendOptions = Readonly<{

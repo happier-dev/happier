@@ -471,6 +471,7 @@ async function submitClaudeProviderInput(
     localId: request.inputIds[0] ?? null,
     localIds: [...request.inputIds],
     ...(structuredInput === undefined ? {} : { structuredInput }),
+    ...(request.input.outputSchema === undefined ? {} : { outputSchema: request.input.outputSchema }),
   };
   if (request.delivery.kind === 'steer') {
     return await operations.steerProviderTurn(prompt, meta);

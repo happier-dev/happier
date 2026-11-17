@@ -809,6 +809,13 @@ describe('conversation rollback wire schemas', () => {
 });
 
 describe('AgentSessionSendRequestV1Schema', () => {
+  it('preserves the optional native output schema while keeping the input envelope closed', () => {
+    const request = { inputIds: ['native-output'], delivery: { kind: 'newTurn', turnId: 'turn-schema' },
+      input: { text: 'Review the code', outputSchema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } } };
+    expect(AgentSessionSendRequestV1Schema.parse(request)).toEqual(request);
+    expect(AgentSessionSendRequestV1Schema.safeParse({ ...request,
+      input: { ...request.input, unsupportedOutputAuthority: true } }).success).toBe(false);
+  });
   it('preserves nonblank opaque input ids across send and custody evidence', () => {
     const opaqueInputId = ' input-opaque ';
     const sendRequest = AgentSessionSendRequestV1Schema.safeParse({

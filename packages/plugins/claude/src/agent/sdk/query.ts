@@ -161,6 +161,7 @@ function normalizeToolInput(input: unknown): Record<string, unknown> {
 
 function buildClaudeArgs(prompt: QueryPrompt, options: QueryOptions = {}): string[] {
     const args = ['--output-format', 'stream-json', '--verbose', ...buildClaudeSettingSourcesArgs(options.settingSources)];
+    if (options.outputFormat) args.push('--json-schema', JSON.stringify(options.outputFormat.schema));
     if (typeof options.systemPrompt === 'string') {
         args.push('--system-prompt', options.systemPrompt);
     } else if (options.customSystemPrompt) {
